@@ -90,7 +90,9 @@ $script:ManifestFileName = '.ai-rules.json'
 $script:AgentsMdFileName = 'AGENTS.md'
 $script:UserRulesFileName = 'USER-RULES.md'
 $script:MemoryFileName = 'memory.md'
-$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode')
+$script:DevEnvFileName = '.dev.env'
+$script:DevEnvExampleName = '.dev.env.example'
+$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'other')
 $script:ManagedBlocks = @('core', 'user-defined', 'openspec')
 $script:LastChannel = 'powershell'
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -823,7 +825,9 @@ function Get-ToolDetectionSignals {
         'claude-code' = @((Test-Path (Join-Path $Root '.claude')), (Test-Path (Join-Path $Root 'CLAUDE.md')))
         'codex'       = @((Test-Path (Join-Path $Root '.codex')))
         'opencode'    = @((Test-Path (Join-Path $Root '.opencode')), (Test-Path (Join-Path $Root 'opencode.json')))
-        'kilocode'    = @((Test-Path (Join-Path $Root '.kilocode')))
+        'kilocode'    = @((Test-Path (Join-Path $Root '.kilo')), (Test-Path (Join-Path $Root '.kilocode')))
+        # 'other' is a manual-only fallback — never auto-detected.
+        'other'       = @()
     }
     $detected = @()
     foreach ($t in $script:SupportedTools) {
@@ -1603,8 +1607,11 @@ function Invoke-PlacePhase {
 
 # Priority order for choosing the "canonical" rules directory referenced by
 # AGENTS.md. Lower index = higher priority. The first active tool in this
-# order whose adapter defines a `rules.copyTo` wins.
-$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'opencode', 'codex')
+# order whose adapter defines a `rules.copyTo` wins. The universal fallback
+# `other` is intentionally last: when combined with any "real" tool the real
+# tool's rules dir wins; `.ai-agent/rules/` becomes canonical only when
+# `other` is the only active tool.
+$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'opencode', 'codex', 'other')
 
 function Resolve-CanonicalRulesLayout {
     # Returns @{ Dir = <path>; Ext = <ext-without-dot> } for the highest-priority
@@ -1771,6 +1778,202 @@ function Place-RootTemplates {
             installedHash = (Get-FileSha256 $target)
         }
         Write-Info "  placed (template, will not be overwritten on update): $name"
+    }
+}
+
+# ============================================================================
+# SECTION 12b: .dev.env BOOTSTRAP
+# ============================================================================
+#
+# .dev.env is the single source of truth for project parameters used by
+# all rules / commands / subagents (code-generation params + infobase
+# connection params + web-publish URL for tests).
+#
+# Behaviour:
+#   - If the file already exists in the project root — DO NOT overwrite.
+#     Just register it in the manifest so future updates know it is present.
+#   - If missing — render from the source `.dev.env.example` template,
+#     auto-fill what we can detect (PLATFORM_VERSION from Configuration.xml,
+#     PLATFORM_PATH from C:\Program Files\1cv8\, PREFIX from extension's
+#     NamePrefix), and either prompt the user for the rest (interactive
+#     mode) or leave them empty with a console WARNING (non-interactive).
+#
+# Critical fields (treated as blocking for IB-related commands when empty):
+#   PREFIX, COMPANY, DEVELOPER, PLATFORM_VERSION, PLATFORM_PATH,
+#   INFOBASE_PATH.
+# Recommended fields (warned about, but not blocking):
+#   IB_USER, INFOBASE_PUBLISH_URL, LOG_PATH.
+
+function Find-PlatformPath {
+    # Returns the path to the most recent installed 1C platform under
+    # `C:\Program Files\1cv8\<version>\bin\1cv8.exe` or its (x86) sibling,
+    # or empty string when nothing is found.
+    param([string]$PreferredVersion)
+
+    $roots = @()
+    foreach ($pf in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if (-not $pf) { continue }
+        $r = Join-Path $pf '1cv8'
+        if (Test-Path $r) { $roots += $r }
+    }
+    if ($roots.Count -eq 0) { return '' }
+
+    $candidates = @()
+    foreach ($r in $roots) {
+        $dirs = Get-ChildItem -Directory -Path $r -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+(\.\d+){2,3}$' -and (Test-Path (Join-Path $_.FullName 'bin\1cv8.exe')) }
+        foreach ($d in $dirs) {
+            $verParts = ($d.Name -split '\.') | ForEach-Object { [int]$_ }
+            while ($verParts.Count -lt 4) { $verParts += 0 }
+            $candidates += [PSCustomObject]@{
+                Path     = $d.FullName
+                Version  = $d.Name
+                SortKey  = ($verParts[0] * 1000000000L) + ($verParts[1] * 1000000L) + ($verParts[2] * 1000L) + $verParts[3]
+            }
+        }
+    }
+    if ($candidates.Count -eq 0) { return '' }
+
+    if ($PreferredVersion -and $PreferredVersion -match '^\d+(\.\d+){1,3}$') {
+        $prefMatch = $candidates | Where-Object { $_.Version.StartsWith($PreferredVersion + '.') -or $_.Version -eq $PreferredVersion } |
+            Sort-Object SortKey -Descending | Select-Object -First 1
+        if ($prefMatch) { return $prefMatch.Path }
+    }
+    return ($candidates | Sort-Object SortKey -Descending | Select-Object -First 1).Path
+}
+
+function Read-DevEnvKeys {
+    # Parses a .dev.env file and returns an ordered hashtable of keys → values
+    # for the lines that look like KEY=VALUE (no comments, no blanks).
+    param([string]$Path)
+
+    $result = [ordered]@{}
+    if (-not (Test-Path $Path)) { return $result }
+    foreach ($line in (Get-Content -Path $Path -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $trim = $line.TrimStart()
+        if ($trim.StartsWith('#')) { continue }
+        if ($trim -match '^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$') {
+            $result[$Matches[1]] = $Matches[2]
+        }
+    }
+    return $result
+}
+
+function Set-DevEnvValue {
+    # In-place rewrite of a single KEY= line in the rendered template text.
+    # Idempotent: only the first occurrence of `<Key>=...` at line start is
+    # touched. If the key is not present, the text is returned unchanged.
+    param(
+        [string]$Text,
+        [string]$Key,
+        [string]$Value
+    )
+    if (-not $Text) { return $Text }
+    $pattern = '(?m)^' + [regex]::Escape($Key) + '=.*$'
+    $escVal = $Value -replace '\$', '$$$$'
+    return [regex]::Replace($Text, $pattern, ($Key + '=' + $escVal), 1)
+}
+
+function Read-Required {
+    # Asks the user for a value. Empty input returns empty string and lets the
+    # caller decide whether to leave the field blank.
+    param(
+        [string]$Prompt,
+        [string]$DefaultValue
+    )
+    if ($NonInteractive) { return $DefaultValue }
+    $hint = if ($DefaultValue) { " [$DefaultValue]" } else { '' }
+    $ans = Read-Host "$Prompt$hint"
+    if ([string]::IsNullOrWhiteSpace($ans)) { return $DefaultValue }
+    return $ans.Trim()
+}
+
+function Place-DevEnv {
+    param(
+        [string]$Root,
+        [string]$SourceRoot,
+        [System.Collections.IDictionary]$Manifest
+    )
+    $target = Join-Path $Root $script:DevEnvFileName
+    $source = Join-Path $SourceRoot $script:DevEnvExampleName
+
+    if (-not (Test-Path $source)) {
+        Write-Warn "Template not found in source: $script:DevEnvExampleName"
+        return
+    }
+
+    if (Test-Path $target) {
+        if (-not $Manifest.files.Contains($script:DevEnvFileName)) {
+            $Manifest.files[$script:DevEnvFileName] = [ordered]@{
+                source        = $script:DevEnvExampleName
+                template      = $true
+                installedHash = (Get-FileSha256 $target)
+            }
+        }
+        Write-Info "  .dev.env: already exists, leaving user values untouched"
+        return
+    }
+
+    # Detect what we can without asking
+    $info = Get-1cProjectInfo -Root $Root
+    $detectedVersion = if ($info.PlatformVersion) { $info.PlatformVersion } else { '' }
+    $detectedPath    = Find-PlatformPath -PreferredVersion $detectedVersion
+    $detectedPrefix  = if ($info.NamePrefix) { $info.NamePrefix } else { '' }
+
+    $text = Read-TextFile $source
+
+    # Prefill auto-detected values
+    if ($detectedVersion) { $text = Set-DevEnvValue -Text $text -Key 'PLATFORM_VERSION' -Value $detectedVersion }
+    if ($detectedPath)    { $text = Set-DevEnvValue -Text $text -Key 'PLATFORM_PATH'    -Value $detectedPath }
+    if ($detectedPrefix)  { $text = Set-DevEnvValue -Text $text -Key 'PREFIX'           -Value $detectedPrefix }
+
+    # Interactive prompts for the human-only fields
+    if (-not $NonInteractive) {
+        Write-Info ''
+        Write-Info '  Заполнение .dev.env (Enter — оставить поле пустым/значением по умолчанию):'
+        if (-not $detectedPrefix)  { $val = Read-Required 'PREFIX (префикс новых объектов, напр. рлф)' '';                                     if ($val) { $text = Set-DevEnvValue -Text $text -Key 'PREFIX'              -Value $val } }
+        $val = Read-Required 'COMPANY (название компании/проекта для комментариев)' '';                                                       if ($val) { $text = Set-DevEnvValue -Text $text -Key 'COMPANY'             -Value $val }
+        $val = Read-Required 'DEVELOPER (идентификатор разработчика)'                ''; if (-not $val) { $val = $env:USERNAME };             if ($val) { $text = Set-DevEnvValue -Text $text -Key 'DEVELOPER'           -Value $val }
+        if (-not $detectedVersion) { $val = Read-Required 'PLATFORM_VERSION (мин. совместимость, напр. 8.3.23)' '';                            if ($val) { $text = Set-DevEnvValue -Text $text -Key 'PLATFORM_VERSION'    -Value $val } }
+        if (-not $detectedPath)    { $val = Read-Required 'PLATFORM_PATH (каталог установки 1С, содержит bin\1cv8.exe)' '';                    if ($val) { $text = Set-DevEnvValue -Text $text -Key 'PLATFORM_PATH'       -Value $val } }
+        $kindAns = Read-Choice 'INFOBASE_KIND' @('file', 'server') 'file';                                                                     $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_KIND' -Value $kindAns
+        $val = Read-Required 'INFOBASE_PATH (путь к файловой ИБ или строка подключения)'  '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_PATH'       -Value $val }
+        $val = Read-Required 'IB_USER (пусто — без аутентификации)'                       '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_USER'             -Value $val }
+        $val = Read-Required 'IB_PASSWORD (пусто — без пароля; не храните прод-пароли)'   '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_PASSWORD'         -Value $val }
+        $val = Read-Required 'LOG_PATH (файл лога Designer''а, напр. E:\Temp\1cv8.log)' '';                                                   if ($val) { $text = Set-DevEnvValue -Text $text -Key 'LOG_PATH'            -Value $val }
+        $val = Read-Required 'INFOBASE_PUBLISH_URL (URL веб-публикации для UI-тестов; пусто — UI-тесты пропускаются)' '';                      if ($val) { $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_PUBLISH_URL' -Value $val }
+    }
+
+    Write-TextFile -Path $target -Content $text
+    $Manifest.files[$script:DevEnvFileName] = [ordered]@{
+        source        = $script:DevEnvExampleName
+        template      = $true
+        installedHash = (Get-FileSha256 $target)
+    }
+
+    Write-Info "  placed: .dev.env (single source of truth for project parameters)"
+    if ($detectedVersion) { Write-Info "    autodetected PLATFORM_VERSION = $detectedVersion" }
+    if ($detectedPath)    { Write-Info "    autodetected PLATFORM_PATH    = $detectedPath" }
+    if ($detectedPrefix)  { Write-Info "    autodetected PREFIX           = $detectedPrefix" }
+
+    # Final sanity check: warn loudly about empty critical fields so the user
+    # knows the file still needs hand-editing before code-gen / IB commands run.
+    $values = Read-DevEnvKeys -Path $target
+    $criticalEmpty = @()
+    foreach ($k in @('PREFIX', 'COMPANY', 'DEVELOPER', 'PLATFORM_VERSION', 'PLATFORM_PATH', 'INFOBASE_PATH')) {
+        if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $criticalEmpty += $k }
+    }
+    $recommendedEmpty = @()
+    foreach ($k in @('LOG_PATH', 'INFOBASE_PUBLISH_URL')) {
+        if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $recommendedEmpty += $k }
+    }
+    if ($criticalEmpty.Count -gt 0) {
+        Write-Warn ("  .dev.env: незаполнены критичные поля: " + ($criticalEmpty -join ', '))
+        Write-Warn '  Заполните их вручную перед запуском задач генерации кода / работы с ИБ.'
+    }
+    if ($recommendedEmpty.Count -gt 0) {
+        Write-Info ("  .dev.env: рекомендуется также заполнить: " + ($recommendedEmpty -join ', '))
     }
 }
 
@@ -1942,6 +2145,9 @@ function Invoke-Init {
 
     Write-Section 'Phase 8b: Root templates (USER-RULES.md, memory.md)'
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+
+    Write-Section 'Phase 8c: .dev.env (project parameters, single source of truth)'
+    Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
     Write-Section 'Phase 9: Manifest'
     Write-Manifest -Root $Root -Manifest $manifest
@@ -2120,6 +2326,9 @@ function Invoke-Update {
     Write-Section 'Root templates (update)'
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
+    Write-Section '.dev.env (update — placed only if missing)'
+    Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+
     $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     $manifest.lastChannel = $script:LastChannel
     $manifest.version = Get-SourceVersion -SourceRoot $sourceRoot
@@ -2171,6 +2380,7 @@ function Invoke-Add {
     Update-AgentsMd -Root $Root -SourceRoot $sourceRoot -ActiveTools $allActive -Adapters $allAdapters -Manifest $manifest
 
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+    Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
     $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     Write-Manifest -Root $Root -Manifest $manifest
@@ -2194,8 +2404,9 @@ function Invoke-Remove {
             'claude-code' { $toolPrefixes = @('.claude/', 'CLAUDE.md', '.mcp.json') }
             'codex'       { $toolPrefixes = @('.codex/') }
             'opencode'    { $toolPrefixes = @('.opencode/', 'opencode.json') }
-            'kilocode'    { $toolPrefixes = @('.kilocode/') }
+            'kilocode'    { $toolPrefixes = @('.kilo/', '.kilocode/') }
             'cursor'      { $toolPrefixes = @('.cursor/') }
+            'other'       { $toolPrefixes = @('.ai-agent/') }
         }
         $toRemove = @()
         foreach ($rel in @($manifest.files.Keys)) {
@@ -2234,7 +2445,10 @@ function Invoke-Remove {
         Remove-Item -Force (Join-Path $Root $script:ManifestFileName) -ErrorAction SilentlyContinue
         # Clean up empty per-tool directories
         $cleanupDirs = @('.ai-rules')
-        foreach ($t in $manifest.tools) { $cleanupDirs += ".$t" }
+        foreach ($t in $manifest.tools) {
+            if ($t -eq 'other') { $cleanupDirs += '.ai-agent' }
+            else { $cleanupDirs += ".$t" }
+        }
         foreach ($rel in $cleanupDirs) {
             $dir = Join-Path $Root $rel
             if (Test-Path $dir) {

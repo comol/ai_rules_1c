@@ -1,41 +1,75 @@
 ---
-description: Deploy configuration to infobase and run web client tests
+description: Загрузить конфигурацию в тестовую ИБ из .dev.env и прогнать UI-тесты в веб-клиенте
 ---
-# installation
-**IMPORTANT** if file infobasesettings.md does not exists - create it with following info:
-1) Ask connection for infobase. In this example 'C:\Users\filippov.o\Documents\InfoBase12' 
-2) Ask infobase publish URL. In this file it http://localhost/TestForms/ru/ 
 
+# /deploy-and-test — деплой в тестовую ИБ + UI-тесты
 
-# setings usage
-1) In commands below replace infobase connection with read from infobasesettings.md. Don't forget to use /S for server infobase and /F for file
-2) replace 'http://localhost/TestForms/ru/' url to url read from infobasesettings.md. If URL not set - just skip testing
-3) E:\Temp\Update.log - just put update log whereever it comfortable
-4) E:\newformsgen - replace it with current project root directory
+Деплой текущей конфигурации в тестовую информационную базу, заданную в `.dev.env`, с последующим прогоном UI-тестов в веб-клиенте по `INFOBASE_PUBLISH_URL`.
 
+## Шаг 0. Проверить параметры в `.dev.env`
 
-# testing and deployment
-## to update infobase before testing use following commands:
-**Step 1 - Load config to base:**
+`.dev.env` — единый источник правды для всех параметров (создаётся установщиком 1c-rules в корне проекта). Если файла нет — попросить пользователя выполнить `install.ps1 init` или скопировать `.dev.env.example` → `.dev.env`.
+
+Если в проекте остался устаревший `infobasesettings.md` — перенести значения в `.dev.env` и удалить файл; никаких других мест с настройками подключения и URL веб-публикации в наборе правил нет.
+
+Используемые ключи:
+
+| Ключ | Назначение |
+|---|---|
+| `PLATFORM_PATH` | Каталог установки платформы (содержит `bin\1cv8.exe`) |
+| `INFOBASE_KIND` | `file` или `server` |
+| `INFOBASE_PATH` | Путь к файловой ИБ или строка подключения к серверной |
+| `IB_USER` / `IB_PASSWORD` | Учётные данные (опционально) |
+| `EXTENSION_NAME` | Имя расширения (пусто — основная конфигурация) |
+| `EXPORT_PATH` | Каталог исходников (пусто — корень репозитория) |
+| `LOG_PATH` | Файл лога Designer'а |
+| `INFOBASE_PUBLISH_URL` | URL веб-публикации тестовой ИБ для UI-тестов. Если пусто — UI-тесты пропускаются, остаётся только деплой |
+
+Критичные поля для деплоя — `INFOBASE_PATH`, `PLATFORM_PATH`, `LOG_PATH`. Если пустые — спросить у пользователя и записать в `.dev.env`.
+
+## Шаг 1. Загрузка конфигурации в ИБ
 
 ```powershell
-& 'C:\Program Files\1cv8\8.3.23.1997\bin\1cv8.exe' DESIGNER /F 'C:\Users\filippov.o\Documents\InfoBase12' /DisableStartupMessages /LoadConfigFromFiles E:\newformsgen /Out E:\Temp\Update.log
+& '{PLATFORM_PATH}\bin\1cv8.exe' DESIGNER `
+    /F '{INFOBASE_PATH}' `
+    /N '{IB_USER}' `
+    /P '{IB_PASSWORD}' `
+    /DisableStartupMessages `
+    /LoadConfigFromFiles '{EXPORT_PATH}' `
+    -Extension {EXTENSION_NAME} `
+    /Out '{LOG_PATH}'
 ```
 
-Read `E:\Temp\Update.log` to confirm success.
+Удалить незаполненные опциональные ключи (`/N`, `/P`, `-Extension`). Для серверной ИБ — `/S` вместо `/F`.
 
-Wait 5-10 seconds
+Прочитать `{LOG_PATH}` — должен содержать `Конфигурация успешно загружена` / `Configuration successfully loaded`. Подождать 5–10 секунд.
 
-**Step 2 - Update database structure:**
+## Шаг 2. Обновление структуры БД
 
 ```powershell
-& 'C:\Program Files\1cv8\8.3.23.1997\bin\1cv8.exe' DESIGNER /F 'C:\Users\filippov.o\Documents\InfoBase12' /DisableStartupMessages /UpdateDBCfg -Dynamic+ -SessionTerminate force /Out E:\Temp\Update.log
+& '{PLATFORM_PATH}\bin\1cv8.exe' DESIGNER `
+    /F '{INFOBASE_PATH}' `
+    /N '{IB_USER}' `
+    /P '{IB_PASSWORD}' `
+    /DisableStartupMessages `
+    /UpdateDBCfg -Dynamic+ -SessionTerminate force `
+    -Extension {EXTENSION_NAME} `
+    /Out '{LOG_PATH}'
 ```
 
-Read `E:\Temp\Update.log` to confirm success.
+Прочитать `{LOG_PATH}`. При ошибках — показать фрагмент лога и **не запускать** UI-тесты.
 
-## to test infobase use following URL and rules:
+## Шаг 3. UI-тесты в веб-клиенте
 
-http://localhost/TestForms/ru/
-**IMPORTANT** ALWAYS USE **human-like typing** simulation with **DELAY** to fill values during testing
-you can use TAB to select form field
+Если `INFOBASE_PUBLISH_URL` пусто — пропустить шаг и завершить с сообщением «UI-тесты пропущены: `INFOBASE_PUBLISH_URL` не задан в `.dev.env`».
+
+Иначе — открыть `{INFOBASE_PUBLISH_URL}` через MCP-браузер и прогнать сценарии тестирования. Правила:
+
+- **ОБЯЗАТЕЛЬНО** использовать имитацию ввода с задержкой (human-like typing) при заполнении полей.
+- Использовать TAB для перехода между полями формы.
+- Дожидаться загрузки элементов перед взаимодействием.
+- Делать скриншоты на ключевых шагах для документации.
+
+## Шаг 4. Финальный отчёт
+
+Кратко: какая ИБ обновлена, какие тестовые сценарии прошли/упали, ошибки — отдельным списком (с фрагментами логов и скриншотами).

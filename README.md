@@ -12,7 +12,8 @@
 - **Claude Code** (`.claude/rules/`, `.claude/agents/`, `.claude/commands/`)
 - **OpenAI Codex** (`.codex/skills/`)
 - **OpenCode** (`.opencode/command/`)
-- **Kilo Code** (`.kilocode/rules/`, `.kilocode/workflows/`)
+- **Kilo Code** (`.kilo/rules/`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`)
+- **Прочее (`other`, универсальный fallback)** (`.ai-agent/rules/`, `.ai-agent/agents/`, `.ai-agent/commands/`, `.ai-agent/skills/`, `.ai-agent/mcp.json`) — для любого ИИ-клиента, которого нет в списке выше (Aider, Cline, Continue, Cody и т.п.). Ничего не автодетектится — выбирается вручную при установке. На диск пишутся максимально портабельные правила: `AGENTS.md` в корне (де-факто стандарт для современных агентов), а on-demand-правила и описания субагентов — по нейтральным путям под `.ai-agent/` с минимальной frontmatter (`description` + `alwaysApply`).
 
 Один и тот же исходный набор правил из `content/` раскладывается во все активные инструменты одновременно, поэтому `AGENTS.md`, on-demand правила и описания субагентов остаются согласованными независимо от того, в каком клиенте вы работаете.
 
@@ -46,7 +47,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 - **Корневой свод правил** — `AGENTS.md`: всегда подгружаемый контекст для ИИ-агента: персона, процедура разработки, принципы, перечень MCP-инструментов и их использование, стандарты кода, дисциплина вызовов инструментов.
 - **Пользовательские правила** — `USER-RULES.md`: пустой по умолчанию файл для команды/проекта. Установщик его не перезаписывает.
 - **Память проекта** — `memory.md`: рабочая память ИИ для долгоживущих фактов, корректировок и проектных особенностей.
-- **Параметры проекта** — `.dev.env.example`: шаблон параметров (`PREFIX`, `COMPANY`, `DEVELOPER`, `PLATFORM_VERSION`, шаблоны комментариев, политика размещения новых объектов). Скопировать в `.dev.env` и заполнить.
+- **Параметры проекта** — `.dev.env`: единый источник правды для всех правил, on-demand-инструкций, слэш-команд и субагентов. Содержит и параметры генерации кода (`PREFIX`, `COMPANY`, `DEVELOPER`, `PLATFORM_VERSION`, шаблоны комментариев, `NEW_OBJECTS_IN`), и параметры подключения к ИБ для команд и тестов (`PLATFORM_PATH`, `INFOBASE_KIND`/`INFOBASE_PATH`, `IB_USER`/`IB_PASSWORD`, `EXTENSION_NAME`, `EXPORT_PATH`, `LOG_PATH`, `INFOBASE_PUBLISH_URL` для веб-тестов). Установщик создаёт `.dev.env` автоматически на `init`, заполняет автодетектом `PLATFORM_VERSION` (из `Configuration.xml`), `PLATFORM_PATH` (поиск в `C:\Program Files\1cv8\`) и `PREFIX` (из `NamePrefix` расширения), запрашивает остальное в интерактивном режиме. В `-NonInteractive` оставляет пустые поля с явным WARNING. Шаблон — `.dev.env.example`.
 - **Установщик** — `install.ps1`: PowerShell-инсталлятор (команды `init` / `update` / `add` / `remove` / `doctor` / `eject`).
 - **Спецификация установщика** — `AGENT-INSTALL.md`: что пишется/обновляется на диске, как происходит миграция и что принадлежит установщику.
 
@@ -64,7 +65,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 ├── content/
 │   ├── rules/               # on-demand правила, подключаемые по задаче
 │   ├── agents/              # описания 12 специализированных субагентов
-│   ├── commands/            # слэш-команды (deploy-and-test, getconfigfiles)
+│   ├── commands/            # слэш-команды (deploy-and-test, getconfigfiles, loadfrom1cbase, update1cbase, checkmcp, update)
 │   ├── skills/              # SKILL-пакеты (1c-metadata-manage, mermaid-diagrams и др.)
 │   ├── openspec-bundle/     # снапшот вывода `openspec init` для каждого инструмента
 │   └── mcp-servers.json     # каталог MCP-серверов экосистемы 1С
@@ -77,7 +78,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 Независимо от канала установки (агент или `install.ps1`) на диске будет:
 
 - `AGENTS.md`, `USER-RULES.md`, `memory.md` — **в корне проекта**. Это требование инструментов: Cursor, Claude Code, Codex, OpenCode, Kilo Code читают `AGENTS.md` именно из корня; перенос в `.cursor/`/`.claude/` отключит загрузку.
-- директории активных инструментов (`.cursor/`, `.claude/`, `.codex/`, `.opencode/`, `.kilocode/`) — для каждого детектированного. On-demand правила лежат в `<tool>/rules/` соответствующего инструмента, не дублируются в отдельный «общий» каталог.
+- директории активных инструментов (`.cursor/`, `.claude/`, `.codex/`, `.opencode/`, `.kilo/` + `.kilocode/mcp.json` для Kilo Code) — для каждого детектированного. On-demand правила лежат в `<tool>/rules/` соответствующего инструмента, не дублируются в отдельный «общий» каталог.
 - `openspec/` — OpenSpec-воркспейс (если ещё не было).
 - `.ai-rules.json` — манифест с перечнем размещённых файлов, активных инструментов, выбранным каноническим каталогом on-demand правил и версией.
 
@@ -93,17 +94,21 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 - `dev-standards-architecture.md` — архитектурные паттерны, расширения, стандарты платформы, code smells.
 - `dev-standards-forms.md` — структура модулей и шаблоны управляемых форм.
 - `forms-add.md` / `forms-events-add.md` / `form-module.md` — генерация форм, событий и работа с модулем формы.
+- `form-reserved-names.md` — зарезервированные имена свойств в модулях форм (запрет на локальные переменные `ПараметрыВыбора`, `СвязиПараметровВыбора`, `СписокВыбора`, `ПараметрыОтбора`, `ОтборСтрок`).
+- `async-methods.md` — практическое руководство по `Асинх` / `Ждать` / `Обещание` (платформа 8.3.18+) с типичными паттернами и ловушками (тихая потеря исключений без `Ждать`, `Асинх` в обработчиках событий формы, HTTP-async).
+- `extension-patterns.md` — паттерны расширений (CFE): типы перехватчиков, правила `ПродолжитьВызов`, маркеры `#Вставка` / `#Удаление`, ограничения заимствованных объектов, антипаттерны.
+- `metadata-xml-workarounds.md` — типовые ошибки при ручной генерации метаданных XML (отсутствие `LineNumber` в табличных частях, опечатка `PagesGroupExtInfo`, обязательный `Page.enabled`, уникальность UUID).
 - `tooling-playbooks.md` — пошаговые MCP-плейбуки под типовые задачи (написание кода, ревью, архитектура, исправление ошибок, оптимизация, рефакторинг, метаданные XML, формы, интеграции, документация, сравнение версий платформы).
 - `getconfigfiles.md` — выгрузка объектов метаданных из информационной базы в репозиторий.
 - `integrations-add.md` — правила для интеграций (HTTP-сервисы, REST, очереди).
 - `refactor-add.md` — чек-лист безопасного рефакторинга.
 - `sdd-integrations.md` — правила работы с OpenSpec.
 - `anti-patterns.md` — каталог 1С анти-паттернов и рубрика код-ревью.
-- `platform-solutions.md` — типичные ловушки платформы и проверенные шаблоны решений.
+- `platform-solutions.md` — типичные ловушки платформы и проверенные шаблоны решений (включая фоновые задания из внешней обработки через БСП).
 
 ## Специализированные субагенты (`content/agents/`)
 
-Двенадцать ролей под конкретные задачи: `1c-analytic`, `1c-planner`, `1c-architect`, `1c-arch-reviewer`, `1c-developer`, `1c-metadata-manager`, `1c-refactoring`, `1c-performance-optimizer`, `1c-error-fixer`, `1c-tester`, `1c-code-reviewer`, `1c-doc-writer`. Когда какой использовать — описано в `AGENTS.md → Subagent catalog`.
+Тринадцать ролей под конкретные задачи: `1c-explorer`, `1c-analytic`, `1c-planner`, `1c-architect`, `1c-arch-reviewer`, `1c-developer`, `1c-metadata-manager`, `1c-refactoring`, `1c-performance-optimizer`, `1c-error-fixer`, `1c-tester`, `1c-code-reviewer`, `1c-doc-writer`. Когда какой использовать — описано в `AGENTS.md → Subagent catalog`.
 
 ## SKILL-пакеты (`content/skills/`)
 
@@ -127,12 +132,16 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 - **Макеты и шаблоны, справка** (`template-manage.md`, `help-manage.md`), паттерны БСП (`ssl-patterns.md`).
 - **Запросы** — написание новых (`query-writing.md`) и оптимизация (`query-optimization.md`).
 - **Веб-публикация** (`web-manage.md`) — публикация/снятие, статус, smoke-тесты для Apache/IIS.
+- **Распаковка бинарников без платформы 1С** (`v8unpack-cf.md`) — извлечение и сборка CF/CFE/EPF через Python-утилиту `v8unpack` (для CI без 1С на хосте, оффлайн-инспекции стороннего расширения, partial-rebuild пайплайнов).
 
 ### Сопутствующие скиллы
 
 - **`img-grid-analysis`** — наложение пронумерованной сетки на изображение для определения пропорций колонок. Используется при генерации MXL-макетов из скриншотов или сканов печатных форм; даёт коэффициенты ширины колонок для JSON-DSL компилятора.
 - **`mermaid-diagrams`** — практическое руководство по диаграммам Mermaid, совместимым с большинством рендереров (плюс ASCII-сайдкары для просмотра в чистом Markdown).
 - **`powershell-windows`** — правила скриптинга в Windows PowerShell (разделители команд, кавычки путей, замены `curl`/`timeout`/`&&`, Docker, HTTP, JSON). Подгружается, когда правила выполняют shell-команды на Windows.
+- **`md-to-docx`** — конвертация Markdown в Word-документ (`.docx`) c сохранением заголовков, таблиц, списков, кода, ссылок и инлайн-изображений. Требует Node.js и пакет `docx`.
+- **`prompt-enhancer`** — превращение короткой неструктурированной заметки или ТЗ в подробную императивную постановку с пронумерованными шагами анализа, явными граничными случаями и фиксированным форматом вывода. Сохраняет термины и не добавляет новых требований.
+- **`transcribe`** — транскрибация аудио и видео через Gemini 2.5 Flash API: дословная расшифровка с таймкодами, опциональное саммари, режим `--analyze-ui` для разбора экранного интерфейса со скриншотами. Требует Python, ffmpeg и `GEMINI_API_KEY`.
 
 ## MCP-серверы экосистемы 1С
 

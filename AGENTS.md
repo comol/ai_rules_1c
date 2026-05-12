@@ -115,7 +115,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 # Project info
 
-The canonical project context (configuration name, platform version via `CompatibilityMode`, form mode, БСП version, top-level subsystems, metadata counts) lives in [`openspec/project.md`](openspec/project.md). 
+The canonical project context (configuration name, platform version via `CompatibilityMode`, form mode, БСП version, top-level subsystems, metadata counts) lives in [`openspec/project.md`](openspec/project.md).
 
 - The project is entirely in 1C (bsl) — no other programming languages.
 - Write code in Russian.
@@ -125,286 +125,88 @@ The canonical project context (configuration name, platform version via `Compati
 
 # Tooling
 
-## Key Principles
+**MCP tools are a mandatory part of the workflow, not an option.** Whenever a relevant MCP server is available in the current session (its tools are exposed in the tool schema), call it for the task it covers. **Not calling an applicable MCP tool counts as a defect** — skipping a needed tool costs more than an extra call. The set of tools to call must not be silently narrowed.
 
-- **Available profile MCP tools are mandatory, not optional.** If the relevant MCP server is available, exhaust its tools before falling back to Grep/rg. If it is unavailable, use the next fallback in the chain.
-- **Primary metadata/code priority starts with `1c-graph-metadata-mcp` → `1c-code-metadata-mcp`; the full fallback chain before Grep/rg is defined in `Important Rules` item 7.**
-- **Verify before writing** (templates, existing code, metadata, documentation), **validate after writing** (syntax, logic, style).
-- **`syntaxcheck` is limited to 3 calls per cycle.** Definition of "cycle": one logical edit of one module, from the first edit until either a clean `syntaxcheck` is achieved or the limit is exhausted. Each module edit starts a new cycle. The same limit applies to `check_1c_code` and `review_1c_code`. If style warnings persist after the limit, fix the substantive errors and move on.
-- **Always follow up `its_help` with `fetch_its`** — read the full ITS article content by ID.
-- **Use the Model Context Protocol (MCP)** whenever the relevant server is available to standardize context/tool exchange between the agent and your environment.
-- **AI-based MCP tools (`ask_1c_ai`, `rewrite_1c_code`, `modify_1c_code`, `answer_metadata_question`) are non-deterministic.** Treat their output as a draft hint, never as authority. Always re-validate generated/rewritten code with `syntaxcheck` + `check_1c_code` + `review_1c_code` before delivering.
-- **Tailor every MCP query to the tool's own description.** Before each call, read the tool's schema/descriptor when descriptors are available in the current tool (for example, Cursor's MCP descriptor cache) and shape the request accordingly: pick the right `search_type` / `detail_level` / `object_type` / `direction` / `depth` / `filter_type` / `names_only` / `exact` etc., choose JSON templates over natural language when supported, and use the input format the tool expects (exact 1C names, Lucene syntax, qualified dotted paths, GUIDs). A vague query to a parameter-rich tool is a misuse of the tool.
+Reading a tool's schema is recommended for parameter tuning (especially for parameter-rich tools), but it is **not a precondition** for calling. The hard gate is whether the call happens at all when it is needed.
 
-## 1C Code & Metadata Server (1c-code-metadata-mcp)
+## MCP server catalog (brief overview)
 
-### Metadata Search
+The full per-tool catalog for each server lives in the **`mcp-1c-tools`** skill (`content/skills/mcp-1c-tools/SKILL.md`); under it, `docs/<server>.md` documents each server's parameters, purpose, and usage scenarios. **Load a specific `docs/<server>.md` when you are about to call tools from that server and want to tune parameters; the server must be actually available in the current session.**
 
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **metadatasearch** | `query`, `limit=5`, `object_type=""`, `names_only=false` | Semantic/FTS search in 1C metadata XML files. `object_type` filters by category (e.g. `Справочники`, `Документы`). `names_only=true` returns compact list (`full_path`, `object_type`, `synonym`) instead of raw chunks — prefer this to find objects, then use `get_metadata_details` for details | Search metadata objects, verify existence, find attributes and relationships. Use exact configuration names (e.g. `'Справочники.Контрагенты.Реквизиты'`) |
-| **get_metadata_details** | `object_name` | Full metadata structure: attributes with types, tabular parts, synonyms, properties | Get complete object structure when you already know the name (e.g. `'Номенклатура'`, `'Документ.РеализацияТоваровУслуг'`) |
+| Server | Purpose |
+|---|---|
+| `1c-graph-metadata-mcp` | Graph metadata (Neo4j): `get_object_dossier`, `search_code`, `search_metadata`, `search_metadata_by_description`, `trace_impact`, `trace_call_chain`, `find_objects_using_object`, `find_usages_of_object`, `business_search`, `answer_metadata_question`, `compare_base_and_extension`, `resolve_qualified_name`, `find_by_guid`, `get_metadata_prompt`, `execute_metadata_cypher`, `find_register_movement_docs` |
+| `1c-code-metadata-mcp` | Metadata and code: `metadatasearch`, `get_metadata_details`, `codesearch`, `search_function`, `get_module_structure`, `get_method_call_hierarchy`, `graph_dependencies`, `bsl_scope_members`, `helpsearch`, `search_forms`, `inspect_form_layout`, `get_xsd_schema`, `verify_xml`, `reindex`, `stats` |
+| `1c-templates-mcp` | Code templates and project memory: `templatesearch`, `remember`, `recall` |
+| `1c-ssl-mcp` | БСП / SSL search: `ssl_search` |
+| `1C-docs-mcp` | Platform documentation: `docinfo`, `docsearch` |
+| `1c-code-check-mcp` | 1С:Напарник — code review and ITS: `check_1c_code`, `review_1c_code`, `rewrite_1c_code`, `modify_1c_code`, `ask_1c_ai`, `search_1c_documentation`, `onec_help`, `its_help`, `fetch_its`, `diff_1c_documentation_versions`, `config_help` |
+| `1c-syntax-checker-mcp` | BSL syntax and style: `syntaxcheck` |
 
-### Code Search & Navigation
+Step-by-step playbooks per task type (writing code, review, architecture, error fixing, performance, refactoring, metadata XML, forms, integrations, documentation, platform-version comparison) — `tooling-playbooks.md`.
 
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **codesearch** | `query`, `limit=5` | Hybrid search in BSL object modules and common modules | Find code patterns, check usages, verify implementations. `query` can be code, function name, or comment |
-| **search_function** | `name`, `exact=true`, `limit=10` | Find BSL procedures/functions by name via structural FTS index. `exact=true` does case-insensitive match with auto-fallback to fuzzy | Find specific procedure/function definition (e.g. `'ОбработкаПроведения'`, `'ПриСозданииНаСервере'`) |
-| **get_module_structure** | `module_path` | Full module structure: all procedures, functions, regions, and statistics | Understand module before editing. Get overview of what a module contains |
-| **get_method_call_hierarchy** | `method_name`, `direction="both"`, `depth=3` | Call graph: who calls this method (`callers`), what it calls (`callees`), or `both` | Understand call chains, impact analysis, find hot paths |
-| **graph_dependencies** | `object_name`, `direction="both"`, `limit=50` | Dependency graph: `forward` (what this uses), `reverse` (who uses this), or `both` | Impact analysis before refactoring, understand object relationships |
-| **bsl_scope_members** | `context`, `member_type="all"` | Available methods, properties, events for a BSL context string. `member_type`: `all`, `methods`, `properties`, `events` | Discover available API for an object (e.g. `'Справочник.Номенклатура'`, `'Глобальный'`) |
+## Tool Calling Rules (unified)
 
-### Help Search
+Single source for tool-calling rules. Replaces the former *Key Principles*, *Important Rules*, and *Tool Calling Discipline* sections.
 
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **helpsearch** | `query`, `limit=5` | Search HTML help and user documentation | Find help topics, understand metadata object purpose, find functional descriptions |
+### A. Priority and obligation
 
-### Forms
+1. **MCP tools are mandatory when applicable and available.** If the task could benefit from an MCP tool and the server is exposed in the current session, calling it is non-optional. Not calling counts as a defect. Do not narrow the set of tools you would otherwise call.
+2. **Fallback chain before `Grep` / `rg`** — `Grep` / `rg` operate on the current project, so they can substitute only the project-indexing servers (`1c-graph-metadata-mcp` and `1c-code-metadata-mcp`); the remaining servers in the chain cover external knowledge (project memory, БСП / SSL, platform docs, ITS) and have no grep equivalent. Exhaust in order:
+   1. `1c-graph-metadata-mcp`
+   2. `1c-code-metadata-mcp` (default search mode — hybrid / semantic / FTS)
+   3. `1c-code-metadata-mcp` with `grep=true` (substring retry inside the MCP index — see the empty-result retry rule in `content/skills/mcp-1c-tools/docs/1c-code-metadata-mcp.md`; applies to tools that expose `grep`: `codesearch`, `metadatasearch`, `search_function`, `helpsearch`, `search_forms`)
+   4. `1c-templates-mcp`
+   5. `1c-ssl-mcp`
+   6. `1C-docs-mcp`
+   7. `1c-code-check-mcp` (`its_help` → `fetch_its` for ITS)
+   8. only then `Grep` / `rg` — and only as a replacement for the project-source layer covered by steps 1–3.
 
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **search_forms** | `query`, `limit=10` | Search across all configuration forms (elements, attributes, commands) | Find existing forms as examples before generating new ones (e.g. `'Номенклатура'`, `'ФормаЭлемента'`) |
-| **inspect_form_layout** | `object_name`, `form_name=""` | Full element tree: hierarchical structure, attributes, commands, event handlers, bindings, visibility, accessibility | Study form layout before modification or as a reference for generating a new form |
+   **Before invoking `Grep`, explicitly state in your response which MCP tools were tried (including the `grep=true` retry on `1c-code-metadata-mcp`) and why they did not return what was needed** (one or two sentences). This is a mandatory safeguard against falling back to cheap text search.
+3. **Verify before writing, validate after writing.** Before writing: templates (`templatesearch`), existing code (`codesearch` / `search_code`), metadata (`get_object_dossier` / `metadatasearch`), documentation (`docinfo` / `docsearch`). After writing: `syntaxcheck` → `check_1c_code` → `review_1c_code`.
+4. **Metadata first via graph.** When `1c-graph-metadata-mcp` is available — start with `get_object_dossier` (full passport in one call) and `search_metadata` / `search_metadata_by_description`. Only when the graph server is unavailable — `metadatasearch` + `get_metadata_details` from `1c-code-metadata-mcp`.
+5. **Impact analysis before refactoring.** Before refactoring — `trace_impact` (recursive, multi-level); fallback to `graph_dependencies` (single-level). For call graph — `trace_call_chain` (depth 1–10), fallback to `get_method_call_hierarchy`.
+6. **Metadata XML — through schema.** Before generating / editing XML — `get_xsd_schema`; after — `verify_xml`. For non-trivial edits prefer the `1c-metadata-manage` skill (or the `metadata-manager` subagent) over hand-editing XML.
+7. **ITS is not ignored.** Always follow `its_help` with `fetch_its` for every returned document ID.
 
-### XSD Schemas & Validation
+### B. Limits and non-determinism
 
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **get_xsd_schema** | `object_type` | Generated XSD for a metadata type (`Справочник`, `Документ`, `РегистрСведений`, `РегистрНакопления`, `Роль`) or sub-object type (`Форма`, `СКД`, `Макет`). English aliases accepted | Get XML structure rules before generating/modifying metadata XML |
-| **verify_xml** | `xml_content`, `object_type` | Validate XML string against XSD. Returns `status` (`valid`/`invalid`/`error`/`not_found`) and `errors` list | Validate generated or modified XML before committing |
+8. **Verification limit — 3 calls per cycle.** Applies to `syntaxcheck`, `check_1c_code`, `review_1c_code`. A **cycle** is one logical edit of one module, from the first edit until either a clean result is achieved or the limit is exhausted; every new edit of the module starts a new cycle. Once the limit is hit, fix the substantive errors and move on; style warnings do not block delivery.
+9. **AI-based MCP tools are non-deterministic.** `ask_1c_ai`, `rewrite_1c_code`, `modify_1c_code`, `answer_metadata_question` produce draft hints, not authority. Generated / rewritten code must always be re-validated: `syntaxcheck` + `check_1c_code` + `review_1c_code`.
 
-### Administration
+### C. Call discipline (no duplication)
 
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **reindex** | `force=false` | Trigger background reindexation. `force=true` wipes and rebuilds all indexes from scratch | After configuration changes, when search results seem stale |
-| **stats** | *(none)* | Index statistics: document counts per collection, embedding provider, last indexation time, reindex schedule | Diagnostics, verify indexing status |
-
-## Documentation Search (1C-docs-mcp)
-
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| **docsearch** | Search 1C platform documentation by description (hybrid: vector + BM25) | Search for built-in functions by description, find platform features when exact name is unknown |
-| **docinfo** | Look up 1C platform documentation by exact object/method name | Get documentation for a known object or method (e.g., `"ТаблицаЗначений"`, `"Массив.Найти"`, `"Запрос"`) |
-
-> **Prefer docinfo for known names** — use `docinfo` for precise lookup by exact name; use `docsearch` for fuzzy/semantic search when the exact name is unknown.
-
-## Code Templates and Project Memory (1c-templates-mcp)
-
-Hosts the code-template library (`templatesearch`) and the fine-grained project memory (`remember` / `recall`). Memory routing rules — see *Project Memory* below.
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **templatesearch** | `query` | Hybrid search (semantic + fulltext) over the code-template library (2000+ entries) | Find architectural patterns and implementation examples before writing code |
-| **remember** | `content` (≥5 chars) | Save a free-form note to project memory (vector-indexed) | Persist a project-specific fact, user correction, or non-obvious decision that should survive across tasks |
-| **recall** | `query` | Vector search over saved memory notes | Retrieve earlier corrections, decisions, and project-specific quirks at the start of a task |
-
-## Standard Subsystems Library Search (1c-ssl-mcp)
-
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| **ssl_search** | Search SSL (БСП) functions | Find standard library functions to reuse |
-
-## Graph Metadata (1c-graph-metadata-mcp)
-
-Tools are deterministic (no LLM) unless noted.
-
-### Metadata Search
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **search_metadata** | `query`, `project_name=None` | Template JSON queries (instant, deterministic) or natural language → Cypher (requires LLM). JSON format: `{"operation": "<name>", ...params}`. Operations: `list_attributes`, `list_tabular_parts`, `object_structure`, `list_objects_by_category`, `list_objects_by_name`, `list_forms`, `list_enum_values`, `list_resources`, `list_dimensions`, `get_attribute_type`, `list_attributes_with_type` | Structural metadata queries. Prefer JSON templates for deterministic results. Use NL mode when templates don't cover the query |
-| **get_metadata_prompt** | *(none)* | Returns Neo4j database schema, Cypher examples, and available template operations list | Before writing manual Cypher queries with `execute_metadata_cypher`. Also shows all available JSON template operations for `search_metadata` |
-| **execute_metadata_cypher** | `query` | Execute raw Cypher query on Neo4j metadata database | Complex graph queries not covered by templates. Always use `get_metadata_prompt` first to understand the schema |
-| **search_metadata_by_description** | `query`, `top_k=10`, `filter_type=None`, `project_name=None`, `use_fuzzy=false`, `alpha=0.5` | Lucene fulltext (+ optional vector hybrid) on name, Синоним, Комментарий, Описание, Справка. `use_fuzzy=true` enables fuzzy matching. `alpha` controls vector/fulltext balance (0.0 = fulltext only, 1.0 = vector only) | Find metadata objects by their Russian synonyms, comments, descriptions, or help text. Better than `search_metadata` when you have a descriptive phrase rather than a technical name |
-| **resolve_qualified_name** | `qualified_name` | Resolve dot-notation 1C qualified names to graph nodes. Patterns: `Справочник.Контрагенты`, `Документ.РеализацияТоваровУслуг.ТабличнаяЧасть.Товары`, `Справочник.Контрагенты.Реквизит.ИНН` | Validate qualified name paths, navigate from category to object to attribute in the graph |
-| **find_by_guid** | `guid` | Find any metadata node by its GUID identifier. Returns node type, name, and all properties | Look up a specific metadata node when you have a GUID (e.g. from XML or configuration dump) |
-
-### Object Analysis
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **get_object_dossier** | `object_name`, `sections=None` | Comprehensive structural passport in one call — no LLM. Sections: `structure` (attributes, tabular parts, dimensions, resources, commands, layouts), `forms`, `subscriptions`, `roles`, `dependencies` (USED_IN upstream/downstream, register movements), `code` (module procedures/functions with signatures), `business_info`. Default: all sections | **First step** when you need to understand any metadata object. Replaces multiple separate queries. Use `sections` filter to reduce output when only specific info is needed |
-| **find_objects_using_object** | `object_name`, `project_name=None` | Find all metadata objects where the given object is used as a type reference in attributes, dimensions, or resources (via USED_IN relationship) | Answer "Where is catalog X used?" — find all objects that reference the given object in their structure |
-| **find_usages_of_object** | `object_name`, `project_name=None` | Find specific attributes, dimensions, and resources that reference the given object, with owner object and full type information | Answer "In which attributes is X referenced?" — attribute-level detail (not just object-level like `find_objects_using_object`) |
-| **find_register_movement_docs** | `register_name`, `project_name=None` | Find all documents that make movements (проводки / движения) into the given register | Answer "Which documents post to register X?" — essential for understanding document-register relationships |
-
-### Dependency & Impact Analysis
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **trace_impact** | `object_name`, `depth=3`, `direction="downstream"`, `relationship_types=None`, `project_name=None` | Recursive impact analysis across USED_IN, DO_MOVEMENTS_IN, and CALLS relationships. `direction`: `downstream` (who depends on me), `upstream` (what I depend on), `both`. `depth`: 1–5 for metadata, 1–10 for CALLS. `relationship_types`: optional filter list (`USED_IN`, `DO_MOVEMENTS_IN`, `CALLS`) | **Before refactoring**: "If I change X, what else is affected?" Use `downstream` for impact, `upstream` for dependency tree. Preferred over `graph_dependencies` for deep multi-level analysis |
-| **trace_call_chain** | `routine_name`, `object_name=None`, `direction="callees"`, `depth=3` | Recursive BSL call graph traversal. `direction`: `callees` (what does this routine call), `callers` (who calls this routine). `depth`: 1–10. `object_name` disambiguates when multiple routines share a name | Trace call chains across all metadata objects. Use `callers` before refactoring a routine to find all callers. Use `callees` to understand what a routine depends on |
-
-### Code Search
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **search_code** | `query`, `search_type="hybrid"`, `top_k=3`, `filter_type=None`, `project_name=None`, `detail_level="L1"` | BSL code search across all metadata objects. `search_type`: `fulltext` (exact/Lucene syntax), `semantic` (by meaning), `hybrid` (both, default — returns up to 2×top_k). `detail_level`: **L0** — full procedure code without truncation; **L1** — signature + description + callees (default); **L2** — brief card (name, owner, module, export, directive); **L3** — name and score only (minimal tokens). `filter_type`: category filter (e.g. `Справочники`, `Документы`, `ОбщиеМодули`) | **Primary tool for BSL code search.** Use `fulltext` for exact function names and Lucene syntax (`Процедура AND Скидк*`). Use `semantic` to find code by purpose description. Use `L3` + high `top_k` for overview lists, `L0` for full code |
-
-### Semantic Search & Q&A
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **business_search** | `query`, `top_k=10`, `filter_type=None`, `include_structure=true`, `project_name=None` | Vector-based semantic search on business documentation. When `include_structure=true` (default), enriches results with graph context: attributes, tabular parts, forms, USED_IN relationships. Falls back to fulltext if vector index unavailable | Find metadata objects by business description when you don't know the technical name (e.g. "объект для хранения информации о клиентах"). Use `filter_type` to narrow by category |
-| **answer_metadata_question** | `question`, `max_tokens=4000`, `include_code=true`, `project_name=None` | Natural language Q&A about metadata (requires LLM). Returns structured answer with sources, confidence score, and processing metadata | Ask complex questions about how metadata objects work, their purpose, and relationships. Questions usually in Russian |
-
-### Extension Analysis
-
-| Tool | Parameters | Purpose | When to Use |
-|------|-----------|---------|-------------|
-| **compare_base_and_extension** | `object_name`, `extension_name` | Structural diff: attributes, forms, and routines added/overridden/unchanged by extension vs base. Requires base and extension loaded into the same Neo4j database | Compare base configuration object with its extension counterpart after borrowing. Verify what the extension changes |
-
-### Graph / Code-Metadata Task Map
-
-The full fallback chain before Grep/rg is defined in *Important Rules* item 7. The table below only summarizes which graph/code-metadata tool maps to which task.
-
-| Task | Graph tool (preferred) | Code-metadata fallback |
-|------|----------------------|----------------------|
-| Code search | **search_code** (semantic+fulltext+hybrid, L0–L3) | `codesearch` |
-| Object structure | **get_object_dossier** (full passport) | `get_metadata_details` |
-| Impact analysis | **trace_impact** (recursive depth 1–10) | `graph_dependencies` (single-level) |
-| Call chain | **trace_call_chain** (recursive depth 1–10) | `get_method_call_hierarchy` |
-| Metadata search | **search_metadata** (Cypher/JSON templates) | `metadatasearch` (vector/FTS) |
-| Find usages | **find_objects_using_object** / **find_usages_of_object** | `graph_dependencies` (`direction="reverse"`) |
-| Description search | **search_metadata_by_description** (synonym/comment/help) | `metadatasearch` (`names_only=true`) |
-
-## Code Quality (1c-syntax-checker-mcp)
-
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| **syntaxcheck** | Check BSL syntax and style via BSL Language Server | After writing code, verify no errors. **Limit: 3 times per cycle** |
-
-## 1CCodeChecker Tools (1С:Напарник, 1c-code-check-mcp)
-
-### Code Analysis & Modification
-
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| **check_1c_code** | Technical check: syntax, logic, performance | After writing code — find bugs and performance issues |
-| **review_1c_code** | Code review: style, ITS standards, naming, structure | After writing code — ensure standards compliance |
-| **rewrite_1c_code** | AI rewrites code with improvements (optional `goal`: `optimize`, `readability`, `error handling`) | When code needs significant improvement |
-| **modify_1c_code** | Modify or generate code by explicit instruction | Apply targeted changes, fix specific bugs, add features |
-| **ask_1c_ai** | Free-form question to 1С:Напарник (preserves dialog context) | Architecture questions, concept explanations, advice |
-
-### Documentation & Knowledge Base
-
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| **search_1c_documentation** | Search platform docs for specific version (e.g. `v8.3.25`) | Version-specific method signatures, platform features |
-| **onec_help** | Search platform docs (latest version) | Quick lookup of platform features, methods, types |
-| **its_help** | Search ITS knowledge base (standards, methodologies) | Find ITS standards, best practices. **Returns document IDs → use `fetch_its`** |
-| **fetch_its** | Read full ITS document by ID | **Always use after `its_help`** to read found articles. Special IDs: `root`, `v8std` |
-| **diff_1c_documentation_versions** | Compare docs between platform versions | Check changes between versions (e.g. `v8.3.25` → `v8.5.1`) |
-| **config_help** | Search docs for specific configs (ERP, БП, ЗУП, УТ) | Config-specific business logic, object descriptions |
-
-> **Key workflow**: `its_help` → get document IDs → `fetch_its` with each ID to read full content. Never ignore ITS article references.
-
-## Skills and Subagents
-
-When working with 1C metadata structure (creating, editing, validating, or removing configuration objects, forms, reports, layouts, roles, extensions, databases), use the **1c-metadata-manage** skill. It covers catalogs, documents, registers, enums, managed forms, DCS/SKD, MXL layouts, roles, EPF/ERF, extensions (CFE), configurations (CF), subsystems, command interfaces, and templates.
-
-### Subagent catalog
-
-12 specialized subagents are available (full prompts in `content/agents/<name>.md`). Delegate to a subagent when the work is large enough to be worth the launch overhead, when it would otherwise drain the parent's context window (long traces, large files, mass edits), or when several independent checks can run in parallel (most subagents have `allowParallel: true`). For trivial single-file edits, execute directly.
-
-| Subagent | When to call | When NOT to call |
-|----------|--------------|------------------|
-| **1c-analytic** | User asks for a PRD, specification, or analysis of an existing area without writing code | Task is to write code |
-| **1c-planner** | A multi-step implementation or refactoring plan is needed before coding | Task is small enough that the plan is 1–2 lines |
-| **1c-architect** | Designing architecture of a sizable modification (new subsystem, integration, multi-module change) | Single-procedure or single-module change |
-| **1c-arch-reviewer** | User asks to review or validate an architectural decision before implementation | No architectural design exists yet |
-| **1c-developer** | Bulk code writing or modification across multiple modules that would drain the parent's context | Small local edit (Quick-fix path — see *Development Procedure*) |
-| **1c-metadata-manager** | Creating, scaffolding, compiling, or multi-step / multi-domain metadata operations (objects, forms, reports, layouts, roles, extensions) | Single info lookup or single XML attribute fix — use direct edits or the `1c-metadata-manage` skill |
-| **1c-refactoring** | Dead-code cleanup, consolidation, or deduplication across multiple modules | Refactor is local to one procedure |
-| **1c-performance-optimizer** | User reports slowness, or query / loop optimization is the explicit task | No performance concern was raised |
-| **1c-error-fixer** | Quick fix of syntax / runtime errors / BSL LS warnings without architectural changes (cheap model — `haiku`) | The fix requires architectural rework — escalate to `1c-architect` / `1c-developer` |
-| **1c-tester** | User asks to verify changes via deploy + UI automation against a test infobase | No test infobase available, or the task is purely static |
-| **1c-code-reviewer** | **Only when the user explicitly asks for a code review** | Do not auto-trigger after edits |
-| **1c-doc-writer** | User-facing docs: user guides, admin manuals, tutorials, codemaps, API references | Inline code documentation (module / procedure headers) — that is the developer's responsibility |
-
-## Tool Usage by Task
-
-Step-by-step MCP playbooks for the 11 typical task types (Writing New Code, Code Review, Architecture Design, Error Fixing, Performance Optimization, Refactoring, Generating / Modifying Metadata XML, Form Analysis and Generation, Integrations, Documentation, Comparing Platform Versions) live in the on-demand file `tooling-playbooks.md`. Load it at the start of a task of the matching type. See the entry in *Additional rules (load on demand)* below for the canonical path.
-
-## Important Rules
-
-1. **Always search before writing** — use `templatesearch` and `codesearch` / `search_code` first
-2. **Verify against documentation** — use `docinfo` for known names, `docsearch` for description-based search
-3. **Check metadata exists** — when `1c-graph-metadata-mcp` is available, use it first: `get_object_dossier` for a complete structural passport, `search_metadata` / `search_metadata_by_description` to locate objects; fall back to `metadatasearch` + `get_metadata_details` from `1c-code-metadata-mcp` only if the graph server is unavailable
-4. **Use structural tools** — `search_function`, `get_module_structure`, `get_method_call_hierarchy` for code navigation instead of manual grep
-5. **Validate generated XML** — always use `get_xsd_schema` before writing XML and `verify_xml` after
-6. **Limit syntaxcheck** — maximum 3 times per cycle (cycle defined in *Key Principles* above); same limit for `check_1c_code` and `review_1c_code`. After the limit, fix substantive errors and move on
-7. **Grep/rg only as absolute last resort** — always exhaust available applicable MCP tools first along the strict chain:
-    1. `1c-graph-metadata-mcp` (`search_code`, `search_metadata`, `search_metadata_by_description`, `get_object_dossier`, `trace_impact`, `trace_call_chain`, `find_objects_using_object`, `find_usages_of_object`, `business_search`, `answer_metadata_question`),
-    2. `1c-code-metadata-mcp` (`codesearch`, `metadatasearch`, `get_metadata_details`, `search_function`, `get_module_structure`, `get_method_call_hierarchy`, `graph_dependencies`, `bsl_scope_members`, `helpsearch`, `search_forms`, `inspect_form_layout`),
-    3. `1c-templates-mcp` (`templatesearch`),
-    4. `1c-ssl-mcp` (`ssl_search`),
-    5. `1C-docs-mcp` (`docinfo`, `docsearch`),
-    6. `1c-code-check-mcp` (`its_help` → `fetch_its` for ITS standards),
-    7. and only then `Grep`/`rg`.
-
-    **Before invoking Grep, explicitly state in your response which MCP tools you tried and why they did not return what was needed (one or two sentences).** This is a mandatory safeguard against falling back to cheap text search.
-8. **Always follow up `its_help` with `fetch_its`** — read full ITS article content by ID
-9. **Use 1CCodeChecker tools at the right moments** — run `check_1c_code` and `review_1c_code` once after a substantive code change is finished, not after every micro-edit. Respect the per-cycle limit (rule #6) and the *Tool Calling Discipline* below — do not re-run them when nothing has changed since the last run
-10. **Use `get_object_dossier` first** — when you need to understand any metadata object before deeper analysis. One call replaces multiple separate queries
-11. **Use `trace_impact` → `graph_dependencies` for impact analysis** — before refactoring, use recursive multi-level impact analysis; fall back to flat dependency list if graph unavailable
-12. **Use `trace_call_chain` for call graph analysis** — trace BSL call chains with depth control before modifying routines
-13. **Refine every MCP query against the tool's own schema** — before calling any MCP tool, read its descriptor when the current tool exposes one; otherwise use the *Tooling* tables above as the schema summary. Adapt the request to it: choose the right search mode (`fulltext` / `semantic` / `hybrid`), `detail_level` (`L0`–`L3`), `object_type` / `filter_type`, `direction`, `depth`, `names_only`, `exact`, `use_fuzzy`, `alpha`, etc.; prefer JSON templates over natural language when the tool offers them (e.g. `search_metadata` operations); use the input format the tool expects (exact 1C names with categories, qualified dotted paths, Lucene syntax for fulltext, GUIDs for `find_by_guid`); narrow scope with `project_name` / category filters when applicable; if the first call returns no results, reformulate the query (broaden/narrow, switch mode, lower `exact`, raise `top_k`) before falling back to a different tool
+10. **Every call must add information that is not already available.** Before each call, mentally check: what is missing from the collected context, and why this call closes that gap. If the answer is "nothing missing" or "just to be safe" — do not call.
+11. **No-change repeats are forbidden.** Do not re-invoke a tool with the same parameters. Do not re-read a file, repeat the same search, or duplicate the same MCP query. A re-call is allowed only when parameters change substantially (different query, different object, different depth) or when state has actually changed (e.g., after a code edit before `syntaxcheck`). Do not re-run `check_1c_code` / `review_1c_code` if the code has not changed since the last run.
+12. **Tune each query to the tool's schema.** For parameter-rich tools (`search_code`, `search_metadata`, `search_metadata_by_description`, `trace_impact`, `trace_call_chain`, `get_object_dossier`, `business_search`) default parameters are usually suboptimal. Before such a call, consult `mcp-1c-tools/docs/<server>.md` (or the descriptor exposed by the current environment if any — the environment descriptor wins on conflict) and tune: `search_type` (`fulltext` / `semantic` / `hybrid`), `detail_level` (`L0`–`L3`), `object_type` / `filter_type`, `direction`, `depth`, `names_only`, `exact`, `use_fuzzy`, `alpha`. Prefer JSON templates over natural language where supported (`search_metadata` operations). Use the expected input format (exact 1C names with categories, dotted paths, Lucene syntax for fulltext, GUIDs for `find_by_guid`). Narrow scope with `project_name` / category filters. If the first call returns nothing, reformulate (broaden / narrow, switch mode, lower `exact`, raise `top_k`) before falling back to another tool. **This rule is about call quality — it does not relax rule #1: the call still must happen.**
+13. **Prefer structural tools over manual grep:** `search_function`, `get_module_structure`, `get_method_call_hierarchy` for code navigation.
 
 ---
 
-# Coding Standards (headlines)
+# Coding Standards
 
-Authoritative content for code style, naming, comments, queries, data access and performance lives in the on-demand rules below. This section gives only the cross-cutting headlines. Always load the relevant on-demand file before writing or reviewing code.
+The full set of rules for code style, forbidden constructs, comments, module regions, queries, data access, and performance lives in on-demand rules. Summary / anchors — `coding-standards.md`. Authoritative details:
 
-## Forbidden Calls and Constructs (project-wide)
+- `dev-standards-core.md` — project parameters, formatting, naming, metrics, headers.
+- `dev-standards-architecture.md` — architectural patterns, queries, attribute access, performance.
+- `dev-standards-forms.md` — module structure templates by type.
+- `anti-patterns.md`, `platform-solutions.md` — anti-pattern catalog and platform pitfalls.
 
-- Ternary operator `?(...)` — **PROHIBITED in any form**, including the simple non-nested case. **[Project rule — stricter than ITS standard.]**
-- `Выполнить()` / `Вычислить()` — **PROHIBITED** without extreme necessity.
-- Hardcoded credentials (passwords, tokens, API keys) — **PROHIBITED**.
-- `COMОбъект` — **PROHIBITED** unless explicitly requested by the task.
-- Hungarian notation, names from 1C global context, Yoda syntax, magic numbers — **PROHIBITED**.
+**Before writing or reviewing code — load the relevant detail file from the list above.**
 
-For the full list of style rules, naming, comments, formatting, quality metrics and typography — `dev-standards-core.md`.
+---
 
-## Comments
+# Skills and Subagents
 
-Prefer self-documenting code. Comments are appropriate only when they add value: motivation, non-trivial algorithm, constraints / side effects, technical debt markers (`TODO No.<task>: ...`), platform hacks. Comments that paraphrase code or decorate the module with author/history banners are forbidden — git tracks that. Examples and the verification rule — `dev-standards-core.md §7`.
+## 1C Metadata
 
-## Code Review After Each Edit
+For any operation on 1C metadata structure (creating, editing, validating, removing configuration objects, forms, reports, layouts, roles, extensions, databases) — use the **`1c-metadata-manage`** skill.
 
-After any code edit, perform an internal review (style, readability, correctness, edge cases, security, concurrency, locks, transactions). Always consider whether an outer transaction already exists (e.g. object-write transaction) before opening a new one. Loop until clean. Full guidance — `dev-standards-core.md §8`.
+## Subagents
 
-## Code Reuse
+If a task feels large / multi-step / multi-module and seems worth delegating to a specialized subagent — **read `subagents.md`** and decide whether to delegate or execute directly. Full subagent prompts — `content/agents/<name>.md`.
 
-Before writing new code, check common and manager modules for an existing export method that can be reused. Use `search_function`, `ssl_search`, `templatesearch` and `codesearch` first.
-
-## Module Regions
-
-Canonical region names — Russian, БСП-style. Templates per module type — `dev-standards-forms.md §1`. Regions inside procedures/functions are forbidden; pseudo-regions via comments are forbidden.
-
-## Queries
-
-Authoritative rules and the formatting template — `dev-standards-architecture.md §3 "Queries"`. Headlines:
-
-- Verify metadata before writing a query (`metadatasearch` / `get_metadata_details`).
-- No queries inside loops — use batch queries with temporary tables (`ВТ_*`).
-- Always parameterize (`Запрос.УстановитьПараметр()`), never concatenate.
-- Always use `КАК` aliases. Use `ПЕРВЫЕ N` when only a subset is needed.
-- Filter virtual tables by parameters, not by `ГДЕ`.
-- Always use an intermediate variable for query results (`РезультатЗапроса = Запрос.Выполнить();`); method chaining is forbidden.
-
-## Data Access — Reference Attributes
-
-Do not access reference attributes via dot notation (`Контрагент.ИНН`). Use `ОбщегоНазначения.ЗначениеРеквизитаОбъекта` / `ЗначенияРеквизитовОбъекта` / `ЗначениеРеквизитаОбъектов` / `ЗначенияРеквизитовОбъектов`. **[Project rule — stricter than ITS standard.]** Full method table and caching/batch templates — `dev-standards-architecture.md §4`.
-
-## Performance
-
-Authoritative baseline (server-side bulk, queries, privileged mode, caching, collections, transactions, managed locks) — `dev-standards-architecture.md §5`. Detailed anti-pattern catalog with severity — `anti-patterns.md`. Platform pitfalls (long-running operations, temporary storage, transactions, deadlocks, dates, collection search, external components) — `platform-solutions.md`.
+---
 
 # Tone & Output
 
@@ -418,25 +220,6 @@ Brevity over verbosity. The final summary is a compressed report, not a retellin
 - Intermediate notes between tool calls are also short — one line per step, no expansive previews of "what and why next".
 - Clarifying questions — short and on point. No preamble explaining why the question is asked when that is obvious from context.
 - This rule applies to every task by default. It is relaxed only on explicit user request for a detailed report.
-
-# Tool Calling Discipline
-
-Avoid redundant tool calls. Each call must add information that is not already available.
-
-- Do not re-invoke a tool if the previous call returned the answer. Re-reading the same file with the same parameters, repeating the same search, duplicating the same MCP query — forbidden.
-- Do not invoke another tool if the data already collected is sufficient for the answer or for the next step.
-- Before each tool call, verify mentally: what is missing from the collected context, and why this call closes that gap. If the answer is "nothing missing" or "for safety" — do not call.
-- Re-calling the same tool is allowed only when parameters change substantially (different query, different object, different depth) or when state may have changed between calls (for example, after editing a file before `syntaxcheck`).
-
-# Project Rules Stricter Than the ITS Standard
-
-Some project rules are intentionally **stricter** than the official 1C ITS standard. Whenever such a rule appears in this file or in any on-demand rule, it is marked with the tag **`[Project rule — stricter than ITS standard]`**.
-
-When discussing such a rule in code review or with the user:
-
-- Refer to it as a **project decision**, not as an ITS requirement.
-- If asked, point out the delta vs the ITS standard explicitly.
-- Do not weaken these rules silently to "match ITS"; raise the question if a relaxation is needed and let the user decide.
 
 # Project Memory
 
@@ -475,7 +258,7 @@ Treat the server as **available** only if the current tool environment actually 
 
 - Keep edits small and focused; one logical change per edit.
 - Prefer minimal, reversible changes; avoid refactors unless explicitly required by the task.
-- For tool-driven workflows (search before writing, syntax check after writing, impact analysis before refactoring) follow the per-task playbooks in the *Tooling* section.
+- For tool-driven workflows (search before writing, syntax check after writing, impact analysis before refactoring) follow the per-task playbooks in `tooling-playbooks.md`.
 - **Metadata XML edits**: prefer the `1c-metadata-manage` skill or the `metadata-manager` subagent over hand-editing XML. They reduce the risk of BOM/encoding errors, broken UUIDs, and dangling cross-references. Direct XML edits are acceptable only when the change is unambiguous (e.g. fixing a single attribute value) and the skill machinery would add overhead.
 
 # Documentation
@@ -489,17 +272,29 @@ Treat the server as **available** only if the current tool environment actually 
 
 Load the corresponding file when the task matches the rule's scenario.
 
+## MCP servers (skill)
+
+- **mcp-1c-tools** (skill) — catalog of MCP servers for 1C with detailed per-tool documentation in `docs/<server>.md`. Load a specific `docs/<server>.md` when you are about to call tools from that server and want to tune parameters; the server must be actually available in the current session. Skill: `content/skills/mcp-1c-tools/SKILL.md`.
+
 ## Development standards
 
-- **dev-standards-core** — project parameters (.dev.env), code style, modification comments, naming conventions, documentation headers. Load when configuring a new project or writing/reviewing code against the project-wide style baseline. File: `{{ rulesDir }}/dev-standards-core.{{ rulesExt }}`.
+- **coding-standards** — headlines and anchors for code style, forbidden constructs, comments, queries, data access, performance; pointers to the detail files. Load before writing / reviewing code. File: `{{ rulesDir }}/coding-standards.{{ rulesExt }}`.
+- **dev-standards-core** — project parameters (`.dev.env` — single source of truth for both code-generation params and infobase / web-publish settings used by IB-bound commands and tests), code style, modification comments, naming conventions, documentation headers. Load when configuring a new project or writing/reviewing code against the project-wide style baseline. File: `{{ rulesDir }}/dev-standards-core.{{ rulesExt }}`.
 - **dev-standards-architecture** — architecture patterns, extensions, platform standards, and code smells. Load when making architectural decisions, designing extensions, or reviewing cross-module structure. File: `{{ rulesDir }}/dev-standards-architecture.{{ rulesExt }}`.
 - **dev-standards-forms** — module structure templates and form modification rules. Load when working on form modules or designing managed forms. File: `{{ rulesDir }}/dev-standards-forms.{{ rulesExt }}`.
+- **extension-patterns** — practical patterns for 1C configuration extensions (CFE): interceptor types (`&Перед` / `&После` / `&ИзменениеИКонтроль`), `ПродолжитьВызов` semantics, change markers (`#Вставка` / `#Удаление`), constraints on adopted objects, anti-patterns. Load when writing or reviewing extension code (`**/Extensions/**/*.bsl`). File: `{{ rulesDir }}/extension-patterns.{{ rulesExt }}`.
+
+## Subagents
+
+- **subagents** — catalog of 12 specialized subagents and delegation rules. Load when a task feels large enough that delegating to a subagent might be worthwhile. File: `{{ rulesDir }}/subagents.{{ rulesExt }}`.
 
 ## Forms
 
 - **forms-add** — rules for generating or modifying a 1C form (Form.xml + Form.Module.bsl). Load only when you need to create or significantly alter a form. File: `{{ rulesDir }}/forms-add.{{ rulesExt }}`.
 - **forms-events-add** — rules for adding event handlers to a 1C form. Load when wiring up form events (ПриОткрытии, ПриИзменении, etc.). File: `{{ rulesDir }}/forms-events-add.{{ rulesExt }}`.
 - **form-module** — detailed rules for working on form modules (`Form.Module.bsl` / ФормаМодуль). Load when editing form-module code. File: `{{ rulesDir }}/form-module.{{ rulesExt }}`.
+- **form-reserved-names** — list of reserved property names that must not be used as local variables in form modules (`ПараметрыВыбора`, `СвязиПараметровВыбора`, `СписокВыбора`, `ПараметрыОтбора`, `ОтборСтрок`). Load whenever you write or refactor server-side code in form modules to avoid silent "Несоответствие типов" errors. File: `{{ rulesDir }}/form-reserved-names.{{ rulesExt }}`.
+- **async-methods** — practical guide and pitfalls for the new asynchronous mechanism (`Асинх` / `Ждать` / `Обещание`, platform 8.3.18+): old → new method mapping, `Ждать`-and-exceptions rule, async on form event handlers vs commands, patterns for question-on-open / close, file workflows, HTTP async (8.3.21+). Load when writing client-side async code. File: `{{ rulesDir }}/async-methods.{{ rulesExt }}`.
 
 ## Tooling
 
@@ -515,7 +310,8 @@ Load the corresponding file when the task matches the rule's scenario.
 ## Quality
 
 - **anti-patterns** — full catalog of 1C anti-patterns, performance guidelines, and code-review scoring rubric. Load during code review, performance investigation, or when the user asks for an anti-pattern check. File: `{{ rulesDir }}/anti-patterns.{{ rulesExt }}`.
-- **platform-solutions** — case book of common 1C platform pitfalls and proven fix templates (`ЗначениеЗаполнено`, `ДлительныеОперации`, temporary storage, transactions in event handlers, object copying, `ТекущаяДатаСеанса`, collection search, external components). Load when working on the corresponding topic. File: `{{ rulesDir }}/platform-solutions.{{ rulesExt }}`.
+- **platform-solutions** — case book of common 1C platform pitfalls and proven fix templates (`ЗначениеЗаполнено`, `ДлительныеОперации`, temporary storage, transactions in event handlers, object copying, `ТекущаяДатаСеанса`, collection search, external components, managed locks / deadlocks, background jobs from external data processors). Load when working on the corresponding topic. File: `{{ rulesDir }}/platform-solutions.{{ rulesExt }}`.
+- **metadata-xml-workarounds** — concrete recurring pitfalls when generating or hand-editing 1C metadata XML and managed-form XML (TabularSection `LineNumber`, `PagesGroupExtInfo` typo, `Page.enabled`, UID uniqueness, post-edit validation hook). Load when authoring or fixing metadata XML directly outside the `1c-metadata-manage` skill. File: `{{ rulesDir }}/metadata-xml-workarounds.{{ rulesExt }}`.
 
 ---
 

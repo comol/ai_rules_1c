@@ -28,22 +28,28 @@ Follow the `powershell-windows` skill for all PowerShell commands (use `;` not `
 
 Before testing, ensure:
 
-1. **Infobase Settings**: Check if `infobasesettings.md` exists with:
-   - Infobase connection string (file or server)
-   - Infobase publish URL (for web testing)
+1. **Project parameters in `.dev.env`** — единый источник правды для всех настроек, в т.ч. подключения к ИБ и URL веб-публикации. Создаётся установщиком 1c-rules в корне проекта. Если файла нет — попросить пользователя выполнить `install.ps1 init` или скопировать `.dev.env.example` → `.dev.env`. Если в проекте остался устаревший `infobasesettings.md` — перенести значения в `.dev.env` и удалить файл.
 
-2. If settings file doesn't exist, ask user for:
-   - Connection string (e.g., `C:\Users\...\InfoBase12` for file, or server connection)
-   - Web publish URL (e.g., `http://localhost/TestForms/ru/`)
+2. Required keys in `.dev.env`:
+   - `PLATFORM_PATH` — каталог установки 1С (содержит `bin\1cv8.exe`)
+   - `INFOBASE_KIND` — `file` или `server`
+   - `INFOBASE_PATH` — путь к файловой ИБ или строка подключения
+   - `IB_USER` / `IB_PASSWORD` — учётные данные (опционально)
+   - `EXTENSION_NAME` — имя расширения (пусто — основная конфигурация)
+   - `EXPORT_PATH` — каталог исходников (пусто — корень репозитория)
+   - `LOG_PATH` — файл лога Designer'а
+   - `INFOBASE_PUBLISH_URL` — URL веб-публикации тестовой ИБ (например, `http://localhost/TestForms/ru/`). Если пусто — UI-тесты пропускаются.
+
+3. Если критичные поля пустые (`INFOBASE_PATH`, `PLATFORM_PATH`, `INFOBASE_PUBLISH_URL` для UI-тестов) — спросить у пользователя и записать в `.dev.env`, не угадывать.
 
 ## Deployment Process
 
-Follow the `@commands/deploy_and_test.md` command for deployment:
+Follow the `@commands/deploy-and-test.md` command for deployment. All paths and credentials come from `.dev.env`:
 
 ### Step 1: Load Configuration to Infobase
 
 ```powershell
-& 'C:\Program Files\1cv8\8.3.23.1997\bin\1cv8.exe' DESIGNER /F '<INFOBASE_PATH>' /DisableStartupMessages /LoadConfigFromFiles <PROJECT_ROOT> /Out <LOG_PATH>
+& '{PLATFORM_PATH}\bin\1cv8.exe' DESIGNER /F '{INFOBASE_PATH}' /DisableStartupMessages /LoadConfigFromFiles '{EXPORT_PATH}' /Out '{LOG_PATH}'
 ```
 
 **After execution:**
@@ -53,7 +59,7 @@ Follow the `@commands/deploy_and_test.md` command for deployment:
 ### Step 2: Update Database Structure
 
 ```powershell
-& 'C:\Program Files\1cv8\8.3.23.1997\bin\1cv8.exe' DESIGNER /F '<INFOBASE_PATH>' /DisableStartupMessages /UpdateDBCfg -Dynamic+ -SessionTerminate force /Out <LOG_PATH>
+& '{PLATFORM_PATH}\bin\1cv8.exe' DESIGNER /F '{INFOBASE_PATH}' /DisableStartupMessages /UpdateDBCfg -Dynamic+ -SessionTerminate force /Out '{LOG_PATH}'
 ```
 
 **After execution:**
@@ -62,9 +68,10 @@ Follow the `@commands/deploy_and_test.md` command for deployment:
 
 ### Important Notes
 
-- Use `/S` for server infobase, `/F` for file infobase
-- Replace paths according to `infobasesettings.md`
-- Use current project root directory for configuration files path
+- Use `/S` for server infobase, `/F` for file infobase (driven by `INFOBASE_KIND` in `.dev.env`)
+- Append `/N '{IB_USER}' /P '{IB_PASSWORD}'` only if those values are set
+- Append `-Extension {EXTENSION_NAME}` only if extension name is set; for main configuration drop the flag entirely
+- `{EXPORT_PATH}` defaults to the current project root if empty in `.dev.env`
 
 ## Web UI Testing
 

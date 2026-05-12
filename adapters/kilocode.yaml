@@ -1,33 +1,48 @@
-# Adapter: Kilo Code (VSCode extension)
+# Adapter: Kilo Code (VSCode extension + CLI)
 #
 # Describes how to copy and adapt files from content/ for Kilo Code.
 # Read by both installation channels (AI-agent installer and install.ps1).
 #
 # Schema: see ARCHITECTURE.md §7 and §7.1 (closed operation set).
 # Notes:
+#   - Current Kilo Code (VSCode extension and CLI, built on the Kilo CLI core)
+#     loads project content from the `.kilo/` directory:
+#       rules    -> .kilo/rules/         (legacy `.kilocode/rules/` still works
+#                                         via backward compatibility)
+#       agents   -> .kilo/agents/        (markdown subagent files; the legacy
+#                                         extension did not expose a folder for
+#                                         these — `.kilocode/subagents/` was
+#                                         never an official location)
+#       commands -> .kilo/commands/      (formerly "workflows"; the new extension
+#                                         auto-migrates `.kilocode/workflows/`
+#                                         to `.kilo/commands/` on startup)
+#       skills   -> .kilo/skills/        (per the Agent Skills specification;
+#                                         `.kilocode/skills/` is not a recognised
+#                                         skill directory)
+#   - MCP project-level config still lives in `.kilocode/mcp.json` for the
+#     VSCode extension (documented current location).
 #   - Kilo Code distinguishes primary agents from subagents via a `mode` field:
-#     `subagent` (only invoked via delegation) or `all` (both primary and subagent).
-#     Source flag `isSubagent: true` maps to `mode: subagent`; otherwise `mode: all`.
-#   - Slash-commands are stored as Kilo "workflows" in .kilocode/workflows/.
-#   - Skills follow the Anthropic SKILL.md standard; Kilo Code discovers them
-#     from .kilocode/skills/.
-#   - MCP config uses the common `mcpServers` dictionary schema (same as
-#     Cursor and Claude Code).
+#     `subagent` (only invoked via delegation) or `all` (both primary and
+#     subagent). Source flag `isSubagent: true` maps to `mode: subagent`;
+#     otherwise `mode: all`.
+#   - Detection accepts both `.kilo/` (new) and `.kilocode/` (legacy) so
+#     existing projects keep working without re-installing.
 
 tool: kilocode
 schemaVersion: 1
 
 detection:
+  - exists: ".kilo/"
   - exists: ".kilocode/"
 
 rules:
-  copyTo: ".kilocode/rules/{name}.md"
+  copyTo: ".kilo/rules/{name}.md"
   frontmatter:
     keep: [description, alwaysApply]
     drop: [globs, category]
 
 agents:
-  copyTo: ".kilocode/subagents/{name}.md"
+  copyTo: ".kilo/agents/{name}.md"
   frontmatter:
     keep: [name, description, tools, modelHint]
     rename:
@@ -38,13 +53,13 @@ agents:
     drop: [allowParallel, reasoningEffort]
 
 commands:
-  copyTo: ".kilocode/workflows/{name}.md"
+  copyTo: ".kilo/commands/{name}.md"
   frontmatter:
     keep: [description]
     drop: [argumentHint, allowedTools]
 
 skills:
-  copyTo: ".kilocode/skills/{name}/"
+  copyTo: ".kilo/skills/{name}/"
   mode: verbatim
 
 mcp:

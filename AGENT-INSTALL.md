@@ -21,8 +21,9 @@ If the user asks you to install or update `1c-rules`, follow this protocol from 
 - **Source** — local clone of `1c-rules` if the user pointed at one; otherwise `https://github.com/comol/ai_rules_1c` (default).
 - **Active tools** — auto-detect from the project. A tool is "active" if its `detection:` block in `adapters/<tool>.yaml` matches (e.g. `.cursor/` for Cursor, `CLAUDE.md` or `.claude/` for Claude Code, etc.).
   - **Exactly one tool detected** — proceed silently with that tool. Do not ask.
-  - **Zero tools detected** — ask once: "No AI tool directory detected. Which tools should I install for? (`cursor`, `claude-code`, `codex`, `opencode`, `kilocode`)".
+  - **Zero tools detected** — ask once: "No AI tool directory detected. Which tools should I install for? (`cursor`, `claude-code`, `codex`, `opencode`, `kilocode`, `other`)". The `other` option is a universal fallback for any AI client that is not in the explicit list — it places `AGENTS.md` at the project root and writes on-demand rules / agents / commands / skills / MCP config under `.ai-agent/` in a portable, tool-agnostic layout.
   - **Two or more tools detected** — ask once: "Detected: `<list>`. Press Enter to install for all, or specify a subset.".
+- **`other` is never auto-detected.** It is selected only when the user explicitly types it in the prompt above or passes `-Tools other` to the PowerShell installer. When `other` is combined with a "real" tool, `AGENTS.md` still references the real tool's rules directory (priority order `cursor → claude-code → kilocode → opencode → codex → other`); `.ai-agent/rules/` becomes the canonical referenced directory only when `other` is the sole active tool.
 - **Confirmation** — only required when migrating an existing user-modified `AGENTS.md`/`CLAUDE.md`, or when the operation would overwrite user-modified managed files. See *Confirm before destructive actions* below.
 
 ### Lean placement — do not read every file
@@ -56,9 +57,11 @@ Use this lean sequence:
 
 6. **Place the always-on layer** (`AGENTS.md`, `USER-RULES.md`, `memory.md`) — see the next section.
 
-7. **Scaffold OpenSpec.** Copy `openspec/` into the project in skip-if-exists mode (no overwrites).
+7. **Place `.dev.env`** at the project root if missing — see *.dev.env bootstrap* below. This is mandatory: `.dev.env` is the single source of truth for project parameters used by all rules / commands / subagents (code-generation params and infobase connection params, including the web-publish URL for UI tests).
 
-8. **Write the manifest** `.ai-rules.json` at the project root: list all placed files with their content sources, the active tools, the source version (`git describe --tags --always` from the clone), the protocol version (`1.0`), the `rulesDir` chosen for AGENTS.md substitution, and any detected foreign user-authored files under `foreignFiles`.
+8. **Scaffold OpenSpec.** Copy `openspec/` into the project in skip-if-exists mode (no overwrites).
+
+9. **Write the manifest** `.ai-rules.json` at the project root: list all placed files with their content sources, the active tools, the source version (`git describe --tags --always` from the clone), the protocol version (`1.0`), the `rulesDir` chosen for AGENTS.md substitution, and any detected foreign user-authored files under `foreignFiles`.
 
 ### Always-on layer placement
 
@@ -72,6 +75,23 @@ Use this lean sequence:
 4. Write the rendered text to the project root as `AGENTS.md`. Refresh on update only if the local file is unmodified since the previous installer write (manifest hash matches) — preserve user edits otherwise.
 
 `USER-RULES.md` and `memory.md` are created from the templates on first install and **never** overwritten thereafter.
+
+### `.dev.env` bootstrap
+
+`.dev.env` is mandatory and must be created at the project root on first install. It is the single source of truth for project parameters across all rules, on-demand instructions, slash commands and subagents — both code-generation parameters (`PREFIX`, `COMPANY`, `DEVELOPER`, `PLATFORM_VERSION`, comment templates, `NEW_OBJECTS_IN`) and infobase connection parameters used by `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test` and the `1c-tester` subagent (`PLATFORM_PATH`, `INFOBASE_KIND`, `INFOBASE_PATH`, `IB_USER`, `IB_PASSWORD`, `EXTENSION_NAME`, `EXPORT_PATH`, `LOG_PATH`, `INFOBASE_PUBLISH_URL`).
+
+Bootstrap procedure:
+
+1. If `.dev.env` already exists at the project root — leave it untouched, just record the entry in `.ai-rules.json` (`template: true`). User values are sacred.
+2. If missing — read the source `.dev.env.example`, then auto-fill what can be detected without asking the user:
+   - `PLATFORM_VERSION` ← `CompatibilityMode` from `Configuration.xml` (or `ConfigurationExtension.xml`).
+   - `PLATFORM_PATH` ← scan `C:\Program Files\1cv8\<version>\bin\1cv8.exe` (and `(x86)`) for the highest installed version that matches or exceeds `PLATFORM_VERSION`.
+   - `PREFIX` ← `NamePrefix` from `ConfigurationExtension.xml` when the project is an extension.
+3. In interactive mode (agent channel, or PowerShell installer without `-NonInteractive`) — ask the user for the remaining critical fields: `COMPANY`, `DEVELOPER`, `INFOBASE_KIND`, `INFOBASE_PATH`, `IB_USER`, `IB_PASSWORD`, `LOG_PATH`, `INFOBASE_PUBLISH_URL`. Do not block on optional fields — leave them empty.
+4. In non-interactive mode (`-NonInteractive` / agent without ability to ask) — leave non-detected critical fields empty and emit a clear WARNING listing them. Do not block installation.
+5. Write the file to the project root and record it in `.ai-rules.json` with `template: true` so the file is never overwritten by subsequent updates.
+
+The legacy `infobasesettings.md` file (used by earlier versions of `/loadfrom1cbase`, `/update1cbase`, `/deploy-and-test`, `1c-tester`) is no longer supported. If you find it during install, leave it as a foreign file but do not migrate values automatically — instruct the user to copy them into `.dev.env` (key names match) and delete the old file.
 
 ### Update / add / remove
 
@@ -131,8 +151,9 @@ There is no supported way to run `install.ps1` directly from the GitHub URL with
 - `AGENTS.md` — rendered from the source template by substituting `{{ rulesDir }}` with the canonical rules directory of the active tool set; refreshed on every update when safe. **Do not edit it directly** — your edits will be overwritten on the next update.
 - `USER-RULES.md` — created empty by the installer on first install and **never** overwritten thereafter. Project- or team-specific conventions go here.
 - `memory.md` — project memory file at the project root. Created on first install and not overwritten by the installer.
-- On-demand rule files — placed under each active tool's `rules.copyTo` directory (`.cursor/rules/*.mdc`, `.claude/rules/*.md`, `.kilocode/rules/*.md`, `.codex/rules/*.md`, `.opencode/rules/*.md`). All copies contain the same authoritative text; per-tool frontmatter differs (e.g. Cursor keeps `globs`/`alwaysApply`). `AGENTS.md` references one canonical directory — the highest-priority active tool's. Other active tools' rules dirs are still populated so that tool-native auto-loading (Cursor's `.cursor/rules/*.mdc` indexing) keeps working.
-- `content/agents/<name>.md` — full role descriptions and prompts for the 12 specialized subagents. Each AI tool discovers them from its own agents directory after install.
+- `.dev.env` — single source of truth for project parameters (code generation + infobase connection + web-publish URL for tests). Created on first install with auto-detected values where possible (PLATFORM_VERSION, PLATFORM_PATH, PREFIX) and prompts for the rest in interactive mode. **Never** overwritten by the installer; gitignored by default.
+- On-demand rule files — placed under each active tool's `rules.copyTo` directory (`.cursor/rules/*.mdc`, `.claude/rules/*.md`, `.kilo/rules/*.md`, `.codex/rules/*.md`, `.opencode/rules/*.md`, `.ai-agent/rules/*.md` for `other`). All copies contain the same authoritative text; per-tool frontmatter differs (e.g. Cursor keeps `globs`/`alwaysApply`; `other` keeps only the minimum portable subset `description` + `alwaysApply`). `AGENTS.md` references one canonical directory — the highest-priority active tool's. Other active tools' rules dirs are still populated so that tool-native auto-loading (Cursor's `.cursor/rules/*.mdc` indexing) keeps working.
+- `content/agents/<name>.md` — full role descriptions and prompts for the 13 specialized subagents. Each AI tool discovers them from its own agents directory after install.
 
 ## USER-RULES.md
 

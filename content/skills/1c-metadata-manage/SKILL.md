@@ -50,5 +50,6 @@ The subagent already knows how to read the skill docs, execute PowerShell script
 | Query writing — compose new queries from scratch | write query, build query, query template, ВЫБРАТЬ, ИЗ, СОЕДИНЕНИЕ, virtual tables, batch queries | [query-writing.md](docs/query-writing.md) |
 | Query optimization | query, temporary table, join, DCS optimization | [query-optimization.md](docs/query-optimization.md) |
 | Web publishing — publish, unpublish, status, smoke test | web, publish, Apache, IIS, web client, webdav, default.vrd | [web-manage.md](docs/web-manage.md) |
+| Unpack / rebuild CF, CFE, EPF binaries without 1C platform | v8unpack, binary unpack, headless extract, no platform | [v8unpack-cf.md](docs/v8unpack-cf.md) |
 
 **If the task spans multiple domains**, the subagent will read all relevant docs automatically (or read each one directly for simple tasks).

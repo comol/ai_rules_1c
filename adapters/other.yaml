@@ -1,0 +1,61 @@
+# Adapter: Other (universal fallback)
+#
+# Generic, tool-agnostic placement for AI clients that are NOT in the explicit
+# supported list (cursor, claude-code, codex, opencode, kilocode). The intent
+# is to produce the most portable layout possible:
+#
+#   - AGENTS.md at the project root (de-facto standard, read by most modern
+#     AI coding agents — Cursor, Claude Code, Codex, OpenCode, KiloCode,
+#     Aider, Cline, Continue, Cody, etc.).
+#   - On-demand rules / agents / commands / skills / MCP config under a
+#     neutral, non-conflicting directory: `.ai-agent/`. Any tool that does
+#     not auto-discover them can be told to read them via AGENTS.md.
+#
+# Detection block is intentionally empty: this adapter is never auto-detected.
+# It is selected only when the user explicitly chooses `other` in the install
+# prompt or passes `-Tools other` to the PowerShell installer.
+#
+# Frontmatter is reduced to the minimum portable subset (`description`,
+# `alwaysApply`) — anything tool-specific (`globs`, `category`, `model`,
+# `argument-hint`, `allowed-tools`) is dropped to avoid confusing readers
+# that don't understand it. Skills follow the Anthropic SKILL.md standard
+# verbatim. MCP config uses the common `mcpServers` JSON dictionary schema.
+#
+# Note on priority: `other` sits last in `RulesDirPriority`, so when it is
+# combined with a "real" tool (e.g. cursor + other), AGENTS.md still links
+# to the real tool's rules directory. `.ai-agent/rules/*.md` becomes the
+# canonical referenced path only when `other` is the only active tool.
+
+tool: other
+schemaVersion: 1
+
+detection: []
+
+rules:
+  copyTo: ".ai-agent/rules/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+agents:
+  copyTo: ".ai-agent/agents/{name}.md"
+  frontmatter:
+    keep: [name, description, tools, modelHint, isSubagent]
+    rename:
+      modelHint: model
+    drop: [allowParallel, reasoningEffort]
+
+commands:
+  copyTo: ".ai-agent/commands/{name}.md"
+  frontmatter:
+    keep: [description, argumentHint, allowedTools]
+
+skills:
+  copyTo: ".ai-agent/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".ai-agent/mcp.json"
+  schema: mcpServers
+  format: json

@@ -8,9 +8,11 @@ category: development
 
 ## 1. Project Parameters (.dev.env)
 
-**Before starting any code task**, read the `.dev.env` file from the project root. If it does not exist — **stop and request parameters from the user**. Guessing values is PROHIBITED.
+**Before starting any code task**, read the `.dev.env` file from the project root. If it does not exist — **stop and request parameters from the user** (or run the 1c-rules installer, which creates `.dev.env` from the template). Guessing values is PROHIBITED.
 
-Parameters and their effect on code generation:
+`.dev.env` is the **single source of truth** for project parameters across the whole rules set. There is no `infobasesettings.md`, no separate per-command settings file — all rules, on-demand instructions, slash commands and subagents read from `.dev.env`.
+
+### Code-generation parameters (mandatory for any code task)
 
 | Parameter | Effect |
 |---|---|
@@ -22,13 +24,28 @@ Parameters and their effect on code generation:
 | `{COMMENT_CLOSE}` | Closing modification comment template |
 | `{NEW_OBJECTS_IN}` | Where to place new objects: `main_configuration` (default) or `extension` |
 
+### Infobase / deployment parameters (mandatory for IB-bound commands and tests)
+
+Used by `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test` and the `1c-tester` subagent. Not required for pure code tasks.
+
+| Parameter | Effect |
+|---|---|
+| `{PLATFORM_PATH}` | 1C platform install dir (must contain `bin\1cv8.exe`); used as the executable for all Designer-mode commands |
+| `{INFOBASE_KIND}` | `file` → `/F`, `server` → `/S` flag for Designer |
+| `{INFOBASE_PATH}` | Path to file infobase or connection string of server infobase |
+| `{IB_USER}` / `{IB_PASSWORD}` | Optional credentials (`/N`, `/P`); empty values omit the flags |
+| `{EXTENSION_NAME}` | Optional `-Extension` argument; empty = main configuration |
+| `{EXPORT_PATH}` | Source-export directory; empty = current repository root |
+| `{LOG_PATH}` | Designer log file (must be writable) |
+| `{INFOBASE_PUBLISH_URL}` | Web-publish URL of the test infobase for `1c-tester` UI tests; empty = UI tests are skipped |
+
 Task number `{TASK}` is **only required when modification comment markers are produced** — i.e. when the change touches **typical (standard) configuration code** and the templates `{COMMENT_OPEN}` / `{COMMENT_CLOSE}` reference `{TASK}`. For new objects with `{PREFIX}` (no per-method markers) and for review / analysis / documentation tasks `{TASK}` is **not required** — do not block on it.
 
 When `{TASK}` is required and not provided — ask the user once and reuse the same value across the whole change.
 
-> For tasks without code generation (review, analysis, documentation) — parameters are not blocking.
+> For tasks without code generation (review, analysis, documentation) — code-generation parameters are not blocking. Infobase parameters are only consulted by IB-bound commands.
 
-See `.dev.env.example` for template.
+See `.dev.env.example` for the template.
 
 ## 2. Code Style (single source of truth — referenced from `AGENTS.md`)
 
