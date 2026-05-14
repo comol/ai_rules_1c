@@ -116,7 +116,62 @@ The implementation subagent is responsible for:
 - running its own pre-handoff `syntaxcheck` on every touched module;
 - preserving module headers, regions and the project's code style (`dev-standards-core.md`);
 - removing only the imports / variables / procedures **that its own changes made unused** — never pre-existing dead code;
-- summarizing the diff against the plan, file by file.
+- summarizing the diff against the plan, file by file;
+- producing a structured **Handoff** block (see "Stage 3 — Handoff between implementation subagents" below) when the same change is going to continue under another implementation subagent.
+
+### Stage 3 — Handoff between implementation subagents
+
+When stage 3 is split across multiple implementation subagents inside the same change (typical chain: `1c-metadata-manager` produces stubs and metadata, then `1c-developer` fills the BSL bodies; or `1c-developer` writes the bulk and `1c-refactoring` consolidates), the parent agent **must** prevent the downstream subagent from re-reading what the upstream subagent has already produced. Re-reading bloats the downstream context, wastes minutes per file, and is a recurring failure mode of informal chains.
+
+The mechanism is a fixed-format **Handoff** block that every upstream implementation subagent puts at the top of its final report, that the parent forwards verbatim, and that the downstream subagent treats as authoritative inventory.
+
+**Mandatory Handoff format (emitted by the upstream subagent at the very top of its final report):**
+
+```text
+## Handoff (для следующего субагента)
+
+### Artifacts
+- <full repo path> — <one-line role> [stub | done | edited]
+- ...
+
+### Public surface
+- <ObjectName>.<RoutineName>(<params>) → <return type> — <one-line purpose>
+- <Metadata.Object> — <attribute / tabular section / form name>: <type / role>
+- ...
+
+### Open TODOs / stubs (для следующего субагента)
+- <file>:<region or routine> — <what to implement> — <signature hint, if pre-agreed>
+- ...
+
+### Locked decisions (не пересматривать без согласования)
+- <decision> — <one-line rationale>
+- ...
+
+### Open questions raised
+- <CONFUSION-id> — <one-line summary> — <status: resolved / pending>
+```
+
+The block is **not** a marketing summary — it is a machine-readable inventory. Keep each line short (≤120 chars), one fact per line, no prose paragraphs inside the block.
+
+**Parent agent obligations:**
+
+- When invoking the next implementation subagent on the same change, the parent **must** include the upstream Handoff block verbatim in the new subagent's prompt under a heading `## Upstream Handoff`. No paraphrasing, no re-formatting, no selective omission — paraphrasing is the dominant source of drift between stages.
+- If the parent has its own additional instructions (extra constraints, new user feedback), they go in a separate section **after** `## Upstream Handoff`, not mixed into it.
+- The parent does **not** re-list the artifacts in its own prompt prose — the Handoff is the inventory.
+
+**Downstream subagent obligations:**
+
+- The downstream subagent **must** read the `## Upstream Handoff` block first and treat `### Artifacts`, `### Public surface`, and `### Locked decisions` as authoritative. Re-deriving them by reading files is forbidden.
+- The downstream subagent **must not** call `Read`, `get_module_structure`, `metadatasearch`, `get_metadata_details`, `inspect_form_layout`, or `Glob` on objects / files already listed in the Handoff "for context" or "to verify". A targeted call is allowed **only** when a concrete detail needed for the current edit is missing from the Handoff (e.g. exact UUID, exact line of a TODO marker inside an existing region, full attribute list of a tabular section the upstream summarized as `<attribute / tabular section …>`). Before such a call, the subagent must state in one sentence which detail is missing and why the Handoff alone is insufficient.
+- The downstream subagent **must** preserve `### Locked decisions` unless the user (not the parent) explicitly authorizes a revision. If a locked decision turns out to block correct implementation, raise a `CONFUSION` instead of silently overriding it.
+- The downstream subagent appends its own Handoff block at the top of **its** report if a further implementation subagent is expected; otherwise its report goes straight into stage 4a.
+
+**Anti-patterns:**
+
+- Downstream subagent opens with `Read` on every file in `### Artifacts` "to load context" — the inventory **is** the context.
+- Parent paraphrases the Handoff into its own words "to make it shorter" — paraphrasing erases the very precision the format is for.
+- Upstream emits a Handoff that just says "see files above" — that defeats the purpose; the Handoff must list the artifacts and the public surface, not point at a diff.
+- Upstream embeds prose explanations inside `### Locked decisions` — keep one rationale line; long discussion belongs in the report body, not the inventory.
 
 ### Stage 4a — Spec-compliance review (parent agent, cheap)
 

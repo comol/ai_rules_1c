@@ -4,6 +4,8 @@ Graph metadata server (Neo4j + Cypher). Tools are deterministic (no LLM) unless 
 
 > Load this file only if the `1c-graph-metadata-mcp` server is actually available in the current session (its tools are exposed in the tool schema).
 
+> **Argument naming for search tools — do not invent.** `search_metadata`, `search_metadata_by_description`, `execute_metadata_cypher`, `search_code`, `business_search` all take the search input as **`query`**. Forbidden hallucinations: `query_template`, `template`, `json_query`, `q`, `text`, `search_query`, `prompt`. For `search_metadata` the JSON template (`{"operation": "list_attributes", ...}`) is the **value** of `query`, not a separate parameter name — pass it as a JSON string. `answer_metadata_question` takes **`question`** (not `query`). `resolve_qualified_name` takes `qualified_name`, `find_by_guid` takes `guid`.
+
 ## Metadata search
 
 | Tool | Parameters | Purpose | When to use |
@@ -17,9 +19,11 @@ Graph metadata server (Neo4j + Cypher). Tools are deterministic (no LLM) unless 
 
 ## Object analysis
 
+> **Argument naming — do not invent.** The required parameter for object-scoped tools on this server is **`object_name`**. Forbidden hallucinations: `object_full_name`, `full_name`, `qualified_name`, `name`, `fullName`, `objectFullName`. The same `object_name` applies to `get_object_dossier`, `find_objects_using_object`, `find_usages_of_object`, `trace_impact`, `compare_base_and_extension`, and (optionally, for disambiguation) `trace_call_chain`. `find_register_movement_docs` uses **`register_name`**, `trace_call_chain` uses **`routine_name`**, `find_by_guid` uses **`guid`**, `resolve_qualified_name` uses **`qualified_name`**. The value of `object_name` is a 1C dotted qualified name — `Справочник.Контрагенты`, `Документ.РеализацияТоваровУслуг`, `РегистрНакопления.ТоварыНаСкладах`, `ОбщийМодуль.РаботаСКонтрагентамиКлиентСервер`, etc. — same shape that `resolve_qualified_name` accepts.
+
 | Tool | Parameters | Purpose | When to use |
 |---|---|---|---|
-| **get_object_dossier** | `object_name`, `sections=None` | Comprehensive structural passport in one call — no LLM. Sections: `structure` (attributes, tabular parts, dimensions, resources, commands, layouts), `forms`, `subscriptions`, `roles`, `dependencies` (USED_IN upstream/downstream, register movements), `code` (module procedures/functions with signatures), `business_info`. Default: all sections | **First step** when you need to understand any metadata object. Replaces multiple separate queries. Use the `sections` filter to reduce output |
+| **get_object_dossier** | `object_name` (required, qualified name like `Документ.РеализацияТоваровУслуг`), `sections=None` | Comprehensive structural passport in one call — no LLM. Sections: `structure` (attributes, tabular parts, dimensions, resources, commands, layouts), `forms`, `subscriptions`, `roles`, `dependencies` (USED_IN upstream/downstream, register movements), `code` (module procedures/functions with signatures), `business_info`. Default: all sections | **First step** when you need to understand any metadata object. Replaces multiple separate queries. Use the `sections` filter to reduce output |
 | **find_objects_using_object** | `object_name`, `project_name=None` | All metadata objects where the given object is used as a type reference in attributes, dimensions, or resources (via USED_IN) | Answer "Where is catalog X used?" — at the object level |
 | **find_usages_of_object** | `object_name`, `project_name=None` | Specific attributes, dimensions, and resources that reference the given object, with the owner object and full type information | Answer "In which attributes is X referenced?" — attribute-level detail (in contrast to `find_objects_using_object`) |
 | **find_register_movement_docs** | `register_name`, `project_name=None` | All documents that make movements into the given register | Answer "Which documents post to register X?" — essential for understanding document-register relationships |

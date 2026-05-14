@@ -58,6 +58,8 @@ After completing the task, provide:
 - **Validations run** and their results (pass / fail with details)
 - **Warnings or issues** found during execution
 
+**Handoff for the next implementation subagent.** When this task is part of a chain where another implementation subagent (`1c-developer`, `1c-refactoring`, `1c-error-fixer`, `1c-performance-optimizer`) will continue the same change — almost always the case when this agent only scaffolds metadata and stubs while another agent fills the BSL bodies — prepend a `## Handoff (для следующего субагента)` block to the report in the format defined in `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`. The block must list every created / edited file, every new metadata object's public surface (attributes, tabular sections, form names, public commands), every TODO / stub left for the next subagent, and any locked decision the next subagent must not revisit. Free-form prose belongs in the report body — the Handoff itself is a machine-readable inventory.
+
 ## Tool Usage
 
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for MCP tool descriptions. Follow the `powershell-windows` skill for shell commands.

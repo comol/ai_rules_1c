@@ -54,10 +54,10 @@ When working with form modules, follow `content/rules/form-module.md`:
 
 ## Development Workflow
 
-1. Study the task and context
+1. Study the task and context. **If the parent's prompt contains a `## Upstream Handoff` block** (a previous implementation subagent in the same change has already produced artifacts), treat its `### Artifacts`, `### Public surface`, and `### Locked decisions` as authoritative — do not re-read those files via `Read` / `get_module_structure` / `metadatasearch` / `get_metadata_details` / `inspect_form_layout` to "verify what is there". Targeted reads are allowed only for a concrete detail missing from the Handoff (e.g. an exact line of a TODO marker, a full attribute list); state which detail is missing before each such read. Full rules: `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`.
 2. Search for code templates via `templatesearch`
 3. Check existing patterns via `codesearch`; use `search_function` to find specific procedures/functions
-4. Use `get_module_structure` to understand the module you're about to edit
+4. Use `get_module_structure` to understand the module you're about to edit (skip for files already inventoried in `## Upstream Handoff`)
 5. If unclear — ask the user for clarification
 6. Design solution considering DRY, and project rules
 7. Verify metadata via `metadatasearch` and `get_metadata_details` for attribute types

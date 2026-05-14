@@ -4,6 +4,8 @@ Metadata and BSL code search, module navigation, forms, XSD schemas, XML validat
 
 > Load this file only if the `1c-code-metadata-mcp` server is actually available in the current session.
 
+> **Argument naming — do not invent.** Object-scoped tools on this server take **`object_name`** (the same shape as on `1c-graph-metadata-mcp` — a 1C dotted qualified name like `Справочник.Контрагенты`, `Документ.РеализацияТоваровУслуг`, `РегистрНакопления.ТоварыНаСкладах`, `ОбщийМодуль.РаботаСКонтрагентамиКлиентСервер`): `get_metadata_details`, `graph_dependencies`, `inspect_form_layout` (plus `form_name=""`). Forbidden hallucinations on these tools: `object_full_name`, `full_name`, `qualified_name`, `name`, `fullName`, `objectFullName`. Other tools use **different** parameter names — do not generalise `object_name` to all of them: `search_function` takes **`name`** (the routine name, not a qualified object), `get_module_structure` takes **`module_path`**, `get_method_call_hierarchy` takes **`method_name`**, `bsl_scope_members` takes **`context`**, `get_xsd_schema` and `verify_xml` take **`object_type`** (+ `xml_content` for `verify_xml`). Search inputs on `metadatasearch`, `codesearch`, `search_forms`, `helpsearch` go into **`query`** — not `q`, `text`, `prompt`, or `search_query`. If a Pydantic / schema validator rejects the call as `Missing required argument` or `Unexpected keyword argument`, re-read this file before retrying — do not paraphrase the parameter.
+
 ## `grep=true` retry rule
 
 Use `grep=true` as a targeted substring retry **only after** indexed / semantic / exact search did not find enough and the query is likely to benefit from literal matching: exact identifier, query fragment, metadata path, event handler name, error text, or string literal.
