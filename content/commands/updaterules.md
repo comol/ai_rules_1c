@@ -2,7 +2,7 @@
 description: Update the 1c-rules ruleset from GitHub (https://github.com/comol/ai_rules_1c)
 ---
 
-# /update — update 1c-rules
+# /updaterules — update 1c-rules
 
 Source: `https://github.com/comol/ai_rules_1c`.
 
@@ -14,7 +14,7 @@ Action: update managed files in the current installation to the latest repositor
 
 ## Steps
 
-1. Make sure `.ai-rules.json` exists at the project root. If it is missing, this is a first install: run `init` by `AGENT-INSTALL.md`, not `update`.
+1. Make sure `.ai-rules.json` exists at the project root. If it is missing, this is a first install: run `init` by `AGENT-INSTALL.md`, not `/updaterules`.
 
 2. Run the PowerShell channel from the project root. `install.ps1` expects a local path in `-Source`, so first clone or update the source into a cache under `$env:TEMP`:
 

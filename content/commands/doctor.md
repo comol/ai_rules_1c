@@ -149,7 +149,7 @@ Classify the project:
 
 For **Not ready**, provide the shortest safe repair path, for example:
 
-1. Run `install.ps1 init` or `/update`.
+1. Run `install.ps1 init` or `/updaterules`.
 2. Fill `.dev.env` critical fields.
 3. Fix Markdown integrity findings from Check 7.
 4. Generate or refresh `openspec/project.md`.
