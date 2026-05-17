@@ -1,8 +1,11 @@
-﻿# cf-validate v1.0 — Validate 1C configuration root structure
+﻿# cf-validate v1.3 — Validate 1C configuration root structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$ConfigPath,
+
+	[switch]$Detailed,
 
 	[int]$MaxErrors = 30,
 
@@ -38,6 +41,7 @@ $configDir = Split-Path $resolvedPath -Parent
 # --- Output infrastructure ---
 $script:errors = 0
 $script:warnings = 0
+$script:okCount = 0
 $script:stopped = $false
 $script:output = New-Object System.Text.StringBuilder 8192
 
@@ -48,7 +52,8 @@ function Out-Line {
 
 function Report-OK {
 	param([string]$msg)
-	Out-Line "[OK]    $msg"
+	$script:okCount++
+	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
 
 function Report-Error {
@@ -67,10 +72,14 @@ function Report-Warn {
 }
 
 $finalize = {
-	Out-Line ""
-	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ==="
-
-	$result = $script:output.ToString()
+	$checks = $script:okCount + $script:errors + $script:warnings
+	if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
+		$result = "=== Validation OK: Configuration.$objName ($checks checks) ==="
+	} else {
+		Out-Line ""
+		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
+		$result = $script:output.ToString()
+	}
 	Write-Host $result
 
 	if ($OutFile) {
@@ -137,17 +146,17 @@ $childTypeDirMap = @{
 
 # Valid enum values for Configuration properties
 $validEnumValues = @{
-	"ConfigurationExtensionCompatibilityMode" = @("DontUse","Version8_1","Version8_2_13","Version8_2_16","Version8_3_1","Version8_3_2","Version8_3_3","Version8_3_4","Version8_3_5","Version8_3_6","Version8_3_7","Version8_3_8","Version8_3_9","Version8_3_10","Version8_3_11","Version8_3_12","Version8_3_13","Version8_3_14","Version8_3_15","Version8_3_16","Version8_3_17","Version8_3_18","Version8_3_19","Version8_3_20","Version8_3_21","Version8_3_22","Version8_3_23","Version8_3_24","Version8_3_25","Version8_3_26","Version8_3_27","Version8_3_28")
+	"ConfigurationExtensionCompatibilityMode" = @("DontUse","Version8_1","Version8_2_13","Version8_2_16","Version8_3_1","Version8_3_2","Version8_3_3","Version8_3_4","Version8_3_5","Version8_3_6","Version8_3_7","Version8_3_8","Version8_3_9","Version8_3_10","Version8_3_11","Version8_3_12","Version8_3_13","Version8_3_14","Version8_3_15","Version8_3_16","Version8_3_17","Version8_3_18","Version8_3_19","Version8_3_20","Version8_3_21","Version8_3_22","Version8_3_23","Version8_3_24","Version8_3_25","Version8_3_26","Version8_3_27","Version8_3_28","Version8_5_1")
 	"DefaultRunMode" = @("ManagedApplication","OrdinaryApplication","Auto")
 	"ScriptVariant" = @("Russian","English")
 	"DataLockControlMode" = @("Automatic","Managed","AutomaticAndManaged")
 	"ObjectAutonumerationMode" = @("NotAutoFree","AutoFree")
 	"ModalityUseMode" = @("DontUse","Use","UseWithWarnings")
 	"SynchronousPlatformExtensionAndAddInCallUseMode" = @("DontUse","Use","UseWithWarnings")
-	"InterfaceCompatibilityMode" = @("Taxi","TaxiEnableVersion8_2","Version8_2")
+	"InterfaceCompatibilityMode" = @("Version8_2","Version8_2EnableTaxi","Taxi","TaxiEnableVersion8_2","TaxiEnableVersion8_5","Version8_5EnableTaxi","Version8_5")
 	"DatabaseTablespacesUseMode" = @("DontUse","Use")
 	"MainClientApplicationWindowMode" = @("Normal","Fullscreen","Kiosk")
-	"CompatibilityMode" = @("DontUse","Version8_1","Version8_2_13","Version8_2_16","Version8_3_1","Version8_3_2","Version8_3_3","Version8_3_4","Version8_3_5","Version8_3_6","Version8_3_7","Version8_3_8","Version8_3_9","Version8_3_10","Version8_3_11","Version8_3_12","Version8_3_13","Version8_3_14","Version8_3_15","Version8_3_16","Version8_3_17","Version8_3_18","Version8_3_19","Version8_3_20","Version8_3_21","Version8_3_22","Version8_3_23","Version8_3_24","Version8_3_25","Version8_3_26","Version8_3_27","Version8_3_28")
+	"CompatibilityMode" = @("DontUse","Version8_1","Version8_2_13","Version8_2_16","Version8_3_1","Version8_3_2","Version8_3_3","Version8_3_4","Version8_3_5","Version8_3_6","Version8_3_7","Version8_3_8","Version8_3_9","Version8_3_10","Version8_3_11","Version8_3_12","Version8_3_13","Version8_3_14","Version8_3_15","Version8_3_16","Version8_3_17","Version8_3_18","Version8_3_19","Version8_3_20","Version8_3_21","Version8_3_22","Version8_3_23","Version8_3_24","Version8_3_25","Version8_3_26","Version8_3_27","Version8_3_28","Version8_5_1")
 }
 
 # --- 1. Parse XML ---
@@ -195,8 +204,8 @@ if ($root.NamespaceURI -ne $expectedNs) {
 $version = $root.GetAttribute("version")
 if (-not $version) {
 	Report-Warn "1. Missing version attribute on MetaDataObject"
-} elseif ($version -ne "2.17" -and $version -ne "2.20") {
-	Report-Warn "1. Unusual version '$version' (expected 2.17 or 2.20)"
+} elseif ($version -ne "2.17" -and $version -ne "2.20" -and $version -ne "2.21") {
+	Report-Warn "1. Unusual version '$version' (expected 2.17, 2.20 or 2.21)"
 }
 
 # Must have Configuration child
@@ -525,8 +534,72 @@ if ($childObjNode) {
 			Report-Warn "8. Missing directory: $md"
 		}
 	}
+}
+
+# --- Check 9: Form references (HomePageWorkArea + Properties) ---
+function Test-FormRef([string]$ref) {
+	if (-not $ref) { return $true }
+	# UUID — cannot verify without scanning all forms; skip
+	if ($ref -match $guidPattern) { return $true }
+	$parts = $ref.Split(".")
+	if ($parts.Count -eq 2 -and $parts[0] -eq "CommonForm") {
+		$p = Join-Path (Join-Path (Join-Path $configDir "CommonForms") $parts[1]) "Form.xml"
+		$pExt = Join-Path (Join-Path (Join-Path (Join-Path $configDir "CommonForms") $parts[1]) "Ext") "Form.xml"
+		return (Test-Path $p) -or (Test-Path $pExt)
+	}
+	if ($parts.Count -eq 4 -and $parts[2] -eq "Form" -and $childTypeDirMap.ContainsKey($parts[0])) {
+		$dir = $childTypeDirMap[$parts[0]]
+		$p = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $configDir $dir) $parts[1]) "Forms") $parts[3]) "Form.xml"
+		$pExt = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $configDir $dir) $parts[1]) "Forms") $parts[3]) "Ext") "Form.xml"
+		return (Test-Path $p) -or (Test-Path $pExt)
+	}
+	return $false
+}
+
+$formRefsChecked = 0
+$formRefErrors = @()
+
+# HomePageWorkArea
+$hpPath = Join-Path (Join-Path $configDir "Ext") "HomePageWorkArea.xml"
+if (Test-Path $hpPath) {
+	try {
+		[xml]$hpDoc = Get-Content -Path $hpPath -Encoding UTF8
+		$hpNs = New-Object System.Xml.XmlNamespaceManager($hpDoc.NameTable)
+		$hpNs.AddNamespace("hp", "http://v8.1c.ru/8.3/xcf/extrnprops")
+		foreach ($f in $hpDoc.DocumentElement.SelectNodes("//hp:Item/hp:Form", $hpNs)) {
+			$ref = $f.InnerText.Trim()
+			if (-not $ref) { continue }
+			$formRefsChecked++
+			if (-not (Test-FormRef $ref)) {
+				$formRefErrors += "HomePageWorkArea.Form '$ref' — file not found"
+			}
+		}
+	} catch {
+		$formRefErrors += "HomePageWorkArea.xml: parse error — $($_.Exception.Message)"
+	}
+}
+
+# Properties: DefaultXxxForm refs
+if ($propsNode) {
+	$formProps = @("DefaultReportForm","DefaultReportVariantForm","DefaultReportSettingsForm","DefaultDynamicListSettingsForm","DefaultSearchForm","DefaultDataHistoryChangeHistoryForm","DefaultDataHistoryVersionDataForm","DefaultDataHistoryVersionDifferencesForm","DefaultCollaborationSystemUsersChoiceForm","DefaultConstantsForm")
+	foreach ($pn in $formProps) {
+		$node = $propsNode.SelectSingleNode("md:$pn", $ns)
+		if ($node -and $node.InnerText.Trim()) {
+			$ref = $node.InnerText.Trim()
+			$formRefsChecked++
+			if (-not (Test-FormRef $ref)) {
+				$formRefErrors += "Properties.$pn '$ref' — form not found"
+			}
+		}
+	}
+}
+
+if ($formRefsChecked -eq 0) {
+	Report-OK "9. Form references: none to check"
+} elseif ($formRefErrors.Count -eq 0) {
+	Report-OK "9. Form references: $formRefsChecked verified"
 } else {
-	Report-OK "8. Object directories: N/A"
+	foreach ($err in $formRefErrors) { Report-Error "9. $err" }
 }
 
 # --- Final output ---

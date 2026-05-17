@@ -1,9 +1,10 @@
-﻿# meta-edit v1.3 — Edit existing 1C metadata object XML (inline mode + complex properties + TS attribute ops + modify-ts)
+﻿# meta-edit v1.6 — Edit existing 1C metadata object XML (inline mode + complex properties + TS attribute ops + modify-ts)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
 
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$ObjectPath,
 
 	# Inline mode (alternative to DefinitionFile)
@@ -43,6 +44,73 @@ if (-not $DefinitionFile -and -not $Operation) {
 	exit 1
 }
 
+# --- Enum value normalization (same as meta-compile) ---
+$script:enumValueAliases = @{
+	"Balances" = "Balance"; "Остатки" = "Balance"; "Обороты" = "Turnovers"
+	"RecordSubordinate" = "RecorderSubordinate"; "Subordinate" = "RecorderSubordinate"
+	"ПодчинениеРегистратору" = "RecorderSubordinate"; "Независимый" = "Independent"
+	"NotDependOnCalculationTypes" = "DontUse"; "NoDependence" = "DontUse"; "NotUsed" = "DontUse"
+	"Depend" = "OnActionPeriod"; "ПоПериодуДействия" = "OnActionPeriod"
+	"None" = "Nonperiodical"; "Daily" = "Day"; "Monthly" = "Month"
+	"Quarterly" = "Quarter"; "Yearly" = "Year"
+	"Непериодический" = "Nonperiodical"; "Секунда" = "Second"; "День" = "Day"; "Месяц" = "Month"
+	"Квартал" = "Quarter"; "Год" = "Year"
+	"ПозицияРегистратора" = "RecorderPosition"
+	"Автоматический" = "Automatic"; "Управляемый" = "Managed"
+	"Использовать" = "Use"; "НеИспользовать" = "DontUse"
+	"Разрешить" = "Allow"; "Запретить" = "Deny"
+	"ВДиалоге" = "InDialog"; "ВСписке" = "InList"; "ОбаСпособа" = "BothWays"
+	"ВВидеНаименования" = "AsDescription"; "ВВидеКода" = "AsCode"
+	"НеПроверять" = "DontCheck"; "Ошибка" = "ShowError"; "Предупреждение" = "ShowWarning"
+	"НеИндексировать" = "DontIndex"; "Индексировать" = "Index"
+	"ИндексироватьСДопУпорядочиванием" = "IndexWithAdditionalOrder"
+}
+
+$script:validEnumValues = @{
+	"RegisterType"                   = @("Balance","Turnovers")
+	"WriteMode"                      = @("Independent","RecorderSubordinate")
+	"InformationRegisterPeriodicity" = @("Nonperiodical","Second","Day","Month","Quarter","Year","RecorderPosition")
+	"DependenceOnCalculationTypes"   = @("DontUse","OnActionPeriod")
+	"DataLockControlMode"            = @("Automatic","Managed")
+	"FullTextSearch"                 = @("Use","DontUse")
+	"DataHistory"                    = @("Use","DontUse")
+	"DefaultPresentation"            = @("AsDescription","AsCode")
+	"Posting"                        = @("Allow","Deny")
+	"RealTimePosting"                = @("Allow","Deny")
+	"EditType"                       = @("InDialog","InList","BothWays")
+	"HierarchyType"                  = @("HierarchyFoldersAndItems","HierarchyItemsOnly")
+	"CodeType"                       = @("String","Number")
+	"CodeAllowedLength"              = @("Variable","Fixed")
+	"NumberType"                     = @("String","Number")
+	"NumberAllowedLength"            = @("Variable","Fixed")
+	"RegisterRecordsDeletion"        = @("AutoDelete","AutoDeleteOnUnpost","AutoDeleteOff")
+	"RegisterRecordsWritingOnPost"   = @("WriteModified","WriteSelected","WriteAll")
+	"ReturnValuesReuse"              = @("DontUse","DuringRequest","DuringSession")
+	"ReuseSessions"                  = @("DontUse","AutoUse")
+	"FillChecking"                   = @("DontCheck","ShowError","ShowWarning")
+	"Indexing"                       = @("DontIndex","Index","IndexWithAdditionalOrder")
+}
+
+function Normalize-EnumValue {
+	param([string]$propName, [string]$value)
+	# 1. Check alias dictionary — silent auto-correct
+	if ($script:enumValueAliases.ContainsKey($value)) {
+		return $script:enumValueAliases[$value]
+	}
+	# 2. Case-insensitive match against valid values — silent
+	$valid = $script:validEnumValues[$propName]
+	if ($valid) {
+		foreach ($v in $valid) {
+			if ($v -ieq $value) { return $v }
+		}
+		# 3. Known property, unknown value — error with hint
+		Write-Error "Invalid value '$value' for property '$propName'. Valid values: $($valid -join ', ')"
+		exit 1
+	}
+	# 4. Unknown property — pass-through (no validation data)
+	return $value
+}
+
 # --- Load JSON definition (DefinitionFile mode) ---
 $def = $null
 if ($DefinitionFile) {
@@ -58,11 +126,24 @@ if ($DefinitionFile) {
 if (Test-Path $ObjectPath -PathType Container) {
 	$dirName = Split-Path $ObjectPath -Leaf
 	$candidate = Join-Path $ObjectPath "$dirName.xml"
+	$sibling = Join-Path (Split-Path $ObjectPath) "$dirName.xml"
 	if (Test-Path $candidate) {
 		$ObjectPath = $candidate
+	} elseif (Test-Path $sibling) {
+		$ObjectPath = $sibling
 	} else {
-		Write-Error "Directory given but no $dirName.xml found inside"
+		Write-Error "Directory given but no $dirName.xml found inside or as sibling"
 		exit 1
+	}
+}
+# File not found — check Dir/Name/Name.xml → Dir/Name.xml
+if (-not (Test-Path $ObjectPath)) {
+	$fileName = [System.IO.Path]::GetFileNameWithoutExtension($ObjectPath)
+	$parentDir = Split-Path $ObjectPath
+	$parentDirName = Split-Path $parentDir -Leaf
+	if ($fileName -eq $parentDirName) {
+		$candidate = Join-Path (Split-Path $parentDir) "$fileName.xml"
+		if (Test-Path $candidate) { $ObjectPath = $candidate }
 	}
 }
 if (-not (Test-Path $ObjectPath)) {
@@ -256,6 +337,17 @@ function Build-TypeContentXml {
 	param([string]$indent, [string]$typeStr)
 	if (-not $typeStr) { return "" }
 
+	# Composite type: "Type1 + Type2 + Type3"
+	if ($typeStr.Contains(' + ')) {
+		$parts = $typeStr -split '\s*\+\s*'
+		$sb = New-Object System.Text.StringBuilder
+		foreach ($part in $parts) {
+			$inner = Build-TypeContentXml $indent $part.Trim()
+			if ($inner) { $sb.AppendLine($inner) | Out-Null }
+		}
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
 	$typeStr = Resolve-TypeStr $typeStr
 	$sb = New-Object System.Text.StringBuilder
 
@@ -273,7 +365,7 @@ function Build-TypeContentXml {
 
 	# String or String(N)
 	if ($typeStr -match '^String(\((\d+)\))?$') {
-		$len = if ($Matches[2]) { $Matches[2] } else { "0" }
+		$len = if ($Matches[2]) { $Matches[2] } else { "10" }
 		$sb.AppendLine("$indent<v8:Type>xs:string</v8:Type>") | Out-Null
 		$sb.AppendLine("$indent<v8:StringQualifiers>") | Out-Null
 		$sb.AppendLine("$indent`t<v8:Length>$len</v8:Length>") | Out-Null
@@ -329,9 +421,9 @@ function Build-TypeContentXml {
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
-	# Reference types
+	# Reference types — use local xmlns declaration for 1C compatibility
 	if ($typeStr -match '^(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|ExchangePlanRef|BusinessProcessRef|TaskRef)\.(.+)$') {
-		$sb.AppendLine("$indent<v8:Type>cfg:$typeStr</v8:Type>") | Out-Null
+		$sb.AppendLine("$indent<v8:Type xmlns:d5p1=`"http://v8.1c.ru/8.1/data/enterprise/current-config`">d5p1:$typeStr</v8:Type>") | Out-Null
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
@@ -611,7 +703,7 @@ function Parse-AttributeShorthand {
 	$name = "$($val.name)"
 	$result = @{
 		name        = $name
-		type        = if ($val.type) { "$($val.type)" } else { "" }
+		type        = if ($val.type -is [array]) { ($val.type | ForEach-Object { "$_" }) -join ' + ' } elseif ($val.type) { "$($val.type)" } else { "" }
 		synonym     = if ($val.synonym) { "$($val.synonym)" } else { Split-CamelCase $name }
 		comment     = if ($val.comment) { "$($val.comment)" } else { "" }
 		flags       = @(if ($val.flags) { $val.flags } else { @() })
@@ -665,10 +757,34 @@ function Get-AttributeContext {
 	}
 }
 
+$script:reservedAttrNames = @{
+	"Ref"="Ссылка"; "DeletionMark"="ПометкаУдаления"; "Code"="Код"; "Description"="Наименование"
+	"Date"="Дата"; "Number"="Номер"; "Posted"="Проведен"; "Parent"="Родитель"; "Owner"="Владелец"
+	"IsFolder"="ЭтоГруппа"; "Predefined"="Предопределенный"; "PredefinedDataName"="ИмяПредопределенныхДанных"
+	"Recorder"="Регистратор"; "Period"="Период"; "LineNumber"="НомерСтроки"; "Active"="Активность"
+	"Order"="Порядок"; "Type"="Тип"; "OffBalance"="Забалансовый"
+	"Started"="Стартован"; "Completed"="Завершен"; "HeadTask"="ВедущаяЗадача"
+	"Executed"="Выполнена"; "RoutePoint"="ТочкаМаршрута"; "BusinessProcess"="БизнесПроцесс"
+	"ThisNode"="ЭтотУзел"; "SentNo"="НомерОтправленного"; "ReceivedNo"="НомерПринятого"
+	"CalculationType"="ВидРасчета"; "RegistrationPeriod"="ПериодРегистрации"; "ReversingEntry"="СторноЗапись"
+	"Account"="Счет"; "ValueType"="ТипЗначения"; "ActionPeriodIsBasic"="ПериодДействияБазовый"
+}
+
 function Build-AttributeFragment {
 	param($parsed, [string]$context, [string]$indent)
 
 	if (-not $context) { $context = Get-AttributeContext }
+
+	# Check reserved attribute names
+	$attrName = $parsed.name
+	if ($script:reservedAttrNames.ContainsKey($attrName)) {
+		Write-Warning "Attribute '$attrName' conflicts with a standard attribute name. This may cause errors when loading into 1C."
+	}
+	$ruValues = $script:reservedAttrNames.Values
+	if ($ruValues -contains $attrName) {
+		Write-Warning "Attribute '$attrName' conflicts with a standard attribute name (Russian). This may cause errors when loading into 1C."
+	}
+
 	$uuid = New-Guid-String
 	$sb = New-Object System.Text.StringBuilder
 
@@ -708,7 +824,7 @@ function Build-AttributeFragment {
 	# FillChecking
 	$fillChecking = "DontCheck"
 	if ($parsed.flags -contains "req") { $fillChecking = "ShowError" }
-	if ($parsed.fillChecking) { $fillChecking = $parsed.fillChecking }
+	if ($parsed.fillChecking) { $fillChecking = Normalize-EnumValue "FillChecking" $parsed.fillChecking }
 	$sb.AppendLine("$indent`t`t<FillChecking>$fillChecking</FillChecking>") | Out-Null
 
 	$sb.AppendLine("$indent`t`t<ChoiceFoldersAndItems>Items</ChoiceFoldersAndItems>") | Out-Null
@@ -730,7 +846,7 @@ function Build-AttributeFragment {
 		$indexing = "DontIndex"
 		if ($parsed.flags -contains "index") { $indexing = "Index" }
 		if ($parsed.flags -contains "indexadditional") { $indexing = "IndexWithAdditionalOrder" }
-		if ($parsed.indexing) { $indexing = $parsed.indexing }
+		if ($parsed.indexing) { $indexing = Normalize-EnumValue "Indexing" $parsed.indexing }
 		$sb.AppendLine("$indent`t`t<Indexing>$indexing</Indexing>") | Out-Null
 
 		$sb.AppendLine("$indent`t`t<FullTextSearch>Use</FullTextSearch>") | Out-Null
@@ -1992,6 +2108,8 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 						$valueStr = "$changeValue"
 						if ($changeValue -is [bool]) {
 							$valueStr = if ($changeValue) { "true" } else { "false" }
+						} else {
+							$valueStr = Normalize-EnumValue $changeProp $valueStr
 						}
 						$scalarEl.InnerText = $valueStr
 						Info "Modified $xmlTag '$elemName'.$changeProp = $valueStr"

@@ -1,7 +1,8 @@
-﻿# skd-info v1.0 — Analyze 1C DCS structure
+﻿# skd-info v1.4 — Analyze 1C DCS structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)]
+	[Alias('Path')]
 	[string]$TemplatePath,
 	[ValidateSet("overview", "query", "fields", "links", "calculated", "resources", "params", "variant", "trace", "templates", "full")]
 	[string]$Mode = "overview",
@@ -17,6 +18,8 @@ $ErrorActionPreference = "Stop"
 
 # --- Resolve path ---
 
+$originalPath = $TemplatePath
+
 if (-not $TemplatePath.EndsWith(".xml")) {
 	$candidate = Join-Path (Join-Path $TemplatePath "Ext") "Template.xml"
 	if (Test-Path $candidate) {
@@ -24,7 +27,48 @@ if (-not $TemplatePath.EndsWith(".xml")) {
 	}
 }
 
-if (-not (Test-Path $TemplatePath)) {
+# If still not a file, try resolving from object directory (Reports/X, DataProcessors/X)
+if (-not (Test-Path $TemplatePath -PathType Leaf)) {
+	$templatesDir = Join-Path $originalPath "Templates"
+	if (Test-Path $templatesDir) {
+		$dcsTemplates = @()
+		foreach ($metaXml in (Get-ChildItem $templatesDir -Filter "*.xml" -File)) {
+			[xml]$meta = Get-Content $metaXml.FullName -Encoding UTF8
+			$tt = $meta.SelectSingleNode("//*[local-name()='TemplateType']")
+			if ($tt -and $tt.InnerText -eq "DataCompositionSchema") {
+				$tplName = [System.IO.Path]::GetFileNameWithoutExtension($metaXml.Name)
+				$tplPath = Join-Path (Join-Path (Join-Path $templatesDir $tplName) "Ext") "Template.xml"
+				if (Test-Path $tplPath) {
+					$dcsTemplates += $tplPath
+				}
+			}
+		}
+		if ($dcsTemplates.Count -eq 1) {
+			$TemplatePath = $dcsTemplates[0]
+			$resolvedMsg = (Resolve-Path $TemplatePath).Path
+			$cwd = (Get-Location).Path
+			if ($resolvedMsg.StartsWith($cwd)) {
+				$resolvedMsg = $resolvedMsg.Substring($cwd.Length + 1)
+			}
+			Write-Host "[i] Resolved: $resolvedMsg"
+		} elseif ($dcsTemplates.Count -gt 1) {
+			Write-Host "Multiple DCS templates found in: $originalPath"
+			$cwd = (Get-Location).Path
+			for ($i = 0; $i -lt $dcsTemplates.Count; $i++) {
+				$p = (Resolve-Path $dcsTemplates[$i]).Path
+				if ($p.StartsWith($cwd)) { $p = $p.Substring($cwd.Length + 1) }
+				Write-Host "  $($i+1). $p"
+			}
+			Write-Host "Specify the template path."
+			exit 1
+		} else {
+			Write-Error "No DCS templates found in: $originalPath"
+			exit 1
+		}
+	}
+}
+
+if (-not (Test-Path $TemplatePath -PathType Leaf)) {
 	Write-Error "File not found: $TemplatePath"
 	exit 1
 }
@@ -402,7 +446,11 @@ function Show-Overview {
 		if ($fieldTpls.Count -gt 0) { $parts += "$($fieldTpls.Count) field" }
 		$grpCount = $groupTpls.Count + $groupHeaderTpls.Count + $groupFooterTpls.Count
 		if ($grpCount -gt 0) { $parts += "$grpCount group" }
-		$lines.Add("Templates: $($tplDefs.Count) defined ($($parts -join ', ') bindings)")
+		if ($parts.Count -gt 0) {
+			$lines.Add("Templates: $($tplDefs.Count) defined ($($parts -join ', ') bindings)")
+		} else {
+			$lines.Add("Templates: $($tplDefs.Count) defined")
+		}
 	}
 
 	# Parameters — split visible/hidden
@@ -776,8 +824,14 @@ function Show-Fields {
 				$roleParts = @()
 				if ($role) {
 					foreach ($child in $role.ChildNodes) {
-						if ($child.NodeType -eq "Element" -and $child.InnerText -eq "true") {
+						if ($child.NodeType -ne "Element") { continue }
+						$txt = $child.InnerText.Trim()
+						if ($txt -eq "true") {
 							$roleParts += $child.LocalName
+						} elseif ($txt -eq "false") {
+							# skip default-false flags
+						} else {
+							$roleParts += "$($child.LocalName)=$txt"
 						}
 					}
 				}
@@ -1305,7 +1359,18 @@ if ($Mode -eq "variant") {
 elseif ($Mode -eq "full") {
 	Show-Overview
 	$lines.Add(""); $lines.Add("--- query ---"); $lines.Add("")
-	Show-Query
+	$hasQuery = $root.SelectNodes("descendant::s:dataSet[@xsi:type='DataSetQuery']", $ns).Count -gt 0
+	if ($hasQuery) {
+		Show-Query
+	} else {
+		$objNodes = $root.SelectNodes("descendant::s:dataSet[@xsi:type='DataSetObject']/s:objectName", $ns)
+		if ($objNodes.Count -gt 0) {
+			$names = @(); foreach ($n in $objNodes) { $names += $n.InnerText }
+			$lines.Add("(no query datasets; external datasets: $($names -join ', '))")
+		} else {
+			$lines.Add("(no query datasets)")
+		}
+	}
 	$lines.Add(""); $lines.Add("--- fields ---"); $lines.Add("")
 	Show-Fields
 	$lines.Add(""); $lines.Add("--- resources ---"); $lines.Add("")

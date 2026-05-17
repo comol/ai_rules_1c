@@ -1,12 +1,38 @@
-﻿param(
+﻿# form-validate v1.6 — Validate 1C managed form
+# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+param(
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$FormPath,
+
+	[switch]$Detailed,
 
 	[int]$MaxErrors = 30
 )
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Resolve path ---
+# A: Directory → Ext/Form.xml
+if (Test-Path $FormPath -PathType Container) {
+	$FormPath = Join-Path (Join-Path $FormPath "Ext") "Form.xml"
+}
+# B1: Missing Ext/ (e.g. Forms/Форма/Form.xml → Forms/Форма/Ext/Form.xml)
+if (-not (Test-Path $FormPath)) {
+	$fn = [System.IO.Path]::GetFileName($FormPath)
+	if ($fn -eq "Form.xml") {
+		$c = Join-Path (Join-Path (Split-Path $FormPath) "Ext") $fn
+		if (Test-Path $c) { $FormPath = $c }
+	}
+}
+# B2: Descriptor (Forms/Форма.xml → Forms/Форма/Ext/Form.xml)
+if (-not (Test-Path $FormPath) -and $FormPath.EndsWith(".xml")) {
+	$stem = [System.IO.Path]::GetFileNameWithoutExtension($FormPath)
+	$dir = Split-Path $FormPath
+	$c = Join-Path (Join-Path (Join-Path $dir $stem) "Ext") "Form.xml"
+	if (Test-Path $c) { $FormPath = $c }
+}
 
 # --- Load XML ---
 
@@ -33,15 +59,31 @@ $nsMgr.AddNamespace("v8", "http://v8.1c.ru/8.1/data/core")
 
 $root = $xmlDoc.DocumentElement
 
+# --- Detect context: config vs EPF/ERF ---
+# Walk up from FormPath looking for Configuration.xml → config context
+# No Configuration.xml → external data processor / report (EPF/ERF)
+$script:isConfigContext = $false
+$walkDir = Split-Path (Resolve-Path $FormPath) -Parent
+for ($i = 0; $i -lt 15; $i++) {
+	if (-not $walkDir -or $walkDir -eq (Split-Path $walkDir)) { break }
+	if (Test-Path (Join-Path $walkDir "Configuration.xml")) {
+		$script:isConfigContext = $true
+		break
+	}
+	$walkDir = Split-Path $walkDir
+}
+
 # --- Counters ---
 
 $errors = 0
 $warnings = 0
 $stopped = $false
+$script:okCount = 0
 
 function Report-OK {
 	param([string]$msg)
-	Write-Host "[OK]    $msg"
+	$script:okCount++
+	if ($Detailed) { Write-Host "[OK]    $msg" }
 }
 
 function Report-Error {
@@ -71,8 +113,13 @@ if ($parentDir) {
 	}
 }
 
-Write-Host "=== Validation: $formName ==="
-Write-Host ""
+if ($Detailed) {
+	Write-Host "=== Validation: $formName ==="
+	Write-Host ""
+}
+
+# Early BaseForm detection (used in Check 5 to skip base element DataPath validation)
+$hasBaseForm = ($root.SelectSingleNode("f:BaseForm", $nsMgr) -ne $null)
 
 # --- Check 1: Root element and version ---
 
@@ -80,10 +127,10 @@ if ($root.LocalName -ne "Form") {
 	Report-Error "Root element is '$($root.LocalName)', expected 'Form'"
 } else {
 	$version = $root.GetAttribute("version")
-	if ($version -eq "2.17") {
+	if ($version -eq "2.17" -or $version -eq "2.20") {
 		Report-OK "Root element: Form version=$version"
 	} elseif ($version) {
-		Report-Warn "Form version='$version' (expected 2.17)"
+		Report-Warn "Form version='$version' (expected 2.17 or 2.20)"
 	} else {
 		Report-Warn "Form version attribute missing"
 	}
@@ -295,6 +342,7 @@ if (-not $stopped) {
 if (-not $stopped) {
 	$pathErrors = 0
 	$pathChecked = 0
+	$pathBaseSkipped = 0
 
 	foreach ($el in $allElements) {
 		if ($stopped) { break }
@@ -307,18 +355,61 @@ if (-not $stopped) {
 			continue
 		}
 
+		# In borrowed forms, skip DataPath check for base elements (id < 1000000)
+		if ($hasBaseForm -and $el.Id) {
+			try { if ([int]$el.Id -lt 1000000) { $pathBaseSkipped++; continue } } catch {}
+		}
+
 		$dpNode = $node.SelectSingleNode("f:DataPath", $nsMgr)
 		if (-not $dpNode) { continue }
 
 		$dataPath = $dpNode.InnerText.Trim()
 		if (-not $dataPath) { continue }
 
+		# Opaque platform-internal DataPath shapes — not validatable from Form.xml alone:
+		#   - bare numeric (e.g. "10", "1000003") — internal index
+		#   - "N/M:<uuid>" — metadata reference by UUID
+		if ($dataPath -match '^\d+$' -or $dataPath -match '^\d+/\d+:[0-9a-fA-F-]+$') {
+			continue
+		}
+
 		$pathChecked++
 
 		# Extract root segment of path, strip array indices like [0]
 		$cleanPath = $dataPath -replace '\[\d+\]', ''
+		# Strip leading '~' (current row of DynamicList: ~Список.Поле)
+		if ($cleanPath.StartsWith('~')) { $cleanPath = $cleanPath.Substring(1) }
 		$segments = $cleanPath -split '\.'
 		$rootAttr = $segments[0]
+
+		# Resolve Items.<TableName>.CurrentData.<Field>... — table element, not attribute
+		if ($rootAttr -eq 'Items') {
+			if ($segments.Count -lt 3 -or $segments[2] -ne 'CurrentData') {
+				Report-Warn "[$tag] '$elName': DataPath='$dataPath' — unknown Items.* shape, expected Items.<Table>.CurrentData.*"
+				continue
+			}
+			$tableName = $segments[1]
+			$tableEl = $null
+			foreach ($candidate in $allElements) {
+				if ($candidate.Tag -eq 'Table' -and $candidate.Name -eq $tableName) {
+					$tableEl = $candidate
+					break
+				}
+			}
+			if (-not $tableEl) {
+				Report-Error "[$tag] '$elName': DataPath='$dataPath' — table element '$tableName' not found"
+				$pathErrors++
+				continue
+			}
+			$tableDpNode = $tableEl.Node.SelectSingleNode("f:DataPath", $nsMgr)
+			if (-not $tableDpNode -or -not $tableDpNode.InnerText.Trim()) {
+				# Table without DataPath — can't resolve further, accept silently
+				continue
+			}
+			$tableDp = $tableDpNode.InnerText.Trim() -replace '\[\d+\]', ''
+			if ($tableDp.StartsWith('~')) { $tableDp = $tableDp.Substring(1) }
+			$rootAttr = ($tableDp -split '\.')[0]
+		}
 
 		if (-not $attrMap.ContainsKey($rootAttr)) {
 			Report-Error "[$tag] '$elName': DataPath='$dataPath' — attribute '$rootAttr' not found"
@@ -326,9 +417,15 @@ if (-not $stopped) {
 		}
 	}
 
-	if ($pathErrors -eq 0 -and $pathChecked -gt 0) {
-		Report-OK "DataPath references: $pathChecked paths checked"
-	} elseif ($pathChecked -eq 0) {
+	$pathMsg = ""
+	if ($pathChecked -gt 0) { $pathMsg = "$pathChecked paths checked" }
+	if ($pathBaseSkipped -gt 0) {
+		$skipNote = "$pathBaseSkipped base skipped"
+		$pathMsg = if ($pathMsg) { "$pathMsg, $skipNote" } else { $skipNote }
+	}
+	if ($pathErrors -eq 0 -and $pathMsg) {
+		Report-OK "DataPath references: $pathMsg"
+	} elseif ($pathErrors -eq 0) {
 		Report-OK "DataPath references: none"
 	}
 }
@@ -477,20 +574,248 @@ if (-not $stopped) {
 	}
 }
 
-# --- Summary ---
+# --- Check 11: Extension-specific validations ---
 
-Write-Host ""
-Write-Host "---"
-Write-Host "Total: $($allElements.Count) elements, $($attrNodes.Count) attributes, $($cmdNodes.Count) commands"
+$baseFormNode = $root.SelectSingleNode("f:BaseForm", $nsMgr)
+$isExtension = ($baseFormNode -ne $null)
 
-if ($stopped) {
-	Write-Host "Stopped after $MaxErrors errors. Fix and re-run."
+if (-not $stopped -and $isExtension) {
+	# 11a. BaseForm version
+	$bfVersion = $baseFormNode.GetAttribute("version")
+	if ($bfVersion) {
+		Report-OK "BaseForm: version=$bfVersion"
+	} else {
+		Report-Warn "BaseForm: version attribute missing"
+	}
+
+	# 11b. callType values validation (Before, After, Override)
+	$validCallTypes = @("Before", "After", "Override")
+	$ctErrors = 0
+	$ctChecked = 0
+
+	# Check form-level events
+	$formEventsNode = $root.SelectSingleNode("f:Events", $nsMgr)
+	if ($formEventsNode) {
+		foreach ($evt in $formEventsNode.SelectNodes("f:Event", $nsMgr)) {
+			$ct = $evt.GetAttribute("callType")
+			if ($ct) {
+				$ctChecked++
+				if ($validCallTypes -notcontains $ct) {
+					Report-Error "Form event '$($evt.GetAttribute('name'))': invalid callType='$ct' (expected: Before, After, Override)"
+					$ctErrors++
+				}
+			}
+		}
+	}
+
+	# Check element-level events
+	foreach ($el in $allElements) {
+		if ($stopped) { break }
+		$eventsNode = $el.Node.SelectSingleNode("f:Events", $nsMgr)
+		if (-not $eventsNode) { continue }
+		foreach ($evt in $eventsNode.SelectNodes("f:Event", $nsMgr)) {
+			$ct = $evt.GetAttribute("callType")
+			if ($ct) {
+				$ctChecked++
+				if ($validCallTypes -notcontains $ct) {
+					Report-Error "[$($el.Tag)] '$($el.Name)' event '$($evt.GetAttribute('name'))': invalid callType='$ct'"
+					$ctErrors++
+				}
+			}
+		}
+	}
+
+	# Check command actions
+	foreach ($cmd in $cmdNodes) {
+		if ($stopped) { break }
+		$cmdName = $cmd.GetAttribute("name")
+		foreach ($action in $cmd.SelectNodes("f:Action", $nsMgr)) {
+			$ct = $action.GetAttribute("callType")
+			if ($ct) {
+				$ctChecked++
+				if ($validCallTypes -notcontains $ct) {
+					Report-Error "Command '$cmdName' Action: invalid callType='$ct'"
+					$ctErrors++
+				}
+			}
+		}
+	}
+
+	if (-not $stopped -and $ctErrors -eq 0 -and $ctChecked -gt 0) {
+		Report-OK "callType values: $ctChecked checked"
+	}
+
+	# 11c. Extension ID ranges — warn if extension-added attrs/commands have id < 1000000
+	# Collect BaseForm attribute names to distinguish added ones
+	$baseAttrNames = @{}
+	$baseCmdNames = @{}
+	$bfNs = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
+	$bfNs.AddNamespace("f", "http://v8.1c.ru/8.3/xcf/logform")
+	foreach ($bAttr in $baseFormNode.SelectNodes("f:Attributes/f:Attribute", $bfNs)) {
+		$baName = $bAttr.GetAttribute("name")
+		if ($baName) { $baseAttrNames[$baName] = $true }
+	}
+	foreach ($bCmd in $baseFormNode.SelectNodes("f:Commands/f:Command", $bfNs)) {
+		$bcName = $bCmd.GetAttribute("name")
+		if ($bcName) { $baseCmdNames[$bcName] = $true }
+	}
+
+	$idWarnCount = 0
+	foreach ($attr in $attrNodes) {
+		$aName = $attr.GetAttribute("name")
+		$aId = $attr.GetAttribute("id")
+		if ($aName -and -not $baseAttrNames.ContainsKey($aName) -and $aId) {
+			try {
+				$intId = [int]$aId
+				if ($intId -lt 1000000) {
+					Report-Warn "Attribute '$aName' (id=$aId): extension-added attribute has id < 1000000"
+					$idWarnCount++
+				}
+			} catch {}
+		}
+	}
+
+	foreach ($cmd in $cmdNodes) {
+		$cName = $cmd.GetAttribute("name")
+		$cId = $cmd.GetAttribute("id")
+		if ($cName -and -not $baseCmdNames.ContainsKey($cName) -and $cId) {
+			try {
+				$intId = [int]$cId
+				if ($intId -lt 1000000) {
+					Report-Warn "Command '$cName' (id=$cId): extension-added command has id < 1000000"
+					$idWarnCount++
+				}
+			} catch {}
+		}
+	}
+
+	if (-not $stopped -and $idWarnCount -eq 0) {
+		$extAttrCount = ($attrNodes | Where-Object { -not $baseAttrNames.ContainsKey($_.GetAttribute("name")) }).Count
+		$extCmdCount = ($cmdNodes | Where-Object { -not $baseCmdNames.ContainsKey($_.GetAttribute("name")) }).Count
+		if (($extAttrCount + $extCmdCount) -gt 0) {
+			Report-OK "Extension ID ranges: $extAttrCount attr(s), $extCmdCount cmd(s) — all >= 1000000"
+		}
+	}
 }
 
-if ($errors -eq 0 -and $warnings -eq 0) {
-	Write-Host "All checks passed."
+# Check callType without BaseForm (structural warning)
+if (-not $stopped -and -not $isExtension) {
+	$callTypeWithoutBase = $false
+	$feNode = $root.SelectSingleNode("f:Events", $nsMgr)
+	if ($feNode) {
+		foreach ($evt in $feNode.SelectNodes("f:Event", $nsMgr)) {
+			if ($evt.GetAttribute("callType")) { $callTypeWithoutBase = $true; break }
+		}
+	}
+	if (-not $callTypeWithoutBase) {
+		foreach ($cmd in $cmdNodes) {
+			foreach ($action in $cmd.SelectNodes("f:Action", $nsMgr)) {
+				if ($action.GetAttribute("callType")) { $callTypeWithoutBase = $true; break }
+			}
+			if ($callTypeWithoutBase) { break }
+		}
+	}
+	if ($callTypeWithoutBase) {
+		Report-Warn "callType attributes found but no BaseForm — possible incorrect structure"
+	}
+}
+
+# --- Check 12: Type values validation ---
+
+$knownInvalidTypes = @(
+	"FormDataStructure","FormDataCollection","FormDataTree","FormDataTreeItem","FormDataCollectionItem"
+	"FormGroup","FormField","FormButton","FormDecoration","FormTable"
+)
+$validClosedTypes = @(
+	"xs:boolean","xs:string","xs:decimal","xs:dateTime","xs:binary"
+	"v8:FillChecking","v8:Null","v8:StandardPeriod","v8:StandardBeginningDate","v8:Type"
+	"v8:TypeDescription","v8:UUID","v8:ValueListType","v8:ValueTable","v8:ValueTree"
+	"v8:Universal","v8:FixedArray","v8:FixedStructure"
+	"v8ui:Color","v8ui:Font","v8ui:FormattedString","v8ui:HorizontalAlign"
+	"v8ui:Picture","v8ui:SizeChangeMode","v8ui:VerticalAlign"
+	"dcsset:DataCompositionComparisonType","dcsset:DataCompositionFieldPlacement"
+	"dcsset:Filter","dcsset:SettingsComposer","dcsset:DataCompositionSettings"
+	"dcssch:DataCompositionSchema"
+	"dcscor:DataCompositionComparisonType","dcscor:DataCompositionGroupType"
+	"dcscor:DataCompositionPeriodAdditionType","dcscor:DataCompositionSortDirection","dcscor:Field"
+	"ent:AccountType","ent:AccumulationRecordType","ent:AccountingRecordType"
+)
+$validCfgPrefixes = @(
+	"AccountingRegisterRecordSet","AccumulationRegisterRecordSet"
+	"BusinessProcessObject","BusinessProcessRef"
+	"CatalogObject","CatalogRef"
+	"ChartOfAccountsObject","ChartOfAccountsRef"
+	"ChartOfCalculationTypesObject","ChartOfCalculationTypesRef"
+	"ChartOfCharacteristicTypesObject","ChartOfCharacteristicTypesRef"
+	"ConstantsSet","DataProcessorObject","DocumentObject","DocumentRef"
+	"DynamicList","EnumRef","ExchangePlanObject","ExchangePlanRef"
+	"ExternalDataProcessorObject","ExternalReportObject"
+	"InformationRegisterRecordManager","InformationRegisterRecordSet"
+	"ReportObject","TaskObject","TaskRef"
+)
+
+if (-not $stopped) {
+	$typeNodes = $root.SelectNodes("//v8:Type", $nsMgr)
+	$typeOk = $true
+	$typeChecked = 0
+	$typeInvalid = 0
+	foreach ($tn in $typeNodes) {
+		$tv = $tn.InnerText.Trim()
+		if (-not $tv) { continue }
+		$typeChecked++
+		if ($tv -in $knownInvalidTypes) {
+			Report-Error "12. Type '$tv': invalid runtime/UI type (not valid in XDTO schema)"
+			$typeOk = $false; $typeInvalid++
+			continue
+		}
+		if ($tv -in $validClosedTypes) { continue }
+		if ($tv -match '^cfg:(.+)$') {
+			$cfgVal = $Matches[1]
+			if ($cfgVal -eq "DynamicList") { continue }
+			if ($cfgVal -match '^([^.]+)\.') {
+				$pfx = $Matches[1]
+				if ($pfx -in $validCfgPrefixes) {
+					# ExternalDataProcessorObject/ExternalReportObject valid only for EPF/ERF, not config
+					if ($script:isConfigContext -and ($pfx -eq "ExternalDataProcessorObject" -or $pfx -eq "ExternalReportObject")) {
+						Report-Error "12. Type '$tv': External* type in configuration context (use DataProcessorObject/ReportObject instead)"
+						$typeOk = $false; $typeInvalid++
+					}
+					continue
+				}
+			}
+			Report-Warn "12. Type '$tv': unrecognized cfg prefix"
+			$typeOk = $false
+			continue
+		}
+		if ($tv -match ':') { continue }
+		Report-Warn "12. Type '$tv': bare type without namespace prefix"
+		$typeOk = $false
+	}
+	if ($typeChecked -eq 0) {
+		Report-OK "12. Types: no type values to check"
+	} elseif ($typeOk) {
+		Report-OK "12. Types: $typeChecked values, all valid"
+	}
+}
+
+# --- Summary ---
+
+$checks = $script:okCount + $errors + $warnings
+
+if ($errors -eq 0 -and $warnings -eq 0 -and -not $Detailed) {
+	Write-Host "=== Validation OK: Form.$formName ($checks checks) ==="
 } else {
-	Write-Host "Errors: $errors, Warnings: $warnings"
+	Write-Host ""
+	if ($Detailed) {
+		Write-Host "---"
+		Write-Host "Total: $($allElements.Count) elements, $($attrNodes.Count) attributes, $($cmdNodes.Count) commands"
+	}
+
+	if ($stopped) {
+		Write-Host "Stopped after $MaxErrors errors. Fix and re-run."
+	}
+
+	Write-Host "=== Result: $errors errors, $warnings warnings ($checks checks) ==="
 }
 
 if ($errors -gt 0) {

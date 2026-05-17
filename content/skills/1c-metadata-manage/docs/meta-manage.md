@@ -486,6 +486,37 @@ Exit code: 0 = all checks passed, 1 = errors found.
 ```
 
 ---
+## Recent Additions (upstream `w-2026-05-17`)
+
+The PowerShell scripts under `tools/1c-meta-{compile,edit,info,remove,validate}/scripts/` were refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills). Highlights:
+
+### `meta-compile` — new properties and stricter type rules
+
+- **Catalog properties** are now driven by JSON (no more hard-coded values): `limitLevelCount`, `levelCount`, `foldersOnTop`, `subordinationUse`, `codeSeries`, `quickChoice`, `choiceMode`. Hand-edit of XML is no longer required for non-default settings.
+- **`owners`** — array of catalog owners with shorthand syntax.
+- **`multiLine: true`** (or flag `| multiline`) on an attribute marks it as multiline.
+- **`choiceHistoryOnInput`** on attributes — controls history-based auto-completion when entering a reference value.
+- **Default for `quickChoice`** aligned with real configurations: catalogs / chart-of-characteristic-types / chart-of-accounts / chart-of-calculation-types / exchange plans default to `false`; enums default to `true` (≈95% / ≈99% match across real configs).
+- **Manager modules** are now created alongside the object module for **reports and data processors** — required for reports that override `НастроитьВариантыОтчета`. Constants get manager and value-manager modules; enums get a manager module.
+- **Empty `Ext/` folders** no longer created for constants, enums and document journals — they previously caused the platform to wipe extension modules on load.
+- **Register-attribute properties** are filtered by register kind: AccumulationRegister / AccountingRegister / CalculationRegister attributes no longer get attribute-only properties the platform silently dropped. InformationRegister keeps the full set.
+- **System enum values** in properties (`RegisterType`, `WriteMode`, `Periodicity`, …≈20 more) now accept synonyms and are case-insensitive — typical model errors like `Balances` → `Balance` or Russian variants no longer break the build.
+- **Strict validation of enum values**: an unknown value for a known property gives a clear error instead of leaking into XML.
+- **Format version** auto-detected from the nearest `Configuration.xml` (8.3.27+, 8.5).
+
+### `meta-edit`
+
+- Same synonym dictionary and case-insensitivity for system enum values, applied in `modify-attribute` / `modify-property` and when parsing `fillChecking` / `indexing`.
+
+### `meta-validate`
+
+- Empty register check (no dimensions, no resources, no attributes — platform refuses to load).
+- Document-movements pointing to a non-existent register are reported.
+
+### `meta-remove`
+
+- Returns exit code 1 when the object is not found (was silently 0).
+
 ## MCP Integration
 
 - **get_object_dossier** — Comprehensive structural passport in one call: structure, forms, subscriptions, roles, dependencies, code modules, business info. Use as the first step before creating/modifying/removing objects.

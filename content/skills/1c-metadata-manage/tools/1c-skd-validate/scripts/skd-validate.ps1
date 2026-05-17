@@ -1,8 +1,11 @@
-﻿# skd-validate v1.0 — Validate 1C DCS structure
+﻿# skd-validate v1.1 — Validate 1C DCS structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$TemplatePath,
+
+	[switch]$Detailed,
 
 	[int]$MaxErrors = 20,
 
@@ -14,11 +17,27 @@ $ErrorActionPreference = "Stop"
 
 # --- Resolve path ---
 
-if (-not $TemplatePath.EndsWith(".xml")) {
-	$candidate = Join-Path (Join-Path $TemplatePath "Ext") "Template.xml"
-	if (Test-Path $candidate) {
-		$TemplatePath = $candidate
+if (-not [System.IO.Path]::IsPathRooted($TemplatePath)) {
+	$TemplatePath = Join-Path (Get-Location).Path $TemplatePath
+}
+# A: Directory → Ext/Template.xml
+if (Test-Path $TemplatePath -PathType Container) {
+	$TemplatePath = Join-Path (Join-Path $TemplatePath "Ext") "Template.xml"
+}
+# B1: Missing Ext/ (e.g. Templates/СКД/Template.xml → Templates/СКД/Ext/Template.xml)
+if (-not (Test-Path $TemplatePath)) {
+	$fn = [System.IO.Path]::GetFileName($TemplatePath)
+	if ($fn -eq "Template.xml") {
+		$c = Join-Path (Join-Path (Split-Path $TemplatePath) "Ext") $fn
+		if (Test-Path $c) { $TemplatePath = $c }
 	}
+}
+# B2: Descriptor (Templates/СКД.xml → Templates/СКД/Ext/Template.xml)
+if (-not (Test-Path $TemplatePath) -and $TemplatePath.EndsWith(".xml")) {
+	$stem = [System.IO.Path]::GetFileNameWithoutExtension($TemplatePath)
+	$dir = Split-Path $TemplatePath
+	$c = Join-Path (Join-Path (Join-Path $dir $stem) "Ext") "Template.xml"
+	if (Test-Path $c) { $TemplatePath = $c }
 }
 
 if (-not (Test-Path $TemplatePath)) {
@@ -33,6 +52,7 @@ $fileName = [System.IO.Path]::GetFileName($resolvedPath)
 
 $script:errors = 0
 $script:warnings = 0
+$script:okCount = 0
 $script:stopped = $false
 $script:output = New-Object System.Text.StringBuilder 4096
 
@@ -43,7 +63,8 @@ function Out-Line {
 
 function Report-OK {
 	param([string]$msg)
-	Out-Line "[OK]    $msg"
+	$script:okCount++
+	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
 
 function Report-Error {
@@ -62,10 +83,14 @@ function Report-Warn {
 }
 
 $finalize = {
-	Out-Line ""
-	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ==="
-
-	$result = $script:output.ToString()
+	$checks = $script:okCount + $script:errors + $script:warnings
+	if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
+		$result = "=== Validation OK: $fileName ($checks checks) ==="
+	} else {
+		Out-Line ""
+		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
+		$result = $script:output.ToString()
+	}
 	Write-Host $result
 
 	if ($OutFile) {

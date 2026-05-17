@@ -1,8 +1,11 @@
-﻿# meta-validate v1.0 — Validate 1C metadata object structure
+﻿# meta-validate v1.3 — Validate 1C metadata object structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$ObjectPath,
+
+	[switch]$Detailed,
 
 	[int]$MaxErrors = 30,
 
@@ -11,6 +14,31 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Batch mode: pipe-separated paths (comma reserved by PowerShell) ---
+
+$pathList = @($ObjectPath -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($pathList.Count -gt 1) {
+	$batchOk = 0
+	$batchFail = 0
+	foreach ($singlePath in $pathList) {
+		$callArgs = @{ ObjectPath = $singlePath; MaxErrors = $MaxErrors; Verbose = $Detailed }
+		if ($OutFile) {
+			$baseName = [System.IO.Path]::GetFileNameWithoutExtension($OutFile)
+			$ext = [System.IO.Path]::GetExtension($OutFile)
+			$dir = Split-Path $OutFile
+			if (-not $dir) { $dir = "." }
+			$objLeaf = [System.IO.Path]::GetFileNameWithoutExtension($singlePath)
+			$callArgs.OutFile = Join-Path $dir "$baseName`_$objLeaf$ext"
+		}
+		& $PSCommandPath @callArgs
+		if ($LASTEXITCODE -eq 0) { $batchOk++ } else { $batchFail++ }
+	}
+	Write-Host ""
+	Write-Host "=== Batch: $($pathList.Count) objects, $batchOk passed, $batchFail failed ==="
+	if ($batchFail -gt 0) { exit 1 }
+	exit 0
+}
 
 # --- Resolve path ---
 
@@ -21,8 +49,11 @@ if (-not [System.IO.Path]::IsPathRooted($ObjectPath)) {
 if (Test-Path $ObjectPath -PathType Container) {
 	$dirName = Split-Path $ObjectPath -Leaf
 	$candidate = Join-Path $ObjectPath "$dirName.xml"
+	$sibling = Join-Path (Split-Path $ObjectPath) "$dirName.xml"
 	if (Test-Path $candidate) {
 		$ObjectPath = $candidate
+	} elseif (Test-Path $sibling) {
+		$ObjectPath = $sibling
 	} else {
 		$xmlFiles = @(Get-ChildItem $ObjectPath -Filter "*.xml" -File | Select-Object -First 1)
 		if ($xmlFiles.Count -gt 0) {
@@ -34,6 +65,16 @@ if (Test-Path $ObjectPath -PathType Container) {
 	}
 }
 
+# File not found — check Dir/Name/Name.xml → Dir/Name.xml
+if (-not (Test-Path $ObjectPath)) {
+	$fileName = [System.IO.Path]::GetFileNameWithoutExtension($ObjectPath)
+	$parentDir = Split-Path $ObjectPath
+	$parentDirName = Split-Path $parentDir -Leaf
+	if ($fileName -eq $parentDirName) {
+		$candidate = Join-Path (Split-Path $parentDir) "$fileName.xml"
+		if (Test-Path $candidate) { $ObjectPath = $candidate }
+	}
+}
 if (-not (Test-Path $ObjectPath)) {
 	Write-Host "[ERROR] File not found: $ObjectPath"
 	exit 1
@@ -41,10 +82,24 @@ if (-not (Test-Path $ObjectPath)) {
 
 $resolvedPath = (Resolve-Path $ObjectPath).Path
 
+# --- Detect config directory (for cross-object checks) ---
+
+$script:configDir = $null
+$probe = Split-Path $resolvedPath
+for ($depth = 0; $depth -lt 4; $depth++) {
+	if (-not $probe) { break }
+	if (Test-Path (Join-Path $probe "Configuration.xml")) {
+		$script:configDir = $probe
+		break
+	}
+	$probe = Split-Path $probe
+}
+
 # --- Output infrastructure ---
 
 $script:errors = 0
 $script:warnings = 0
+$script:okCount = 0
 $script:stopped = $false
 $script:output = New-Object System.Text.StringBuilder 8192
 
@@ -55,7 +110,8 @@ function Out-Line {
 
 function Report-OK {
 	param([string]$msg)
-	Out-Line "[OK]    $msg"
+	$script:okCount++
+	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
 
 function Report-Error {
@@ -74,10 +130,14 @@ function Report-Warn {
 }
 
 $finalize = {
-	Out-Line ""
-	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ==="
-
-	$result = $script:output.ToString()
+	$checks = $script:okCount + $script:errors + $script:warnings
+	if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
+		$result = "=== Validation OK: $mdType.$objName ($checks checks) ==="
+	} else {
+		Out-Line ""
+		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
+		$result = $script:output.ToString()
+	}
 	Write-Host $result
 
 	if ($OutFile) {
@@ -203,6 +263,15 @@ $validPropertyValues = @{
 	"FillChecking"                   = @("DontCheck","ShowError","ShowWarning")
 	"Indexing"                       = @("DontIndex","Index","IndexWithAdditionalOrder")
 	"DataHistory"                    = @("Use","DontUse")
+	"DependenceOnCalculationTypes"   = @("DontUse","OnActionPeriod")
+}
+
+# Properties forbidden per type (would cause LoadConfigFromFiles error)
+$forbiddenProperties = @{
+	"ChartOfCharacteristicTypes" = @("CodeType")
+	"ChartOfAccounts"            = @("Autonumbering","Hierarchical")
+	"ChartOfCalculationTypes"    = @("CheckUnique","Autonumbering")
+	"ExchangePlan"               = @("CodeType","CheckUnique","Autonumbering")
 }
 
 # --- 1. Parse XML ---
@@ -389,8 +458,6 @@ if ($typesWithoutInternalInfo -contains $mdType) {
 			Report-OK "2. InternalInfo: $($genTypes.Count) GeneratedType ($catList)"
 		}
 	}
-} else {
-	Report-OK "2. InternalInfo: N/A for $mdType"
 }
 
 if ($script:stopped) { & $finalize; exit 1 }
@@ -509,8 +576,6 @@ if ($typesWithStdAttrs -contains $mdType) {
 			Report-OK "5. StandardAttributes: $($stdAttrs.Count) entries"
 		}
 	}
-} else {
-	Report-OK "5. StandardAttributes: N/A for $mdType"
 }
 
 if ($script:stopped) { & $finalize; exit 1 }
@@ -630,8 +695,39 @@ if ($childObjNode) {
 	} elseif ($check7Count -eq 0) {
 		Report-OK "7. Child elements: none to check"
 	}
-} else {
-	Report-OK "7. Child elements: N/A (no ChildObjects)"
+}
+
+if ($script:stopped) { & $finalize; exit 1 }
+
+# --- Check 7b: Reserved attribute names ---
+
+$reservedAttrNames = @(
+	"Ref","DeletionMark","Code","Description","Date","Number","Posted","Parent","Owner",
+	"IsFolder","Predefined","PredefinedDataName","Recorder","Period","LineNumber","Active",
+	"Order","Type","OffBalance","Started","Completed","HeadTask","Executed","RoutePoint",
+	"BusinessProcess","ThisNode","SentNo","ReceivedNo","CalculationType","RegistrationPeriod",
+	"ReversingEntry","Account","ValueType","ActionPeriodIsBasic"
+)
+
+if ($childObjNode) {
+	$check7bOk = $true
+	$attrNodes = $childObjNode.SelectNodes("md:Attribute", $ns)
+	foreach ($attrNode in $attrNodes) {
+		$attrProps = $attrNode.SelectSingleNode("md:Properties", $ns)
+		if ($attrProps) {
+			$attrNameNode = $attrProps.SelectSingleNode("md:Name", $ns)
+			if ($attrNameNode -and $attrNameNode.InnerText) {
+				$an = $attrNameNode.InnerText
+				if ($reservedAttrNames -contains $an) {
+					Report-Warn "7b. Attribute '$an' conflicts with a standard attribute name"
+					$check7bOk = $false
+				}
+			}
+		}
+	}
+	if ($check7bOk) {
+		Report-OK "7b. Reserved attribute names: no conflicts"
+	}
 }
 
 if ($script:stopped) { & $finalize; exit 1 }
@@ -719,8 +815,6 @@ if ($childObjNode) {
 	if ($check8Ok) {
 		Report-OK "8. Name uniqueness: all names unique"
 	}
-} else {
-	Report-OK "8. Name uniqueness: N/A"
 }
 
 if ($script:stopped) { & $finalize; exit 1 }
@@ -806,8 +900,6 @@ if ($childObjNode) {
 	} else {
 		Report-OK "9. TabularSections: none present"
 	}
-} else {
-	Report-OK "9. TabularSections: N/A"
 }
 
 if ($script:stopped) { & $finalize; exit 1 }
@@ -872,6 +964,151 @@ if ($propsNode) {
 			Report-Error "10. ScheduledJob: empty MethodName"
 			$check10Ok = $false
 			$check10Issues++
+		}
+	}
+
+	# AccountingRegister: ChartOfAccounts must not be empty
+	if ($mdType -eq "AccountingRegister") {
+		$coa = $propsNode.SelectSingleNode("md:ChartOfAccounts", $ns)
+		if (-not $coa -or -not $coa.InnerText.Trim()) {
+			Report-Error "10. AccountingRegister: empty ChartOfAccounts"
+			$check10Ok = $false
+			$check10Issues++
+			Write-Host "[HINT] /meta-edit -Operation modify-property -Value `"ChartOfAccounts=ChartOfAccounts.XXX`""
+		}
+	}
+
+	# CalculationRegister: ChartOfCalculationTypes must not be empty
+	if ($mdType -eq "CalculationRegister") {
+		$coct = $propsNode.SelectSingleNode("md:ChartOfCalculationTypes", $ns)
+		if (-not $coct -or -not $coct.InnerText.Trim()) {
+			Report-Error "10. CalculationRegister: empty ChartOfCalculationTypes"
+			$check10Ok = $false
+			$check10Issues++
+			Write-Host "[HINT] /meta-edit -Operation modify-property -Value `"ChartOfCalculationTypes=ChartOfCalculationTypes.XXX`""
+		}
+	}
+
+	# BusinessProcess: Task should not be empty
+	if ($mdType -eq "BusinessProcess") {
+		$taskProp = $propsNode.SelectSingleNode("md:Task", $ns)
+		if (-not $taskProp -or -not $taskProp.InnerText.Trim()) {
+			Report-Warn "10. BusinessProcess: empty Task reference"
+			$check10Issues++
+			Write-Host "[HINT] /meta-edit -Operation modify-property -Value `"Task=Task.XXX`""
+		}
+	}
+
+	# CalculationRegister: ActionPeriod=true requires non-empty Schedule
+	if ($mdType -eq "CalculationRegister") {
+		$actionPeriod = $propsNode.SelectSingleNode("md:ActionPeriod", $ns)
+		if ($actionPeriod -and $actionPeriod.InnerText -eq "true") {
+			$schedule = $propsNode.SelectSingleNode("md:Schedule", $ns)
+			if (-not $schedule -or -not $schedule.InnerText.Trim()) {
+				Report-Warn "10. CalculationRegister: ActionPeriod=true but Schedule is empty — platform requires a schedule register"
+				$check10Issues++
+			}
+		}
+	}
+
+	# DocumentJournal: RegisteredDocuments should not be empty
+	if ($mdType -eq "DocumentJournal") {
+		$regDocs = $propsNode.SelectSingleNode("md:RegisteredDocuments", $ns)
+		$hasRegDocs = $false
+		if ($regDocs) {
+			$items = $regDocs.SelectNodes("v8:Type", $ns)
+			if ($items.Count -gt 0) { $hasRegDocs = $true }
+		}
+		if (-not $hasRegDocs) {
+			Report-Warn "10. DocumentJournal: no RegisteredDocuments specified"
+			$check10Issues++
+		}
+	}
+
+	# ChartOfAccounts: ExtDimensionTypes should be set if MaxExtDimensionCount > 0
+	if ($mdType -eq "ChartOfAccounts") {
+		$maxExtDim = $propsNode.SelectSingleNode("md:MaxExtDimensionCount", $ns)
+		if ($maxExtDim -and [int]$maxExtDim.InnerText -gt 0) {
+			$edt = $propsNode.SelectSingleNode("md:ExtDimensionTypes", $ns)
+			if (-not $edt -or -not $edt.InnerText.Trim()) {
+				Report-Warn "10. ChartOfAccounts: MaxExtDimensionCount>0 but ExtDimensionTypes is empty"
+				$check10Issues++
+				Write-Host "[HINT] /meta-edit -Operation modify-property -Value `"ExtDimensionTypes=ChartOfCharacteristicTypes.XXX`""
+			}
+		}
+	}
+
+	# Register: must have at least one Dimension or Resource (platform rejects empty registers)
+	$regTypesAll = @("AccumulationRegister","AccountingRegister","CalculationRegister","InformationRegister")
+	if ($regTypesAll -contains $mdType -and $childObjNode) {
+		$dims = $childObjNode.SelectNodes("md:Dimension", $ns).Count
+		$ress = $childObjNode.SelectNodes("md:Resource", $ns).Count
+		$attrs = $childObjNode.SelectNodes("md:Attribute", $ns).Count
+		if (($dims + $ress + $attrs) -eq 0) {
+			Report-Warn "10. $mdType`: no Dimensions, Resources, or Attributes — platform will reject"
+			$check10Issues++
+		}
+	}
+
+	# Document: RegisterRecords references should point to existing objects in config
+	if ($mdType -eq "Document" -and $script:configDir) {
+		$regRecords = $propsNode.SelectSingleNode("md:RegisterRecords", $ns)
+		if ($regRecords) {
+			$items = $regRecords.SelectNodes("xr:Item", $ns)
+			foreach ($item in $items) {
+				$refVal = $item.InnerText.Trim()
+				if (-not $refVal) { continue }
+				# Parse "AccumulationRegister.Name" → dir AccumulationRegisters/Name
+				$parts = $refVal -split '\.',2
+				if ($parts.Count -eq 2) {
+					$refType = $parts[0]; $refName = $parts[1]
+					$dirMap = @{
+						"AccumulationRegister"="AccumulationRegisters"; "InformationRegister"="InformationRegisters"
+						"AccountingRegister"="AccountingRegisters"; "CalculationRegister"="CalculationRegisters"
+					}
+					$refDir = $dirMap[$refType]
+					if ($refDir) {
+						$refPath = Join-Path $script:configDir "$refDir/$refName"
+						$refXml = Join-Path $script:configDir "$refDir/$refName.xml"
+						if (-not (Test-Path $refPath) -and -not (Test-Path $refXml)) {
+							Report-Warn "10. Document.RegisterRecords references '$refVal' but object not found in config"
+							$check10Issues++
+						}
+					}
+				}
+			}
+		}
+	}
+
+	# Register: must have at least one registrar document
+	$registerTypes = @("AccumulationRegister","AccountingRegister","CalculationRegister","InformationRegister")
+	if ($registerTypes -contains $mdType -and $script:configDir -and $objName -ne "(unknown)") {
+		$needsRegistrar = $true
+		# InformationRegister with WriteMode=Independent does not need a registrar
+		if ($mdType -eq "InformationRegister") {
+			$writeMode = $propsNode.SelectSingleNode("md:WriteMode", $ns)
+			if (-not $writeMode -or $writeMode.InnerText -ne "RecorderSubordinate") {
+				$needsRegistrar = $false
+			}
+		}
+		if ($needsRegistrar) {
+			$regRef = "$mdType.$objName"
+			$docsDir = Join-Path $script:configDir "Documents"
+			$hasRegistrar = $false
+			if (Test-Path $docsDir) {
+				$docXmls = Get-ChildItem $docsDir -Filter "*.xml" -File -ErrorAction SilentlyContinue
+				foreach ($docXml in $docXmls) {
+					$content = [System.IO.File]::ReadAllText($docXml.FullName, [System.Text.Encoding]::UTF8)
+					if ($content.Contains($regRef)) {
+						$hasRegistrar = $true
+						break
+					}
+				}
+			}
+			if (-not $hasRegistrar) {
+				Report-Warn "10. $mdType`: no registrar document found (none references '$regRef' in RegisterRecords)"
+				$check10Issues++
+			}
 		}
 	}
 }
@@ -974,8 +1211,123 @@ if ($mdType -eq "HTTPService" -and $childObjNode) {
 	if ($check11Ok) {
 		Report-OK "11. WebService: $($operations.Count) operation(s), $paramCount parameter(s)"
 	}
-} else {
-	Report-OK "11. HTTPService/WebService: N/A"
+}
+
+if ($script:stopped) { & $finalize; exit 1 }
+
+# --- Check 12: Forbidden properties per type ---
+
+if ($propsNode -and $forbiddenProperties.ContainsKey($mdType)) {
+	$forbidden = $forbiddenProperties[$mdType]
+	$check12Ok = $true
+	foreach ($fp in $forbidden) {
+		$fpNode = $propsNode.SelectSingleNode("md:$fp", $ns)
+		if ($fpNode) {
+			Report-Error "12. Forbidden property '$fp' present in $mdType (will fail on LoadConfigFromFiles)"
+			$check12Ok = $false
+		}
+	}
+	if ($check12Ok) {
+		Report-OK "12. Forbidden properties: none found"
+	}
+}
+
+if ($script:stopped) { & $finalize; exit 1 }
+
+# --- Check 13: Method reference validation (EventSubscription.Handler, ScheduledJob.MethodName) ---
+
+if ($propsNode -and $mdType -in @("EventSubscription","ScheduledJob") -and $script:configDir) {
+	$check13Ok = $true
+	$methodRef = $null
+	$propLabel = $null
+
+	if ($mdType -eq "EventSubscription") {
+		$hNode = $propsNode.SelectSingleNode("md:Handler", $ns)
+		if ($hNode) { $methodRef = $hNode.InnerText.Trim() }
+		$propLabel = "Handler"
+	} elseif ($mdType -eq "ScheduledJob") {
+		$mNode = $propsNode.SelectSingleNode("md:MethodName", $ns)
+		if ($mNode) { $methodRef = $mNode.InnerText.Trim() }
+		$propLabel = "MethodName"
+	}
+
+	if ($methodRef) {
+		$parts = $methodRef.Split('.')
+		# Format: CommonModule.ModuleName.ProcedureName (3 parts) or ModuleName.ProcedureName (2 parts, legacy)
+		if ($parts.Count -eq 3 -and $parts[0] -eq "CommonModule") {
+			$cmName = $parts[1]
+			$procName = $parts[2]
+		} elseif ($parts.Count -eq 2) {
+			$cmName = $parts[0]
+			$procName = $parts[1]
+		} else {
+			Report-Error "13. ${mdType}.${propLabel} = '$methodRef': expected format 'CommonModule.ModuleName.ProcedureName'"
+			$check13Ok = $false
+			$cmName = $null
+			$procName = $null
+		}
+		if ($cmName) {
+			$cmXml = Join-Path (Join-Path $script:configDir "CommonModules") "$cmName.xml"
+			if (-not (Test-Path $cmXml)) {
+				Report-Error "13. ${mdType}.${propLabel}: CommonModule '$cmName' not found (expected $cmXml)"
+				$check13Ok = $false
+			} else {
+				# Check BSL file for exported procedure
+				$bslPath = Join-Path (Join-Path (Join-Path $script:configDir "CommonModules") $cmName) "Ext/Module.bsl"
+				if (Test-Path $bslPath) {
+					$bslContent = [System.IO.File]::ReadAllText($bslPath, [System.Text.Encoding]::UTF8)
+					# Match: Procedure/Function ProcName(...) Export or Процедура/Функция ProcName(...) Экспорт
+					$exportPattern = "(?mi)^[\s]*(Procedure|Function|Процедура|Функция)\s+$([regex]::Escape($procName))\s*\(.*\)\s+(Export|Экспорт)"
+					if (-not [regex]::IsMatch($bslContent, $exportPattern)) {
+						Report-Warn "13. ${mdType}.${propLabel}: procedure '$procName' not found as exported in CommonModule '$cmName'"
+						$check13Ok = $false
+					}
+				} else {
+					Report-Warn "13. ${mdType}.${propLabel}: BSL file not found ($bslPath), cannot verify procedure"
+				}
+			}
+		}
+	}
+
+	if ($check13Ok) {
+		Report-OK "13. Method reference: $propLabel = '$methodRef'"
+	}
+}
+
+if ($script:stopped) { & $finalize; exit 1 }
+
+# --- Check 14: DocumentJournal Column content ---
+
+if ($mdType -eq "DocumentJournal" -and $childObjNode) {
+	$columns = $childObjNode.SelectNodes("md:Column", $ns)
+	$check14Ok = $true
+	$colCount = 0
+	$emptyRefCount = 0
+
+	foreach ($col in $columns) {
+		$colCount++
+		$colProps = $col.SelectSingleNode("md:Properties", $ns)
+		$colNameNode = if ($colProps) { $colProps.SelectSingleNode("md:Name", $ns) } else { $null }
+		$colName = if ($colNameNode) { $colNameNode.InnerText } else { "(unnamed)" }
+
+		$refs = if ($colProps) { $colProps.SelectSingleNode("md:References", $ns) } else { $null }
+		$hasItems = $false
+		if ($refs) {
+			$items = $refs.SelectNodes("xr:Item", $ns)
+			if ($items.Count -gt 0) { $hasItems = $true }
+		}
+		if (-not $hasItems) {
+			Report-Error "14. DocumentJournal Column '$colName': empty References (will fail on LoadConfigFromFiles)"
+			$check14Ok = $false
+			$emptyRefCount++
+		}
+	}
+
+	if ($check14Ok -and $colCount -gt 0) {
+		Report-OK "14. DocumentJournal Columns: $colCount column(s), all have References"
+	} elseif ($colCount -eq 0) {
+		Report-OK "14. DocumentJournal Columns: none"
+	}
 }
 
 # --- Final output ---

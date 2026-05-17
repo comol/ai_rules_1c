@@ -117,6 +117,26 @@ $hasXml = Test-Path $objXml
 $hasDir = Test-Path $objDir -PathType Container
 
 if (-not $hasXml -and -not $hasDir) {
+	# Check if registered in Configuration.xml before proceeding
+	$cfgCheckDoc = New-Object System.Xml.XmlDocument
+	$cfgCheckDoc.PreserveWhitespace = $true
+	$cfgCheckDoc.Load($configXml)
+	$cfgCheckNs = New-Object System.Xml.XmlNamespaceManager($cfgCheckDoc.NameTable)
+	$cfgCheckNs.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
+	$cfgCheckNode = $cfgCheckDoc.DocumentElement.SelectSingleNode("md:Configuration/md:ChildObjects", $cfgCheckNs)
+	$registeredInCfg = $false
+	if ($cfgCheckNode) {
+		foreach ($child in @($cfgCheckNode.ChildNodes)) {
+			if ($child.NodeType -ne 'Element') { continue }
+			if ($child.LocalName -eq $objType -and $child.InnerText.Trim() -eq $objName) {
+				$registeredInCfg = $true; break
+			}
+		}
+	}
+	if (-not $registeredInCfg) {
+		Write-Host "[ERROR] Object not found: $typePlural/$objName.xml and not registered in Configuration.xml"
+		exit 1
+	}
 	Write-Host "[WARN]  Object files not found: $typePlural/$objName.xml"
 	Write-Host "        Proceeding with deregistration only..."
 } else {

@@ -1,4 +1,4 @@
-﻿# db-load-xml v1.0 — Load 1C configuration from XML files
+﻿# db-load-xml v1.3 — Load 1C configuration from XML files
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 <#
 .SYNOPSIS
@@ -95,7 +95,13 @@ param(
 
     [Parameter(Mandatory=$false)]
     [ValidateSet("Hierarchical", "Plain")]
-    [string]$Format = "Hierarchical"
+    [string]$Format = "Hierarchical",
+
+    [Parameter(Mandatory=$false)]
+    [switch]$UpdateDB,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$StrictLog
 )
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -195,6 +201,11 @@ try {
         $arguments += "-AllExtensions"
     }
 
+    # --- UpdateDB ---
+    if ($UpdateDB) {
+        $arguments += "/UpdateDBCfg"
+    }
+
     # --- Output ---
     $outFile = Join-Path $tempDir "load_log.txt"
     $arguments += "/Out", "`"$outFile`""
@@ -205,20 +216,58 @@ try {
     $process = Start-Process -FilePath $V8Path -ArgumentList $arguments -NoNewWindow -Wait -PassThru
     $exitCode = $process.ExitCode
 
+    # --- Read log ---
+    $logContent = $null
+    if (Test-Path $outFile) {
+        $logContent = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
+    }
+
+    # --- Scan log for silent rejections ---
+    # Platform often writes load-time rejections into /Out but exits with code 0.
+    # These patterns flag cases where metadata was dropped or rejected silently.
+    $fatalLogPatterns = @(
+        'Неверное свойство объекта метаданных',
+        'не входит в состав объекта метаданных',
+        'Неизвестное имя типа',
+        'Неизвестный объект метаданных',
+        'Ни один из документов не является регистратором для регистра',
+        'Неверное значение перечисления',
+        'не может быть приведен к типу'
+    )
+    $silentFailures = @()
+    if ($logContent) {
+        foreach ($line in ($logContent -split "`r?`n")) {
+            foreach ($pat in $fatalLogPatterns) {
+                if ($line -match [regex]::Escape($pat)) {
+                    $silentFailures += $line.Trim()
+                    break
+                }
+            }
+        }
+    }
+
     # --- Result ---
+    # Default: mirror platform's verdict via exit code. Log content (including any
+    # rejection warnings) is always printed to stdout for visibility. With -StrictLog,
+    # elevate exit code to 1 when rejection patterns are found even if platform said 0.
     if ($exitCode -eq 0) {
         Write-Host "Load completed successfully" -ForegroundColor Green
     } else {
         Write-Host "Error loading configuration (code: $exitCode)" -ForegroundColor Red
     }
 
-    if (Test-Path $outFile) {
-        $logContent = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
-        if ($logContent) {
-            Write-Host "--- Log ---"
-            Write-Host $logContent
-            Write-Host "--- End ---"
-        }
+    if ($logContent) {
+        Write-Host "--- Log ---"
+        Write-Host $logContent
+        Write-Host "--- End ---"
+    }
+
+    if ($silentFailures.Count -gt 0) {
+        $msg = "[warning] log contains $($silentFailures.Count) rejection(s) — platform loaded config but dropped properties/refs"
+        if (-not $StrictLog) { $msg += " (pass -StrictLog to treat as error)" }
+        Write-Host $msg -ForegroundColor Yellow
+        foreach ($f in $silentFailures) { Write-Host "  $f" -ForegroundColor Yellow }
+        if ($StrictLog -and $exitCode -eq 0) { $exitCode = 1 }
     }
 
     exit $exitCode

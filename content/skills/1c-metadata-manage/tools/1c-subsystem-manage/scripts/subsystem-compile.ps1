@@ -1,4 +1,4 @@
-﻿# subsystem-compile v1.0 — Create 1C subsystem from JSON definition
+﻿# subsystem-compile v1.5 — Create 1C subsystem from JSON definition
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -85,7 +85,178 @@ function New-Guid-String {
 	return [System.Guid]::NewGuid().ToString()
 }
 
-# --- 3. Resolve defaults ---
+function Write-ChildSubsystemStub([string]$childPath, [string]$childName, [string]$formatVersion, [System.Text.Encoding]$utf8Bom) {
+	$childUuid = New-Guid-String
+	$sb = New-Object System.Text.StringBuilder 2048
+	[void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
+	[void]$sb.AppendLine("<MetaDataObject xmlns=`"http://v8.1c.ru/8.3/MDClasses`" xmlns:app=`"http://v8.1c.ru/8.2/managed-application/core`" xmlns:cfg=`"http://v8.1c.ru/8.1/data/enterprise/current-config`" xmlns:cmi=`"http://v8.1c.ru/8.2/managed-application/cmi`" xmlns:ent=`"http://v8.1c.ru/8.1/data/enterprise`" xmlns:lf=`"http://v8.1c.ru/8.2/managed-application/logform`" xmlns:style=`"http://v8.1c.ru/8.1/data/ui/style`" xmlns:sys=`"http://v8.1c.ru/8.1/data/ui/fonts/system`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:v8ui=`"http://v8.1c.ru/8.1/data/ui`" xmlns:web=`"http://v8.1c.ru/8.1/data/ui/colors/web`" xmlns:win=`"http://v8.1c.ru/8.1/data/ui/colors/windows`" xmlns:xen=`"http://v8.1c.ru/8.3/xcf/enums`" xmlns:xpr=`"http://v8.1c.ru/8.3/xcf/predef`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"$formatVersion`">")
+	[void]$sb.AppendLine("`t<Subsystem uuid=`"$childUuid`">")
+	[void]$sb.AppendLine("`t`t<Properties>")
+	[void]$sb.AppendLine("`t`t`t<Name>$(Esc-Xml $childName)</Name>")
+	[void]$sb.AppendLine("`t`t`t<Synonym/>")
+	[void]$sb.AppendLine("`t`t`t<Comment/>")
+	[void]$sb.AppendLine("`t`t`t<IncludeHelpInContents>true</IncludeHelpInContents>")
+	[void]$sb.AppendLine("`t`t`t<IncludeInCommandInterface>true</IncludeInCommandInterface>")
+	[void]$sb.AppendLine("`t`t`t<UseOneCommand>false</UseOneCommand>")
+	[void]$sb.AppendLine("`t`t`t<Explanation/>")
+	[void]$sb.AppendLine("`t`t`t<Picture/>")
+	[void]$sb.AppendLine("`t`t`t<Content/>")
+	[void]$sb.AppendLine("`t`t</Properties>")
+	[void]$sb.AppendLine("`t`t<ChildObjects/>")
+	[void]$sb.AppendLine("`t</Subsystem>")
+	[void]$sb.AppendLine('</MetaDataObject>')
+	[System.IO.File]::WriteAllText($childPath, $sb.ToString(), $utf8Bom)
+}
+
+# --- 3. Content type normalization (plural→singular, Russian→English) ---
+$script:contentTypeMap = @{
+	# Plural English → Singular
+	"Catalogs"                     = "Catalog"
+	"Documents"                    = "Document"
+	"Enums"                        = "Enum"
+	"Constants"                    = "Constant"
+	"Reports"                      = "Report"
+	"DataProcessors"               = "DataProcessor"
+	"InformationRegisters"         = "InformationRegister"
+	"AccumulationRegisters"        = "AccumulationRegister"
+	"AccountingRegisters"          = "AccountingRegister"
+	"CalculationRegisters"         = "CalculationRegister"
+	"ChartsOfAccounts"             = "ChartOfAccounts"
+	"ChartsOfCharacteristicTypes"  = "ChartOfCharacteristicTypes"
+	"ChartsOfCalculationTypes"     = "ChartOfCalculationTypes"
+	"BusinessProcesses"            = "BusinessProcess"
+	"Tasks"                        = "Task"
+	"ExchangePlans"                = "ExchangePlan"
+	"DocumentJournals"             = "DocumentJournal"
+	"CommonModules"                = "CommonModule"
+	"CommonCommands"               = "CommonCommand"
+	"CommonForms"                  = "CommonForm"
+	"CommonPictures"               = "CommonPicture"
+	"CommonTemplates"              = "CommonTemplate"
+	"CommonAttributes"             = "CommonAttribute"
+	"CommandGroups"                = "CommandGroup"
+	"Roles"                        = "Role"
+	"SessionParameters"            = "SessionParameter"
+	"FilterCriteria"               = "FilterCriterion"
+	"XDTOPackages"                 = "XDTOPackage"
+	"WebServices"                  = "WebService"
+	"HTTPServices"                 = "HTTPService"
+	"WSReferences"                 = "WSReference"
+	"EventSubscriptions"           = "EventSubscription"
+	"ScheduledJobs"                = "ScheduledJob"
+	"SettingsStorages"             = "SettingsStorage"
+	"FunctionalOptions"            = "FunctionalOption"
+	"FunctionalOptionsParameters"  = "FunctionalOptionsParameter"
+	"DefinedTypes"                 = "DefinedType"
+	"DocumentNumerators"           = "DocumentNumerator"
+	"Sequences"                    = "Sequence"
+	"Subsystems"                   = "Subsystem"
+	"StyleItems"                   = "StyleItem"
+	"IntegrationServices"          = "IntegrationService"
+	# Russian singular → English
+	"Справочник"                   = "Catalog"
+	"Каталог"                      = "Catalog"
+	"Документ"                     = "Document"
+	"Перечисление"                 = "Enum"
+	"Константа"                    = "Constant"
+	"Отчёт"                        = "Report"
+	"Отчет"                        = "Report"
+	"Обработка"                    = "DataProcessor"
+	"РегистрСведений"              = "InformationRegister"
+	"РегистрНакопления"            = "AccumulationRegister"
+	"РегистрБухгалтерии"           = "AccountingRegister"
+	"РегистрРасчёта"               = "CalculationRegister"
+	"РегистрРасчета"               = "CalculationRegister"
+	"ПланСчетов"                   = "ChartOfAccounts"
+	"ПланВидовХарактеристик"       = "ChartOfCharacteristicTypes"
+	"ПланВидовРасчёта"             = "ChartOfCalculationTypes"
+	"ПланВидовРасчета"             = "ChartOfCalculationTypes"
+	"БизнесПроцесс"                = "BusinessProcess"
+	"Задача"                       = "Task"
+	"ПланОбмена"                   = "ExchangePlan"
+	"ЖурналДокументов"             = "DocumentJournal"
+	"ОбщийМодуль"                  = "CommonModule"
+	"ОбщаяКоманда"                 = "CommonCommand"
+	"ОбщаяФорма"                   = "CommonForm"
+	"ОбщаяКартинка"                = "CommonPicture"
+	"ОбщийМакет"                   = "CommonTemplate"
+	"ОбщийРеквизит"                = "CommonAttribute"
+	"ГруппаКоманд"                 = "CommandGroup"
+	"Роль"                         = "Role"
+	"ПараметрСеанса"               = "SessionParameter"
+	"КритерийОтбора"               = "FilterCriterion"
+	"ПакетXDTO"                    = "XDTOPackage"
+	"ВебСервис"                    = "WebService"
+	"HTTPСервис"                   = "HTTPService"
+	"WSСсылка"                     = "WSReference"
+	"ПодпискаНаСобытие"            = "EventSubscription"
+	"РегламентноеЗадание"          = "ScheduledJob"
+	"ХранилищеНастроек"            = "SettingsStorage"
+	"ФункциональнаяОпция"          = "FunctionalOption"
+	"ПараметрФункциональныхОпций"  = "FunctionalOptionsParameter"
+	"ОпределяемыйТип"              = "DefinedType"
+	"НумераторДокументов"          = "DocumentNumerator"
+	"Последовательность"           = "Sequence"
+	"Подсистема"                   = "Subsystem"
+	"ЭлементСтиля"                 = "StyleItem"
+	"СервисИнтеграции"             = "IntegrationService"
+	# Russian plural → English
+	"Справочники"                  = "Catalog"
+	"Документы"                    = "Document"
+	"Перечисления"                 = "Enum"
+	"Константы"                    = "Constant"
+	"Отчёты"                       = "Report"
+	"Отчеты"                       = "Report"
+	"Обработки"                    = "DataProcessor"
+	"РегистрыСведений"             = "InformationRegister"
+	"РегистрыНакопления"           = "AccumulationRegister"
+	"РегистрыБухгалтерии"          = "AccountingRegister"
+	"РегистрыРасчёта"              = "CalculationRegister"
+	"РегистрыРасчета"              = "CalculationRegister"
+	"ПланыСчетов"                  = "ChartOfAccounts"
+	"ПланыВидовХарактеристик"      = "ChartOfCharacteristicTypes"
+	"ПланыВидовРасчёта"            = "ChartOfCalculationTypes"
+	"ПланыВидовРасчета"            = "ChartOfCalculationTypes"
+	"БизнесПроцессы"               = "BusinessProcess"
+	"Задачи"                       = "Task"
+	"ПланыОбмена"                  = "ExchangePlan"
+	"ЖурналыДокументов"            = "DocumentJournal"
+	"ОбщиеМодули"                  = "CommonModule"
+	"ОбщиеКоманды"                 = "CommonCommand"
+	"ОбщиеФормы"                   = "CommonForm"
+	"ОбщиеКартинки"                = "CommonPicture"
+	"ОбщиеМакеты"                  = "CommonTemplate"
+	"ОбщиеРеквизиты"               = "CommonAttribute"
+	"ГруппыКоманд"                 = "CommandGroup"
+	"Роли"                         = "Role"
+	"ПараметрыСеанса"              = "SessionParameter"
+	"КритерииОтбора"               = "FilterCriterion"
+	"ПакетыXDTO"                   = "XDTOPackage"
+	"ВебСервисы"                   = "WebService"
+	"HTTPСервисы"                  = "HTTPService"
+	"WSСсылки"                     = "WSReference"
+	"ПодпискиНаСобытия"            = "EventSubscription"
+	"РегламентныеЗадания"          = "ScheduledJob"
+	"ХранилищаНастроек"            = "SettingsStorage"
+	"ФункциональныеОпции"          = "FunctionalOption"
+	"ОпределяемыеТипы"             = "DefinedType"
+	"Подсистемы"                   = "Subsystem"
+	"ЭлементыСтиля"                = "StyleItem"
+	"СервисыИнтеграции"            = "IntegrationService"
+}
+
+function Normalize-ContentRef([string]$ref) {
+	if (-not $ref -or -not $ref.Contains('.')) { return $ref }
+	$dotIdx = $ref.IndexOf('.')
+	$typePart = $ref.Substring(0, $dotIdx)
+	$namePart = $ref.Substring($dotIdx + 1)
+	if ($script:contentTypeMap.ContainsKey($typePart)) {
+		$typePart = $script:contentTypeMap[$typePart]
+	}
+	return "$typePart.$namePart"
+}
+
+# --- 4. Resolve defaults ---
 $synonym = if ($def.synonym) { "$($def.synonym)" } else { Split-CamelCase $objName }
 $comment = if ($def.comment) { "$($def.comment)" } else { "" }
 $includeHelpInContents = "true"
@@ -94,9 +265,24 @@ $useOneCommand = if ($null -ne $def.useOneCommand) { "$($def.useOneCommand)".ToL
 $explanation = if ($def.explanation) { "$($def.explanation)" } else { "" }
 $picture = if ($def.picture) { "$($def.picture)" } else { "" }
 
+# Synonym: accept "objects" as alias for "content"
+if (-not $def.content -and $def.objects) { $def | Add-Member -NotePropertyName content -NotePropertyValue $def.objects }
+
 $contentItems = @()
+$normalizedCount = 0
 if ($def.content) {
-	foreach ($c in $def.content) { $contentItems += "$c" }
+	foreach ($c in $def.content) {
+		$raw = "$c"
+		$normalized = Normalize-ContentRef $raw
+		if ($normalized -ne $raw) {
+			Write-Host "[NORM] Content: $raw -> $normalized"
+			$normalizedCount++
+		}
+		$contentItems += $normalized
+	}
+}
+if ($normalizedCount -gt 0) {
+	Write-Host "[INFO] Normalized $normalizedCount content reference(s) to singular English form"
 }
 
 $children = @()
@@ -104,12 +290,31 @@ if ($def.children) {
 	foreach ($ch in $def.children) { $children += "$ch" }
 }
 
+# --- Detect format version ---
+
+function Detect-FormatVersion([string]$dir) {
+	$d = $dir
+	while ($d) {
+		$cfgPath = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfgPath) {
+			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
+		$parent = Split-Path $d -Parent
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return "2.17"
+}
+
+$formatVersion = Detect-FormatVersion $OutputDir
+
 # --- 4. Build XML ---
 $uuid = New-Guid-String
 $indent = "`t`t`t"
 
 X '<?xml version="1.0" encoding="UTF-8"?>'
-X '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.17">'
+X "<MetaDataObject xmlns=`"http://v8.1c.ru/8.3/MDClasses`" xmlns:app=`"http://v8.1c.ru/8.2/managed-application/core`" xmlns:cfg=`"http://v8.1c.ru/8.1/data/enterprise/current-config`" xmlns:cmi=`"http://v8.1c.ru/8.2/managed-application/cmi`" xmlns:ent=`"http://v8.1c.ru/8.1/data/enterprise`" xmlns:lf=`"http://v8.1c.ru/8.2/managed-application/logform`" xmlns:style=`"http://v8.1c.ru/8.1/data/ui/style`" xmlns:sys=`"http://v8.1c.ru/8.1/data/ui/fonts/system`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:v8ui=`"http://v8.1c.ru/8.1/data/ui`" xmlns:web=`"http://v8.1c.ru/8.1/data/ui/colors/web`" xmlns:win=`"http://v8.1c.ru/8.1/data/ui/colors/windows`" xmlns:xen=`"http://v8.1c.ru/8.3/xcf/enums`" xmlns:xpr=`"http://v8.1c.ru/8.3/xcf/predef`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"$formatVersion`">"
 X "`t<Subsystem uuid=`"$uuid`">"
 X "`t`t<Properties>"
 
@@ -203,12 +408,22 @@ $utf8Bom = New-Object System.Text.UTF8Encoding($true)
 [System.IO.File]::WriteAllText($targetXml, $xmlContent, $utf8Bom)
 Write-Host "[OK] Created: $targetXml"
 
-# Create subdirectory if children exist
+# Create subdirectory and stub files for children if they exist
 if ($children.Count -gt 0) {
 	$childSubsDir = Join-Path (Join-Path $subsDir $objName) "Subsystems"
 	if (-not (Test-Path $childSubsDir)) {
 		New-Item -ItemType Directory -Path $childSubsDir -Force | Out-Null
 		Write-Host "[OK] Created directory: $childSubsDir"
+	}
+	$seen = @{}
+	foreach ($ch in $children) {
+		if ($seen.ContainsKey($ch)) { continue }
+		$seen[$ch] = $true
+		$childXml = Join-Path $childSubsDir "$ch.xml"
+		if (-not (Test-Path $childXml)) {
+			Write-ChildSubsystemStub $childXml $ch $formatVersion $utf8Bom
+			Write-Host "[OK] Created stub: $childXml"
+		}
 	}
 }
 

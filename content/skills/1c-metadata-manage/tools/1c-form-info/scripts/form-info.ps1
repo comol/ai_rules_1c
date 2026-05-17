@@ -1,14 +1,40 @@
-﻿param(
+﻿# form-info v1.3 — Analyze 1C managed form structure
+# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+param(
 	[Parameter(Mandatory=$true)]
+	[Alias('Path')]
 	[string]$FormPath,
 	[int]$Limit = 150,
-	[int]$Offset = 0
+	[int]$Offset = 0,
+	[string]$Expand
 )
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# --- Validate path ---
+# --- Resolve FormPath ---
+if (-not [System.IO.Path]::IsPathRooted($FormPath)) {
+	$FormPath = Join-Path (Get-Location).Path $FormPath
+}
+# A: Directory → Ext/Form.xml
+if (Test-Path $FormPath -PathType Container) {
+	$FormPath = Join-Path (Join-Path $FormPath "Ext") "Form.xml"
+}
+# B1: Missing Ext/ (Forms/Форма/Form.xml → Forms/Форма/Ext/Form.xml)
+if (-not (Test-Path $FormPath)) {
+	$fn = [System.IO.Path]::GetFileName($FormPath)
+	if ($fn -eq "Form.xml") {
+		$c = Join-Path (Join-Path (Split-Path $FormPath) "Ext") $fn
+		if (Test-Path $c) { $FormPath = $c }
+	}
+}
+# B2: Descriptor (Forms/Форма.xml → Forms/Форма/Ext/Form.xml)
+if (-not (Test-Path $FormPath) -and $FormPath.EndsWith(".xml")) {
+	$stem = [System.IO.Path]::GetFileNameWithoutExtension($FormPath)
+	$dir = Split-Path $FormPath
+	$c = Join-Path (Join-Path (Join-Path $dir $stem) "Ext") "Form.xml"
+	if (Test-Path $c) { $FormPath = $c }
+}
 
 if (-not (Test-Path $FormPath)) {
 	Write-Error "File not found: $FormPath"
@@ -33,6 +59,10 @@ $ns.AddNamespace("dcsset", "http://v8.1c.ru/8.1/data-composition-system/settings
 
 $root = $xmlDoc.DocumentElement
 
+# --- Detect extension (BaseForm) ---
+$baseFormNode = $root.SelectSingleNode("d:BaseForm", $ns)
+$isExtension = ($baseFormNode -ne $null)
+
 # --- Helper: extract multilang text ---
 
 function Get-MLText($node) {
@@ -52,8 +82,8 @@ function Format-Type($typeNode) {
 	$typeSet = $typeNode.SelectSingleNode("v8:TypeSet", $ns)
 	if ($typeSet) {
 		$val = $typeSet.InnerText
-		# Strip cfg: prefix for DefinedType, keep as-is
-		if ($val -like "cfg:*") { $val = $val.Substring(4) }
+		# Strip cfg:/d5p1: prefix for DefinedType, keep as-is
+		$val = $val -replace '^(cfg|d\d+p\d+):', ''
 		return $val
 	}
 
@@ -95,7 +125,7 @@ function Format-Type($typeNode) {
 				}
 			}
 			"xs:binary" { $parts += "binary" }
-			"cfg:*" { $parts += $raw.Substring(4) }
+			{ $_ -like "cfg:*" -or $_ -match '^d\d+p\d+:' } { $parts += ($raw -replace '^(cfg|d\d+p\d+):', '') }
 			"v8:ValueTable" { $parts += "ValueTable" }
 			"v8:ValueTree" { $parts += "ValueTree" }
 			"v8:ValueListType" { $parts += "ValueList" }
@@ -138,7 +168,10 @@ function Get-EventsStr($node) {
 	if (-not $eventsNode) { return "" }
 	$evts = @()
 	foreach ($e in $eventsNode.SelectNodes("d:Event", $ns)) {
-		$evts += $e.GetAttribute("name")
+		$eName = $e.GetAttribute("name")
+		$ct = $e.GetAttribute("callType")
+		if ($ct) { $evts += "$eName[$ct]" }
+		else { $evts += $eName }
 	}
 	if ($evts.Count -eq 0) { return "" }
 	return " {$($evts -join ', ')}"
@@ -223,6 +256,7 @@ function Count-SignificantChildren($childItemsNode) {
 # --- Build element tree recursively ---
 
 $treeLines = [System.Collections.Generic.List[string]]::new()
+$script:hasCollapsed = $false
 
 function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
 	if (-not $childItemsNode) { return }
@@ -273,14 +307,21 @@ function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
 		$line = "$prefix$connector $tag $name$binding$flags$titleStr$events"
 		$treeLines.Add($line)
 
-		# Recurse into containers (but not Page — show summary)
+		# Recurse into containers (but not Page — show summary unless expanded)
 		$localName = $child.LocalName
 		if ($localName -eq "Page") {
 			$ci = $child.SelectSingleNode("d:ChildItems", $ns)
-			$cnt = Count-SignificantChildren $ci
-			# Append count to last line
-			$idx = $treeLines.Count - 1
-			$treeLines[$idx] = $treeLines[$idx] + " ($cnt items)"
+			$pageName = $child.GetAttribute("name")
+			$pageTitle = Test-TitleDiffers $child $pageName
+			$shouldExpand = ($Expand -eq "*") -or ($Expand -eq $pageName) -or ($pageTitle -and $Expand -eq $pageTitle)
+			if ($shouldExpand -and $ci) {
+				Build-Tree $ci "$prefix$continuation" $last
+			} else {
+				$cnt = Count-SignificantChildren $ci
+				$idx = $treeLines.Count - 1
+				$treeLines[$idx] = $treeLines[$idx] + " ($cnt items)"
+				$script:hasCollapsed = $true
+			}
 		} elseif ($localName -in @("UsualGroup", "Pages", "Table", "CommandBar", "ButtonGroup", "Popup")) {
 			$ci = $child.SelectSingleNode("d:ChildItems", $ns)
 			if ($ci) {
@@ -338,7 +379,8 @@ if ($titleNode) {
 	$formTitle = Get-MLText $titleNode
 	if (-not $formTitle) { $formTitle = $titleNode.InnerText }
 }
-$header = "=== Form: $formName"
+$extMarker = if ($isExtension) { " [EXTENSION]" } else { "" }
+$header = "=== Form: $formName$extMarker"
 if ($formTitle) { $header += " — `"$formTitle`"" }
 if ($objectContext) { $header += " ($objectContext)" }
 $header += " ==="
@@ -388,8 +430,66 @@ if ($formEvents -and $formEvents.HasChildNodes) {
 	foreach ($e in $formEvents.SelectNodes("d:Event", $ns)) {
 		$eName = $e.GetAttribute("name")
 		$eHandler = $e.InnerText
-		$lines += "  $eName -> $eHandler"
+		$ct = $e.GetAttribute("callType")
+		$ctStr = if ($ct) { "[$ct]" } else { "" }
+		$lines += "  $eName${ctStr} -> $eHandler"
 	}
+}
+
+# --- Main AutoCommandBar (form's id=-1 panel) ---
+
+function Format-MainAcb($acbNode) {
+	if (-not $acbNode) { return @() }
+	$result = @()
+	$autofillNode = $acbNode.SelectSingleNode("d:Autofill", $ns)
+	$autofill = $true
+	if ($autofillNode -and $autofillNode.InnerText -eq "false") { $autofill = $false }
+	$halignNode = $acbNode.SelectSingleNode("d:HorizontalAlign", $ns)
+	$flags = @()
+	$flags += if ($autofill) { "autofill" } else { "no-autofill" }
+	if ($halignNode) { $flags += "align=$($halignNode.InnerText)" }
+	$header = "AutoCommandBar [$($flags -join ', ')]"
+	$childItemsNode = $acbNode.SelectSingleNode("d:ChildItems", $ns)
+	$buttons = @()
+	if ($childItemsNode) {
+		foreach ($btn in $childItemsNode.ChildNodes) {
+			if ($btn.NodeType -ne "Element") { continue }
+			if ($skipElements.ContainsKey($btn.LocalName)) { continue }
+			$bName = $btn.GetAttribute("name")
+			$cmdNode = $btn.SelectSingleNode("d:CommandName", $ns)
+			$cmdRef = if ($cmdNode) { $cmdNode.InnerText } else { "" }
+			$locNode = $btn.SelectSingleNode("d:LocationInCommandBar", $ns)
+			$locStr = if ($locNode) { " [$($locNode.InnerText)]" } else { "" }
+			$tag = Get-ElementTag $btn
+			if ($cmdRef) {
+				$buttons += "  $tag $bName -> $cmdRef$locStr"
+			} else {
+				$buttons += "  $tag $bName$locStr"
+			}
+		}
+	}
+	if ($buttons.Count -eq 0 -and $autofill -and -not $halignNode) {
+		# Default empty panel — terse one-liner
+		return @("AutoCommandBar [autofill]")
+	}
+	$result += $header
+	$result += $buttons
+	return $result
+}
+
+# Determine position from CommandBarLocation form property
+$cbLocNode = $root.SelectSingleNode("d:CommandBarLocation", $ns)
+$cbLoc = if ($cbLocNode) { $cbLocNode.InnerText } else { "Auto" }
+$mainAcbNode = $root.SelectSingleNode("d:AutoCommandBar", $ns)
+$acbLines = @()
+if ($cbLoc -ne "None" -and $mainAcbNode) {
+	$acbLines = Format-MainAcb $mainAcbNode
+}
+
+# AutoCommandBar above Elements (Auto/Top)
+if ($acbLines.Count -gt 0 -and ($cbLoc -eq "Auto" -or $cbLoc -eq "Top")) {
+	$lines += ""
+	$lines += $acbLines
 }
 
 # --- Element tree ---
@@ -400,6 +500,12 @@ if ($childItems) {
 	$lines += "Elements:"
 	Build-Tree $childItems "  " $false
 	$lines += $treeLines.ToArray()
+}
+
+# AutoCommandBar below Elements (Bottom)
+if ($acbLines.Count -gt 0 -and $cbLoc -eq "Bottom") {
+	$lines += ""
+	$lines += $acbLines
 }
 
 # --- Attributes ---
@@ -489,11 +595,26 @@ if ($cmdsNode) {
 	$cmdLines = @()
 	foreach ($cmd in $cmdsNode.SelectNodes("d:Command", $ns)) {
 		$cName = $cmd.GetAttribute("name")
-		$action = $cmd.SelectSingleNode("d:Action", $ns)
 		$shortcut = $cmd.SelectSingleNode("d:Shortcut", $ns)
-
-		$actionStr = if ($action) { " -> $($action.InnerText)" } else { "" }
 		$scStr = if ($shortcut) { " [$($shortcut.InnerText)]" } else { "" }
+
+		# Collect all Action elements (may have multiple with callType)
+		$actions = $cmd.SelectNodes("d:Action", $ns)
+		if ($actions.Count -gt 1) {
+			$actParts = @()
+			foreach ($a in $actions) {
+				$ct = $a.GetAttribute("callType")
+				$ctStr = if ($ct) { "[$ct]" } else { "" }
+				$actParts += "$($a.InnerText)$ctStr"
+			}
+			$actionStr = " -> $($actParts -join ', ')"
+		} elseif ($actions.Count -eq 1) {
+			$ct = $actions[0].GetAttribute("callType")
+			$ctStr = if ($ct) { "[$ct]" } else { "" }
+			$actionStr = " -> $($actions[0].InnerText)$ctStr"
+		} else {
+			$actionStr = ""
+		}
 
 		$cmdLines += "  $cName$actionStr$scStr"
 	}
@@ -502,6 +623,22 @@ if ($cmdsNode) {
 		$lines += "Commands:"
 		$lines += $cmdLines
 	}
+}
+
+# --- BaseForm footer ---
+
+if ($isExtension) {
+	$bfVersion = $baseFormNode.GetAttribute("version")
+	$bfStr = if ($bfVersion) { "present (version $bfVersion)" } else { "present" }
+	$lines += ""
+	$lines += "BaseForm: $bfStr"
+}
+
+# --- Expand hint ---
+
+if ($script:hasCollapsed) {
+	$lines += ""
+	$lines += "Hint: use -Expand <name> to expand a collapsed section, -Expand * for all"
 }
 
 # --- Truncation protection ---

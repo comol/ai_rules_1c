@@ -1,12 +1,15 @@
-﻿# role-validate v1.0 — Validate 1C role structure
+﻿# role-validate v1.1 — Validate 1C role structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$RightsPath,
 
-	[string]$MetadataPath,
+	[string]$OutFile,
 
-	[string]$OutFile
+	[switch]$Detailed,
+
+	[int]$MaxErrors = 30
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,25 +135,36 @@ $script:commandRights = @("View")
 
 # --- 2. Output helpers ---
 
-$script:lines = @()
 $script:errors = 0
 $script:warnings = 0
+$script:okCount = 0
+$script:stopped = $false
+$script:output = New-Object System.Text.StringBuilder 8192
 
-function Out-OK {
+function Out-Line {
 	param([string]$msg)
-	$script:lines += "  OK  $msg"
+	$script:output.AppendLine($msg) | Out-Null
 }
 
-function Out-WARN {
+function Report-OK {
 	param([string]$msg)
-	$script:warnings++
-	$script:lines += "  WARN  $msg"
+	$script:okCount++
+	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
 
-function Out-ERR {
+function Report-Error {
 	param([string]$msg)
 	$script:errors++
-	$script:lines += "  ERR  $msg"
+	Out-Line "[ERROR] $msg"
+	if ($script:errors -ge $MaxErrors) {
+		$script:stopped = $true
+	}
+}
+
+function Report-Warn {
+	param([string]$msg)
+	$script:warnings++
+	Out-Line "[WARN]  $msg"
 }
 
 function Get-ObjectType {
@@ -174,38 +188,63 @@ function Find-Similar {
 	return $result
 }
 
+# --- Resolve path ---
+if (-not [System.IO.Path]::IsPathRooted($RightsPath)) {
+	$RightsPath = Join-Path (Get-Location).Path $RightsPath
+}
+# A: Directory → Ext/Rights.xml
+if (Test-Path $RightsPath -PathType Container) {
+	$RightsPath = Join-Path (Join-Path $RightsPath "Ext") "Rights.xml"
+}
+# B1: Missing Ext/ (e.g. Roles/МояРоль/Rights.xml → Roles/МояРоль/Ext/Rights.xml)
+if (-not (Test-Path $RightsPath)) {
+	$fn = [System.IO.Path]::GetFileName($RightsPath)
+	if ($fn -eq "Rights.xml") {
+		$c = Join-Path (Join-Path (Split-Path $RightsPath) "Ext") $fn
+		if (Test-Path $c) { $RightsPath = $c }
+	}
+}
+
 # --- 3. Validate Rights.xml ---
 
-$script:lines += "Validating: $RightsPath"
-
 if (-not (Test-Path $RightsPath)) {
-	Out-ERR "File not found: $RightsPath"
-	$script:lines += "---"
-	$script:lines += "Result: $($script:errors) error(s), $($script:warnings) warning(s)"
-	$output = $script:lines -join "`n"
+	Report-Error "File not found: $RightsPath"
+	$result = $script:output.ToString()
+	Write-Host $result
 	if ($OutFile) {
-		$enc = New-Object System.Text.UTF8Encoding($true)
-		[System.IO.File]::WriteAllText($OutFile, $output, $enc)
-	} else {
-		Write-Host $output
+		$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location) $OutFile }
+		$outDir = [System.IO.Path]::GetDirectoryName($outPath)
+		if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
+		$utf8Bom = New-Object System.Text.UTF8Encoding $true
+		[System.IO.File]::WriteAllText($outPath, $result, $utf8Bom)
+		Write-Host "Written to: $outPath"
 	}
 	exit 1
 }
 
+# Auto-detect metadata: Roles/Name/Ext/Rights.xml → Roles/Name.xml
+$resolvedRights = (Resolve-Path $RightsPath).Path
+$extDir = Split-Path $resolvedRights -Parent
+$roleDir = Split-Path $extDir -Parent
+$rolesDir = Split-Path $roleDir -Parent
+$roleDirName = Split-Path $roleDir -Leaf
+$MetadataPath = Join-Path $rolesDir "$roleDirName.xml"
+
 # 3a. Parse XML
 try {
 	[xml]$xml = Get-Content -Path $RightsPath -Encoding UTF8
-	Out-OK "XML well-formed"
+	Report-OK "XML well-formed"
 } catch {
-	Out-ERR "XML parse error: $($_.Exception.Message)"
-	$script:lines += "---"
-	$script:lines += "Result: $($script:errors) error(s), $($script:warnings) warning(s)"
-	$output = $script:lines -join "`n"
+	Report-Error "XML parse error: $($_.Exception.Message)"
+	$result = $script:output.ToString()
+	Write-Host $result
 	if ($OutFile) {
-		$enc = New-Object System.Text.UTF8Encoding($true)
-		[System.IO.File]::WriteAllText($OutFile, $output, $enc)
-	} else {
-		Write-Host $output
+		$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location) $OutFile }
+		$outDir = [System.IO.Path]::GetDirectoryName($outPath)
+		if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
+		$utf8Bom = New-Object System.Text.UTF8Encoding $true
+		[System.IO.File]::WriteAllText($outPath, $result, $utf8Bom)
+		Write-Host "Written to: $outPath"
 	}
 	exit 1
 }
@@ -215,11 +254,11 @@ $rightsNs = "http://v8.1c.ru/8.2/roles"
 
 # 3b. Check root element
 if ($root.LocalName -ne "Rights") {
-	Out-ERR "Root element is '$($root.LocalName)', expected 'Rights'"
+	Report-Error "Root element is '$($root.LocalName)', expected 'Rights'"
 } elseif ($root.NamespaceURI -ne $rightsNs) {
-	Out-WARN "Namespace is '$($root.NamespaceURI)', expected '$rightsNs'"
+	Report-Warn "Namespace is '$($root.NamespaceURI)', expected '$rightsNs'"
 } else {
-	Out-OK "Root element: <Rights> with correct namespace"
+	Report-OK "Root element: <Rights> with correct namespace"
 }
 
 # 3c. Global flags
@@ -230,15 +269,15 @@ foreach ($fn in $flagNames) {
 	if ($node.Count -gt 0) {
 		$val = $node[0].InnerText
 		if ($val -ne "true" -and $val -ne "false") {
-			Out-WARN "$fn = '$val' (expected 'true' or 'false')"
+			Report-Warn "$fn = '$val' (expected 'true' or 'false')"
 		}
 		$flagsFound++
 	} else {
-		Out-WARN "Missing global flag: $fn"
+		Report-Warn "Missing global flag: $fn"
 	}
 }
 if ($flagsFound -eq 3) {
-	Out-OK "3 global flags present"
+	Report-OK "3 global flags present"
 }
 
 # 3d. Objects
@@ -257,7 +296,7 @@ foreach ($obj in $objects) {
 	}
 
 	if (-not $objName) {
-		Out-ERR "Object without <name>"
+		Report-Error "Object without <name>"
 		continue
 	}
 
@@ -266,7 +305,7 @@ foreach ($obj in $objects) {
 
 	# Check object type is known
 	if (-not $isNested -and -not $script:knownRights.ContainsKey($objectType)) {
-		Out-WARN "${objName}: unknown object type '$objectType'"
+		Report-Warn "${objName}: unknown object type '$objectType'"
 	}
 
 	# Check rights
@@ -289,18 +328,18 @@ foreach ($obj in $objects) {
 					if ($rcc.LocalName -eq "condition") { $condNode = $rcc }
 				}
 				if (-not $condNode -or -not $condNode.InnerText) {
-					Out-WARN "${objName}: RLS condition for '$rName' is empty"
+					Report-Warn "${objName}: RLS condition for '$rName' is empty"
 				}
 			}
 		}
 
 		if (-not $rName) {
-			Out-ERR "${objName}: <right> without <name>"
+			Report-Error "${objName}: <right> without <name>"
 			continue
 		}
 
 		if ($rValue -ne "true" -and $rValue -ne "false") {
-			Out-ERR "${objName}: right '$rName' has invalid value '$rValue'"
+			Report-Error "${objName}: right '$rName' has invalid value '$rValue'"
 			continue
 		}
 
@@ -310,15 +349,15 @@ foreach ($obj in $objects) {
 		if ($isNested) {
 			if ($objName -match '\.Command\.') {
 				if ($rName -notin $script:commandRights) {
-					Out-WARN "${objName}: '$rName' not valid for commands (only: View)"
+					Report-Warn "${objName}: '$rName' not valid for commands (only: View)"
 				}
 			} elseif ($objName -match '\.IntegrationServiceChannel\.') {
 				if ($rName -notin $script:channelRights) {
-					Out-WARN "${objName}: '$rName' not valid for channels (only: Use)"
+					Report-Warn "${objName}: '$rName' not valid for channels (only: Use)"
 				}
 			} else {
 				if ($rName -notin $script:nestedRights) {
-					Out-WARN "${objName}: '$rName' not valid for nested objects (only: View, Edit)"
+					Report-Warn "${objName}: '$rName' not valid for nested objects (only: View, Edit)"
 				}
 			}
 		} elseif ($script:knownRights.ContainsKey($objectType)) {
@@ -326,15 +365,15 @@ foreach ($obj in $objects) {
 			if ($rName -notin $validRights) {
 				$similar = Find-Similar -needle $rName -haystack $validRights
 				$sugStr = if ($similar.Count -gt 0) { " Did you mean: $($similar -join ', ')?" } else { "" }
-				Out-WARN "${objName}: unknown right '$rName'.$sugStr"
+				Report-Warn "${objName}: unknown right '$rName'.$sugStr"
 			}
 		}
 	}
 }
 
-Out-OK "$objCount objects, $rightCount rights"
+Report-OK "$objCount objects, $rightCount rights"
 if ($rlsCount -gt 0) {
-	Out-OK "$rlsCount RLS restrictions"
+	Report-OK "$rlsCount RLS restrictions"
 }
 
 # 3e. Templates
@@ -349,72 +388,63 @@ if ($templates.Count -gt 0) {
 			if ($child.LocalName -eq "condition") { $tCond = $child.InnerText }
 		}
 		if (-not $tName) {
-			Out-WARN "Restriction template without <name>"
+			Report-Warn "Restriction template without <name>"
 		} else {
 			$parenIdx = $tName.IndexOf("(")
 			$shortName = if ($parenIdx -gt 0) { $tName.Substring(0, $parenIdx) } else { $tName }
 			$tplNames += $shortName
 		}
 		if (-not $tCond) {
-			Out-WARN "Template '$tName': empty <condition>"
+			Report-Warn "Template '$tName': empty <condition>"
 		}
 	}
-	Out-OK "$($templates.Count) templates: $($tplNames -join ', ')"
+	Report-OK "$($templates.Count) templates: $($tplNames -join ', ')"
 }
 
-# --- 4. Validate metadata (optional) ---
+# --- 4. Validate metadata ---
 
-if ($MetadataPath) {
-	$script:lines += ""
-
-	if (-not (Test-Path $MetadataPath)) {
-		Out-ERR "Metadata file not found: $MetadataPath"
-	} else {
-		try {
-			[xml]$metaXml = Get-Content -Path $MetadataPath -Encoding UTF8
-			$roleNode = $metaXml.DocumentElement.SelectSingleNode("//*[local-name()='Role']")
-			if (-not $roleNode) {
-				Out-ERR "Metadata: <Role> element not found"
+if (Test-Path $MetadataPath) {
+	Out-Line ""
+	try {
+		[xml]$metaXml = Get-Content -Path $MetadataPath -Encoding UTF8
+		$roleNode = $metaXml.DocumentElement.SelectSingleNode("//*[local-name()='Role']")
+		if (-not $roleNode) {
+			Report-Error "Metadata: <Role> element not found"
+		} else {
+			$uuid = $roleNode.GetAttribute("uuid")
+			if ($uuid -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+				Report-OK "Metadata: UUID valid ($uuid)"
 			} else {
-				$uuid = $roleNode.GetAttribute("uuid")
-				if ($uuid -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
-					Out-OK "Metadata: UUID valid ($uuid)"
-				} else {
-					Out-ERR "Metadata: invalid UUID format '$uuid'"
-				}
-
-				$nameNode = $roleNode.SelectSingleNode(".//*[local-name()='Name']")
-				if ($nameNode -and $nameNode.InnerText) {
-					Out-OK "Metadata: Name = $($nameNode.InnerText)"
-				} else {
-					Out-ERR "Metadata: <Name> is empty or missing"
-				}
-
-				$synNode = $roleNode.SelectSingleNode(".//*[local-name()='Synonym']")
-				if ($synNode -and $synNode.InnerXml) {
-					Out-OK "Metadata: Synonym present"
-				} else {
-					Out-WARN "Metadata: <Synonym> is empty"
-				}
+				Report-Error "Metadata: invalid UUID format '$uuid'"
 			}
-		} catch {
-			Out-ERR "Metadata XML parse error: $($_.Exception.Message)"
+
+			$nameNode = $roleNode.SelectSingleNode(".//*[local-name()='Name']")
+			if ($nameNode -and $nameNode.InnerText) {
+				Report-OK "Metadata: Name = $($nameNode.InnerText)"
+			} else {
+				Report-Error "Metadata: <Name> is empty or missing"
+			}
+
+			$synNode = $roleNode.SelectSingleNode(".//*[local-name()='Synonym']")
+			if ($synNode -and $synNode.InnerXml) {
+				Report-OK "Metadata: Synonym present"
+			} else {
+				Report-Warn "Metadata: <Synonym> is empty"
+			}
 		}
+	} catch {
+		Report-Error "Metadata XML parse error: $($_.Exception.Message)"
 	}
 }
 
 # --- 5. Check registration in Configuration.xml ---
 
-# Infer paths: RightsPath = .../Roles/Name/Ext/Rights.xml
-$extDir2 = Split-Path (Resolve-Path $RightsPath).Path -Parent
-$roleDir2 = Split-Path $extDir2 -Parent
-$rolesDir2 = Split-Path $roleDir2 -Parent
-$configDir2 = Split-Path $rolesDir2 -Parent
-$configXmlPath2 = Join-Path $configDir2 "Configuration.xml"
-$inferredRoleName = Split-Path $roleDir2 -Leaf
+$configDir = Split-Path $rolesDir -Parent
+$configXmlPath = Join-Path $configDir "Configuration.xml"
+$inferredRoleName = $roleDirName
 
 # Use metadata name if available
-if ($MetadataPath -and (Test-Path $MetadataPath)) {
+if (Test-Path $MetadataPath) {
 	try {
 		[xml]$metaXml2 = Get-Content -Path $MetadataPath -Encoding UTF8
 		$nameNode2 = $metaXml2.DocumentElement.SelectSingleNode("//*[local-name()='Role']//*[local-name()='Name']")
@@ -424,10 +454,10 @@ if ($MetadataPath -and (Test-Path $MetadataPath)) {
 	} catch { }
 }
 
-if (Test-Path $configXmlPath2) {
-	$script:lines += ""
+if (Test-Path $configXmlPath) {
+	Out-Line ""
 	try {
-		[xml]$cfgXml = Get-Content -Path $configXmlPath2 -Encoding UTF8
+		[xml]$cfgXml = Get-Content -Path $configXmlPath -Encoding UTF8
 		$cfgNs = New-Object System.Xml.XmlNamespaceManager($cfgXml.NameTable)
 		$cfgNs.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
 		$childObj = $cfgXml.SelectSingleNode("//md:Configuration/md:ChildObjects", $cfgNs)
@@ -441,22 +471,30 @@ if (Test-Path $configXmlPath2) {
 				}
 			}
 			if ($found) {
-				Out-OK "Configuration.xml: <Role>$inferredRoleName</Role> registered"
+				Report-OK "Configuration.xml: <Role>$inferredRoleName</Role> registered"
 			} else {
-				Out-WARN "Configuration.xml: <Role>$inferredRoleName</Role> NOT found in ChildObjects"
+				Report-Warn "Configuration.xml: <Role>$inferredRoleName</Role> NOT found in ChildObjects"
 			}
 		}
 	} catch {
-		Out-WARN "Configuration.xml: parse error — $($_.Exception.Message)"
+		Report-Warn "Configuration.xml: parse error — $($_.Exception.Message)"
 	}
 }
 
 # --- 6. Summary ---
 
-$script:lines += "---"
-$script:lines += "Result: $($script:errors) error(s), $($script:warnings) warning(s)"
+# Insert header
+$script:output.Insert(0, "=== Validation: Role.$inferredRoleName ===$([Environment]::NewLine)") | Out-Null
 
-$output = $script:lines -join "`n"
+$checks = $script:okCount + $script:errors + $script:warnings
+if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
+	$result = "=== Validation OK: Role.$inferredRoleName ($checks checks) ==="
+} else {
+	Out-Line ""
+	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
+	$result = $script:output.ToString()
+}
+Write-Host $result
 
 if ($OutFile) {
 	$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location) $OutFile }
@@ -464,11 +502,9 @@ if ($OutFile) {
 	if (-not (Test-Path $outDir)) {
 		New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 	}
-	$enc = New-Object System.Text.UTF8Encoding($true)
-	[System.IO.File]::WriteAllText($outPath, $output, $enc)
-	Write-Host "[OK] Validation result written to: $outPath"
-} else {
-	Write-Host $output
+	$utf8Bom = New-Object System.Text.UTF8Encoding $true
+	[System.IO.File]::WriteAllText($outPath, $result, $utf8Bom)
+	Write-Host "Written to: $outPath"
 }
 
 if ($script:errors -gt 0) { exit 1 } else { exit 0 }

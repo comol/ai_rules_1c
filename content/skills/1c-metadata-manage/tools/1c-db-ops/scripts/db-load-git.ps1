@@ -1,4 +1,4 @@
-﻿# db-load-git v1.0 — Load Git changes into 1C database
+﻿# db-load-git v1.3 — Load Git changes into 1C database
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 <#
 .SYNOPSIS
@@ -98,14 +98,17 @@ param(
     [string]$Format = "Hierarchical",
 
     [Parameter(Mandatory=$false)]
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$UpdateDB
 )
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# --- Helper: map BSL path to object XML ---
-function Get-ObjectXmlFromBsl {
+# --- Helper: map sub-file path (BSL, HTML, etc.) to object XML ---
+function Get-ObjectXmlFromSubFile {
     param([string]$RelativePath)
 
     $parts = $RelativePath -split '[\\/]'
@@ -165,33 +168,34 @@ try {
 
 # --- Get changed files from Git ---
 $changedFiles = @()
-$configDirNormalized = $ConfigDir.TrimEnd('\', '/').Replace('\', '/')
+$ConfigDir = (Resolve-Path $ConfigDir).Path.TrimEnd('\')
+$configDirNormalized = $ConfigDir.Replace('\', '/')
 
 Push-Location $ConfigDir
 try {
     switch ($Source) {
         "Staged" {
             Write-Host "Getting staged changes..."
-            $raw = git diff --cached --name-only 2>&1
+            $raw = git diff --cached --name-only --relative 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
         }
         "Unstaged" {
             Write-Host "Getting unstaged changes..."
-            $raw = git diff --name-only 2>&1
+            $raw = git diff --name-only --relative 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
             $raw = git ls-files --others --exclude-standard 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
         }
         "Commit" {
             Write-Host "Getting changes from $CommitRange..."
-            $raw = git diff --name-only $CommitRange 2>&1
+            $raw = git diff --name-only --relative $CommitRange 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
         }
         "All" {
             Write-Host "Getting all uncommitted changes..."
-            $raw = git diff --cached --name-only 2>&1
+            $raw = git diff --cached --name-only --relative 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
-            $raw = git diff --name-only 2>&1
+            $raw = git diff --name-only --relative 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
             $raw = git ls-files --others --exclude-standard 2>&1
             if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
@@ -201,7 +205,7 @@ try {
     Pop-Location
 }
 
-$changedFiles = $changedFiles | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+$changedFiles = $changedFiles | Where-Object { $_ -is [string] -and -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
 if ($changedFiles.Count -eq 0) {
     Write-Host "No changes found"
@@ -220,40 +224,38 @@ foreach ($file in $changedFiles) {
     # Skip service files
     if ($file -eq "ConfigDumpInfo.xml") { continue }
 
-    # Only process .xml and .bsl files
-    if ($file -match '\.(xml|bsl)$') {
-        # Check file exists in config dir
-        $fullPath = Join-Path $ConfigDir $file
-        if ($file -match '\.xml$') {
-            if (Test-Path $fullPath) {
-                if ($configFiles -notcontains $file) {
-                    $configFiles += $file
-                }
+    $fullPath = Join-Path $ConfigDir $file
+
+    if ($file -match '\.xml$') {
+        # XML file — add directly if exists
+        if (Test-Path $fullPath) {
+            if ($configFiles -notcontains $file) {
+                $configFiles += $file
             }
         }
-        elseif ($file -match '\.bsl$') {
-            # For BSL: add the BSL itself + parent object XML + all Ext/ files
-            $objectXml = Get-ObjectXmlFromBsl -RelativePath $file
-            if ($objectXml) {
-                $fullXmlPath = Join-Path $ConfigDir $objectXml
-                if (Test-Path $fullXmlPath) {
-                    if ($configFiles -notcontains $objectXml) {
-                        $configFiles += $objectXml
-                    }
-                    if ($configFiles -notcontains $file) {
-                        $configFiles += $file
-                    }
+    }
+    else {
+        # Non-XML (BSL, HTML, etc.) — map to parent object XML + include all Ext/ files
+        $objectXml = Get-ObjectXmlFromSubFile -RelativePath $file
+        if ($objectXml) {
+            $fullXmlPath = Join-Path $ConfigDir $objectXml
+            if (Test-Path $fullXmlPath) {
+                if ($configFiles -notcontains $objectXml) {
+                    $configFiles += $objectXml
+                }
+                if ((Test-Path $fullPath) -and $configFiles -notcontains $file) {
+                    $configFiles += $file
+                }
 
-                    # Add all files from Ext/ directory of the object
-                    $parts = $file -split '[\\/]'
-                    if ($parts.Count -ge 2) {
-                        $extDir = Join-Path (Join-Path $ConfigDir $parts[0]) "$($parts[1])\Ext"
-                        if (Test-Path $extDir) {
-                            Get-ChildItem -Path $extDir -Recurse -File | ForEach-Object {
-                                $extRelPath = $_.FullName.Replace("$ConfigDir\", '').Replace('\', '/')
-                                if ($configFiles -notcontains $extRelPath) {
-                                    $configFiles += $extRelPath
-                                }
+                # Add all files from Ext/ directory of the object
+                $parts = $file -split '[\\/]'
+                if ($parts.Count -ge 2) {
+                    $extDir = Join-Path (Join-Path $ConfigDir $parts[0]) "$($parts[1])\Ext"
+                    if (Test-Path $extDir) {
+                        Get-ChildItem -Path $extDir -Recurse -File | ForEach-Object {
+                            $extRelPath = $_.FullName.Replace("$ConfigDir\", '').Replace('\', '/')
+                            if ($configFiles -notcontains $extRelPath) {
+                                $configFiles += $extRelPath
                             }
                         }
                     }
@@ -311,6 +313,11 @@ try {
         $arguments += "-Extension", "`"$Extension`""
     } elseif ($AllExtensions) {
         $arguments += "-AllExtensions"
+    }
+
+    # --- UpdateDB ---
+    if ($UpdateDB) {
+        $arguments += "/UpdateDBCfg"
     }
 
     # --- Output ---

@@ -1,4 +1,6 @@
-﻿param(
+﻿# form-add v1.5 — Add managed form to 1C config object
+# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+param(
 	[Parameter(Mandatory)]
 	[string]$ObjectPath,
 
@@ -13,8 +15,39 @@
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Detect XML format version ---
+
+function Detect-FormatVersion([string]$dir) {
+	$d = $dir
+	while ($d) {
+		$cfgPath = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfgPath) {
+			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
+		$parent = Split-Path $d -Parent
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return "2.17"
+}
 
 # --- Фаза 1: Определение типа объекта ---
+
+# Resolve ObjectPath (directory → .xml)
+if (-not [System.IO.Path]::IsPathRooted($ObjectPath)) {
+	$ObjectPath = Join-Path (Get-Location).Path $ObjectPath
+}
+if (Test-Path $ObjectPath -PathType Container) {
+	$dirName = Split-Path $ObjectPath -Leaf
+	$candidate = Join-Path $ObjectPath "$dirName.xml"
+	$sibling = Join-Path (Split-Path $ObjectPath) "$dirName.xml"
+	if (Test-Path $candidate) { $ObjectPath = $candidate }
+	elseif (Test-Path $sibling) { $ObjectPath = $sibling }
+}
 
 if (-not (Test-Path $ObjectPath)) {
 	Write-Error "Файл объекта не найден: $ObjectPath"
@@ -22,6 +55,8 @@ if (-not (Test-Path $ObjectPath)) {
 }
 
 $objectXmlFull = Resolve-Path $ObjectPath
+$script:formatVersion = Detect-FormatVersion (Split-Path $objectXmlFull.Path -Parent)
+
 $xmlDoc = New-Object System.Xml.XmlDocument
 $xmlDoc.PreserveWhitespace = $true
 $xmlDoc.Load($objectXmlFull.Path)
@@ -39,7 +74,8 @@ if (-not $metaDataObject) {
 
 $supportedTypes = @(
 	"Document", "Catalog", "DataProcessor", "Report",
-	"InformationRegister", "ChartOfAccounts", "ChartOfCharacteristicTypes",
+	"ExternalDataProcessor", "ExternalReport",
+	"InformationRegister", "AccumulationRegister", "ChartOfAccounts", "ChartOfCharacteristicTypes",
 	"ExchangePlan", "BusinessProcess", "Task"
 )
 
@@ -87,7 +123,7 @@ switch ($Purpose) {
 }
 
 $objectLikeTypes = @("Document", "Catalog", "ChartOfAccounts", "ChartOfCharacteristicTypes", "ExchangePlan", "BusinessProcess", "Task")
-$processorLikeTypes = @("DataProcessor", "Report")
+$processorLikeTypes = @("DataProcessor", "Report", "ExternalDataProcessor", "ExternalReport")
 
 switch ($Purpose) {
 	"Object" {
@@ -136,9 +172,15 @@ $encBom = New-Object System.Text.UTF8Encoding($true)
 
 $formUuid = [guid]::NewGuid().ToString()
 
+# ExtendedPresentation — only for DataProcessor, Report, ExternalDataProcessor, ExternalReport forms
+$extPresentationLine = ""
+if ($objectType -in $processorLikeTypes) {
+	$extPresentationLine = "`n`t`t`t<ExtendedPresentation/>"
+}
+
 $formMetaXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.17">
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="$($script:formatVersion)">
 	<Form uuid="$formUuid">
 		<Properties>
 			<Name>$FormName</Name>
@@ -154,8 +196,7 @@ $formMetaXml = @"
 			<UsePurposes>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">PlatformApplication</v8:Value>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">MobilePlatformApplication</v8:Value>
-			</UsePurposes>
-			<ExtendedPresentation/>
+			</UsePurposes>$extPresentationLine
 		</Properties>
 	</Form>
 </MetaDataObject>
@@ -176,13 +217,10 @@ if ($Purpose -eq "List" -or $Purpose -eq "Choice") {
 
 	$formXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<Form $formNsDecl version="2.17">
+<Form $formNsDecl version="$($script:formatVersion)">
 	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
 		<Autofill>true</Autofill>
 	</AutoCommandBar>
-	<Events>
-		<Event name="OnCreateAtServer">ПриСозданииНаСервере</Event>
-	</Events>
 	<ChildItems/>
 	<Attributes>
 		<Attribute name="Список" id="1">
@@ -204,13 +242,10 @@ if ($Purpose -eq "List" -or $Purpose -eq "Choice") {
 
 	$formXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<Form $formNsDecl version="2.17">
+<Form $formNsDecl version="$($script:formatVersion)">
 	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
 		<Autofill>true</Autofill>
 	</AutoCommandBar>
-	<Events>
-		<Event name="OnCreateAtServer">ПриСозданииНаСервере</Event>
-	</Events>
 	<ChildItems/>
 	<Attributes>
 		<Attribute name="$mainAttrName" id="1">
@@ -233,40 +268,49 @@ if ($Purpose -eq "List" -or $Purpose -eq "Choice") {
 		"Catalog"                     = "CatalogObject"
 		"DataProcessor"               = "DataProcessorObject"
 		"Report"                      = "ReportObject"
+		"ExternalDataProcessor"       = "ExternalDataProcessorObject"
+		"ExternalReport"              = "ExternalReportObject"
 		"ChartOfAccounts"             = "ChartOfAccountsObject"
 		"ChartOfCharacteristicTypes"  = "ChartOfCharacteristicTypesObject"
 		"ExchangePlan"                = "ExchangePlanObject"
 		"BusinessProcess"             = "BusinessProcessObject"
 		"Task"                        = "TaskObject"
 		"InformationRegister"         = "InformationRegisterRecordManager"
+		"AccumulationRegister"        = "AccumulationRegisterRecordSet"
 	}
 
 	$mainAttrType = "$($attrTypeMap[$objectType]).$objectName"
 
+	# SavedData: standard for Catalog/Document/etc, but not for processor-like (DataProcessor/Report/External*)
+	$savedDataLine = ""
+	if ($objectType -notin $processorLikeTypes) {
+		$savedDataLine = "`n`t`t`t<SavedData>true</SavedData>"
+	}
+
 	$formXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<Form $formNsDecl version="2.17">
+<Form $formNsDecl version="$($script:formatVersion)">
 	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
 		<Autofill>true</Autofill>
 	</AutoCommandBar>
-	<Events>
-		<Event name="OnCreateAtServer">ПриСозданииНаСервере</Event>
-	</Events>
 	<ChildItems/>
 	<Attributes>
 		<Attribute name="$mainAttrName" id="1">
 			<Type>
 				<v8:Type>cfg:$mainAttrType</v8:Type>
 			</Type>
-			<MainAttribute>true</MainAttribute>
-			<SavedData>true</SavedData>
+			<MainAttribute>true</MainAttribute>$savedDataLine
 		</Attribute>
 	</Attributes>
 </Form>
 "@
 }
 
-[System.IO.File]::WriteAllText($formXmlPath, $formXml, $encBom)
+if (Test-Path $formXmlPath) {
+	Write-Host "[SKIP] Form.xml already exists: $formXmlPath — not overwriting"
+} else {
+	[System.IO.File]::WriteAllText($formXmlPath, $formXml, $encBom)
+}
 
 # --- 3c. Module.bsl ---
 
@@ -274,11 +318,6 @@ $modulePath = Join-Path $formModuleDir "Module.bsl"
 
 $moduleBsl = @"
 #Область ОбработчикиСобытийФормы
-
-&НаСервере
-Процедура ПриСозданииНаСервере(Отказ, СтандартнаяОбработка)
-
-КонецПроцедуры
 
 #КонецОбласти
 
@@ -299,7 +338,11 @@ $moduleBsl = @"
 #КонецОбласти
 "@
 
-[System.IO.File]::WriteAllText($modulePath, $moduleBsl, $encBom)
+if (Test-Path $modulePath) {
+	Write-Host "[SKIP] Module.bsl already exists: $modulePath — not overwriting"
+} else {
+	[System.IO.File]::WriteAllText($modulePath, $moduleBsl, $encBom)
+}
 
 # --- Фаза 4: Регистрация в родительском объекте ---
 

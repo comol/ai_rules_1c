@@ -5,16 +5,27 @@ Create, analyze, and validate 1C roles (metadata + Rights.xml) for access rights
 ---
 ## 1. Compile — Create Role
 
-Creates role files (metadata + Rights.xml) from a rights description. No script — the agent generates XML using templates below.
+Creates role files (metadata + Rights.xml) from a JSON description.
+
+> **Preferred path** — invoke the PowerShell script `tools/1c-role-compile/scripts/role-compile.ps1` (added from upstream `cc-1c-skills` `w-2026-05-17`). The full JSON DSL for the script lives in `tools/1c-role-compile/dsl-reference.md` (legacy Russian — to be translated separately).
+>
+> The XML templates below remain for manual fallback when the script is not applicable (e.g. one-off rights-only edits).
 
 ## Usage
 
 ```
-1c-role-compile <RoleName> <RolesDir>
+1c-role-compile <RolePath> <OutputDir>
 ```
 
-- **RoleName** — programmatic role name
-- **RolesDir** — `Roles/` directory in configuration sources
+- **RolePath** — path to the JSON role definition.
+- **OutputDir** — either the configuration source root (the script creates `Roles/` itself) or a path that already ends with `Roles`.
+
+**Command:**
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -RolePath "<role.json>" -OutputDir "<src-root-or-Roles>"
+```
+
+The script accepts the DSL keys `objects` (canonical) or its synonym `rights`. UUIDs and registration in `Configuration.xml` are handled automatically.
 
 ## File Structure and Registration
 
@@ -360,6 +371,14 @@ Exit code: `0` — no errors, `1` — errors found.
 ```
 
 ---
+## Recent Additions (upstream `w-2026-05-17`)
+
+The PowerShell scripts under `tools/1c-role-{compile,info,validate}/scripts/` were refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills). Highlights:
+
+- **`role-compile`** — `OutputDir` now accepts the source root of the configuration; `Roles/` is created automatically. Legacy behaviour (path already ending in `Roles`) is preserved. The DSL key `rights` is accepted as a synonym of `objects`.
+- **`role-validate`** — auto-discovers metadata from the path to `Rights.xml`; `-MetadataPath` is no longer required, metadata-driven checks always run when the file is present.
+- **All 10 validators** (`role-validate`, `meta-validate`, `epf-validate`, `skd-validate`, `cf-validate`, `cfe-validate`, `form-validate`, `mxl-validate`, `subsystem-validate`, `interface-validate`) now emit a single one-liner by default; the full per-check trace is available via `-Detailed`. Each accepts a folder path as the primary file argument and resolves to the canonical XML file (e.g. `Roles/MyRole` → `Roles/MyRole/Ext/Rights.xml`). The universal `-Path` parameter is supported in addition to the legacy named parameters (`-RolePath`, `-FormPath`, `-TemplatePath`, `-ObjectPath`, …).
+
 ## MCP Integration
 
 - **metadatasearch** — Verify metadata object names when defining rights; verify objects referenced in role rights exist in the configuration.

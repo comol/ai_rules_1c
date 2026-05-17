@@ -1,7 +1,7 @@
-﻿# meta-info v1.0 — Compact summary of 1C metadata object
+﻿# meta-info v1.1 — Compact summary of 1C metadata object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
-	[Parameter(Mandatory=$true)][string]$ObjectPath,
+	[Parameter(Mandatory=$true)][Alias('Path')][string]$ObjectPath,
 	[ValidateSet("overview","brief","full")]
 	[string]$Mode = "overview",
 	[string]$Name,
@@ -22,12 +22,15 @@ if (-not [System.IO.Path]::IsPathRooted($ObjectPath)) {
 	$ObjectPath = Join-Path (Get-Location).Path $ObjectPath
 }
 
-# Directory -> find XML inside
+# Directory -> find XML inside or as sibling
 if (Test-Path $ObjectPath -PathType Container) {
 	$dirName = Split-Path $ObjectPath -Leaf
 	$candidate = Join-Path $ObjectPath "$dirName.xml"
+	$sibling = Join-Path (Split-Path $ObjectPath) "$dirName.xml"
 	if (Test-Path $candidate) {
 		$ObjectPath = $candidate
+	} elseif (Test-Path $sibling) {
+		$ObjectPath = $sibling
 	} else {
 		$xmlFiles = @(Get-ChildItem $ObjectPath -Filter "*.xml" -File | Select-Object -First 1)
 		if ($xmlFiles.Count -gt 0) {
@@ -39,6 +42,16 @@ if (Test-Path $ObjectPath -PathType Container) {
 	}
 }
 
+# File not found — check Dir/Name/Name.xml → Dir/Name.xml (common LLM mistake)
+if (-not (Test-Path $ObjectPath)) {
+	$fileName = [System.IO.Path]::GetFileNameWithoutExtension($ObjectPath)
+	$parentDir = Split-Path $ObjectPath
+	$parentDirName = Split-Path $parentDir -Leaf
+	if ($fileName -eq $parentDirName) {
+		$candidate = Join-Path (Split-Path $parentDir) "$fileName.xml"
+		if (Test-Path $candidate) { $ObjectPath = $candidate }
+	}
+}
 if (-not (Test-Path $ObjectPath)) {
 	Write-Host "[ERROR] File not found: $ObjectPath"
 	exit 1
@@ -210,6 +223,8 @@ function Format-SingleType([string]$raw, $parentNode) {
 		"v8:UUID" { return "УникальныйИдентификатор" }
 		"v8:Null" { return "Null" }
 		default {
+			# Normalize d5p1:/dNpN: -> cfg:
+			$raw = $raw -replace '^d\d+p\d+:', 'cfg:'
 			# cfg:CatalogRef.Xxx -> СправочникСсылка.Xxx
 			if ($raw -match '^cfg:(\w+)Ref\.(.+)$') {
 				$prefix = "$($Matches[1])Ref"
@@ -343,6 +358,7 @@ function Decline-Cols([int]$n) {
 }
 
 function Format-SourceType([string]$raw) {
+	$raw = $raw -replace '^d\d+p\d+:', 'cfg:'
 	if ($raw -match '^cfg:(\w+)\.(.+)$') {
 		$prefix = $Matches[1]; $name = $Matches[2]
 		if ($objectTypeMap.ContainsKey($prefix)) { return "$($objectTypeMap[$prefix]).$name" }
@@ -757,6 +773,13 @@ if (-not $drillDone) {
 			if ($hier -and $hier.InnerText -eq "true") {
 				$ht = $props.SelectSingleNode("md:HierarchyType", $ns)
 				$htText = if ($ht -and $ht.InnerText -eq "HierarchyFoldersAndItems") { "группы и элементы" } else { "элементы" }
+				$limitNode = $props.SelectSingleNode("md:LimitLevelCount", $ns)
+				$levelNode = $props.SelectSingleNode("md:LevelCount", $ns)
+				if ($limitNode -and $limitNode.InnerText -eq "true" -and $levelNode) {
+					$htText += ", уровней: $($levelNode.InnerText)"
+				} else {
+					$htText += ", без ограничения уровней"
+				}
 				$parts += "Иерархический: $htText"
 			}
 			$codeLen = $props.SelectSingleNode("md:CodeLength", $ns)

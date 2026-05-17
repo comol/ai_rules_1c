@@ -1,6 +1,9 @@
-﻿param(
+﻿# form-remove v1.2 — Remove form from 1C object
+# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+param(
 	[Parameter(Mandatory)]
-	[string]$ProcessorName,
+	[Alias("ProcessorName")]
+	[string]$ObjectName,
 
 	[Parameter(Mandatory)]
 	[string]$FormName,
@@ -9,16 +12,18 @@
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Проверки ---
 
-$rootXmlPath = Join-Path $SrcDir "$ProcessorName.xml"
+$rootXmlPath = Join-Path $SrcDir "$ObjectName.xml"
 if (-not (Test-Path $rootXmlPath)) {
 	Write-Error "Корневой файл обработки не найден: $rootXmlPath"
 	exit 1
 }
 
-$processorDir = Join-Path $SrcDir $ProcessorName
+$processorDir = Join-Path $SrcDir $ObjectName
 $formsDir = Join-Path $processorDir "Forms"
 $formMetaPath = Join-Path $formsDir "$FormName.xml"
 $formDir = Join-Path $formsDir $FormName

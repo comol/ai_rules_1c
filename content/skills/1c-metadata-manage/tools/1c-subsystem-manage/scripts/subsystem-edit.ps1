@@ -1,7 +1,7 @@
-﻿# subsystem-edit v1.0 — Edit existing 1C subsystem XML
+﻿# subsystem-edit v1.2 — Edit existing 1C subsystem XML
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
-	[Parameter(Mandatory)][string]$SubsystemPath,
+	[Parameter(Mandatory)][Alias('Path')][string]$SubsystemPath,
 	[string]$DefinitionFile,
 	[ValidateSet("add-content","remove-content","add-child","remove-child","set-property")]
 	[string]$Operation,
@@ -11,6 +11,86 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Content type normalization (plural→singular, Russian→English) ---
+$script:contentTypeMap = @{
+	"Catalogs"="Catalog"; "Documents"="Document"; "Enums"="Enum"; "Constants"="Constant"
+	"Reports"="Report"; "DataProcessors"="DataProcessor"
+	"InformationRegisters"="InformationRegister"; "AccumulationRegisters"="AccumulationRegister"
+	"AccountingRegisters"="AccountingRegister"; "CalculationRegisters"="CalculationRegister"
+	"ChartsOfAccounts"="ChartOfAccounts"; "ChartsOfCharacteristicTypes"="ChartOfCharacteristicTypes"
+	"ChartsOfCalculationTypes"="ChartOfCalculationTypes"
+	"BusinessProcesses"="BusinessProcess"; "Tasks"="Task"
+	"ExchangePlans"="ExchangePlan"; "DocumentJournals"="DocumentJournal"
+	"CommonModules"="CommonModule"; "CommonCommands"="CommonCommand"
+	"CommonForms"="CommonForm"; "CommonPictures"="CommonPicture"
+	"CommonTemplates"="CommonTemplate"; "CommonAttributes"="CommonAttribute"
+	"CommandGroups"="CommandGroup"; "Roles"="Role"
+	"SessionParameters"="SessionParameter"; "FilterCriteria"="FilterCriterion"
+	"XDTOPackages"="XDTOPackage"; "WebServices"="WebService"
+	"HTTPServices"="HTTPService"; "WSReferences"="WSReference"
+	"EventSubscriptions"="EventSubscription"; "ScheduledJobs"="ScheduledJob"
+	"SettingsStorages"="SettingsStorage"; "FunctionalOptions"="FunctionalOption"
+	"FunctionalOptionsParameters"="FunctionalOptionsParameter"
+	"DefinedTypes"="DefinedType"; "DocumentNumerators"="DocumentNumerator"
+	"Sequences"="Sequence"; "Subsystems"="Subsystem"
+	"StyleItems"="StyleItem"; "IntegrationServices"="IntegrationService"
+	# Russian singular
+	"Справочник"="Catalog"; "Каталог"="Catalog"; "Документ"="Document"
+	"Перечисление"="Enum"; "Константа"="Constant"
+	"Отчёт"="Report"; "Отчет"="Report"; "Обработка"="DataProcessor"
+	"РегистрСведений"="InformationRegister"; "РегистрНакопления"="AccumulationRegister"
+	"РегистрБухгалтерии"="AccountingRegister"
+	"РегистрРасчёта"="CalculationRegister"; "РегистрРасчета"="CalculationRegister"
+	"ПланСчетов"="ChartOfAccounts"; "ПланВидовХарактеристик"="ChartOfCharacteristicTypes"
+	"ПланВидовРасчёта"="ChartOfCalculationTypes"; "ПланВидовРасчета"="ChartOfCalculationTypes"
+	"БизнесПроцесс"="BusinessProcess"; "Задача"="Task"
+	"ПланОбмена"="ExchangePlan"; "ЖурналДокументов"="DocumentJournal"
+	"ОбщийМодуль"="CommonModule"; "ОбщаяКоманда"="CommonCommand"
+	"ОбщаяФорма"="CommonForm"; "ОбщаяКартинка"="CommonPicture"
+	"ОбщийМакет"="CommonTemplate"; "ОбщийРеквизит"="CommonAttribute"
+	"ГруппаКоманд"="CommandGroup"; "Роль"="Role"
+	"ПараметрСеанса"="SessionParameter"; "КритерийОтбора"="FilterCriterion"
+	"ПакетXDTO"="XDTOPackage"; "ВебСервис"="WebService"
+	"HTTPСервис"="HTTPService"; "WSСсылка"="WSReference"
+	"ПодпискаНаСобытие"="EventSubscription"; "РегламентноеЗадание"="ScheduledJob"
+	"ХранилищеНастроек"="SettingsStorage"; "ФункциональнаяОпция"="FunctionalOption"
+	"ПараметрФункциональныхОпций"="FunctionalOptionsParameter"
+	"ОпределяемыйТип"="DefinedType"; "Подсистема"="Subsystem"
+	"ЭлементСтиля"="StyleItem"; "СервисИнтеграции"="IntegrationService"
+	# Russian plural
+	"Справочники"="Catalog"; "Документы"="Document"; "Перечисления"="Enum"
+	"Константы"="Constant"; "Отчёты"="Report"; "Отчеты"="Report"
+	"Обработки"="DataProcessor"; "РегистрыСведений"="InformationRegister"
+	"РегистрыНакопления"="AccumulationRegister"; "РегистрыБухгалтерии"="AccountingRegister"
+	"РегистрыРасчёта"="CalculationRegister"; "РегистрыРасчета"="CalculationRegister"
+	"ПланыСчетов"="ChartOfAccounts"; "ПланыВидовХарактеристик"="ChartOfCharacteristicTypes"
+	"ПланыВидовРасчёта"="ChartOfCalculationTypes"; "ПланыВидовРасчета"="ChartOfCalculationTypes"
+	"БизнесПроцессы"="BusinessProcess"; "Задачи"="Task"
+	"ПланыОбмена"="ExchangePlan"; "ЖурналыДокументов"="DocumentJournal"
+	"ОбщиеМодули"="CommonModule"; "ОбщиеКоманды"="CommonCommand"
+	"ОбщиеФормы"="CommonForm"; "ОбщиеКартинки"="CommonPicture"
+	"ОбщиеМакеты"="CommonTemplate"; "ОбщиеРеквизиты"="CommonAttribute"
+	"ГруппыКоманд"="CommandGroup"; "Роли"="Role"
+	"ПараметрыСеанса"="SessionParameter"; "КритерииОтбора"="FilterCriterion"
+	"ПакетыXDTO"="XDTOPackage"; "ВебСервисы"="WebService"
+	"HTTPСервисы"="HTTPService"; "WSСсылки"="WSReference"
+	"ПодпискиНаСобытия"="EventSubscription"; "РегламентныеЗадания"="ScheduledJob"
+	"ХранилищаНастроек"="SettingsStorage"; "ФункциональныеОпции"="FunctionalOption"
+	"ОпределяемыеТипы"="DefinedType"; "Подсистемы"="Subsystem"
+	"ЭлементыСтиля"="StyleItem"; "СервисыИнтеграции"="IntegrationService"
+}
+
+function Normalize-ContentRef([string]$ref) {
+	if (-not $ref -or -not $ref.Contains('.')) { return $ref }
+	$dotIdx = $ref.IndexOf('.')
+	$typePart = $ref.Substring(0, $dotIdx)
+	$namePart = $ref.Substring($dotIdx + 1)
+	if ($script:contentTypeMap.ContainsKey($typePart)) {
+		$typePart = $script:contentTypeMap[$typePart]
+	}
+	return "$typePart.$namePart"
+}
 
 # --- Mode validation ---
 if ($DefinitionFile -and $Operation) { Write-Error "Cannot use both -DefinitionFile and -Operation"; exit 1 }
@@ -23,16 +103,32 @@ if (-not [System.IO.Path]::IsPathRooted($SubsystemPath)) {
 if (Test-Path $SubsystemPath -PathType Container) {
 	$dirName = Split-Path $SubsystemPath -Leaf
 	$candidate = Join-Path $SubsystemPath "$dirName.xml"
+	$sibling = Join-Path (Split-Path $SubsystemPath) "$dirName.xml"
 	if (Test-Path $candidate) { $SubsystemPath = $candidate }
-	else { Write-Error "No $dirName.xml found in directory"; exit 1 }
+	elseif (Test-Path $sibling) { $SubsystemPath = $sibling }
+	else { Write-Error "No $dirName.xml found in directory or as sibling"; exit 1 }
+}
+# File not found — check Dir/Name/Name.xml → Dir/Name.xml
+if (-not (Test-Path $SubsystemPath)) {
+	$fn = [System.IO.Path]::GetFileNameWithoutExtension($SubsystemPath)
+	$pd = Split-Path $SubsystemPath
+	if ($fn -eq (Split-Path $pd -Leaf)) {
+		$c = Join-Path (Split-Path $pd) "$fn.xml"
+		if (Test-Path $c) { $SubsystemPath = $c }
+	}
 }
 if (-not (Test-Path $SubsystemPath)) { Write-Error "File not found: $SubsystemPath"; exit 1 }
 $resolvedPath = (Resolve-Path $SubsystemPath).Path
+$script:resolvedPath = $resolvedPath
 
 # --- Load XML with PreserveWhitespace ---
 $script:xmlDoc = New-Object System.Xml.XmlDocument
 $script:xmlDoc.PreserveWhitespace = $true
 $script:xmlDoc.Load($resolvedPath)
+
+$script:formatVersion = $script:xmlDoc.DocumentElement.GetAttribute("version")
+if (-not $script:formatVersion) { $script:formatVersion = "2.17" }
+$script:utf8Bom = New-Object System.Text.UTF8Encoding($true)
 
 $script:addCount = 0
 $script:removeCount = 0
@@ -73,6 +169,37 @@ foreach ($child in $script:propsEl.ChildNodes) {
 Info "Subsystem: $($script:objName)"
 
 # --- XML manipulation helpers (from meta-edit pattern) ---
+function Esc-Xml([string]$s) {
+	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
+}
+
+function New-Guid-String {
+	return [System.Guid]::NewGuid().ToString()
+}
+
+function Write-ChildSubsystemStub([string]$childPath, [string]$childName, [string]$formatVersion, [System.Text.Encoding]$utf8Bom) {
+	$childUuid = New-Guid-String
+	$sb = New-Object System.Text.StringBuilder 2048
+	[void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
+	[void]$sb.AppendLine("<MetaDataObject xmlns=`"http://v8.1c.ru/8.3/MDClasses`" xmlns:app=`"http://v8.1c.ru/8.2/managed-application/core`" xmlns:cfg=`"http://v8.1c.ru/8.1/data/enterprise/current-config`" xmlns:cmi=`"http://v8.1c.ru/8.2/managed-application/cmi`" xmlns:ent=`"http://v8.1c.ru/8.1/data/enterprise`" xmlns:lf=`"http://v8.1c.ru/8.2/managed-application/logform`" xmlns:style=`"http://v8.1c.ru/8.1/data/ui/style`" xmlns:sys=`"http://v8.1c.ru/8.1/data/ui/fonts/system`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:v8ui=`"http://v8.1c.ru/8.1/data/ui`" xmlns:web=`"http://v8.1c.ru/8.1/data/ui/colors/web`" xmlns:win=`"http://v8.1c.ru/8.1/data/ui/colors/windows`" xmlns:xen=`"http://v8.1c.ru/8.3/xcf/enums`" xmlns:xpr=`"http://v8.1c.ru/8.3/xcf/predef`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"$formatVersion`">")
+	[void]$sb.AppendLine("`t<Subsystem uuid=`"$childUuid`">")
+	[void]$sb.AppendLine("`t`t<Properties>")
+	[void]$sb.AppendLine("`t`t`t<Name>$(Esc-Xml $childName)</Name>")
+	[void]$sb.AppendLine("`t`t`t<Synonym/>")
+	[void]$sb.AppendLine("`t`t`t<Comment/>")
+	[void]$sb.AppendLine("`t`t`t<IncludeHelpInContents>true</IncludeHelpInContents>")
+	[void]$sb.AppendLine("`t`t`t<IncludeInCommandInterface>true</IncludeInCommandInterface>")
+	[void]$sb.AppendLine("`t`t`t<UseOneCommand>false</UseOneCommand>")
+	[void]$sb.AppendLine("`t`t`t<Explanation/>")
+	[void]$sb.AppendLine("`t`t`t<Picture/>")
+	[void]$sb.AppendLine("`t`t`t<Content/>")
+	[void]$sb.AppendLine("`t`t</Properties>")
+	[void]$sb.AppendLine("`t`t<ChildObjects/>")
+	[void]$sb.AppendLine("`t</Subsystem>")
+	[void]$sb.AppendLine('</MetaDataObject>')
+	[System.IO.File]::WriteAllText($childPath, $sb.ToString(), $utf8Bom)
+}
+
 function Import-Fragment([string]$xmlString) {
 	$wrapper = "<_W xmlns=`"$($script:mdNs)`" xmlns:xsi=`"$($script:xsiNs)`" xmlns:v8=`"$($script:v8Ns)`" xmlns:xr=`"$($script:xrNs)`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`">$xmlString</_W>"
 	$frag = New-Object System.Xml.XmlDocument
@@ -183,7 +310,9 @@ function Do-AddContent([string[]]$items) {
 		$contentIndent = Get-ChildIndent $contentEl
 	}
 
-	foreach ($item in $items) {
+	foreach ($rawItem in $items) {
+		$item = Normalize-ContentRef $rawItem
+		if ($item -ne $rawItem) { Write-Host "[NORM] Content: $rawItem -> $item" }
 		if ($item -in $existing) {
 			Warn "Content already contains: $item"
 			continue
@@ -244,6 +373,20 @@ function Do-AddChild([string]$childName) {
 	Insert-BeforeElement $script:childObjsEl $newEl $null $childIndent
 	$script:addCount++
 	Info "Added child subsystem: $childName"
+
+	# Write stub XML for the new child if it doesn't exist yet
+	$parentDir = [System.IO.Path]::GetDirectoryName($script:resolvedPath)
+	$parentBaseName = [System.IO.Path]::GetFileNameWithoutExtension($script:resolvedPath)
+	$childSubsDir = Join-Path (Join-Path $parentDir $parentBaseName) "Subsystems"
+	if (-not (Test-Path $childSubsDir)) {
+		New-Item -ItemType Directory -Path $childSubsDir -Force | Out-Null
+		Info "Created directory: $childSubsDir"
+	}
+	$childXml = Join-Path $childSubsDir "$childName.xml"
+	if (-not (Test-Path $childXml)) {
+		Write-ChildSubsystemStub $childXml $childName $script:formatVersion $script:utf8Bom
+		Info "Created stub: $childXml"
+	}
 }
 
 function Do-RemoveChild([string]$childName) {

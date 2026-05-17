@@ -1,7 +1,8 @@
-﻿# subsystem-validate v1.0 — Validate 1C subsystem XML structure
+﻿# subsystem-validate v1.2 — Validate 1C subsystem XML structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
-	[Parameter(Mandatory)][string]$SubsystemPath,
+	[Parameter(Mandatory)][Alias('Path')][string]$SubsystemPath,
+	[switch]$Detailed,
 	[int]$MaxErrors = 30,
 	[string]$OutFile
 )
@@ -16,10 +17,21 @@ if (-not [System.IO.Path]::IsPathRooted($SubsystemPath)) {
 if (Test-Path $SubsystemPath -PathType Container) {
 	$dirName = Split-Path $SubsystemPath -Leaf
 	$candidate = Join-Path $SubsystemPath "$dirName.xml"
+	$sibling = Join-Path (Split-Path $SubsystemPath) "$dirName.xml"
 	if (Test-Path $candidate) { $SubsystemPath = $candidate }
+	elseif (Test-Path $sibling) { $SubsystemPath = $sibling }
 	else {
 		Write-Host "[ERROR] No $dirName.xml found in directory: $SubsystemPath"
 		exit 1
+	}
+}
+# File not found — check Dir/Name/Name.xml → Dir/Name.xml
+if (-not (Test-Path $SubsystemPath)) {
+	$fn = [System.IO.Path]::GetFileNameWithoutExtension($SubsystemPath)
+	$pd = Split-Path $SubsystemPath
+	if ($fn -eq (Split-Path $pd -Leaf)) {
+		$c = Join-Path (Split-Path $pd) "$fn.xml"
+		if (Test-Path $c) { $SubsystemPath = $c }
 	}
 }
 if (-not (Test-Path $SubsystemPath)) {
@@ -32,10 +44,14 @@ $resolvedPath = (Resolve-Path $SubsystemPath).Path
 $script:errors = 0
 $script:warnings = 0
 $script:stopped = $false
+$script:okCount = 0
 $script:output = New-Object System.Text.StringBuilder 8192
 
 function Out-Line([string]$msg) { $script:output.AppendLine($msg) | Out-Null }
-function Report-OK([string]$msg) { Out-Line "[OK]    $msg" }
+function Report-OK([string]$msg) {
+	$script:okCount++
+	if ($Detailed) { Out-Line "[OK]    $msg" }
+}
 function Report-Error([string]$msg) {
 	$script:errors++
 	Out-Line "[ERROR] $msg"
@@ -48,6 +64,19 @@ function Report-Warn([string]$msg) {
 
 $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 $identPattern = '^[A-Za-z\u0410-\u042F\u0401\u0430-\u044F\u0451_][A-Za-z0-9\u0410-\u042F\u0401\u0430-\u044F\u0451_]*$'
+
+# Known plural forms that are NOT valid in subsystem Content (platform expects singular)
+$knownPluralTypes = @(
+	"Catalogs","Documents","Enums","Constants","Reports","DataProcessors"
+	"InformationRegisters","AccumulationRegisters","AccountingRegisters","CalculationRegisters"
+	"ChartsOfAccounts","ChartsOfCharacteristicTypes","ChartsOfCalculationTypes"
+	"BusinessProcesses","Tasks","ExchangePlans","DocumentJournals"
+	"CommonModules","CommonCommands","CommonForms","CommonPictures","CommonTemplates"
+	"CommonAttributes","CommandGroups","Roles","SessionParameters","FilterCriteria"
+	"XDTOPackages","WebServices","HTTPServices","WSReferences","EventSubscriptions"
+	"ScheduledJobs","SettingsStorages","FunctionalOptions","FunctionalOptionsParameters"
+	"DefinedTypes","DocumentNumerators","Sequences","Subsystems","StyleItems","IntegrationServices"
+)
 
 # --- 1. XML well-formedness + root structure ---
 $xmlDoc = $null
@@ -109,8 +138,6 @@ if (-not $script:stopped) {
 	# --- 3. Name ---
 	$nameEl = $props.SelectSingleNode("md:Name", $ns)
 	$subName = if ($nameEl) { $nameEl.InnerText.Trim() } else { "" }
-	Out-Line ""
-	Out-Line "=== Validation: Subsystem.$subName ==="
 	# Re-insert header at position 0
 	$headerLine = "=== Validation: Subsystem.$subName ==="
 	$script:output.Insert(0, "$headerLine`r`n`r`n") | Out-Null
@@ -175,6 +202,13 @@ if (-not $script:stopped) {
 			if ($text -notmatch '^[A-Za-z]+\..+$' -and $text -notmatch $guidPattern) {
 				Report-Error "6. Content item `"$text`": invalid format (expected Type.Name or UUID)"
 				$contentOk = $false
+			}
+			if ($text -match '^([A-Za-z]+)\.') {
+				$typePart = $Matches[1]
+				if ($typePart -in $knownPluralTypes) {
+					Report-Error "6. Content item `"$text`": uses plural form `"$typePart`" (platform requires singular, e.g. Catalog not Catalogs)"
+					$contentOk = $false
+				}
 			}
 		}
 		if ($contentOk) { Report-OK "6. Content: $($xrItems.Count) items, all valid MDObjectRef format" }
@@ -245,8 +279,6 @@ if (-not $script:stopped) {
 		} else {
 			Report-Warn "10. ChildObjects files: missing: $($missingFiles -join ', ')"
 		}
-	} else {
-		Report-OK "10. ChildObjects files: n/a (no children)"
 	}
 
 	# --- 11. CommandInterface.xml ---
@@ -296,10 +328,16 @@ if (-not $script:stopped) {
 }
 
 # --- Finalize ---
-Out-Line "---"
-Out-Line "Errors: $($script:errors), Warnings: $($script:warnings)"
+$checks = $script:okCount + $script:errors + $script:warnings
 
-$result = $script:output.ToString()
+if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
+	$result = "=== Validation OK: Subsystem.$subName ($checks checks) ==="
+} else {
+	Out-Line ""
+	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
+	$result = $script:output.ToString()
+}
+
 Write-Host $result
 
 if ($OutFile) {

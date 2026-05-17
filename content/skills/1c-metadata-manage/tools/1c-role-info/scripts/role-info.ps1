@@ -1,5 +1,7 @@
-﻿param(
-	[Parameter(Mandatory=$true)][string]$RightsPath,
+﻿# role-info v1.0 — Analyze 1C role rights
+# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+param(
+	[Parameter(Mandatory=$true)][Alias('Path')][string]$RightsPath,
 	[switch]$ShowDenied,
 	[int]$Limit = 150,
 	[int]$Offset = 0,
@@ -7,6 +9,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Output helper (always collect, paginate at the end) ---
 $script:lines = @()

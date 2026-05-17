@@ -1,4 +1,4 @@
-﻿# cfe-patch-method v1.0 — Generate method interceptor for 1C extension (CFE)
+﻿# cfe-patch-method v1.1 — Generate method interceptor for 1C extension (CFE)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -66,6 +66,14 @@ $typeDirMap = @{
 	"BusinessProcess"="BusinessProcesses"; "Task"="Tasks"
 	"InformationRegister"="InformationRegisters"; "AccumulationRegister"="AccumulationRegisters"
 	"AccountingRegister"="AccountingRegisters"; "CalculationRegister"="CalculationRegisters"
+	"Catalogs"="Catalogs"; "Documents"="Documents"; "Enums"="Enums"
+	"CommonModules"="CommonModules"; "Reports"="Reports"; "DataProcessors"="DataProcessors"
+	"ExchangePlans"="ExchangePlans"; "ChartsOfAccounts"="ChartsOfAccounts"
+	"ChartsOfCharacteristicTypes"="ChartsOfCharacteristicTypes"
+	"ChartsOfCalculationTypes"="ChartsOfCalculationTypes"
+	"BusinessProcesses"="BusinessProcesses"; "Tasks"="Tasks"
+	"InformationRegisters"="InformationRegisters"; "AccumulationRegisters"="AccumulationRegisters"
+	"AccountingRegisters"="AccountingRegisters"; "CalculationRegisters"="CalculationRegisters"
 }
 
 $parts = $ModulePath.Split(".")
@@ -132,10 +140,10 @@ $endKeyword = if ($IsFunction) { "КонецФункции" } else { "Конец
 $bodyLines = @()
 switch ($InterceptorType) {
 	"Before" {
-		$bodyLines += "`t// Код перед вызовом оригинального метода."
+		$bodyLines += "`t// TODO: код перед вызовом оригинального метода"
 	}
 	"After" {
-		$bodyLines += "`t// Код после вызова оригинального метода."
+		$bodyLines += "`t// TODO: код после вызова оригинального метода"
 	}
 	"ModificationAndControl" {
 		$bodyLines += "`t// Скопируйте тело оригинального метода и внесите изменения,"
@@ -145,7 +153,7 @@ switch ($InterceptorType) {
 
 if ($IsFunction) {
 	$bodyLines += "`t"
-	$bodyLines += "`tВозврат Неопределено;"
+	$bodyLines += "`tВозврат Неопределено; // TODO: заменить на реальное возвращаемое значение"
 }
 
 $bslCode = @()
@@ -156,6 +164,21 @@ $bslCode += $bodyLines
 $bslCode += "$endKeyword"
 
 $bslText = ($bslCode -join "`r`n") + "`r`n"
+
+# --- Check form borrowing for .Form. paths ---
+if ($parts.Count -ge 4 -and $parts[2] -eq "Form") {
+	$formName = $parts[3]
+	$dirName = $typeDirMap[$objType]
+	$formMetaFile = Join-Path (Join-Path (Join-Path (Join-Path $ExtensionPath $dirName) $objName) "Forms") "${formName}.xml"
+	$formXmlFile = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $ExtensionPath $dirName) $objName) "Forms") $formName) "Ext/Form.xml"
+
+	if (-not (Test-Path $formMetaFile) -or -not (Test-Path $formXmlFile)) {
+		Write-Host "[WARN] Form '$formName' metadata or Form.xml not found in extension."
+		Write-Host "       Run /cfe-borrow first:"
+		Write-Host "       /cfe-borrow -ExtensionPath $ExtensionPath -ConfigPath <ConfigPath> -Object `"$objType.$objName.Form.$formName`""
+		Write-Host ""
+	}
+}
 
 # --- Check if file exists and append ---
 $bslDir = Split-Path $bslFile -Parent

@@ -6,13 +6,19 @@ Comprehensive managed form management: design patterns reference, create/remove 
 
 ## 1. Patterns — Design Reference
 
-Reference of standard managed form design patterns for 1C. Load **before** designing a form via `1c-form-compile` when user requirements do not specify element placement details.
+Full reference of managed-form layout archetypes, naming conventions, layout principles and advanced ERP-class patterns lives in [`form-patterns.md`](form-patterns.md).
 
-**How to use:** pick a matching archetype, apply naming conventions, use advanced patterns as needed.
+Load `form-patterns.md` **before** designing a form via `1c-form-compile` when user requirements do not specify element placement (5+ elements or unclear requirements). For simple 1–3 field forms it is not needed.
 
----
+The reference covers:
 
-### Form Archetypes
+- **Archetypes** — Document, Data Processor, List, Catalog Item (Simple/Complex), Wizard.
+- **Naming** — group / element / event-handler conventions.
+- **Layout principles** — reading order, two-column header, action buttons on `autoCmdBar`, totals near table, etc.
+- **Advanced patterns** — collapsible groups, warning banners, popup menus, hyperlink labels, modal dialogs.
+
+<details>
+<summary>Quick archetype index (full versions in <code>form-patterns.md</code>)</summary>
 
 #### Document Form
 
@@ -251,15 +257,17 @@ Instead of a button for opening subforms (PricesAndCurrency, AccountingPolicy):
 }
 ```
 
+</details>
+
 ---
 
 ## 2. Scaffold — Create or Remove Form
 
-Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it in the root XML of a 1C metadata object. Supports all object types: DataProcessor, Document, Catalog, InformationRegister, and more. Also supports form removal.
+Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it in the root XML of a 1C metadata object. A single unified script handles both configuration objects (Document, Catalog, InformationRegister, …) and standalone External Data Processors / Reports (EPF/ERF). The same is true for removal.
+
+> **Note:** the previous EPF-specific entry points (`add-form.ps1` taking `-ProcessorName`, and the EPF-only variant of `remove-form.ps1`) were merged into the unified `form-add.ps1` / `remove-form.ps1` scripts (`ObjectPath` / `ObjectName`). The unified scripts auto-detect the object kind from the XML root and apply the right scaffolding rules — EPF/ERF forms get `ExtendedPresentation`, regular config objects do not.
 
 ### Adding a Form
-
-#### For Configuration Objects
 
 ```
 1c-form-scaffold add <ObjectPath> <FormName> [Purpose] [Synonym] [--set-default]
@@ -267,35 +275,18 @@ Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it i
 
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
-| ObjectPath | yes | — | Path to object XML file (e.g., `Documents/Doc.xml`) |
+| ObjectPath | yes | — | Path to the object XML file (e.g. `Documents/Doc.xml`) or directory; for EPF/ERF — path to the processor/report root XML (`src/MyProcessor.xml` or its directory) |
 | FormName | yes | — | Form name |
-| Purpose | no | Object | Purpose: Object, List, Choice, Record |
+| Purpose | no | Object | Purpose: `Object`, `List`, `Choice`, `Record`, `Folder` |
 | Synonym | no | = FormName | Form synonym |
-| --set-default | no | auto | Set as default form |
+| --set-default | no | auto | Set as default form (auto for the first form of that purpose) |
 
 **Command:**
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1 -ObjectPath "<ObjectPath>" -FormName "<FormName>" [-Purpose "<Purpose>"] [-Synonym "<Synonym>"] [-SetDefault]
 ```
 
-#### For External Data Processors (EPF)
-
-```
-1c-form-scaffold add-epf <ProcessorName> <FormName> [Synonym] [--main]
-```
-
-| Parameter | Required | Default | Description |
-|-----------|:--------:|---------|-------------|
-| ProcessorName | yes | — | Processor name (must exist) |
-| FormName | yes | — | Form name |
-| Synonym | no | = FormName | Form synonym |
-| --main | no | auto | Set as default form (auto for first form) |
-| SrcDir | no | `src` | Source directory |
-
-**Command:**
-```powershell
-pwsh -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/add-form.ps1 -ProcessorName "<ProcessorName>" -FormName "<FormName>" [-Synonym "<Synonym>"] [-Main] [-SrcDir "<SrcDir>"]
-```
+The script auto-detects the format version of `Form.xml` from the nearest `Configuration.xml` (8.3.27+, 8.5).
 
 #### Purpose — Form Assignment
 
@@ -338,38 +329,34 @@ Document, Catalog, DataProcessor, Report, InformationRegister, ChartOfAccounts, 
 
 ### Removing a Form
 
-#### From Configuration Objects
-
-Remove form files and unregister from the object's root XML.
-
-#### From External Data Processors (EPF)
+Unified across configuration objects and EPF/ERF — pass the object name (or alias `ProcessorName` for backward compatibility).
 
 ```
-1c-form-scaffold remove-epf <ProcessorName> <FormName>
+1c-form-scaffold remove <ObjectName> <FormName> [SrcDir]
 ```
 
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
-| ProcessorName | yes | — | Processor name |
+| ObjectName (alias `ProcessorName`) | yes | — | Object name (root XML lives at `<SrcDir>/<ObjectName>.xml`) |
 | FormName | yes | — | Form name to remove |
 | SrcDir | no | `src` | Source directory |
 
 **Command:**
 ```powershell
-pwsh -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1 -ProcessorName "<ProcessorName>" -FormName "<FormName>" [-SrcDir "<SrcDir>"]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1 -ObjectName "<ObjectName>" -FormName "<FormName>" [-SrcDir "<SrcDir>"]
 ```
 
 #### What Gets Removed
 
 ```
-<SrcDir>/<ProcessorName>/Forms/<FormName>.xml     # Form metadata
-<SrcDir>/<ProcessorName>/Forms/<FormName>/         # Form directory (recursive)
+<SrcDir>/<ObjectName>/Forms/<FormName>.xml     # Form metadata
+<SrcDir>/<ObjectName>/Forms/<FormName>/         # Form directory (recursive)
 ```
 
 #### What Gets Modified
 
-- `<SrcDir>/<ProcessorName>.xml` — removes `<Form>` from `ChildObjects`
-- If removed form was DefaultForm — clears DefaultForm value
+- `<SrcDir>/<ObjectName>.xml` — removes `<Form>` from `ChildObjects`
+- If the removed form was Default*Form — the corresponding default property is cleared
 
 ---
 
@@ -391,39 +378,63 @@ pwsh -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/r
 # Set as default form
 1c-form-scaffold add Documents/Order.xml NewDocumentForm --purpose Object --set-default
 
-# EPF form
-1c-form-scaffold add-epf MyProcessor MainForm "Main Form" --main
+# EPF / ERF form (same unified script — pass the path to the EPF root XML)
+1c-form-scaffold add src/MyProcessor.xml MainForm --synonym "Main Form" --set-default
 
-# Remove EPF form
-1c-form-scaffold remove-epf MyProcessor OldForm
+# Remove a form (works for both config objects and EPF/ERF)
+1c-form-scaffold remove MyProcessor OldForm
 ```
 
 ---
 
-## 3. Compile — Generate from JSON
+## 3. Compile — Generate from JSON or from Object Metadata
 
-Takes a compact JSON definition (20–50 lines) and generates a complete, valid Form.xml (100–500+ lines) with namespace declarations, auto-generated companion elements, and sequential IDs.
+Two modes:
 
-> **When designing a form from scratch (5+ elements or unclear requirements)** — load the `1c-form-patterns` skill first for archetypes, naming conventions, and advanced patterns. For simple forms (1–3 fields with clear requirements) — not needed.
+1. **JSON DSL** — generate `Form.xml` from a JSON definition.
+2. **From-object** (`-FromObject`) — generate a typical form from an object's metadata (Catalog, Document, InformationRegister, AccumulationRegister, ChartOfCharacteristicTypes, ExchangePlan, ChartOfAccounts) using the active preset (default `erp-standard`).
+
+> **Designing a form from scratch (5+ elements or unclear requirements)** — load [`form-patterns.md`](form-patterns.md) first. For simple forms (1–3 fields) it is not needed.
+>
+> **Full DSL reference** — see [`form-compile-dsl.md`](form-compile-dsl.md). The block below is a quick summary.
+
+### What's New (vs the previous local snapshot)
+
+- **`-FromObject` mode** — produces a typical form from object metadata; purpose (`Object`/`List`/`Choice`/`Folder`/`Record`) is inferred from `OutputPath`. Document list forms get the standard `Number` and `Date` columns automatically; ChartOfAccounts pulls accounting flags / sub-account kinds correctly.
+- **New element types** — `radio` (RadioButtonField with `radioButtonType`: `Auto` / `RadioButtons` / `Tumbler`, `choiceList`); `autoCmdBar` (fills the form's main AutoCommandBar id=-1); `columnGroup` (column grouping inside table `columns` — `horizontal` / `vertical` / `inCell`, nestable).
+- **New input keys** — `textEdit: false` (disable free text editing on reference fields), `maxWidth` / `maxHeight` (hard caps, usually with `autoMaxWidth: false`).
+- **New group key** — `collapsed: true` for `"group": "collapsible"` (group starts collapsed).
+- **Multilingual strings** — any title / presentation may be `{ "ru": "...", "en": "..." }`.
+- **Auto-titles** — attributes, commands, pages, popups and decorations without explicit `title` get a humanised title from the name (`НомерСчёта` → "Номер счёта").
+- **Format version** — auto-detected from the nearest `Configuration.xml` (8.3.27+, 8.5).
+- **Presets** — `tools/1c-form-compile/presets/erp-standard.json` is shipped; project-level override at `<projectRoot>/presets/skills/form/<name>.json`.
+- **Defaults aligned with real ERP/БП forms** — multi-line inputs are not auto-width-bounded by default; checkbox title is on the right; `autoTitle` is suppressed when `title` is set; objects with editable state save the input state (`Esc → confirm`).
 
 ### Usage
 
 ```
-1c-form-compile <JsonPath> <OutputPath>
+1c-form-compile <JsonPath> <OutputPath>            # JSON DSL mode
+1c-form-compile -FromObject <OutputPath>           # from-object mode
 ```
 
 | Parameter | Required | Description |
 |-----------|:--------:|-------------|
-| JsonPath | yes | Path to the form JSON definition |
-| OutputPath | yes | Path to output Form.xml file |
+| `JsonPath`   | mode 1 | Path to the form JSON definition |
+| `OutputPath` | yes    | Path to the output `Form.xml` |
+| `FromObject` | mode 2 | Switch — generate from object metadata |
+| `Preset`     | no     | Preset name (default `erp-standard`) |
 
 ### Command
 
 ```powershell
+# JSON DSL
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.ps1 -JsonPath "<json>" -OutputPath "<xml>"
+
+# From-object (Catalog / Document / Register / ChartOf* / ExchangePlan)
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.ps1 -FromObject -OutputPath "<.../TypePlural/ObjectName/Forms/FormName/Ext/Form.xml>"
 ```
 
-### JSON DSL Reference
+### JSON DSL Quick Summary
 
 #### Top-Level Structure
 
@@ -819,6 +830,8 @@ Run 1c-form-validate to verify.
 
 Reads a Form.xml of a managed form and outputs a compact summary: element tree, typed attributes, commands, events. Replaces the need to read thousands of XML lines.
 
+> **Behavioural note.** Pages are collapsed by default to a `(N items)` summary — to keep large forms scannable. Use `-Expand <name|*>` to expand specific pages (or `*` for all). The main form auto command bar is rendered as a separate section, separately from the layout tree.
+
 ### Usage
 
 ```
@@ -827,19 +840,27 @@ Reads a Form.xml of a managed form and outputs a compact summary: element tree, 
 
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
-| FormPath | yes | — | Path to Form.xml file |
-| Limit | no | `150` | Max output lines (overflow protection) |
-| Offset | no | `0` | Skip N lines (for pagination) |
+| `Path` (alias `FormPath`) | yes | — | Path to `Form.xml` (also accepts a folder, the script resolves to `Forms/<Name>/Ext/Form.xml`) |
+| `Expand` | no | — | Page names to expand: list of names, single name, or `*` for all |
+| `Limit` | no | `150` | Max output lines (overflow protection) |
+| `Offset` | no | `0` | Skip N lines (for pagination) |
 
 ### Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -FormPath "<path to Form.xml>"
+# Default — pages collapsed, main command bar shown as a separate section
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -Path "<path to Form.xml>"
+
+# Expand a specific page
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -Path "<path>" -Expand "Goods"
+
+# Expand all pages
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -Path "<path>" -Expand "*"
 ```
 
 With pagination:
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -FormPath "<path>" -Offset 150
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -Path "<path>" -Offset 150
 ```
 
 ### Reading the Output
@@ -905,9 +926,10 @@ Elements:
 | `[Button]` | Button |
 | `[CmdBar]` | CommandBar |
 | `[Pages]` | Pages |
-| `[Page]` | Page (shows item count instead of expanding) |
+| `[Page]` | Page (shows item count instead of expanding by default; use `-Expand` to drill in) |
 | `[Popup]` | Popup |
 | `[BtnGroup]` | ButtonGroup |
+| `[AutoCmdBar]` | Form AutoCommandBar (id=-1) — rendered as a separate "Main Form Command Bar" section, not in the layout tree |
 
 **Flags** (only when deviating from default):
 - `[visible:false]` — element is hidden (Visible=false)
@@ -1063,6 +1085,16 @@ Return code: 0 = all checks passed, 1 = errors found.
 4. `1c-form-manage edit` — add elements to existing form
 5. `1c-form-manage info` — analyze form structure
 6. `1c-form-manage validate` — check correctness
+
+## Recent Additions (upstream `w-2026-05-17`)
+
+In addition to the form-compile / form-info / form-add / form-edit / form-remove changes already documented in sections 2–5, **`form-validate`** got the following improvements (script `tools/1c-form-validate/scripts/form-validate.ps1`):
+
+- Stops false-flagging real ERP and БП forms — `Items.<Table>.CurrentData.<Field>` and `~<DynamicList>.<Field>` paths are now correctly resolved through the table's data attribute. Missing table → error; third segment ≠ `CurrentData` → warning.
+- Opaque platform paths (`"10"`, `"1000003"`, `"N/M: "`) are skipped without an error. Previously Check 5 reported "attribute not found" on these.
+- New attribute-type check in `data`: error on intentionally invalid types, warning on unrecognised ones. Context is honoured — `ExternalDataProcessorObject` / `ExternalReportObject` are valid only inside an external data processor / report; in regular configuration object forms it is an error with a hint to use the inner object type.
+- Platform 8.5 support — new compatibility / interface mode values and the new XML header format.
+- Brief output by default; full per-check trace via `-Detailed`. The `-Path` parameter accepts both a `Form.xml` file and a `Forms/<Name>` folder (auto-resolves to `Forms/<Name>/Ext/Form.xml`).
 
 ## MCP Integration
 

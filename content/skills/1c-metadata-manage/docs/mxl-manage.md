@@ -342,6 +342,14 @@ Stops after 20 errors by default (configurable via `-MaxErrors`). Summary line w
 4. **After generation or editing**: Run `1c-mxl-validate` to find structural errors before building
 
 ---
+## Recent Additions (upstream `w-2026-05-17`)
+
+The PowerShell script `tools/1c-mxl-validate/scripts/mxl-validate.ps1` was refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills). Highlights:
+
+- **Universal validator improvements** — one-liner output by default (`-Detailed` for the full per-check trace); accepts both `Template.xml` and a folder path; universal `-Path` parameter alongside legacy `-TemplatePath`.
+
+The compile/decompile/info scripts (`mxl-compile`, `mxl-decompile`, `mxl-info`) were not refreshed — no significant upstream changes for them in this period.
+
 ## MCP Integration
 
 - **metadatasearch** — Verify object names used in parameters; find template paths in the configuration.

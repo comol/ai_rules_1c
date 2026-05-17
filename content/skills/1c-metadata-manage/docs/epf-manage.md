@@ -304,6 +304,15 @@ Exit code: 0 = all checks passed, 1 = errors found.
 
 ---
 
+## Recent Additions (upstream `w-2026-05-17`)
+
+The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills). Highlights:
+
+- **Format version auto-detection** from the nearest `Configuration.xml` (8.3.27+, 8.5).
+- **Platform 8.5** support across `epf-validate` and `erf-validate` (new compatibility-mode and interface-mode values, new XML header format).
+- **Universal validator improvements** — one-liner output by default (`-Detailed` for the full per-check trace); accepts both an XML file and a folder path as the primary argument; universal `-Path` parameter alongside legacy `-ObjectPath`.
+- The same script handles `erf-validate` — upstream `erf-validate` is a thin pass-through to `epf-validate.ps1`, the script auto-detects `ExternalReport` vs `ExternalDataProcessor` from the root XML element. No separate `erf-validate.ps1` is shipped.
+
 ## MCP Integration
 
 - **metadatasearch** — Verify metadata object names and types when setting up the processor/report for integration with existing configuration objects.
