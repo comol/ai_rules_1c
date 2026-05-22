@@ -2,7 +2,7 @@
 name: 1c-arch-reviewer
 description: "Expert 1C architecture reviewer agent. Reviews architectural decisions, evaluates design patterns, identifies scalability issues, and assesses compliance with 1C best practices. Provides confidence-scored feedback on architectural solutions. Use PROACTIVELY before implementing significant architectural changes."
 modelHint: gemini-3-pro
-tools: ["Read", "Grep", "Glob", "MCP"]
+tools: ["Read", "MCP"]
 allowParallel: true
 ---
 
@@ -21,6 +21,8 @@ You are an expert 1C architecture reviewer specializing in evaluating architectu
 ## MCP Tool Usage
 
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for tool descriptions.
+
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` are not in this agent's toolset by design (see frontmatter) — request a search via the parent or `1c-explorer` if needed.
 
 **Key tools for architecture review:**
 - **codesearch** — find existing patterns in codebase

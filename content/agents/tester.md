@@ -24,15 +24,17 @@ You are an expert 1C testing specialist focused on validating code changes throu
 
 Follow the `powershell-windows` skill for all PowerShell commands (use `;` not `&&`, `Invoke-WebRequest` not `curl`, etc.).
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — when inspecting BSL / metadata to validate test results, use MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source. `Grep` on deployment / event logs and other non-project-source artifacts is fine without an MCP attempt.
+
 ## Testing Prerequisites
 
 Before testing, ensure:
 
 1. **Project parameters in `.dev.env`** are the single source of truth. Full key catalog (code-generation block + infobase / deployment block) lives in `dev-standards-core.md §1` — do not duplicate it here. The `1c-rules` installer creates `.dev.env` on `init`; if the file is missing, ask the user to run `install.ps1 init` or copy `.dev.env.example` → `.dev.env`. If a legacy `infobasesettings.md` is still present, migrate its values into `.dev.env`, preserve already-filled `.dev.env` keys, and remove the legacy file after successful migration.
 
-2. Critical keys for this subagent (subset of the catalog in `dev-standards-core.md §1.2`): `PLATFORM_PATH`, `INFOBASE_KIND`, `INFOBASE_PATH`, `LOG_PATH`, `INFOBASE_PUBLISH_URL` (UI tests are skipped if empty), `IBCMD_CONFIG` (optional; enables the `ibcmd` deployment path — see `commands/deploy-and-test.md` steps 2a/3a).
+2. Critical keys for this subagent (subset of the catalog in `dev-standards-core.md §1.2`): `PLATFORM_PATH`, `INFOBASE_KIND`, `INFOBASE_PATH`, `INFOBASE_PUBLISH_URL` (UI tests are skipped if empty), `IBCMD_CONFIG` (optional; enables the `ibcmd` deployment path — see `commands/deploy-and-test.md` steps 2a/3a). Defaulted keys (`IB_USER`, `IB_PASSWORD`, `LOG_PATH`) are silently filled from their documented defaults — do not ask up front.
 
-3. If any critical field is empty (`INFOBASE_PATH`, `PLATFORM_PATH`, or `INFOBASE_PUBLISH_URL` for UI tests) — ask the user, do not guess, and persist the answer back into `.dev.env`.
+3. If any blocking field is empty (`INFOBASE_PATH`, `PLATFORM_PATH`, or `INFOBASE_PUBLISH_URL` for UI tests) — ask the user, do not guess, and persist the answer back into `.dev.env`. **Do not** ask about `IB_USER` / `IB_PASSWORD` / `LOG_PATH` when they are empty: empty `IB_USER` / `IB_PASSWORD` means "no authentication / no password" (the `/N` / `/P` flags are simply omitted, fully valid for dev / test infobases); empty `LOG_PATH` resolves to `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). Re-ask `IB_USER` / `IB_PASSWORD` only if the platform itself returns an authentication error; re-ask `LOG_PATH` only if the resolved path turns out to be non-writable.
 
 ## Deployment Process
 
@@ -44,7 +46,7 @@ All deployment is performed via the slash command `/deploy-and-test` (source: `c
 - Otherwise — fall back to Designer (steps 2b / 3b).
 - `ibcmd infobase config` does not support clustered server infobases; for those always use Designer regardless of `IBCMD_CONFIG`.
 
-After deployment: read the log file referenced by `{LOG_PATH}` and confirm no errors before proceeding to UI testing.
+After deployment: read the log file referenced by `{LOG_PATH}` (or `$env:TEMP\1cv8.log` when the placeholder was empty in `.dev.env`) and confirm no errors before proceeding to UI testing.
 
 ## Web UI Testing
 

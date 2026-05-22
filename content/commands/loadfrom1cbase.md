@@ -21,14 +21,16 @@ Used `.dev.env` keys:
 | `PLATFORM_PATH` | Platform installation directory containing `bin\1cv8.exe` |
 | `INFOBASE_KIND` | `file` or `server` |
 | `INFOBASE_PATH` | File infobase path or server connection string |
-| `IB_USER` | Infobase user; empty means no authentication |
-| `IB_PASSWORD` | Password; empty means no password |
+| `IB_USER` | Infobase user; empty = no authentication, `/N` / `--user` is omitted. **Do not ask up front.** |
+| `IB_PASSWORD` | Password; empty = no password, `/P` / `--password` is omitted. An empty password is a fully valid configuration for dev / test infobases — **do not ask up front**. Re-ask only if the platform itself returns an authentication error. |
 | `EXTENSION_NAME` | Extension name; empty means main configuration |
 | `EXPORT_PATH` | Dump directory; empty means repository root |
-| `LOG_PATH` | Designer log file |
+| `LOG_PATH` | Designer log file; empty resolves to `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). **Do not ask up front** — any writable path works equally well. Re-ask only if the resolved path turns out to be non-writable. |
 | `IBCMD_CONFIG` | Path to standalone server `config.yml` for `ibcmd`, optional |
 
-If critical fields are empty (`INFOBASE_PATH`, `PLATFORM_PATH`), ask the user and write the values to `.dev.env`; do not guess.
+Only `INFOBASE_PATH` and `PLATFORM_PATH` are blocking — if either is empty, ask the user and write the value to `.dev.env`. **Do not** ask about `IB_USER` / `IB_PASSWORD` / `LOG_PATH` when they are empty; apply the documented defaults silently.
+
+When substituting `.dev.env` values into the templates below: if `LOG_PATH` is empty, replace `{LOG_PATH}` with `"$env:TEMP\1cv8.log"` (PowerShell expands the env var when the string is double-quoted).
 
 ## Step 1. Choose tool: `ibcmd` or Designer
 

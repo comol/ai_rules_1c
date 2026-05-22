@@ -22,6 +22,8 @@ You are an expert 1C error resolution specialist focused on fixing syntax errors
 
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for tool descriptions. Follow the `powershell-windows` skill for shell commands.
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source.
+
 **Key tools for error fixing:**
 - **syntaxcheck** — check code for syntax errors (limit: 1 per cycle by default, up to 3 only on substantive defects — see `AGENTS.md → MCP Tool Calling → B.1`)
 - **docsearch** — verify built-in function existence/syntax

@@ -29,6 +29,8 @@ Before creating any documentation:
 - Use **answer_metadata_question** to get answers about how metadata objects work
 - Identify similar implementations for reference
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source.
+
 ### 2. Requirements Gathering
 
 - Ask clarifying questions when requirements are ambiguous

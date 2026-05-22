@@ -71,9 +71,10 @@ Also check:
    - `PLATFORM_PATH`;
    - `INFOBASE_KIND`;
    - `INFOBASE_PATH`;
-   - `LOG_PATH`;
    - `EXPORT_PATH` when the repository root is not the configuration source directory;
    - `PLATFORM_VERSION` when platform-version-specific docs or checks are needed.
+
+   Do **not** treat `IB_USER`, `IB_PASSWORD`, or `LOG_PATH` as critical even when empty — they are **Defaulted** per `content/rules/dev-standards-core.md §1`. Empty `IB_USER` / `IB_PASSWORD` = no authentication / no password (the `/N` / `/P` flags are simply omitted), empty `LOG_PATH` = `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). Report them as "uses default" rather than as a missing value.
 4. Verify that `PLATFORM_PATH` contains `bin\1cv8.exe`.
 5. Verify that `INFOBASE_KIND` is `file` or `server`.
 6. Never print `IB_PASSWORD`, tokens, license keys, or full connection strings. Report only whether they are set.

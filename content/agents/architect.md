@@ -35,6 +35,8 @@ Extract existing patterns, conventions, and architectural decisions:
 **Development standards:** Follow `content/rules/dev-standards-core.md` (project parameters, naming, documentation) and `content/rules/dev-standards-architecture.md` (architecture patterns, extensions, platform standards).
 Key tools: **codesearch**, **metadatasearch**, **get_metadata_details**, **graph_dependencies**, **get_method_call_hierarchy**, **templatesearch**
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source.
+
 **SDD Integration:** If the project has an `openspec/` workspace, read `content/rules/sdd-integrations.md` for OpenSpec integration guidance.
 
 ### 2. Gather Requirements

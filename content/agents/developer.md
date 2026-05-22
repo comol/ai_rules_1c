@@ -38,6 +38,7 @@ You are an expert 1C:Enterprise 8.3 developer with deep knowledge of best practi
 
 Key rules to always remember:
 - Use MCP tools — see the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for descriptions
+- **Search discipline** — follow `content/rules/mcp-first-search.md`: MCP project-index tools first; `Grep` / `Glob` only as a justified last resort on 1C project source
 - Follow the `powershell-windows` skill for shell commands
 - ALWAYS search for templates before writing code
 - ALWAYS verify syntax after writing code

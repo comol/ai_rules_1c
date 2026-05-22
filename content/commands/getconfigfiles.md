@@ -8,17 +8,17 @@ See the full rule in `content/rules/getconfigfiles.md`.
 
 ## Parameters
 
-All paths and identifiers come from `.dev.env` placeholders. If a value is unknown, ask the user.
+All paths and identifiers come from `.dev.env` placeholders. Only `INFOBASE_PATH` and `PLATFORM_PATH` are blocking — if either is empty, ask the user and write the value to `.dev.env`. `IB_USER` / `IB_PASSWORD` / `LOG_PATH` have documented defaults (see the table below) — apply them silently, do not ask up front. When substituting templates: if `LOG_PATH` is empty, replace `{LOG_PATH}` with `"$env:TEMP\1cv8.log"`.
 
 | Placeholder | Purpose |
 |---|---|
 | `{PLATFORM_PATH}` | 1C platform installation directory containing `bin\1cv8.exe` |
 | `{INFOBASE_PATH}` | File infobase path or server connection string |
-| `{IB_USER}` | Infobase user |
-| `{IB_PASSWORD}` | Password, if set |
+| `{IB_USER}` | Infobase user; empty = no authentication, `/N` / `--user` is omitted. **Do not ask up front.** |
+| `{IB_PASSWORD}` | Password; empty = no password, `/P` / `--password` is omitted. An empty password is a fully valid configuration for dev / test infobases — **do not ask up front**. Re-ask only if the platform itself returns an authentication error. |
 | `{EXPORT_PATH}` | Source export directory |
 | `{EXTENSION_NAME}` | Extension name; omit for the main configuration |
-| `{LOG_PATH}` | Designer log file |
+| `{LOG_PATH}` | Designer log file; empty resolves to `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). **Do not ask up front.** |
 | `{IBCMD_CONFIG}` | Path to standalone server `config.yml` for `ibcmd`, optional |
 
 ## Steps

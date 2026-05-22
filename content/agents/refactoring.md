@@ -22,6 +22,8 @@ You are an expert 1C code refactoring specialist focused on code cleanup, consol
 
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for tool descriptions. Follow the `powershell-windows` skill for shell commands.
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source.
+
 **Key tools for refactoring:**
 - **codesearch** — find all usages of code being refactored
 - **search_function** — find specific procedures/functions by name

@@ -141,9 +141,9 @@ Operational parameters (platform version, platform path, infobase connection, we
 **No field in `.dev.env` is globally mandatory.** Every parameter is task-scoped — a missing value matters only when the **current** scheduled operation depends on it. Do not gather empties up front. Detailed classification (advisory / highly desirable / defaulted) and per-parameter behavior — in `content/rules/dev-standards-core.md §1 → "Global principle"`. Quick summary:
 
 - **Advisory** (`PREFIX`, `COMPANY`, `DEVELOPER`) — empty is valid; documented fallback applies (no prefix; no modification markers). **MUST NOT be asked about, ever.**
-- **Highly desirable for IB-bound operations** (`INFOBASE_PATH`, `IB_USER`, `IB_PASSWORD`, `PLATFORM_PATH`, `LOG_PATH`) — needed only for `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test` and similar commands. Ask **only when that command is in scope of the current task**. Pure code / review / analysis / documentation tasks proceed even when this whole block is empty.
+- **Highly desirable for IB-bound operations** (`INFOBASE_PATH`, `PLATFORM_PATH`) — needed only for `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test` and similar commands. Ask **only when that command is in scope of the current task**. Pure code / review / analysis / documentation tasks proceed even when this whole block is empty.
 - **Highly desirable for UI testing** (`INFOBASE_PUBLISH_URL`) — needed by the `1c-tester` subagent / `/deploy-and-test`. Empty = UI tests are silently skipped, the rest of the flow still runs. Ask only when the user explicitly requested UI tests.
-- **Defaulted** (`INFOBASE_KIND`, `EXTENSION_NAME`, `EXPORT_PATH`, `NEW_OBJECTS_IN`, `IBCMD_CONFIG`) — empty resolves to a documented default; no question.
+- **Defaulted** (`INFOBASE_KIND`, `IB_USER`, `IB_PASSWORD`, `EXTENSION_NAME`, `EXPORT_PATH`, `LOG_PATH`, `NEW_OBJECTS_IN`, `IBCMD_CONFIG`) — empty resolves to a documented default; no question. In particular: empty `IB_USER` / `IB_PASSWORD` = no authentication (the `/N` / `/P` flags are simply omitted; an empty password is a valid configuration for dev / test infobases); empty `LOG_PATH` = `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). Re-ask `IB_USER` / `IB_PASSWORD` **only** if the command fails with an authentication error; re-ask `LOG_PATH` **only** if the resolved default path turns out to be non-writable.
 
 Guessing values is still PROHIBITED. When an in-scope operation truly needs a missing highly-desirable value, ask once and proceed.
 
@@ -275,6 +275,7 @@ Load the corresponding file when the task matches the rule's scenario.
 ## Tooling
 
 - **tooling-playbooks** — step-by-step MCP playbooks per task type (writing code, review, architecture, error fixing, performance, refactoring, metadata XML, forms, integrations, documentation, platform-version comparison). Load at the start of a corresponding task. File: `content/rules/tooling-playbooks.md`.
+- **mcp-first-search** — MCP-first search discipline for 1C project source: explicit priority chain (graph → code-metadata → `grep=true` retry → `Grep`) and a mandatory "what was tried" note before any `Grep` / `Glob` fallback. Already encoded in `1c-explorer`; the rule file makes the same gate salient in the other subagents. Load whenever you (or a subagent) are about to run code / metadata / usage / call-graph / form / layout search on 1C project source. File: `content/rules/mcp-first-search.md`.
 
 ## Workflow and integrations
 

@@ -43,6 +43,8 @@ You are an expert documentation specialist focused on creating and maintaining *
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for tool descriptions. Follow the `powershell-windows` skill for shell commands.
 Key tools: **codesearch**, **metadatasearch**, **get_metadata_details**, **get_module_structure**, **templatesearch**, **helpsearch**
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source.
+
 **Diagrams:** Follow the `mermaid-diagrams` skill for Mermaid compatibility rules and templates.
 
 **SDD Integration:** If the project has an `openspec/` workspace, read `content/rules/sdd-integrations.md` for OpenSpec integration guidance.

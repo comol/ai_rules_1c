@@ -64,6 +64,8 @@ After completing the task, provide:
 
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for MCP tool descriptions. Follow the `powershell-windows` skill for shell commands.
 
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` only as a justified last resort on 1C project source.
+
 **Key tools for metadata work (1c-code-metadata-mcp):**
 - **metadatasearch** — verify metadata object existence and structure
 - **get_metadata_details** — get full object structure: attributes with types, tabular parts, synonyms

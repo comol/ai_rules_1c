@@ -2115,7 +2115,11 @@ function Place-RootTemplates {
 #   PREFIX, COMPANY, DEVELOPER, PLATFORM_VERSION, PLATFORM_PATH,
 #   INFOBASE_PATH.
 # Recommended fields (warned about, but not blocking):
-#   IB_USER, INFOBASE_PUBLISH_URL, LOG_PATH.
+#   IB_USER, INFOBASE_PUBLISH_URL.
+# Defaulted fields (empty = silently fall back to a documented default;
+# never re-asked at task time):
+#   IB_PASSWORD (empty = no password; /P omitted),
+#   LOG_PATH    (empty = $env:TEMP\1cv8.log).
 
 function Find-PlatformPath {
     # Returns the path to the most recent installed 1C platform under
@@ -2252,9 +2256,9 @@ function Place-DevEnv {
         if (-not $detectedPath)    { $val = Read-Required 'PLATFORM_PATH (каталог установки 1С, содержит bin\1cv8.exe)' '';                    if ($val) { $text = Set-DevEnvValue -Text $text -Key 'PLATFORM_PATH'       -Value $val } }
         $kindAns = Read-Choice 'INFOBASE_KIND' @('file', 'server') 'file';                                                                     $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_KIND' -Value $kindAns
         $val = Read-Required 'INFOBASE_PATH (путь к файловой ИБ или строка подключения)'  '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_PATH'       -Value $val }
-        $val = Read-Required 'IB_USER (пусто — без аутентификации)'                       '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_USER'             -Value $val }
-        $val = Read-Required 'IB_PASSWORD (пусто — без пароля; не храните прод-пароли)'   '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_PASSWORD'         -Value $val }
-        $val = Read-Required 'LOG_PATH (файл лога Designer''а, напр. E:\Temp\1cv8.log)' '';                                                   if ($val) { $text = Set-DevEnvValue -Text $text -Key 'LOG_PATH'            -Value $val }
+        $val = Read-Required 'IB_USER (пусто — без аутентификации, /N опускается)'         '';                                                  if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_USER'             -Value $val }
+        $val = Read-Required 'IB_PASSWORD (пусто — без пароля, /P опускается; не храните прод-пароли)' '';                                       if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_PASSWORD'         -Value $val }
+        $val = Read-Required 'LOG_PATH (файл лога Designer''а; пусто — $env:TEMP\1cv8.log)' '';                                                if ($val) { $text = Set-DevEnvValue -Text $text -Key 'LOG_PATH'            -Value $val }
         $val = Read-Required 'INFOBASE_PUBLISH_URL (URL веб-публикации для UI-тестов; пусто — UI-тесты пропускаются)' '';                      if ($val) { $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_PUBLISH_URL' -Value $val }
     }
 
@@ -2278,7 +2282,7 @@ function Place-DevEnv {
         if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $criticalEmpty += $k }
     }
     $recommendedEmpty = @()
-    foreach ($k in @('LOG_PATH', 'INFOBASE_PUBLISH_URL')) {
+    foreach ($k in @('INFOBASE_PUBLISH_URL')) {
         if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $recommendedEmpty += $k }
     }
     if ($criticalEmpty.Count -gt 0) {

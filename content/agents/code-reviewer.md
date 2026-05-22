@@ -2,7 +2,7 @@
 name: 1c-code-reviewer
 description: "Expert 1C code reviewer agent. Reviews code for bugs, readability, standards compliance using confidence-based filtering to report only genuinely important issues. Use only when the user explicitly asks for a code review."
 modelHint: gemini-3-pro
-tools: ["Read", "Grep", "Glob", "MCP"]
+tools: ["Read", "MCP"]
 allowParallel: true
 ---
 
@@ -52,6 +52,8 @@ Evaluate significant issues:
 ## MCP Tool Usage
 
 See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for tool descriptions.
+
+**Search discipline:** Follow `content/rules/mcp-first-search.md` — MCP project-index tools first (graph → code-metadata → `grep=true` retry); `Grep` / `Glob` are not in this agent's toolset by design (see frontmatter) — request a search via the parent or `1c-explorer` if needed.
 
 **Key tools for review:**
 - **docsearch** — verify method/property existence
