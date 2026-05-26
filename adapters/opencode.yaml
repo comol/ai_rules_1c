@@ -34,9 +34,8 @@ rules:
 agents:
   copyTo: ".opencode/agent/{name}.md"
   frontmatter:
-    keep: [name, description, tools, modelHint]
-    rename:
-      modelHint: model
+    keep: [name, description]
+    drop: [tools, modelHint]
     addIf:
       isSubagent: { mode: subagent }
       "!isSubagent": { mode: primary }
