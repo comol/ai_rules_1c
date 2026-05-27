@@ -9,6 +9,11 @@
 #   - OpenCode distinguishes primary agents from subagents via a `mode` field.
 #     We set `mode: subagent` when source has `isSubagent: true`,
 #     and `mode: primary` otherwise, via `frontmatter.addIf`.
+#   - OpenCode expects agent/command `tools` as an OBJECT ({read: true, ...}),
+#     not an array. content/ stores tools as a YAML list (right for Cursor /
+#     Claude Code), so we DROP `tools` here — an array fails OpenCode config
+#     validation and blocks the whole config. Dropped agents/commands fall back
+#     to OpenCode's default tool set.
 #   - OpenCode natively reads skills from `.claude/skills/` (besides its own
 #     `.opencode/skills/`). To avoid duplicate skill folders, we write skills
 #     to `.claude/skills/` — shared with Claude Code when both are installed.
@@ -34,20 +39,19 @@ rules:
 agents:
   copyTo: ".opencode/agent/{name}.md"
   frontmatter:
-    keep: [name, description]
-    drop: [tools, modelHint]
+    keep: [name, description, modelHint]
+    rename:
+      modelHint: model
     addIf:
       isSubagent: { mode: subagent }
       "!isSubagent": { mode: primary }
-    drop: [isSubagent, allowParallel, reasoningEffort]
+    drop: [isSubagent, allowParallel, reasoningEffort, tools]
 
 commands:
   copyTo: ".opencode/command/{name}.md"
   frontmatter:
-    keep: [description, allowedTools]
-    rename:
-      allowedTools: tools
-    drop: [argumentHint]
+    keep: [description]
+    drop: [argumentHint, allowedTools]
 
 skills:
   copyTo: ".claude/skills/{name}/"
