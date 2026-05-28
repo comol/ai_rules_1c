@@ -782,8 +782,49 @@ function New-McpConfig-ClaudeCode {
 }
 
 function New-McpConfig-Kilocode {
+    # Current Kilo CLI / Kilo Code extension MCP schema (v7.x+, see
+    # https://kilo.ai/docs/automate/mcp/using-in-cli):
+    #
+    #   {
+    #     "mcp": {
+    #       "<server-id>": {
+    #         "type": "remote" | "local",
+    #         "url": "...",            # remote only
+    #         "command": ["..."],      # local only
+    #         "environment": {...},    # local, optional
+    #         "headers": {...},        # remote, optional
+    #         "enabled": true,
+    #         "timeout": 5000          # optional
+    #       }
+    #     }
+    #   }
+    #
+    # The legacy `.kilocode/mcp.json` with the `mcpServers` dictionary is no
+    # longer read by the current Kilo CLI nor by the current Kilo Code VS
+    # Code extension — both look up MCP under the top-level `mcp` key of
+    # `kilo.json` / `kilo.jsonc` / `.kilo/kilo.json` / `.kilo/kilo.jsonc`
+    # (see `adapters/kilocode.yaml > mcp.target`). Writing the legacy
+    # `mcpServers` shape into `.kilocode/mcp.json` results in silently empty
+    # MCP listings in `/mcps` and during agent tool discovery.
     param([array]$Servers)
-    return New-McpConfig-Cursor $Servers
+    $mcp = [ordered]@{}
+    foreach ($s in $Servers) {
+        $entry = [ordered]@{}
+        if ($s.url) {
+            $entry['type'] = 'remote'
+            $entry['url'] = $s.url
+        }
+        elseif ($s.command) {
+            $entry['type'] = 'local'
+            $cmd = @($s.command) + @($s.args)
+            $entry['command'] = $cmd
+            if ($s.env) { $entry['environment'] = $s.env }
+        }
+        $entry['enabled'] = $true
+        $mcp[$s.id] = $entry
+    }
+    $root = [ordered]@{ mcp = $mcp }
+    return (ConvertTo-Json $root -Depth 10)
 }
 
 function New-McpConfig-Other {
@@ -1958,7 +1999,78 @@ function Invoke-McpPhase {
         if (-not $target) { continue }
         $content = New-McpConfig -ToolId $tool -Servers $servers
         $absTarget = Join-Path $Root $target
-        Write-TextFile -Path $absTarget -Content ($content + "`n")
+
+        # `mcp.legacyTargets` (set in adapter yaml) — list of relative paths
+        # that previous installer versions wrote to and that the current
+        # tool no longer reads. Delete them so they do not confuse
+        # `/checkmcp` and tool diagnostics, and prune them from the
+        # manifest if a prior install recorded them.
+        $legacyTargets = @()
+        if ($adapter.mcp.PSObject.Properties.Match('legacyTargets').Count -gt 0) {
+            $legacyTargets = @($adapter.mcp.legacyTargets)
+        }
+        elseif ($adapter.mcp -is [System.Collections.IDictionary] -and $adapter.mcp.Contains('legacyTargets')) {
+            $legacyTargets = @($adapter.mcp['legacyTargets'])
+        }
+        foreach ($legacy in $legacyTargets) {
+            if (-not $legacy) { continue }
+            $absLegacy = Join-Path $Root $legacy
+            if (Test-Path $absLegacy) {
+                try {
+                    Remove-Item -Path $absLegacy -Force -ErrorAction Stop
+                    Write-Info "  [$tool] MCP legacy removed: $legacy"
+                }
+                catch {
+                    Write-Info "  [$tool] MCP legacy: не удалось удалить $legacy — $($_.Exception.Message)"
+                }
+            }
+            if ($Manifest.files.Contains($legacy)) { [void]$Manifest.files.Remove($legacy) }
+        }
+
+        # `mcp.merge: true` (set in adapter yaml) — when the target file is
+        # a SHARED tool config (e.g. `.kilo/kilo.json` carries not only MCP
+        # but also `instructions`, `skills.paths`, custom permissions),
+        # do not overwrite the whole file. Instead read existing JSON,
+        # replace the top-level `mcp` key with our rendered value, keep
+        # every other key untouched. New file path → write whole rendered
+        # JSON as before.
+        $mergeRequested = $false
+        if ($adapter.mcp.PSObject.Properties.Match('merge').Count -gt 0) {
+            $mergeRequested = [bool]$adapter.mcp.merge
+        }
+        elseif ($adapter.mcp -is [System.Collections.IDictionary] -and $adapter.mcp.Contains('merge')) {
+            $mergeRequested = [bool]$adapter.mcp['merge']
+        }
+
+        $finalContent = $content
+        if ($mergeRequested -and (Test-Path $absTarget)) {
+            try {
+                $existingRaw = Get-Content -Path $absTarget -Raw -ErrorAction Stop
+                $existingObj = $existingRaw | ConvertFrom-Json -ErrorAction Stop
+                $renderedObj = $content | ConvertFrom-Json -ErrorAction Stop
+                $merged = [ordered]@{}
+                # Preserve user keys in their original order, replacing only `mcp`.
+                foreach ($prop in $existingObj.PSObject.Properties) {
+                    if ($prop.Name -ne 'mcp') { $merged[$prop.Name] = $prop.Value }
+                }
+                if ($renderedObj.PSObject.Properties.Match('mcp').Count -gt 0) {
+                    $merged['mcp'] = $renderedObj.mcp
+                }
+                # Append any non-`mcp` keys from rendered that the existing file lacks
+                # (defensive: future-proofs adapters that emit more than `mcp`).
+                foreach ($prop in $renderedObj.PSObject.Properties) {
+                    if ($prop.Name -eq 'mcp') { continue }
+                    if (-not $merged.Contains($prop.Name)) { $merged[$prop.Name] = $prop.Value }
+                }
+                $finalContent = (ConvertTo-Json $merged -Depth 20)
+            }
+            catch {
+                Write-Info "  [$tool] MCP merge: existing $target не парсится как JSON — пишу заново. Ошибка: $($_.Exception.Message)"
+                $finalContent = $content
+            }
+        }
+
+        Write-TextFile -Path $absTarget -Content ($finalContent + "`n")
         $Manifest.files[$target] = [ordered]@{
             source        = 'content/mcp-servers.json'
             installedHash = (Get-FileSha256 $absTarget)

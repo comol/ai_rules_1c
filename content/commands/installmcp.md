@@ -274,7 +274,17 @@ Skip servers whose required inputs are missing and explicitly list them in the f
 
 ### 7. Register servers in the active tool
 
-After containers are up, write the MCP config for the active client. The canonical fragment from `INSTALL.md` STEP 4 (Cursor — `%USERPROFILE%\.cursor\mcp.json` or `.cursor/mcp.json` in the project):
+After containers are up, write the MCP config for the active client. **The file path and JSON shape differ per client** — using the wrong combination (most commonly: writing Cursor-style `mcpServers` into a Kilo / OpenCode file) results in a silently empty MCP list in `/mcps` and missing tools in the agent session. The canonical fragment from `INSTALL.md` STEP 4 covers Cursor only; for the other clients use the table below.
+
+| Client | Config file | Top-level key | Per-server shape |
+|---|---|---|---|
+| Cursor | `.cursor/mcp.json` (project) or `%USERPROFILE%\.cursor\mcp.json` (global) | `mcpServers` | `{ "url": "...", "connection_id": "..." }` |
+| Claude Code | `.mcp.json` (project) or `~/.claude/mcp.json` (global) | `mcpServers` | `{ "url": "...", "connection_id": "..." }` |
+| Kilo Code (v7.x+) | `.kilo/kilo.json` (project) — also `kilo.json` / `kilo.jsonc` / `.kilo/kilo.jsonc`; global `~/.config/kilo/kilo.json` | `mcp` | `{ "type": "remote", "url": "...", "enabled": true }` |
+| OpenCode | `opencode.json` (project) or `~/.config/opencode/opencode.json` (global) | `mcp` | `{ "type": "remote", "url": "..." }` |
+| Codex CLI | `.codex/config.toml` (project) or `~/.codex/config.toml` (global) | `[mcp_servers."<id>"]` | TOML keys `url = ...`, `connection_id = ...` |
+
+Canonical fragments (Cursor / Claude Code — `mcpServers`):
 
 ```json
 {
@@ -290,7 +300,25 @@ After containers are up, write the MCP config for the active client. The canonic
 }
 ```
 
-Keep only the servers that were actually installed. If the project has `.ai-rules.json`, the MCP config is rendered by the 1c-rules installer — re-render through `/updaterules` instead of editing the file manually. Ask the user to restart the client (Cursor / Claude Code / Codex / OpenCode / Kilo Code) so the MCP session is reinitialized.
+Kilo Code (`mcp` key, per-server `type` + `enabled`, see https://kilo.ai/docs/automate/mcp/using-in-cli):
+
+```json
+{
+  "mcp": {
+    "1c-docs-mcp":           { "type": "remote", "url": "http://localhost:8003/mcp", "enabled": true },
+    "1c-graph-metadata-mcp": { "type": "remote", "url": "http://localhost:8006/mcp", "enabled": true },
+    "1c-code-metadata-mcp":  { "type": "remote", "url": "http://localhost:8000/mcp", "enabled": true },
+    "1c-ssl-mcp":            { "type": "remote", "url": "http://localhost:8008/mcp", "enabled": true },
+    "1c-templates-mcp":      { "type": "remote", "url": "http://localhost:8004/mcp", "enabled": true },
+    "1c-syntax-checker-mcp": { "type": "remote", "url": "http://localhost:8002/mcp", "enabled": true },
+    "1c-code-checker-mcp":   { "type": "remote", "url": "http://localhost:8007/mcp", "enabled": true }
+  }
+}
+```
+
+For Kilo Code do **not** write into the legacy `.kilocode/mcp.json` with the `mcpServers` dictionary — current Kilo CLI / Kilo Code (v7.x+) does not read that file, and the result is a silently empty `/mcps` listing. `.kilo/kilo.json` is the shared Kilo config (carries `instructions`, `skills.paths`, `permission`, custom agent overrides…). If the file already exists with such keys, **merge only the top-level `mcp` key** — do not overwrite the whole file.
+
+Keep only the servers that were actually installed. If the project has `.ai-rules.json`, the MCP config is rendered by the 1c-rules installer (which already implements the per-client table above and deep-merges Kilo's `mcp` key) — re-render through `/updaterules` instead of editing the file manually. Ask the user to restart the client (Cursor / Claude Code / Codex / OpenCode / Kilo Code) so the MCP session is reinitialized.
 
 ### 8. Final check
 

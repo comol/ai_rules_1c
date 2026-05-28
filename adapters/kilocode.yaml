@@ -20,8 +20,15 @@
 #       skills   -> .kilo/skills/        (per the Agent Skills specification;
 #                                         `.kilocode/skills/` is not a recognised
 #                                         skill directory)
-#   - MCP project-level config still lives in `.kilocode/mcp.json` for the
-#     VSCode extension (documented current location).
+#   - MCP project-level config lives in `.kilo/kilo.json` (or any of the
+#     equivalents `kilo.json` / `kilo.jsonc` / `.kilo/kilo.jsonc`) and is
+#     written under the top-level `mcp` key, with per-server entries of
+#     shape `{ "type": "remote"|"local", "url"|"command": ..., "enabled":
+#     true }`. The legacy `.kilocode/mcp.json` with `mcpServers` is no
+#     longer read by current Kilo CLI / Kilo Code (v7.x+) — see
+#     https://kilo.ai/docs/automate/mcp/using-in-cli. Past installs that
+#     placed MCP into `.kilocode/mcp.json` produced silently empty MCP
+#     listings; on `update` the installer rewrites to the modern path.
 #   - Kilo Code distinguishes primary agents from subagents via a `mode` field:
 #     `subagent` (only invoked via delegation) or `all` (both primary and
 #     subagent). Source flag `isSubagent: true` maps to `mode: subagent`;
@@ -82,6 +89,18 @@ skills:
 
 mcp:
   source: "content/mcp-servers.json"
-  target: ".kilocode/mcp.json"
-  schema: mcpServers
+  target: ".kilo/kilo.json"
+  schema: kilo-mcp
   format: json
+  # `.kilo/kilo.json` is the SHARED Kilo config (instructions, skills.paths,
+  # custom permissions, agent overrides…), not an MCP-only file. The
+  # installer therefore deep-merges only the top-level `mcp` key into the
+  # existing file when present, preserving every other key the user added.
+  # If `.kilo/kilo.json` does not yet exist, the installer writes a fresh
+  # file containing just `{ "mcp": { … } }`.
+  merge: true
+  # On `update`, remove any leftover `.kilocode/mcp.json` from older
+  # installs (Kilo CLI / Kilo Code v7.x+ no longer reads it; an extra copy
+  # there only adds confusion in `/checkmcp` diagnostics).
+  legacyTargets:
+    - ".kilocode/mcp.json"

@@ -227,8 +227,19 @@ Report per server: image → new image+tag (digest if shown), container status (
 
 After all containers restart:
 
-1. If `INSTALL.md` or `servers\*.md` introduced new ports, service names, or new servers — reconcile against the active client config (`.cursor/mcp.json` / `.mcp.json` / `.opencode/opencode.json` / `.codex/config.toml`). The canonical fragment is identical to `/installmcp` Step 7 and lives in `INSTALL.md` STEP 4.
-2. If `.ai-rules.json` is present in the project, prefer re-rendering via `/updaterules` (it will produce the config by adapter) — but only if changes are compatible with `content/mcp-servers.json`. Otherwise edit the active config manually per the bundled instruction.
+1. If `INSTALL.md` or `servers\*.md` introduced new ports, service names, or new servers — reconcile against the active client config. **The file path and JSON shape differ per client** (using the wrong combination — most commonly writing Cursor-style `mcpServers` into a Kilo file — leads to a silently empty `/mcps` list and missing tools in the agent session):
+
+   | Client | Config file | Top-level key | Per-server shape |
+   |---|---|---|---|
+   | Cursor | `.cursor/mcp.json` (project) or `%USERPROFILE%\.cursor\mcp.json` (global) | `mcpServers` | `{ "url": "...", "connection_id": "..." }` |
+   | Claude Code | `.mcp.json` (project) or `~/.claude/mcp.json` (global) | `mcpServers` | `{ "url": "...", "connection_id": "..." }` |
+   | Kilo Code (v7.x+) | `.kilo/kilo.json` (project) — also `kilo.json` / `kilo.jsonc` / `.kilo/kilo.jsonc`; global `~/.config/kilo/kilo.json` | `mcp` | `{ "type": "remote", "url": "...", "enabled": true }` |
+   | OpenCode | `opencode.json` (project) or `~/.config/opencode/opencode.json` (global) | `mcp` | `{ "type": "remote", "url": "..." }` |
+   | Codex CLI | `.codex/config.toml` (project) or `~/.codex/config.toml` (global) | `[mcp_servers."<id>"]` | TOML keys `url = ...`, `connection_id = ...` |
+
+   The canonical Cursor / Claude fragment lives in `INSTALL.md` STEP 4 and in `/installmcp` Step 7; the Kilo Code fragment (shape `{ "mcp": { "<id>": { "type": "remote", "url": "...", "enabled": true } } }`) is in `/installmcp` Step 7. For Kilo Code do **not** write into the legacy `.kilocode/mcp.json` with `mcpServers` — current Kilo CLI / Kilo Code (v7.x+) ignores that file. `.kilo/kilo.json` is the shared Kilo config (also carries `instructions`, `skills.paths`, `permission`); when editing manually, replace **only** the top-level `mcp` key and keep every other key intact.
+
+2. If `.ai-rules.json` is present in the project, prefer re-rendering via `/updaterules` (it will produce the config by adapter, deep-merging Kilo's `mcp` key into existing `.kilo/kilo.json` and removing the legacy `.kilocode/mcp.json`) — but only if changes are compatible with `content/mcp-servers.json`. Otherwise edit the active config manually per the bundled instruction and the per-client table above.
 3. Ask the user to restart the client (Cursor / Claude Code / Codex / OpenCode / Kilo Code) so it reinitializes the MCP session.
 
 ### 8. Final check

@@ -38,7 +38,7 @@ After the table, list only actionable fixes. Do not include secret values from `
    - Claude Code: `.claude/rules/`, `.claude/agents/`, `.claude/commands/`, MCP config when installed;
    - Codex: `.codex/skills/`, `.codex/config.toml` when installed;
    - OpenCode: `.opencode/command/`, `.opencode/opencode.json` when installed;
-   - Kilo Code: `.kilo/rules/`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`, `.kilocode/mcp.json` when installed;
+   - Kilo Code: `.kilo/rules/`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`, `.kilo/kilo.json` (top-level `mcp` key) when installed; a leftover `.kilocode/mcp.json` from older installs is **legacy** — current Kilo CLI / Kilo Code v7.x+ no longer reads it and the `update` flow removes it;
    - other: `.ai-agent/rules/`, `.ai-agent/agents/`, `.ai-agent/commands/`, `.ai-agent/skills/`, `.ai-agent/mcp.json`.
 
 Pass criterion: the root always-on files exist, and either the installed tool layout is present or the repository is clearly the `1c-rules` source repository being edited directly.
