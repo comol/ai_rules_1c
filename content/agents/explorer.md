@@ -1,7 +1,7 @@
 ---
 name: 1c-explorer
 description: "Read-only 1C codebase exploration specialist. Quickly finds files, code patterns, metadata objects, dependencies, and answers questions about the configuration without modifying anything. Strictly follows the project's MCP fallback chain (graph metadata → code metadata → templates → SSL → docs → ITS → grep) and returns structured findings with file/line references and qualified 1C names. Supports thoroughness levels: quick, medium, thorough. Use PROACTIVELY when the parent needs to gather context across many files, locate code, map a subsystem, or answer 'where is X / how does Y work / who calls Z' questions before planning, coding, or refactoring."
-modelHint: gemini-3-pro
+modelTier: coding
 tools: ["Read", "Grep", "Glob", "MCP"]
 allowParallel: true
 ---

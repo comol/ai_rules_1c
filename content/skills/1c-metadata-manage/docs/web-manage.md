@@ -36,7 +36,7 @@ If `.v8-project.json` is missing — stop and ask the user to register the base 
 Reports whether Apache is running, which infobases are published and the last error from `error.log`.
 
 ```powershell
-powershell.exe -NoProfile -File tools/1c-web-ops/scripts/web-info.ps1 [-ApachePath <path>]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.ps1 [-ApachePath <path>]
 ```
 
 Default `-ApachePath` is `tools/apache24` relative to the project root.
@@ -54,7 +54,7 @@ Output should answer three questions:
 Generates `default.vrd`, patches `httpd.conf`, downloads a portable Apache if needed, and starts the service.
 
 ```powershell
-powershell.exe -NoProfile -File tools/1c-web-ops/scripts/web-publish.ps1 `
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1 `
     [-V8Path <path>] `
     [-InfoBasePath <path> | -InfoBaseServer <name> -InfoBaseRef <name>] `
     [-UserName <name>] [-Password <secret>] `
@@ -100,7 +100,7 @@ After success, report:
 Stops Apache but keeps the publication entries in `httpd.conf` and the generated `default.vrd` files. The next `web-publish` call (or `web-stop -Start`) brings it back up unchanged.
 
 ```powershell
-powershell.exe -NoProfile -File tools/1c-web-ops/scripts/web-stop.ps1 [-ApachePath <path>] [-Force]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1 [-ApachePath <path>] [-Force]
 ```
 
 Use this when:
@@ -116,7 +116,7 @@ Use this when:
 Stops Apache, removes the publication block from `httpd.conf`, deletes the corresponding `default.vrd`. The infobase itself is **not** touched.
 
 ```powershell
-powershell.exe -NoProfile -File tools/1c-web-ops/scripts/web-unpublish.ps1 `
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
     -AppName <publication> `
     [-ApachePath <path>] [-KeepApacheRunning]
 ```

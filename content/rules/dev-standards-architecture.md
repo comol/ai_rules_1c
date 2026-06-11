@@ -96,8 +96,9 @@ Normalize input to a single collection type for uniform processing. Use `CommonC
 3. **Typical code modification** (last resort)
 
 ### Extension Directives
-- `&Перед` / `&После` — preferred
-- `&Вместо` — only for functions, with mandatory `ПродолжитьВызов()`
+- `&Перед` / `&После` — preferred for simple interception
+- `&ИзменениеИКонтроль` — only when the method body must be modified; change markers (`#Вставка` / `#Удаление`) and `ПродолжитьВызов()` are **mandatory** (without `ПродолжитьВызов()` the original method does not execute)
+- Interceptor semantics, `ПродолжитьВызов()` rules, and extension anti-patterns — `extension-patterns.md` (practical companion)
 
 ### Placement Rules (when `{NEW_OBJECTS_IN} = main_configuration`)
 - New metadata objects → main configuration

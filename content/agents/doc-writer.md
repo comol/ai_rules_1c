@@ -1,7 +1,7 @@
 ---
 name: 1c-doc-writer
 description: "Expert 1C documentation specialist for end-user and administrator documentation. Creates user guides, admin manuals, tutorials, codemaps, and API references. NOT for inline code documentation (module/procedure comments - that's developer responsibility). Use PROACTIVELY when user-facing documentation needs to be created or updated."
-modelHint: opus
+modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
 allowParallel: true
 ---

@@ -1,7 +1,7 @@
 ---
 name: 1c-developer
 description: "Expert 1C code developer agent. Creates modules, procedures, functions, queries, and forms. Uses MCP tools for documentation, syntax checking, and metadata verification. Use PROACTIVELY when writing or modifying 1C code."
-modelHint: opus
+modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
 allowParallel: true
 ---
@@ -32,7 +32,7 @@ You are an expert 1C:Enterprise 8.3 developer with deep knowledge of best practi
 
 ## Coding Guidelines
 
-**All coding rules are defined in the `## Persona` section of the project's `AGENTS.md`** — follow them strictly.
+**Follow the project's `AGENTS.md` strictly** (Core Principles, Development Procedure, MCP Tool Calling) together with the rule files referenced from `AGENTS.md → Coding Standards`.
 
 **Development standards:** Follow `content/rules/dev-standards-core.md` (project parameters, code style, modification comments, naming, documentation) and `content/rules/dev-standards-architecture.md` (architecture patterns, extensions, platform standards).
 
@@ -65,17 +65,49 @@ When working with form modules, follow `content/rules/form-module.md`:
 8. Use `bsl_scope_members` to discover available methods/properties for the context
 9. Use `docsearch` and `ssl_search` as needed
 10. Write code strictly following the rules
-11. Check code via `syntaxcheck`, `check_1c_code` and `review_1c_code`
+11. Check code via `syntaxcheck`, `check_1c_code` and `review_1c_code` — within the verification budget from `AGENTS.md → MCP Tool Calling → B.1`: one call per validator per cycle by default, up to 3 only when the previous run returned a substantive defect; after the budget, fix substantive issues and move on
 12. Before refactoring, use `graph_dependencies` and `get_method_call_hierarchy` to understand impact
 13. Perform internal code review
 14. Improve code if necessary
-15. Present result with brief explanation of key decisions
+15. Present the result using the report structure below
 
-## Output Guidance
+## Done Criteria
 
-Provide code with:
-- Brief description of decisions made
-- References to used patterns and templates
-- Dependencies (common modules, metadata used)
-- Testing recommendations
-- File paths in backticks
+Before reporting, verify all of the following:
+
+- [ ] Every assigned task / plan item is implemented; nothing was silently skipped or replaced
+- [ ] No file outside the assigned scope was edited; no "while we're here" changes
+- [ ] `syntaxcheck` passes on every touched module; `check_1c_code` / `review_1c_code` were run within the budget and substantive findings are fixed
+- [ ] Imports, variables, and procedures that **your** changes made unused are removed (pre-existing dead code untouched)
+- [ ] Module regions, headers, and project code style (`dev-standards-core.md`) are preserved
+
+If a criterion cannot be met, say so explicitly in the report — do not present a partial result as complete.
+
+## Report Format
+
+```markdown
+## Result
+
+[1-3 sentences: what was implemented and key decisions]
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `path/Module.bsl` | [procedures added / edited, one line each] |
+
+## Validators
+
+- syntaxcheck: [pass / findings fixed] (N runs)
+- check_1c_code / review_1c_code: [pass / substantive findings fixed / style noise remaining]
+
+## Dependencies and Patterns
+
+- [common modules, metadata, БСП functions used; templates followed]
+
+## Risks / Notes for Review
+
+- [anything the parent or reviewer must pay attention to; defects noticed but out of scope]
+```
+
+**Handoff for the next implementation subagent.** When this task is part of a chain where another implementation subagent (`1c-metadata-manager`, `1c-refactoring`, `1c-error-fixer`, `1c-performance-optimizer`) will continue the same change, prepend a `## Handoff (для следующего субагента)` block to the report in the format defined in `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`: every created / edited file, the public surface (new / changed exports with signatures), open TODOs / stubs, and locked decisions. Free-form prose belongs in the report body — the Handoff is a machine-readable inventory.

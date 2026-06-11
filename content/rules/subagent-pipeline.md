@@ -6,7 +6,7 @@ category: workflow
 
 # Subagent Pipeline — Full-Cycle Flow
 
-**When to load this file:** any task that exceeds the **quick-fix** threshold defined in `AGENTS.md → Triage: Quick-fix vs Full-cycle` (more than ~20 changed lines, more than one module, any metadata change, any architectural impact, any non-trivial bug). For quick-fix tasks the pipeline is unnecessary overhead — a direct edit + `syntaxcheck` is enough.
+**When to load this file:** any task that exceeds the **quick-fix** threshold defined in `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle` (more than ~20 changed lines, more than one module, any metadata change, any architectural impact, any non-trivial bug). For quick-fix tasks the pipeline is unnecessary overhead — a direct edit + `syntaxcheck` is enough.
 
 **Companion files:** `subagents.md` (catalog of subagents and when to delegate), `verification-checklist.md` (the closing gate of the pipeline).
 
@@ -74,7 +74,7 @@ The pipeline removes those failure modes by separating **what to build** (planne
 
 ### Stage 1 — Triage (parent agent)
 
-Apply the matrix from `AGENTS.md → Triage: Quick-fix vs Full-cycle`. **Only** full-cycle tasks enter the pipeline. If the task is a quick-fix, edit directly and skip to stage 5 with a minimal verification (`syntaxcheck` only).
+Apply the matrix from `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle`. **Only** full-cycle tasks enter the pipeline. If the task is a quick-fix, edit directly and skip to stage 5 with a minimal verification (`syntaxcheck` only). Tasks on the **docs-fix** path (Markdown / rules / docs only) bypass the pipeline and the BSL validators — apply the structural checks from `AGENTS.md → Triage` instead. Tasks on the **spec-authoring** path (OpenSpec artifacts with 1C facts) also bypass the pipeline but carry the MCP evidence obligations from `sdd-integrations.md`.
 
 If the user asks for a small change that **looks** like a quick-fix but the change touches a transactional path, a public common-module export, an extension's adopted object, an event subscription / scheduled job / RLS condition, or metadata wired into existing behavior (rename / remove / immediate-use, RLS / indexing / fill-check changes) — promote it to full-cycle. **Isolated metadata additions** that satisfy the "Isolated metadata addition" clause in `AGENTS.md → Triage` (new independent register / defined type / enumeration / constant / unwired attribute, with no consumer touched in the same change) stay on the quick-fix path. When in doubt, full-cycle wins.
 
@@ -183,7 +183,7 @@ Checklist:
 - No file outside the plan was edited (use `git diff --name-only` to verify).
 - The names, parameter types, return types of new public procedures match the plan.
 - New / removed metadata objects match the plan; UUIDs were preserved on edits, not regenerated.
-- Module headers (`/// <summary>` or `// Возвращает / Параметры`) are present on new public procedures per `dev-standards-core.md`.
+- Module headers (the `// Возвращает / Параметры` comment blocks per `dev-standards-core.md §5`) are present on new public procedures.
 
 If anything fails — bounce back to stage 3 with a precise delta. If optional 4b is applicable, do not proceed to it until 4a is clean. This is the cheap gate; running 4b before 4a is wasted compute.
 

@@ -10,9 +10,9 @@ Authoritative content for code style, naming, comments, queries, data access and
 
 ## Forbidden Calls and Constructs (project-wide)
 
-Single source of truth — `dev-standards-core.md §2 → "Forbidden Calls and Constructs"` (ternary `?(...)`, `Выполнить()` / `Вычислить()`, hardcoded credentials, `COMОбъект`, `Сообщить()`, `ЗаписьЖурналаРегистрации()` without explicit task, `Попытка ... Исключение` around DB reads/writes, boolean comparison against `Истина` / `Ложь`, Yoda syntax). Naming bans (Hungarian notation, names from the 1C global context, magic numbers, negative boolean names) and the `[Project rule — stricter than ITS standard]` markers also live there.
+Single source of truth — `dev-standards-core.md §2 → "Forbidden Calls and Constructs"` (ternary `?(...)`, `Выполнить()` / `Вычислить()`, hardcoded credentials, `Сообщить()`, `ЗаписьЖурналаРегистрации()` without explicit task, `Попытка ... Исключение` around DB reads/writes, boolean comparison against `Истина` / `Ложь`, Yoda syntax). Naming bans (Hungarian notation, names from the 1C global context, magic numbers, negative boolean names) and the `[Project rule — stricter than ITS standard]` markers also live there. The `COMОбъект` ban is owned by `dev-standards-architecture.md §3 → "Cross-Platform Compatibility"`.
 
-Do not duplicate the list here — when the rule changes, only `dev-standards-core.md §2 → "Forbidden Calls and Constructs"` is updated.
+Do not duplicate the lists here — when a rule changes, only its owning file (`dev-standards-core.md §2` or `dev-standards-architecture.md §3`) is updated.
 
 ## Comments
 

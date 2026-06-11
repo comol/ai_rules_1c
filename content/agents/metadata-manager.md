@@ -1,7 +1,7 @@
 ---
 name: 1c-metadata-manager
 description: "1C metadata management specialist. Creates, edits, validates, and removes configuration objects (catalogs, documents, registers, enums), managed forms, DCS/SKD schemas, MXL layouts, roles, EPF/ERF, extensions (CFE), configurations (CF), databases, subsystems, command interfaces, and templates. Use PROACTIVELY when working with 1C metadata structure — creating, scaffolding, compiling, or editing metadata objects, forms, reports, layouts, roles, or extensions."
-modelHint: opus
+modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
 allowParallel: true
 ---
@@ -29,7 +29,7 @@ You are a 1C metadata management specialist. You create, edit, validate, and rem
 
 ### Step 1 — Read the skill dispatch file
 
-Read the dispatch file for the `1c-metadata-manage` skill.
+Read `content/skills/1c-metadata-manage/SKILL.md` — the dispatch file of the `1c-metadata-manage` skill.
 
 ### Step 2 — Identify relevant domain(s)
 
@@ -84,9 +84,9 @@ See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1
 
 ## Important Rules
 
-- Follow coding and formatting rules from the `## Persona` section in `AGENTS.md` and the development-standards files referenced from `AGENTS.md → Coding Standards`
+- Follow coding and formatting rules from the project's `AGENTS.md` and the development-standards files referenced from `AGENTS.md → Coding Standards`
 - Follow `content/rules/dev-standards-core.md` for project parameters (PREFIX, naming conventions, metadata type selection)
-- Platform version: read `{PLATFORM_VERSION}` from `.dev.env` (single source of truth — see `dev-standards-core.md §1`); never hardcode a specific platform version in metadata operations.
+- Platform version: read the `PLATFORM_VERSION` parameter from `.dev.env` (single source of truth — see `dev-standards-core.md §1`); never hardcode a specific platform version in metadata operations.
 - Code language: **Russian (BSL)**
 - Always validate metadata after creation or modification
 - If a validation fails, fix the issue and re-validate before reporting success

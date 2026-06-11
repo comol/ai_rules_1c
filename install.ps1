@@ -42,6 +42,35 @@
     Answer "yes" to confirmation prompts (but still pause on destructive
     conflicts — those require -NonInteractive to auto-resolve).
 
+.PARAMETER Force
+    For `update`: overwrite user-modified files with the current shipped
+    version ("take theirs") instead of keeping the user's edits. Without
+    -ForcePaths this applies to every drifted file; combine with -ForcePaths
+    to force only specific files. Applies uniformly to artefact files, the
+    MCP config, the `entry` file (CLAUDE.md), and skill files.
+
+.PARAMETER ForcePaths
+    For `update`: restrict -Force to the listed project-relative paths
+    (exact match or `*` wildcard, e.g. `.claude/rules/tooling-playbooks.md`
+    or `.claude/skills/*`). Implies -Force for the matching paths only; all
+    other drifted files keep the user's edits. Multiple paths are passed
+    COMMA-separated (PowerShell array syntax):
+    `-ForcePaths .claude/skills/*,.claude/rules/forms.md` — a space-separated
+    list would bind only the first path.
+
+.PARAMETER McpMode
+    How to handle the MCP phase. `auto` (default) — detect an external MCP
+    installation (INSTALL.md mode 3 of the MCP distribution) via the
+    BASESAI_MCP_GLOBAL_ROOT user environment variable (fallback:
+    MCP_GLOBAL_ROOT in the project .dev.env) plus `install.manifest.json`
+    in that folder; when found, the installer does NOT touch any tool MCP
+    config and instead syncs the `mcp:install_forme` section of
+    USER-RULES.md from the actual install artifacts. `managed` — always
+    render MCP configs from `content/mcp-servers.json` (legacy behaviour),
+    even when an external installation is detected. `external` — require
+    the external installation (fail if the env signal or manifest is
+    missing) and skip MCP config rendering.
+
 .PARAMETER ProjectRoot
     Project root directory to install into. Defaults to the current working
     directory. Use this when invoking install.ps1 from a different location
@@ -78,7 +107,12 @@ param(
     [string]$Source,
     [string]$ProjectRoot,
     [switch]$NonInteractive,
-    [switch]$AssumeYes
+    [switch]$AssumeYes,
+    [switch]$Force,
+    [string[]]$ForcePaths,
+
+    [ValidateSet('auto', 'managed', 'external')]
+    [string]$McpMode = 'auto'
 )
 
 # ============================================================================
@@ -96,6 +130,13 @@ $script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kiloco
 $script:ManagedBlocks = @('core', 'user-defined', 'openspec')
 $script:LastChannel = 'powershell'
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
+# Set by Invoke-Update (empty during init): the full set of project-relative
+# paths the manifest tracked before the per-update prune. Used by skill
+# pruning to tell "a file we shipped and later dropped" (safe to delete) from
+# "a file the user dropped into the skill dir themselves" (must be kept).
+$script:PreviousFiles = @{}
+$script:ForcedThisRun = @()
+$script:KeptThisRun = @()
 
 # ============================================================================
 # SECTION 1: LOGGING AND USER INPUT
@@ -830,8 +871,31 @@ function New-McpConfig-Cursor {
 }
 
 function New-McpConfig-ClaudeCode {
+    # Claude Code `.mcp.json` schema (https://code.claude.com/docs/en/mcp).
+    # Remote servers MUST carry an explicit `"type": "http"` — without it the
+    # current Claude Code (VS Code extension and CLI) does not load the server
+    # and it silently never appears in the tool list. The documented keys for
+    # an HTTP entry are `type`, `url`, `headers`; for a local (stdio) entry
+    # `command`, `args`, `env`. The Cursor-only `connection_id` / `description`
+    # keys are NOT part of the Claude Code schema, so they are omitted here.
     param([array]$Servers)
-    return New-McpConfig-Cursor $Servers
+    $dict = [ordered]@{}
+    foreach ($s in $Servers) {
+        $entry = [ordered]@{}
+        if ($s.url) {
+            $entry['type'] = 'http'
+            $entry['url'] = $s.url
+            if ($s.headers) { $entry['headers'] = $s.headers }
+        }
+        elseif ($s.command) {
+            $entry['command'] = $s.command
+            if ($s.args) { $entry['args'] = $s.args }
+            if ($s.env) { $entry['env'] = $s.env }
+        }
+        $dict[$s.id] = $entry
+    }
+    $root = [ordered]@{ mcpServers = $dict }
+    return (ConvertTo-Json $root -Depth 10)
 }
 
 function New-McpConfig-Kilocode {
@@ -1700,6 +1764,28 @@ function Resolve-ManifestPath {
     return (Join-Path $Root $Rel)
 }
 
+# Decide whether a drifted (user-modified) target should be overwritten with
+# the shipped version on `update`. Driven by the global -Force / -ForcePaths
+# switches. -Force with no -ForcePaths forces every path; -ForcePaths narrows
+# the force to paths matching one of the patterns (exact match or `*`/`?`
+# wildcard via -like). Used uniformly by the artefact, MCP, entry, and skill
+# placement paths so the overwrite contract is identical everywhere.
+function Test-ForcePath {
+    param([string]$Rel)
+    # -ForcePaths implies -Force for the listed paths (per the documented
+    # contract), so a bare `update -ForcePaths <path>` works without -Force.
+    $hasPaths = ($script:ForcePaths -and $script:ForcePaths.Count -gt 0)
+    if (-not $script:Force -and -not $hasPaths) { return $false }
+    if (-not $hasPaths) { return $true }
+    $norm = ([string]$Rel).Replace('\', '/')
+    foreach ($pat in $script:ForcePaths) {
+        if (-not $pat) { continue }
+        $p = ([string]$pat).Replace('\', '/')
+        if ($norm -like $p) { return $true }
+    }
+    return $false
+}
+
 function Invoke-PlaceArtifactFile {
     param(
         [string]$Root,
@@ -1714,10 +1800,12 @@ function Invoke-PlaceArtifactFile {
         [string]$ContentSource
     )
     # Respect user modifications: if manifest marks this path as userModified,
-    # keep the user's edits and leave the manifest entry unchanged.
+    # keep the user's edits and leave the manifest entry unchanged — unless the
+    # user asked to force this path (-Force / -ForcePaths), in which case fall
+    # through and overwrite with the shipped version.
     if ($Manifest -and $Manifest.files -and $Manifest.files.Contains($TargetRel)) {
         $existing = $Manifest.files[$TargetRel]
-        if ($existing -and $existing.userModified) {
+        if ($existing -and $existing.userModified -and -not (Test-ForcePath $TargetRel)) {
             return
         }
     }
@@ -1757,6 +1845,14 @@ function Invoke-PlaceArtifactFile {
 }
 
 function Invoke-PlaceSkill {
+    # Per-file sync of a skill directory. Earlier versions wiped the whole
+    # target dir (`Remove-Item -Recurse`) and re-copied, which silently
+    # destroyed any user edit inside `<skills>/<name>/` on every update. Now
+    # each file follows the same userModified contract as other artefacts:
+    #   - a file flagged userModified by a prior `update` is preserved
+    #     (unless -Force / -ForcePaths targets it);
+    #   - files removed from the source are pruned from disk and manifest,
+    #     except user-modified ones, so stale shipped files do not linger.
     param(
         [string]$Root,
         [string]$SourceDir,
@@ -1765,16 +1861,127 @@ function Invoke-PlaceSkill {
         [string]$ContentSource
     )
     $absTarget = Join-Path $Root $TargetDir
-    if (Test-Path $absTarget) { Remove-Item -Recurse -Force $absTarget }
-    Copy-Item -Path $SourceDir -Destination $absTarget -Recurse -Force
-    $rootFull = (Resolve-Path $Root).Path.TrimEnd('\', '/')
-    Get-ChildItem -Recurse -File -Path $absTarget | ForEach-Object {
-        $rel = $_.FullName.Substring($rootFull.Length + 1).Replace('\', '/')
-        $Manifest.files[$rel] = [ordered]@{
+    $srcFull = (Resolve-Path $SourceDir).Path.TrimEnd('\', '/')
+    $targetRelBase = ($TargetDir -replace '[\\/]+$', '').Replace('\', '/')
+    if (-not (Test-Path $absTarget)) {
+        New-Item -ItemType Directory -Force -Path $absTarget | Out-Null
+    }
+
+    # 1) Copy / refresh every source file unless the user owns it.
+    $sourceRels = @{}
+    foreach ($sf in Get-ChildItem -Recurse -File -Path $srcFull) {
+        $relWithin = $sf.FullName.Substring($srcFull.Length + 1).Replace('\', '/')
+        $sourceRels[$relWithin] = $true
+        $key = "$targetRelBase/$relWithin"
+        if ($Manifest.files.Contains($key)) {
+            $skEntry = $Manifest.files[$key]
+            if ($skEntry -and $skEntry.userModified -and -not (Test-ForcePath $key)) {
+                continue
+            }
+        }
+        $destFull = Join-Path $absTarget $relWithin
+        $destDir = Split-Path -Parent $destFull
+        if ($destDir -and -not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+        }
+        Copy-Item -Path $sf.FullName -Destination $destFull -Force
+        $Manifest.files[$key] = [ordered]@{
             source        = $ContentSource
-            installedHash = (Get-FileSha256 $_.FullName)
+            installedHash = (Get-FileSha256 $destFull)
         }
     }
+
+    # 2) Prune files that are no longer shipped, keeping user-modified ones.
+    $absTargetFull = (Resolve-Path $absTarget).Path.TrimEnd('\', '/')
+    foreach ($ef in Get-ChildItem -Recurse -File -Path $absTargetFull) {
+        $relWithin = $ef.FullName.Substring($absTargetFull.Length + 1).Replace('\', '/')
+        if ($sourceRels.Contains($relWithin)) { continue }
+        $key = "$targetRelBase/$relWithin"
+        if ($Manifest.files.Contains($key)) {
+            $skEntry = $Manifest.files[$key]
+            if ($skEntry -and $skEntry.userModified -and -not (Test-ForcePath $key)) { continue }
+            [void]$Manifest.files.Remove($key)
+            Remove-Item -Path $ef.FullName -Force -ErrorAction SilentlyContinue
+            continue
+        }
+        # Not currently tracked. Only delete it if WE shipped it in a previous
+        # version (recorded in PreviousFiles before the prune); a file the user
+        # placed into the skill dir themselves is never tracked and is kept.
+        if ($script:PreviousFiles.Contains($key)) {
+            Remove-Item -Path $ef.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ============================================================================
+# SECTION 7b: SUBAGENT MODEL TIERS
+# ============================================================================
+#
+# Source agent files in content/agents/*.md declare an abstract `modelTier`
+# (coding | light) instead of a concrete model name. The concrete model per
+# tier is a project setting in .dev.env:
+#   SUBAGENT_MODEL_CODING — coding / analysis / review subagents;
+#   SUBAGENT_MODEL_LIGHT  — small bounded tasks (e.g. 1c-error-fixer).
+# Both are DEFAULTED parameters: an empty value means the model field is
+# omitted from the installed agent file and the AI client uses its default
+# model. The install never blocks on them.
+# On first init (no .dev.env yet) the values are asked interactively once
+# during agent placement and persisted into the rendered .dev.env by
+# Place-DevEnv. On update they are read from the existing .dev.env silently.
+
+$script:ModelTierKeys = [ordered]@{ coding = 'SUBAGENT_MODEL_CODING'; light = 'SUBAGENT_MODEL_LIGHT' }
+$script:ModelTierValues = $null
+
+function Resolve-ModelTiers {
+    # Returns an ordered hashtable tier -> concrete model name ('' = client
+    # default). Cached for the whole run so the interactive prompt fires once.
+    param([string]$Root)
+    if ($null -ne $script:ModelTierValues) { return $script:ModelTierValues }
+    $vals = [ordered]@{ coding = ''; light = '' }
+    $envPath = Join-Path $Root $script:DevEnvFileName
+    if (Test-Path $envPath) {
+        $keys = Read-DevEnvKeys -Path $envPath
+        foreach ($tier in @($script:ModelTierKeys.Keys)) {
+            $k = $script:ModelTierKeys[$tier]
+            if ($keys.Contains($k)) { $vals[$tier] = ([string]$keys[$k]).Trim() }
+        }
+    }
+    elseif (-not $NonInteractive) {
+        Write-Info ''
+        Write-Info '  Модели субагентов (Enter — модель AI-клиента по умолчанию):'
+        $vals['coding'] = Read-Required 'SUBAGENT_MODEL_CODING (модель для кодинга/анализа/ревью)' ''
+        $vals['light']  = Read-Required 'SUBAGENT_MODEL_LIGHT (модель для небольших задач: быстрые исправления, разведка)' ''
+    }
+    if (-not $vals['coding'] -and -not $vals['light']) {
+        Write-Info '  subagent models not set (SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_LIGHT in .dev.env) — agents will use the AI client default model'
+    }
+    $script:ModelTierValues = $vals
+    return $vals
+}
+
+function Resolve-AgentModelTier {
+    # Replaces the abstract `modelTier` key in an agent's frontmatter with the
+    # concrete `modelHint` consumed by the adapters' keep/rename ops (and by
+    # the Codex rebuild-toml template). When the tier is unknown or its model
+    # is not configured, the key is removed and no model is emitted — the AI
+    # client falls back to its default model.
+    param(
+        [System.Collections.IDictionary]$Frontmatter,
+        [string]$Root
+    )
+    if (-not $Frontmatter -or -not $Frontmatter.Contains('modelTier')) { return $Frontmatter }
+    $tiers = Resolve-ModelTiers -Root $Root
+    $tier = ([string]$Frontmatter['modelTier']).Trim().ToLowerInvariant()
+    $model = if ($tiers.Contains($tier)) { [string]$tiers[$tier] } else { '' }
+    $result = [ordered]@{}
+    foreach ($k in $Frontmatter.Keys) {
+        if ($k -eq 'modelTier') {
+            if ($model) { $result['modelHint'] = $model }
+            continue
+        }
+        $result[$k] = $Frontmatter[$k]
+    }
+    return $result
 }
 
 function Invoke-PlacePhase {
@@ -1813,10 +2020,11 @@ function Invoke-PlacePhase {
             $template = $adapter.agents.template
             foreach ($f in Get-ChildItem -File (Join-Path $SourceRoot 'content/agents') -Filter *.md) {
                 $parts = Split-FrontmatterAndBody (Read-TextFile $f.FullName)
+                $agentFm = Resolve-AgentModelTier -Frontmatter $parts.Frontmatter -Root $Root
                 $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
                 $target = Resolve-CopyToPath $copyTpl $name
                 Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
-                    -TargetRel $target -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
+                    -TargetRel $target -SourceFm $agentFm -SourceBody $parts.Body `
                     -FrontmatterOps $fmOps -Mode $mode -Template $template `
                     -Manifest $Manifest -ContentSource ("content/agents/" + $f.Name)
             }
@@ -1861,16 +2069,51 @@ function Invoke-PlacePhase {
             }
         }
 
-        # entry (Claude Code CLAUDE.md and similar)
+        # entry (Claude Code CLAUDE.md and similar). This file frequently holds
+        # user project context, so it must NOT be clobbered on update. Same
+        # contract as AGENTS.md: write only when the file is missing, or it was
+        # installed by us and is byte-identical to what we recorded (lets a
+        # changed stub template refresh cleanly); otherwise keep the user's
+        # file. -Force / -ForcePaths overrides and rewrites the shipped stub.
         if ($adapter.entry) {
             $etarget = $adapter.entry.target
             $etpl = $adapter.entry.template
             if ($etarget) {
-                Write-TextFile -Path (Join-Path $Root $etarget) -Content $etpl
-                $Manifest.files[$etarget] = [ordered]@{
-                    source        = 'adapters/' + $tool + '.yaml#entry'
-                    installedHash = (Get-FileSha256 (Join-Path $Root $etarget))
+                $eabs = Join-Path $Root $etarget
+                $shouldWriteEntry = $false
+                if (-not (Test-Path $eabs)) {
+                    $shouldWriteEntry = $true
                 }
+                elseif (Test-ForcePath $etarget) {
+                    $shouldWriteEntry = $true
+                }
+                elseif ($Manifest.files.Contains($etarget)) {
+                    $eentry = $Manifest.files[$etarget]
+                    if ($eentry -and -not $eentry.userModified -and ((Get-FileSha256 $eabs) -eq $eentry.installedHash)) {
+                        $shouldWriteEntry = $true
+                    }
+                }
+                if ($shouldWriteEntry) {
+                    Write-TextFile -Path $eabs -Content $etpl
+                    $Manifest.files[$etarget] = [ordered]@{
+                        source        = 'adapters/' + $tool + '.yaml#entry'
+                        installedHash = (Get-FileSha256 $eabs)
+                    }
+                }
+                elseif ((Test-Path $eabs) -and -not $Manifest.files.Contains($etarget)) {
+                    # Pre-existing file we did NOT write (user had their own
+                    # CLAUDE.md before init). Track it as user-owned so a later
+                    # update never mistakes it for our pristine stub and
+                    # overwrites it. Recording it as "ours" with its current
+                    # hash would do exactly that on the next run.
+                    $Manifest.files[$etarget] = [ordered]@{
+                        source        = 'adapters/' + $tool + '.yaml#entry'
+                        installedHash = (Get-FileSha256 $eabs)
+                        userModified  = $true
+                    }
+                }
+                # Skipped but already tracked: leave the manifest entry as-is
+                # (preserves userModified and the original installedHash).
             }
         }
     }
@@ -2113,6 +2356,20 @@ function Invoke-McpPhase {
             if ($Manifest.files.Contains($legacy)) { [void]$Manifest.files.Remove($legacy) }
         }
 
+        # Respect user modifications to the MCP config the same way artefact
+        # files are respected: if a previous `update` flagged this target as
+        # userModified (the user trimmed the server list, switched the format,
+        # etc.), DO NOT regenerate it from the full catalog — that would
+        # silently bring back servers the user removed. Honour -Force /
+        # -ForcePaths as the explicit opt-in to regenerate.
+        if ($Manifest.files.Contains($target)) {
+            $mcpExisting = $Manifest.files[$target]
+            if ($mcpExisting -and $mcpExisting.userModified -and -not (Test-ForcePath $target)) {
+                Write-Warn "  [$tool] MCP config: $target помечен как изменённый пользователем — оставляю без изменений (ваш выбор серверов сохранён). Чтобы перегенерировать из полного каталога: update -Force -ForcePaths $target — ваши правки будут заменены."
+                continue
+            }
+        }
+
         # `mcp.merge: true` (set in adapter yaml) — when the target file is
         # a SHARED tool config (e.g. `.kilo/kilo.json` carries not only MCP
         # but also `instructions`, `skills.paths`, custom permissions),
@@ -2167,6 +2424,674 @@ function Invoke-McpPhase {
         if ($mergeRequested) { $mcpEntry['merged'] = $true }
         $Manifest.files[$target] = $mcpEntry
         Write-Info "  [$tool] MCP config: $target"
+    }
+}
+
+# ============================================================================
+# SECTION 11B: EXTERNAL MCP (INSTALL.md MODE 3 OF THE MCP DISTRIBUTION)
+# ============================================================================
+#
+# When the MCP servers were installed by the MCP distribution's INSTALL.md in
+# multi-project mode (mode 3: GLOBAL_ROOT + projects.registry.json + dynamic
+# per-project ports + two-level mcp.json), the rules installer must NOT
+# overwrite the tool MCP configs with the static catalog from
+# `content/mcp-servers.json` — that would break the working per-project port
+# layout. Instead it:
+#   1. Detects the external installation: user env BASESAI_MCP_GLOBAL_ROOT
+#      (fallback: MCP_GLOBAL_ROOT in the project .dev.env) pointing at a
+#      folder that contains `install.manifest.json`.
+#   2. Resolves every artifact path through the manifest contract
+#      (`schema_version` / `artifacts` / `consumers` / `resolution`) — no
+#      hardcoded paths, ids, or ports in this consumer. Legacy manifests
+#      without `schema_version` fall back to the schema-v1 default contract.
+#   3. Skips Invoke-McpPhase entirely (MCP configs untouched) and syncs the
+#      `mcp:install_forme` section of USER-RULES.md from the ACTUAL servers
+#      found in the resolved global/project mcp.json files.
+# No detection signal (or manifest missing) → managed mode, the legacy
+# behaviour above. Spec: 1C-RULES-MCP-INTEGRATION-PROPOSAL.md (Comol package).
+
+function Get-EnvFileValue {
+    # Reads a single KEY value from a dotenv-style file (.dev.env, config.env)
+    # via the shared Read-DevEnvKeys parser. Returns '' when the file or the
+    # key is missing. Surrounding quotes are stripped: a path written as
+    # MCP_GLOBAL_ROOT="C:\mcp" must still resolve with Test-Path.
+    param(
+        [string]$FilePath,
+        [string]$Key
+    )
+    $keys = Read-DevEnvKeys -Path $FilePath
+    if (-not $keys.Contains($Key)) { return '' }
+    $val = ([string]$keys[$Key]).Trim()
+    if ($val.Length -ge 2 -and
+        (($val.StartsWith('"') -and $val.EndsWith('"')) -or
+         ($val.StartsWith("'") -and $val.EndsWith("'")))) {
+        $val = $val.Substring(1, $val.Length - 2)
+    }
+    return $val
+}
+
+function Normalize-PathForCompare {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    try {
+        return ([System.IO.Path]::GetFullPath($Path)).TrimEnd('\', '/').ToLowerInvariant()
+    }
+    catch {
+        return $Path.Trim().TrimEnd('\', '/').ToLowerInvariant()
+    }
+}
+
+function Read-JsonFile {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path $Path)) { return $null }
+    $raw = Read-TextFile $Path
+    try { return ($raw | ConvertFrom-Json) } catch { return $null }
+}
+
+# Default manifest contract (schema_version 1). Used as the fallback for
+# legacy manifests and as the merge base: a manifest only has to declare the
+# keys it overrides.
+function Get-DefaultMcpManifestContract {
+    return [ordered]@{
+        schema_version = 1
+        artifacts      = [ordered]@{
+            registry      = [ordered]@{
+                path        = 'projects.registry.json'
+                description = 'Multi-project index: id, label, path_code, mcp_root, ports, containers, mcp_cursor'
+            }
+            global_config = [ordered]@{
+                path        = 'config.env'
+                description = 'Shared API keys, IMAGE_TAG'
+            }
+            help_config   = [ordered]@{
+                path_pattern = 'help_*/config.env'
+                description  = 'PORT_HELP, PATH_1C_BIN per help_* folder under GLOBAL_ROOT'
+            }
+            ssl_config    = [ordered]@{
+                path_pattern = 'ssl_*/config.env'
+                description  = 'PORT_SSL, SSL_VERSION per ssl_* folder under GLOBAL_ROOT'
+            }
+        }
+        consumers      = [ordered]@{
+            cursor_global_mcp  = [ordered]@{
+                path        = '%USERPROFILE%/.cursor/mcp.json'
+                scope       = 'global'
+                description = 'Help, SSL, Templates, Syntax, CodeChecker — actual id, url, description'
+            }
+            cursor_project_mcp = [ordered]@{
+                primary_path_pattern  = '{path_code}/.cursor/mcp.json'
+                fallback_path_pattern = '{mcp_root}/.cursor/mcp.json'
+                scope                 = 'per-project'
+                description           = 'Code and Graph metadata MCP for workspace'
+            }
+            project_dev_env    = [ordered]@{
+                path_pattern = '{path_code}/.dev.env'
+                keys         = @('MCP_GLOBAL_ROOT')
+                description  = 'Fallback env signal for external MCP detection'
+            }
+            project_mcp_config = [ordered]@{
+                path_pattern = '{mcp_root}/config.env'
+                description  = 'PATH_METADATA, PATH_CODE, PATH_BASES (reference)'
+            }
+        }
+        resolution     = [ordered]@{
+            project_match = [ordered]@{
+                source  = 'registry'
+                field   = 'path_code'
+                compare = 'workspace_root_normalized'
+            }
+            detection     = [ordered]@{
+                entry_env        = 'BASESAI_MCP_GLOBAL_ROOT'
+                fallback_env_key = 'MCP_GLOBAL_ROOT'
+                manifest_file    = 'install.manifest.json'
+            }
+        }
+    }
+}
+
+function Merge-McpManifestContractNode {
+    param(
+        $Default,
+        $Override
+    )
+    if ($null -eq $Override) { return $Default }
+    $result = [ordered]@{}
+    foreach ($key in $Default.Keys) {
+        $defVal = $Default[$key]
+        $ovVal = $null
+        if ($Override.PSObject.Properties.Name -contains $key) {
+            $ovVal = $Override.$key
+        }
+        if ($defVal -is [System.Collections.IDictionary] -and $null -ne $ovVal) {
+            $result[$key] = Merge-McpManifestContractNode -Default $defVal -Override $ovVal
+        }
+        elseif ($null -ne $ovVal -and "$ovVal" -ne '') {
+            $result[$key] = $ovVal
+        }
+        else {
+            $result[$key] = $defVal
+        }
+    }
+    foreach ($prop in $Override.PSObject.Properties) {
+        if (-not $result.Contains($prop.Name)) {
+            $result[$prop.Name] = $prop.Value
+        }
+    }
+    return $result
+}
+
+# Merge the contract declared inside install.manifest.json over the schema-v1
+# defaults. A $null manifest (or one without contract sections) yields the
+# pure defaults — that is the legacy-manifest path.
+function Get-McpManifestContract {
+    param($Manifest)
+    $defaults = Get-DefaultMcpManifestContract
+    if (-not $Manifest) { return $defaults }
+    $schemaVer = 1
+    if ($Manifest.PSObject.Properties.Name -contains 'schema_version' -and $Manifest.schema_version) {
+        $schemaVer = [int]$Manifest.schema_version
+    }
+    $contract = [ordered]@{ schema_version = $schemaVer }
+    foreach ($section in @('artifacts', 'consumers', 'resolution')) {
+        $defSection = $defaults[$section]
+        $manSection = $null
+        if ($Manifest.PSObject.Properties.Name -contains $section) {
+            $manSection = $Manifest.$section
+        }
+        $merged = [ordered]@{}
+        foreach ($key in $defSection.Keys) {
+            $ov = $null
+            if ($manSection -and $manSection.PSObject.Properties.Name -contains $key) {
+                $ov = $manSection.$key
+            }
+            $merged[$key] = Merge-McpManifestContractNode -Default $defSection[$key] -Override $ov
+        }
+        if ($manSection) {
+            foreach ($prop in $manSection.PSObject.Properties) {
+                if (-not $merged.Contains($prop.Name)) {
+                    $merged[$prop.Name] = $prop.Value
+                }
+            }
+        }
+        $contract[$section] = $merged
+    }
+    return $contract
+}
+
+function Expand-McpManifestPath {
+    # Substitutes %USERPROFILE%, {global_root}, {path_code}, {mcp_root} in a
+    # contract path pattern. Relative results resolve under GLOBAL_ROOT.
+    param(
+        [string]$Pattern,
+        [string]$GlobalRoot,
+        [string]$ProjectRoot,
+        $Project
+    )
+    if ([string]::IsNullOrWhiteSpace($Pattern)) { return '' }
+    $pathCode = if ($Project -and $Project.path_code) { [string]$Project.path_code } else { $ProjectRoot }
+    $mcpRoot = if ($Project -and $Project.mcp_root) { [string]$Project.mcp_root } else { '' }
+    # Plain string replacement on purpose: substituted values are Windows
+    # paths that regex replacement would mishandle ($, \ tokens).
+    $expanded = $Pattern.
+        Replace('%USERPROFILE%', [Environment]::GetFolderPath('UserProfile')).
+        Replace('{global_root}', $GlobalRoot).
+        Replace('{path_code}', $pathCode).
+        Replace('{mcp_root}', $mcpRoot)
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+        $expanded = Join-Path $GlobalRoot $expanded
+    }
+    return $expanded
+}
+
+function Resolve-McpArtifactPath {
+    param(
+        $ArtifactDef,
+        [string]$GlobalRoot
+    )
+    if ($ArtifactDef -and $ArtifactDef.path) {
+        $rel = [string]$ArtifactDef.path
+        if ([System.IO.Path]::IsPathRooted($rel)) { return $rel }
+        return Join-Path $GlobalRoot $rel
+    }
+    return ''
+}
+
+function Resolve-McpConsumerPath {
+    # Resolves a consumer path from the contract: explicit `path`, then
+    # `primary_path_pattern`, then `fallback_path_pattern`. The first
+    # candidate that exists on disk wins; otherwise the first candidate is
+    # returned so the caller can report a meaningful missing path.
+    param(
+        $ConsumerDef,
+        [string]$GlobalRoot,
+        [string]$ProjectRoot,
+        $Project
+    )
+    $candidates = @()
+    foreach ($key in @('path', 'primary_path_pattern', 'fallback_path_pattern')) {
+        $pattern = $null
+        if ($ConsumerDef -is [System.Collections.IDictionary]) {
+            if ($ConsumerDef.Contains($key)) { $pattern = $ConsumerDef[$key] }
+        }
+        elseif ($ConsumerDef.PSObject.Properties.Name -contains $key) {
+            $pattern = $ConsumerDef.$key
+        }
+        if ($pattern) {
+            $candidates += Expand-McpManifestPath -Pattern ([string]$pattern) -GlobalRoot $GlobalRoot -ProjectRoot $ProjectRoot -Project $Project
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+    if ($candidates.Count -gt 0) { return $candidates[0] }
+    return ''
+}
+
+function Get-McpGlobalRootFromEnv {
+    param([string]$ProjectRoot)
+    $globalRoot = [Environment]::GetEnvironmentVariable('BASESAI_MCP_GLOBAL_ROOT', 'User')
+    if (-not $globalRoot) { $globalRoot = $env:BASESAI_MCP_GLOBAL_ROOT }
+    if (-not $globalRoot) {
+        $globalRoot = Get-EnvFileValue -FilePath (Join-Path $ProjectRoot $script:DevEnvFileName) -Key 'MCP_GLOBAL_ROOT'
+    }
+    return $globalRoot
+}
+
+# Detection: external mode requires BOTH the env signal AND
+# `install.manifest.json` inside the folder it points at. Anything else is
+# managed mode (legacy behaviour). Returns a hashtable; `Warn` carries an
+# optional message for the caller to surface.
+function Detect-ExternalMcp {
+    param([string]$ProjectRoot)
+
+    $globalRoot = Get-McpGlobalRootFromEnv -ProjectRoot $ProjectRoot
+    if ([string]::IsNullOrWhiteSpace($globalRoot)) {
+        return @{ Mode = 'managed' }
+    }
+
+    $manifestPath = Join-Path $globalRoot 'install.manifest.json'
+    if (-not (Test-Path $manifestPath)) {
+        return @{
+            Mode = 'managed'
+            Warn = "Сигнал внешней установки MCP задан (BASESAI_MCP_GLOBAL_ROOT либо MCP_GLOBAL_ROOT в .dev.env: $globalRoot), но install.manifest.json там не найден — fallback на managed MCP (конфиг будет отрендерен из content/mcp-servers.json)."
+        }
+    }
+
+    $mcpManifest = Read-JsonFile -Path $manifestPath
+    $contract = Get-McpManifestContract -Manifest $mcpManifest
+
+    $warnEnvMismatch = $null
+    $effectiveRoot = $globalRoot
+    if ($mcpManifest -and $mcpManifest.PSObject.Properties.Name -contains 'global_root' -and $mcpManifest.global_root) {
+        $effectiveRoot = [string]$mcpManifest.global_root
+        if ((Normalize-PathForCompare $effectiveRoot) -ne (Normalize-PathForCompare $globalRoot)) {
+            $warnEnvMismatch = "BASESAI_MCP_GLOBAL_ROOT ($globalRoot) не совпадает с manifest.global_root ($effectiveRoot); используется значение из манифеста."
+        }
+    }
+
+    $registryPath = Resolve-McpArtifactPath -ArtifactDef $contract.artifacts.registry -GlobalRoot $effectiveRoot
+
+    $result = @{
+        Mode         = 'external'
+        GlobalRoot   = $effectiveRoot
+        ManifestPath = $manifestPath
+        RegistryPath = $registryPath
+        Contract     = $contract
+    }
+    if ($warnEnvMismatch) { $result['Warn'] = $warnEnvMismatch }
+    return $result
+}
+
+# Applies the -McpMode CLI override on top of detection.
+function Resolve-ExternalMcpMode {
+    param([string]$ProjectRoot)
+    switch ($script:McpMode) {
+        'managed' { return @{ Mode = 'managed' } }
+        'external' {
+            $det = Detect-ExternalMcp -ProjectRoot $ProjectRoot
+            if ($det.Mode -ne 'external') {
+                $reason = if ($det.Warn) { $det.Warn } else { 'переменная BASESAI_MCP_GLOBAL_ROOT (или MCP_GLOBAL_ROOT в .dev.env) не задана.' }
+                throw "-McpMode external: внешняя установка MCP не обнаружена — $reason"
+            }
+            return $det
+        }
+        default {
+            $det = Detect-ExternalMcp -ProjectRoot $ProjectRoot
+            if ($det.Warn) { Write-Warn "  $($det.Warn)" }
+            return $det
+        }
+    }
+}
+
+function Get-RegistryProjectForRoot {
+    param(
+        $Registry,
+        [string]$ProjectRoot,
+        $Contract
+    )
+    if (-not $Registry -or -not ($Registry.PSObject.Properties.Name -contains 'projects') -or -not $Registry.projects) { return $null }
+    $matchField = 'path_code'
+    if ($Contract -and $Contract.resolution -and $Contract.resolution.project_match -and $Contract.resolution.project_match.field) {
+        $matchField = [string]$Contract.resolution.project_match.field
+    }
+    $normRoot = Normalize-PathForCompare $ProjectRoot
+    foreach ($p in $Registry.projects) {
+        $fieldVal = $null
+        if ($p.PSObject.Properties.Name -contains $matchField) {
+            $fieldVal = $p.$matchField
+        }
+        if (-not $fieldVal) { continue }
+        if ((Normalize-PathForCompare $fieldVal) -eq $normRoot) { return $p }
+    }
+    return $null
+}
+
+function Parse-McpJsonServers {
+    # Reads ACTUAL server entries from an mcp.json: ids as the user/installer
+    # named them, ports parsed from the url — never from constants.
+    param([string]$McpJsonPath)
+    $result = [ordered]@{}
+    if (-not $McpJsonPath -or -not (Test-Path $McpJsonPath)) { return $result }
+    $obj = Read-JsonFile -Path $McpJsonPath
+    if (-not $obj -or -not ($obj.PSObject.Properties.Name -contains 'mcpServers') -or -not $obj.mcpServers) { return $result }
+    foreach ($prop in $obj.mcpServers.PSObject.Properties) {
+        $entry = $prop.Value
+        $url = if ($entry.PSObject.Properties.Name -contains 'url' -and $entry.url) { [string]$entry.url } else { '' }
+        $port = ''
+        if ($url -match ':(\d+)(/|$)') { $port = $Matches[1] }
+        $result[$prop.Name] = [ordered]@{
+            Id          = $prop.Name
+            Url         = $url
+            Port        = $port
+            Description = if ($entry.PSObject.Properties.Name -contains 'description' -and $entry.description) { [string]$entry.description } else { '' }
+        }
+    }
+    return $result
+}
+
+function Read-McpPatternConfigs {
+    # Expands a `prefix_*/suffix` contract pattern under GLOBAL_ROOT into the
+    # list of existing config files (e.g. help_8_3_27/config.env).
+    param(
+        [string]$GlobalRoot,
+        [string]$PathPattern
+    )
+    $items = @()
+    if (-not $GlobalRoot -or -not (Test-Path $GlobalRoot)) { return $items }
+    if ($PathPattern -match '^([^*]+)\*/(.+)$') {
+        $prefix = $Matches[1]
+        $suffix = $Matches[2]
+        Get-ChildItem -Directory -Path $GlobalRoot -Filter "${prefix}*" -ErrorAction SilentlyContinue | ForEach-Object {
+            $cfg = Join-Path $_.FullName $suffix
+            if (Test-Path $cfg) {
+                $items += [ordered]@{ Folder = $_.Name; Path = $cfg }
+            }
+        }
+    }
+    return $items
+}
+
+# Single entry point for reading the external installation: manifest →
+# contract → registry + global/project mcp.json + optional help_*/ssl_*
+# config.env enrichment. Everything downstream (USER-RULES section,
+# .ai-rules.json record) renders from this result only.
+function Read-McpInstallArtifacts {
+    param(
+        [string]$ProjectRoot,
+        [string]$GlobalRoot,
+        [string]$ManifestPath,
+        [string]$RegistryPath,
+        $Contract
+    )
+
+    $mcpManifest = Read-JsonFile -Path $ManifestPath
+    if (-not $Contract) {
+        $Contract = Get-McpManifestContract -Manifest $mcpManifest
+    }
+    if (-not $RegistryPath) {
+        $RegistryPath = Resolve-McpArtifactPath -ArtifactDef $Contract.artifacts.registry -GlobalRoot $GlobalRoot
+    }
+
+    $registry = Read-JsonFile -Path $RegistryPath
+    $project = Get-RegistryProjectForRoot -Registry $registry -ProjectRoot $ProjectRoot -Contract $Contract
+
+    $globalMcpPath = Resolve-McpConsumerPath -ConsumerDef $Contract.consumers.cursor_global_mcp -GlobalRoot $GlobalRoot -ProjectRoot $ProjectRoot -Project $project
+    $projectMcpPath = Resolve-McpConsumerPath -ConsumerDef $Contract.consumers.cursor_project_mcp -GlobalRoot $GlobalRoot -ProjectRoot $ProjectRoot -Project $project
+
+    $globalServers = Parse-McpJsonServers -McpJsonPath $globalMcpPath
+    $projectServers = Parse-McpJsonServers -McpJsonPath $projectMcpPath
+
+    # Optional enrichment: platform/SSL version suffix + HOST ports from the
+    # help_*/ssl_* config.env folders, only when those folders exist. No
+    # default port is assumed when the key is absent.
+    $helpNotes = @()
+    foreach ($item in (Read-McpPatternConfigs -GlobalRoot $GlobalRoot -PathPattern ([string]$Contract.artifacts.help_config.path_pattern))) {
+        $p = Get-EnvFileValue -FilePath $item.Path -Key 'PORT_HELP'
+        $helpNotes += ("{0}{1}" -f $item.Folder, $(if ($p) { " (PORT_HELP=$p)" } else { '' }))
+    }
+    foreach ($item in (Read-McpPatternConfigs -GlobalRoot $GlobalRoot -PathPattern ([string]$Contract.artifacts.ssl_config.path_pattern))) {
+        $p = Get-EnvFileValue -FilePath $item.Path -Key 'PORT_SSL'
+        $helpNotes += ("{0}{1}" -f $item.Folder, $(if ($p) { " (PORT_SSL=$p)" } else { '' }))
+    }
+
+    return [ordered]@{
+        Manifest       = $mcpManifest
+        Contract       = $Contract
+        Registry       = $registry
+        RegistryPath   = $RegistryPath
+        Project        = $project
+        GlobalMcpPath  = $globalMcpPath
+        ProjectMcpPath = $projectMcpPath
+        GlobalServers  = $globalServers
+        ProjectServers = $projectServers
+        ConfigNotes    = $helpNotes
+        GlobalRoot     = $GlobalRoot
+    }
+}
+
+function Format-McpServerTableRows {
+    param([System.Collections.IDictionary]$Servers)
+    $lines = New-Object System.Collections.ArrayList
+    foreach ($id in $Servers.Keys) {
+        $s = $Servers[$id]
+        $desc = ($s.Description -replace '\|', '/')
+        [void]$lines.Add("| ``$id`` | ``$($s.Url)`` | $desc |")
+    }
+    if ($lines.Count -eq 0) {
+        [void]$lines.Add('| *(нет записей в mcp.json)* | | |')
+    }
+    return ($lines -join "`n")
+}
+
+# Generates / refreshes the block between the `mcp:install_forme` markers in
+# USER-RULES.md. Only the block is replaced; everything outside the markers
+# is preserved. A `userModified: mcp:install_forme` marker anywhere in the
+# file opts the section out of regeneration.
+function Update-UserRulesMcpSection {
+    param(
+        [string]$ProjectRoot,
+        [System.Collections.IDictionary]$Artifacts
+    )
+
+    $userRulesPath = Join-Path $ProjectRoot $script:UserRulesFileName
+    $startMarker = '<!-- mcp:install_forme — generated by 1c-rules from install artifacts; manual edits may be overwritten on update -->'
+    $endMarker = '<!-- /mcp:install_forme -->'
+
+    $project = $Artifacts.Project
+    $label = if ($project -and $project.label) { $project.label } else { '(не найден в registry)' }
+    $projId = if ($project -and $project.id) { $project.id } else { '—' }
+    $mcpRoot = if ($project -and $project.mcp_root) { $project.mcp_root } else { '—' }
+
+    $globalRows = Format-McpServerTableRows -Servers $Artifacts.GlobalServers
+    $projectRows = New-Object System.Collections.ArrayList
+    foreach ($id in $Artifacts.ProjectServers.Keys) {
+        $s = $Artifacts.ProjectServers[$id]
+        $container = '—'
+        if ($project -and ($project.PSObject.Properties.Name -contains 'containers') -and $project.containers) {
+            if ($id -match 'code' -and $project.containers.PSObject.Properties.Name -contains 'code' -and $project.containers.code) { $container = $project.containers.code }
+            if ($id -match 'graph' -and $project.containers.PSObject.Properties.Name -contains 'graph' -and $project.containers.graph) { $container = $project.containers.graph }
+        }
+        $desc = ($s.Description -replace '\|', '/')
+        [void]$projectRows.Add("| ``$id`` | ``$($s.Url)`` | ``$container`` | ``$mcpRoot`` | $desc |")
+    }
+    if ($projectRows.Count -eq 0) {
+        [void]$projectRows.Add('| *(нет записей в project mcp.json)* | | | | |')
+    }
+
+    $manifestVer = ''
+    if ($Artifacts.Manifest -and $Artifacts.Manifest.PSObject.Properties.Name -contains 'install_for_me_version' -and $Artifacts.Manifest.install_for_me_version) {
+        $manifestVer = $Artifacts.Manifest.install_for_me_version
+    }
+    $schemaVer = if ($Artifacts.Contract) { $Artifacts.Contract.schema_version } else { 1 }
+    $registryPath = if ($Artifacts.RegistryPath) { $Artifacts.RegistryPath } else { '—' }
+    $configNotesLine = ''
+    if ($Artifacts.ConfigNotes -and @($Artifacts.ConfigNotes).Count -gt 0) {
+        $configNotesLine = "`nДополнительно из config.env под GLOBAL_ROOT: " + (@($Artifacts.ConfigNotes) -join ', ') + '.'
+    }
+
+    $section = @"
+$startMarker
+## MCP (внешняя установка через INSTALL.md, режим 3)
+
+### Обнаружение
+- Сигнал: ``BASESAI_MCP_GLOBAL_ROOT`` (или ``MCP_GLOBAL_ROOT`` в ``.dev.env``)
+- ``install.manifest.json``: найден в ``$($Artifacts.GlobalRoot)``
+- ``schema_version``: $schemaVer · ``install_for_me_version``: $manifestVer
+- Проект в registry: **$label** (``id``: ``$projId``)
+
+### Контракт манифеста (куда смотреть)
+Источник структуры — ``install.manifest.json`` (блоки ``artifacts``, ``consumers``, ``resolution``), не хардкод в потребителе.
+
+| потребитель | путь (разрешённый) |
+|-------------|-------------------|
+| ``cursor_global_mcp`` | ``$($Artifacts.GlobalMcpPath)`` |
+| ``cursor_project_mcp`` | ``$($Artifacts.ProjectMcpPath)`` |
+| ``registry`` | ``$registryPath`` |
+
+### Глобальные серверы
+Источник: ``$($Artifacts.GlobalMcpPath)`` (из ``consumers.cursor_global_mcp``)
+
+| id (фактический ключ) | url | description |
+|-----------------------|-----|-------------|
+$globalRows
+$configNotesLine
+### Проектные серверы
+Источник: ``$($Artifacts.ProjectMcpPath)`` + ``$registryPath``
+
+| id | url | Docker container | mcp_root | description |
+|----|-----|------------------|----------|-------------|
+$($projectRows -join "`n")
+
+### Правило для агента
+Глобальные серверы **не дублировать** в проектном ``.cursor/mcp.json``. При ``/checkmcp`` читать ``install.manifest.json`` → разрешать пути по контракту → брать **фактические** id, url и порты из таблиц выше, не шаблон ``content/mcp-servers.json``. Установщик 1c-rules в этом режиме MCP-конфиги не трогает.
+$endMarker
+"@
+
+    if (-not (Test-Path $userRulesPath)) {
+        Write-TextFile -Path $userRulesPath -Content ("# User Rules`n`n$section`n")
+        return @{ Updated = $true; Created = $true }
+    }
+
+    $existing = Read-TextFile $userRulesPath
+    if ($existing -match 'userModified:\s*mcp:install_forme') {
+        Write-Warn "  USER-RULES.md: секция mcp:install_forme помечена как userModified — пропускаю регенерацию."
+        return @{ Updated = $false; Skipped = 'userModified' }
+    }
+    if ($existing -match '(?s)<!-- mcp:install_forme.*?<!-- /mcp:install_forme -->') {
+        $newContent = [regex]::Replace(
+            $existing,
+            '(?s)<!-- mcp:install_forme.*?<!-- /mcp:install_forme -->',
+            $section.Replace('$', '$$')
+        )
+    }
+    else {
+        $newContent = $existing.TrimEnd() + "`n`n" + $section + "`n"
+    }
+
+    Write-TextFile -Path $userRulesPath -Content $newContent
+    return @{ Updated = $true; Created = $false }
+}
+
+# External-mode replacement for Invoke-McpPhase: reads the install artifacts,
+# syncs USER-RULES.md, records `integrations.mcp` in .ai-rules.json. Tool MCP
+# configs are NOT written and `manifest.mcpServers` is cleared — the external
+# installation owns the server list.
+function Invoke-ExternalMcpPhase {
+    param(
+        [string]$ProjectRoot,
+        [hashtable]$Detection,
+        [System.Collections.IDictionary]$Manifest,
+        [string[]]$ActiveTools,
+        [hashtable]$Adapters
+    )
+
+    $artifacts = Read-McpInstallArtifacts `
+        -ProjectRoot $ProjectRoot `
+        -GlobalRoot $Detection.GlobalRoot `
+        -ManifestPath $Detection.ManifestPath `
+        -RegistryPath $Detection.RegistryPath `
+        -Contract $Detection.Contract
+
+    if (-not $artifacts.Project) {
+        Write-Warn "  External MCP: проект не найден в registry ($($artifacts.RegistryPath)) по path_code = $ProjectRoot. Секция USER-RULES будет без проектных контейнеров — проверьте регистрацию проекта в установке MCP."
+    }
+
+    $updateResult = Update-UserRulesMcpSection -ProjectRoot $ProjectRoot -Artifacts $artifacts
+
+    # Keep the manifest hash of USER-RULES.md in sync with what we just wrote,
+    # so the next `update` does not flag our own write as a user modification.
+    if ($updateResult.Updated -and $Manifest.files.Contains($script:UserRulesFileName)) {
+        $entry = $Manifest.files[$script:UserRulesFileName]
+        if ($entry -and -not $entry.userModified) {
+            $entry['installedHash'] = Get-FileSha256 (Join-Path $ProjectRoot $script:UserRulesFileName)
+        }
+    }
+
+    if (-not $Manifest.integrations) { $Manifest.integrations = [ordered]@{} }
+    $globalIds = @($artifacts.GlobalServers.Keys)
+    $projectIds = @($artifacts.ProjectServers.Keys)
+    $Manifest.integrations['mcp'] = [ordered]@{
+        mode              = 'external'
+        schemaVersion     = $artifacts.Contract.schema_version
+        contractSource    = 'install.manifest.json'
+        manifestPath      = $Detection.ManifestPath
+        registryPath      = $artifacts.RegistryPath
+        registryProjectId = if ($artifacts.Project -and $artifacts.Project.id) { [string]$artifacts.Project.id } else { '' }
+        globalMcpConfig   = $artifacts.GlobalMcpPath
+        projectMcpConfig  = $artifacts.ProjectMcpPath
+        globalServerIds   = $globalIds
+        projectServerIds  = $projectIds
+        userRulesSection  = 'mcp:install_forme'
+        detectedAt        = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+
+    # The external installation owns the MCP configs; the rules installer
+    # manages zero servers in this mode (also disables the restart nag —
+    # nothing was rewritten).
+    $Manifest.mcpServers = @()
+
+    # Untrack the tool MCP targets a previous MANAGED install may have
+    # recorded. The files themselves are NOT deleted (they now belong to the
+    # external installation), but keeping them in `manifest.files` would make
+    # every subsequent update flag them as drifted/user-modified noise, and
+    # `remove` would wrongly delete a config we no longer own.
+    if ($ActiveTools -and $Adapters) {
+        foreach ($tool in $ActiveTools) {
+            $adapter = $Adapters[$tool]
+            if (-not $adapter -or -not $adapter.mcp) { continue }
+            $mcpTarget = $adapter.mcp.target
+            if ($mcpTarget -and $Manifest.files.Contains($mcpTarget)) {
+                [void]$Manifest.files.Remove($mcpTarget)
+                Write-Info "  [$tool] MCP config: $mcpTarget снят с учёта манифеста (принадлежит внешней установке MCP)."
+            }
+        }
+    }
+
+    return @{
+        Artifacts    = $artifacts
+        UserRules    = $updateResult
+        GlobalCount  = $globalIds.Count
+        ProjectCount = $projectIds.Count
     }
 }
 
@@ -2232,6 +3157,9 @@ function Update-AgentsMd {
     if (-not (Test-Path $agentsPath)) {
         $shouldRefresh = $true
     }
+    elseif (Test-ForcePath $script:AgentsMdFileName) {
+        $shouldRefresh = $true
+    }
     elseif ($Manifest.files.Contains($script:AgentsMdFileName)) {
         $entry = $Manifest.files[$script:AgentsMdFileName]
         if (-not $entry.userModified) {
@@ -2243,9 +3171,6 @@ function Update-AgentsMd {
     }
     if ($shouldRefresh) {
         Write-TextFile -Path $agentsPath -Content $rendered
-    }
-
-    if (Test-Path $agentsPath) {
         $Manifest.files[$script:AgentsMdFileName] = [ordered]@{
             source        = 'AGENTS.md'
             rulesDir      = $rulesDir
@@ -2253,6 +3178,21 @@ function Update-AgentsMd {
             installedHash = (Get-FileSha256 $agentsPath)
         }
     }
+    elseif ((Test-Path $agentsPath) -and -not $Manifest.files.Contains($script:AgentsMdFileName)) {
+        # Pre-existing AGENTS.md we did NOT write: track as user-owned.
+        # Recording it as "ours" with its current hash would make the next
+        # update see "installed by us, unchanged" and overwrite the user's
+        # file with the rendered template.
+        $Manifest.files[$script:AgentsMdFileName] = [ordered]@{
+            source        = 'AGENTS.md'
+            rulesDir      = $rulesDir
+            rulesExt      = $rulesExt
+            installedHash = (Get-FileSha256 $agentsPath)
+            userModified  = $true
+        }
+    }
+    # Skipped but already tracked: leave the manifest entry as-is (preserves
+    # userModified and the installedHash recorded at the time we wrote it).
 }
 
 # Place USER-RULES.md and memory.md from source templates into the project
@@ -2322,7 +3262,9 @@ function Place-RootTemplates {
 # Defaulted fields (empty = silently fall back to a documented default;
 # never re-asked at task time):
 #   IB_PASSWORD (empty = no password; /P omitted),
-#   LOG_PATH    (empty = $env:TEMP\1cv8.log).
+#   LOG_PATH    (empty = $env:TEMP\1cv8.log),
+#   SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_LIGHT (empty = AI client default
+#   model; see SECTION 7b).
 
 function Find-PlatformPath {
     # Returns the path to the most recent installed 1C platform under
@@ -2463,6 +3405,19 @@ function Place-DevEnv {
         $val = Read-Required 'IB_PASSWORD (пусто — без пароля, /P опускается; не храните прод-пароли)' '';                                       if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_PASSWORD'         -Value $val }
         $val = Read-Required 'LOG_PATH (файл лога Designer''а; пусто — $env:TEMP\1cv8.log)' '';                                                if ($val) { $text = Set-DevEnvValue -Text $text -Key 'LOG_PATH'            -Value $val }
         $val = Read-Required 'INFOBASE_PUBLISH_URL (URL веб-публикации для UI-тестов; пусто — UI-тесты пропускаются)' '';                      if ($val) { $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_PUBLISH_URL' -Value $val }
+    }
+
+    # Persist subagent model tiers. The values were either asked once during
+    # agent placement (Resolve-ModelTiers, init without .dev.env) or are still
+    # unset; ask here only if placement never ran (e.g. degenerate tool set).
+    if ($null -eq $script:ModelTierValues -and -not $NonInteractive) {
+        Resolve-ModelTiers -Root $Root | Out-Null
+    }
+    if ($script:ModelTierValues) {
+        foreach ($tier in @($script:ModelTierKeys.Keys)) {
+            $mval = [string]$script:ModelTierValues[$tier]
+            if ($mval) { $text = Set-DevEnvValue -Text $text -Key $script:ModelTierKeys[$tier] -Value $mval }
+        }
     }
 
     Write-TextFile -Path $target -Content $text
@@ -2671,13 +3626,28 @@ function Invoke-Init {
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
     Write-Section 'Phase 8: MCP'
-    Invoke-McpPhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
+    $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
+    if ($extMcp.Mode -eq 'external') {
+        Write-Info '  Обнаружена внешняя установка MCP (install.manifest.json) — MCP-конфиги инструментов НЕ изменяются.'
+    }
+    else {
+        Invoke-McpPhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
+    }
 
     Write-Section 'Phase 8b: AGENTS.md'
     Update-AgentsMd -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
 
     Write-Section 'Phase 8c: Root templates (USER-RULES.md, memory.md)'
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+
+    # Runs AFTER Place-RootTemplates so the USER-RULES.md template is placed
+    # first and the generated section is appended to it (not the other way
+    # around, which would suppress the template).
+    if ($extMcp.Mode -eq 'external') {
+        Write-Section 'Phase 8d: External MCP (USER-RULES.md sync)'
+        $extResult = Invoke-ExternalMcpPhase -ProjectRoot $Root -Detection $extMcp -Manifest $manifest -ActiveTools $activeTools -Adapters $adapters
+        Write-Info "  MCP: external. Конфиги не тронуты. USER-RULES.md синхронизирован ($($extResult.GlobalCount) глобальных + $($extResult.ProjectCount) проектных серверов)."
+    }
 
     Write-Section 'Phase 9: Manifest'
     Write-Manifest -Root $Root -Manifest $manifest
@@ -2800,6 +3770,12 @@ function Invoke-Update {
         Write-Info "Migrated: removed $($legacyKeys.Count) legacy .ai-rules/rules/ entries"
     }
 
+    # Snapshot every path we currently track, before the per-update prune below
+    # drops the non-userModified entries. Skill pruning consults this to avoid
+    # deleting files the user added to a skill directory themselves.
+    $script:PreviousFiles = @{}
+    foreach ($k in $manifest.files.Keys) { $script:PreviousFiles[$k] = $true }
+
     Write-Section 'Detecting user-modified files'
     $dirty = @()
     foreach ($rel in @($manifest.files.Keys)) {
@@ -2809,26 +3785,42 @@ function Invoke-Update {
         $expected = $manifest.files[$rel].installedHash
         if ($actual -ne $expected) { $dirty += $rel }
     }
+    # Files force-updated this run ("take theirs"): never flagged userModified,
+    # so the place/MCP/entry/skill phases overwrite them with the shipped copy.
+    $script:ForcedThisRun = @($dirty | Where-Object { Test-ForcePath $_ })
+    $script:KeptThisRun = @()
     if ($dirty.Count -gt 0) {
         Write-Warn "User-modified files detected: $($dirty.Count)"
-        $dirty | ForEach-Object { Write-Warn "  $_" }
-        if (-not $NonInteractive -and -not $AssumeYes) {
-            $choice = Read-Choice 'Resolution' @('keep', 'take', 'skip') 'keep'
-            if ($choice -eq 'keep') {
-                # Keep mine: mark these as userModified so future updates skip them
-                foreach ($d in $dirty) { $manifest.files[$d]['userModified'] = $true }
-            }
-            elseif ($choice -eq 'skip') {
-                # Skip update for these paths — keep them in manifest as-is but do not re-write
-                Write-Info 'Will keep user edits; they will be re-overwritten only if you pass take.'
-                foreach ($d in $dirty) { $manifest.files[$d]['userModified'] = $true }
-            }
-            # take — proceed with overwrite (default behavior of place)
+        $dirty | ForEach-Object {
+            $tag = if (Test-ForcePath $_) { '  (will be overwritten: -Force)' } else { '' }
+            Write-Warn "  $_$tag"
         }
-        else {
-            # Non-interactive default: keep
-            foreach ($d in $dirty) { $manifest.files[$d]['userModified'] = $true }
+        # -Force / -ForcePaths is a non-interactive, deterministic decision: the
+        # listed paths are overwritten regardless of the interactive prompt.
+        # Any remaining drifted file falls back to the interactive/keep logic.
+        $undecided = @($dirty | Where-Object { -not (Test-ForcePath $_) })
+        if ($undecided.Count -gt 0 -and -not $NonInteractive -and -not $AssumeYes) {
+            $choice = Read-Choice 'Resolution for remaining drifted files' @('keep', 'take', 'skip') 'keep'
+            if ($choice -eq 'keep' -or $choice -eq 'skip') {
+                # Keep mine: mark these as userModified so place/MCP/entry/skill skip them.
+                foreach ($d in $undecided) { $manifest.files[$d]['userModified'] = $true }
+            }
+            elseif ($choice -eq 'take') {
+                # Take theirs: also CLEAR the userModified flag set by previous
+                # runs, otherwise files flagged earlier would silently stay at
+                # their old version despite the explicit "take" answer.
+                foreach ($d in $undecided) {
+                    if ($manifest.files[$d].Contains('userModified')) {
+                        [void]$manifest.files[$d].Remove('userModified')
+                    }
+                }
+            }
         }
+        elseif ($undecided.Count -gt 0) {
+            # Non-interactive default: keep user edits.
+            foreach ($d in $undecided) { $manifest.files[$d]['userModified'] = $true }
+        }
+        $script:KeptThisRun = @($dirty | Where-Object { $manifest.files[$_] -and $manifest.files[$_].userModified })
     }
 
     # Rescan
@@ -2839,9 +3831,14 @@ function Invoke-Update {
 
     # Re-place for all files (skipping userModified)
     # Approach: put places into manifest; for userModified, preserve entry but do not overwrite
+    # AGENTS.md is placed by Update-AgentsMd, not by Invoke-PlacePhase, and its
+    # refresh decision needs the previous installedHash from the manifest.
+    # Dropping the clean entry here made Update-AgentsMd treat the existing
+    # file as user-owned: it was never refreshed and got permanently flagged
+    # userModified on every update.
     $newFiles = [ordered]@{}
     foreach ($k in $manifest.files.Keys) {
-        if ($manifest.files[$k].userModified) { $newFiles[$k] = $manifest.files[$k] }
+        if ($manifest.files[$k].userModified -or $k -eq $script:AgentsMdFileName) { $newFiles[$k] = $manifest.files[$k] }
     }
     $manifest.files = $newFiles
 
@@ -2874,7 +3871,13 @@ function Invoke-Update {
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
     Write-Section 'MCP (update)'
-    Invoke-McpPhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
+    $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
+    if ($extMcp.Mode -eq 'external') {
+        Write-Info '  Обнаружена внешняя установка MCP (install.manifest.json) — MCP-конфиги инструментов НЕ изменяются.'
+    }
+    else {
+        Invoke-McpPhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
+    }
 
     Write-Section 'AGENTS.md (update)'
     Update-AgentsMd -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
@@ -2882,12 +3885,30 @@ function Invoke-Update {
     Write-Section 'Root templates (update)'
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
+    if ($extMcp.Mode -eq 'external') {
+        Write-Section 'External MCP (USER-RULES.md sync)'
+        $extResult = Invoke-ExternalMcpPhase -ProjectRoot $Root -Detection $extMcp -Manifest $manifest -ActiveTools $activeTools -Adapters $adapters
+        Write-Info "  MCP: external. Конфиги не тронуты. USER-RULES.md синхронизирован ($($extResult.GlobalCount) глобальных + $($extResult.ProjectCount) проектных серверов)."
+    }
+
     $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     $manifest.lastChannel = $script:LastChannel
     $manifest.version = Get-SourceVersion -SourceRoot $sourceRoot
 
     Write-Manifest -Root $Root -Manifest $manifest
+
+    Write-Section 'Report'
     Write-Info 'Update complete.'
+    $forced = @($script:ForcedThisRun)
+    $kept = @($script:KeptThisRun)
+    if ($forced.Count -gt 0) {
+        Write-Info "  Overwritten with shipped version (-Force): $($forced.Count) file(s)."
+    }
+    if ($kept.Count -gt 0) {
+        Write-Warn "  $($kept.Count) file(s) were LEFT AT THEIR PREVIOUS VERSION because they are user-modified — they did NOT receive this update:"
+        $kept | ForEach-Object { Write-Warn "    $_" }
+        Write-Warn '  To pull the shipped version for these files, re-run `update -Force` (all of them) or `update -ForcePaths <path>[,<path>...]` (specific files, comma-separated). Your current edits to those files will be replaced.'
+    }
     Write-RestartRecommendation -ActiveTools $activeTools -McpCount $manifest.mcpServers.Count
 }
 
@@ -2923,7 +3944,13 @@ function Invoke-Add {
     # placeholders in `content/mcp-servers.json` substitute against the
     # actual project value when rendering the newly-added tool's MCP config.
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
-    Invoke-McpPhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
+    $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
+    if ($extMcp.Mode -eq 'external') {
+        Write-Info '  Обнаружена внешняя установка MCP (install.manifest.json) — MCP-конфиг для нового инструмента НЕ создаётся.'
+    }
+    else {
+        Invoke-McpPhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
+    }
 
     # Merge foreign files for this tool into manifest
     foreach ($k in $foreign.Keys) { $manifest.foreignFiles[$k] = $foreign[$k] }
@@ -2939,6 +3966,11 @@ function Invoke-Add {
     Update-AgentsMd -Root $Root -SourceRoot $sourceRoot -ActiveTools $allActive -Adapters $allAdapters -Manifest $manifest
 
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+
+    if ($extMcp.Mode -eq 'external') {
+        $extResult = Invoke-ExternalMcpPhase -ProjectRoot $Root -Detection $extMcp -Manifest $manifest -ActiveTools $activeTools -Adapters $adapters
+        Write-Info "  MCP: external. USER-RULES.md синхронизирован ($($extResult.GlobalCount) глобальных + $($extResult.ProjectCount) проектных серверов)."
+    }
 
     $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     Write-Manifest -Root $Root -Manifest $manifest
@@ -3111,6 +4143,10 @@ function Invoke-Doctor {
     if ($manifest.integrations -and $manifest.integrations.Count -gt 0) {
         foreach ($k in $manifest.integrations.Keys) {
             $i = $manifest.integrations[$k]
+            if ($k -eq 'mcp' -and $i -and $i.Contains('mode')) {
+                Write-Info "  mcp: mode=$($i['mode'])$(if ($i['mode'] -eq 'external') { " (manifest: $($i['manifestPath']); серверы: $(@($i['globalServerIds']).Count) глоб. + $(@($i['projectServerIds']).Count) проектн.)" })"
+                continue
+            }
             if ($i.detected) {
                 $tag = if ($i.Contains('scaffolded') -and $i['scaffolded']) { ' [scaffolded]' } else { '' }
                 $bundleTag = if ($i.Contains('artifactsBundleVersion') -and $i['artifactsBundleVersion']) { " [artefacts v$($i['artifactsBundleVersion'])]" } else { '' }

@@ -46,7 +46,7 @@ After scaffolding, use these skills to build out the processor:
 
 - **Add a form**: `1c-form-scaffold` skill
 - **Add a template/layout**: `1c-template-manage` skill
-- **Register with SSL (BSP)**: `1c-bsp-registration` skill
+- **Register with SSL (BSP)**: `bsp-manage.md` section 1 «Registration»
 - **Build EPF**: `1c-epf-build` skill
 - **Validate**: `1c-epf-validate` skill
 

@@ -1,7 +1,7 @@
 ---
 name: 1c-tester
-description: "Expert 1C testing agent. Tests code and functions using web browser automation and the deploy_and_test command. Deploys configuration to test infobase, performs UI testing with human-like interactions, validates functionality. Use when the user asks to run deployment, UI testing, or verification against a test infobase."
-modelHint: opus
+description: "Expert 1C testing agent. Tests code and functions using web browser automation and the /deploy-and-test command. Deploys configuration to test infobase, performs UI testing with human-like interactions, validates functionality. Use when the user asks to run deployment, UI testing, or verification against a test infobase."
+modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
 allowParallel: true
 ---

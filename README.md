@@ -44,12 +44,16 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 Команды: `init` / `update` / `add <tool>` / `remove [<tool>]` / `doctor` / `eject`.
 
+### Совместимость с мультипроектной установкой MCP (INSTALL.md, режим 3)
+
+Если MCP-серверы уже установлены дистрибутивом MCP по его `INSTALL.md` в мультипроектном режиме (каталог `GLOBAL_ROOT`, `projects.registry.json`, динамические порты по проектам), установщик правил это **автоматически обнаруживает** (переменная окружения `BASESAI_MCP_GLOBAL_ROOT` либо `MCP_GLOBAL_ROOT` в `.dev.env` + файл `install.manifest.json`) и **не трогает** `mcp.json` — ни проектный, ни глобальный. Вместо этого он записывает в `USER-RULES.md` секцию `mcp:install_forme` с фактическими серверами, url и портами из артефактов установки. Правильный порядок: **сначала MCP по `INSTALL.md`, затем правила** — повторные `init` / `update` правил рабочую MCP-схему не ломают. Принудительное поведение — флаг `-McpMode auto|managed|external` (по умолчанию `auto`). Подробности — в `AGENT-INSTALL.md → External MCP installation`.
+
 ## Что внутри
 
 - **Корневой свод правил** — `AGENTS.md`: исходный always-on контекст для ИИ-агента: персона, процедура разработки, принципы, перечень MCP-инструментов и их использование, стандарты кода, дисциплина вызовов инструментов. В этом репозитории он хранится в корне для удобного просмотра и поддерживается как читаемый документ без обязательных плейсхолдеров путей.
 - **Пользовательские правила** — `USER-RULES.md`: пустой по умолчанию файл для команды/проекта. Установщик его не перезаписывает.
 - **Память проекта** — `memory.md`: строгий долговременный слой для глобальных критичных правил проекта. Маршрутизация между `memory.md` и векторной памятью `remember` / `recall` описана в `AGENTS.md → Project memory`; это не общий блокнот.
-- **Параметры проекта** — `.dev.env`: единый источник правды для всех правил, on-demand-инструкций, слэш-команд и субагентов. Содержит и параметры генерации кода (`PREFIX`, `COMPANY`, `DEVELOPER`, `PLATFORM_VERSION`, шаблоны комментариев, `NEW_OBJECTS_IN`), и параметры подключения к ИБ для команд и тестов (`PLATFORM_PATH`, `INFOBASE_KIND`/`INFOBASE_PATH`, `IB_USER`/`IB_PASSWORD`, `EXTENSION_NAME`, `EXPORT_PATH`, `LOG_PATH`, `INFOBASE_PUBLISH_URL` для веб-тестов). Установщик создаёт `.dev.env` автоматически на `init`, заполняет автодетектом `PLATFORM_VERSION` (из `Configuration.xml`), `PLATFORM_PATH` (поиск в `C:\Program Files\1cv8\`) и `PREFIX` (из `NamePrefix` расширения), запрашивает остальное в интерактивном режиме. В `-NonInteractive` оставляет пустые поля с явным WARNING. Шаблон — `.dev.env.example`.
+- **Параметры проекта** — `.dev.env`: единый источник правды для всех правил, on-demand-инструкций, слэш-команд и субагентов. Содержит параметры генерации кода (`PREFIX`, `COMPANY`, `DEVELOPER`, `PLATFORM_VERSION`, шаблоны комментариев, `NEW_OBJECTS_IN`), параметры подключения к ИБ для команд и тестов (`PLATFORM_PATH`, `INFOBASE_KIND`/`INFOBASE_PATH`, `IB_USER`/`IB_PASSWORD`, `EXTENSION_NAME`, `EXPORT_PATH`, `LOG_PATH`, `INFOBASE_PUBLISH_URL` для веб-тестов) и модели субагентов по ярусам (`SUBAGENT_MODEL_CODING` — кодинг/анализ/ревью, `SUBAGENT_MODEL_LIGHT` — небольшие задачи; пусто — модель AI-клиента по умолчанию; сами файлы субагентов имён моделей не содержат). Установщик создаёт `.dev.env` автоматически на `init`, заполняет автодетектом `PLATFORM_VERSION` (из `Configuration.xml`), `PLATFORM_PATH` (поиск в `C:\Program Files\1cv8\`) и `PREFIX` (из `NamePrefix` расширения), запрашивает остальное в интерактивном режиме. В `-NonInteractive` оставляет пустые поля с явным WARNING. Шаблон — `.dev.env.example`.
 - **Установщик** — `install.ps1`: PowerShell-инсталлятор (команды `init` / `update` / `add` / `remove` / `doctor` / `eject`).
 - **Спецификация установщика** — `AGENT-INSTALL.md`: что пишется/обновляется на диске, как происходит миграция и что принадлежит установщику.
 
@@ -67,7 +71,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 ├── content/
 │   ├── rules/               # on-demand правила, подключаемые по задаче
 │   ├── agents/              # описания 13 специализированных субагентов
-│   ├── commands/            # слэш-команды (doctor, deploy-and-test, getconfigfiles, loadfrom1cbase, update1cbase, checkmcp, installmcp, updatemcp, update)
+│   ├── commands/            # слэш-команды (doctor, deploy-and-test, getconfigfiles, loadfrom1cbase, update1cbase, checkmcp, installmcp, updatemcp, updaterules)
 │   ├── skills/              # SKILL-пакеты (1c-metadata-manage, mermaid-diagrams и др.)
 │   ├── openspec-bundle/     # снапшот вывода `openspec init` для каждого инструмента
 │   └── mcp-servers.json     # каталог MCP-серверов экосистемы 1С
@@ -106,6 +110,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 - `registers-design.md` — проектирование регистров (сведений, накопления, бухгалтерии, расчёта): измерения и ресурсы, периодичность, индексирование, подчинение регистратору, остатки vs обороты, проведение и перепроведение.
 - `metadata-xml-workarounds.md` — типовые ошибки при ручной генерации метаданных XML (отсутствие `LineNumber` в табличных частях, опечатка `PagesGroupExtInfo`, обязательный `Page.enabled`, уникальность UUID).
 - `tooling-playbooks.md` — пошаговые MCP-плейбуки под типовые задачи (написание кода, ревью, архитектура, исправление ошибок, оптимизация, рефакторинг, метаданные XML, формы, интеграции, документация, сравнение версий платформы).
+- `mcp-first-search.md` — дисциплина MCP-first поиска по исходникам 1С: цепочка приоритетов (граф → code-metadata → повтор с `grep=true` → `Grep`) и обязательная заметка «что было испробовано» перед fallback на `Grep` / `Glob`.
 - `subagents.md` / `subagent-pipeline.md` — каталог субагентов и формализованный pipeline для full-cycle задач.
 - `getconfigfiles.md` — выгрузка объектов метаданных из информационной базы в репозиторий.
 - `integrations-add.md` — правила для интеграций (HTTP-сервисы, REST, очереди).
@@ -219,7 +224,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 ## OpenSpec
 
-Установщик безусловно разворачивает OpenSpec-воркспейс (`openspec/`) с режимом «не перезаписывать существующее». Слэш-команды `/opsx:propose`, `/opsx:apply`, `/opsx:archive`, `/opsx:explore` разворачиваются автоматически для каждого активного инструмента из набора `cursor`, `claude-code`, `codex`, `opencode`, `kilocode` (бандлы — в `content/openspec-bundle/<tool>/`). Для адаптера `other` (универсальный fallback) тулз-нейтрального бандла нет — слэш-команды OpenSpec автоматически не разворачиваются; пользователь подключает их вручную, работая напрямую с `openspec/specs/` и `openspec/changes/`. Подробности — в [`openspec/README.md`](openspec/README.md).
+Установщик безусловно разворачивает OpenSpec-воркспейс (`openspec/`) с режимом «не перезаписывать существующее». Слэш-команды `/opsx:propose`, `/opsx:apply`, `/opsx:archive`, `/opsx:explore` разворачиваются автоматически для каждого активного инструмента из набора `cursor`, `claude-code`, `codex`, `opencode`, `kilocode` (бандлы — в `content/openspec-bundle/<tool>/`). Особенность Codex: его бандл содержит только SKILL-пакеты OpenSpec (`.codex/skills/openspec-*`), без слэш-команд — workflow вызывается через скиллы напрямую. Для адаптера `other` (универсальный fallback) тулз-нейтрального бандла нет — слэш-команды OpenSpec автоматически не разворачиваются; пользователь подключает их вручную, работая напрямую с `openspec/specs/` и `openspec/changes/`. Подробности — в [`openspec/README.md`](openspec/README.md).
 
 ## Ссылки
 

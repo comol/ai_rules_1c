@@ -42,7 +42,7 @@ If `docs/<server>.md` conflicts with the descriptor exposed by the current envir
 | **1c-ssl-mcp** | Standard Subsystems Library (БСП / SSL) search | [`docs/1c-ssl-mcp.md`](docs/1c-ssl-mcp.md) |
 | **1C-docs-mcp** | 1C platform documentation (search by description / by exact name) | [`docs/1C-docs-mcp.md`](docs/1C-docs-mcp.md) |
 | **1c-code-check-mcp** | 1С:Напарник — code review, technical check, AI rewrite/modify, ITS documentation | [`docs/1c-code-check-mcp.md`](docs/1c-code-check-mcp.md) |
-| **1c-syntax-checker-mcp** | BSL syntax and style via BSL Language Server | [`docs/1c-syntax-checker-mcp.md`](docs/1c-syntax-checker-mcp.md) |
+| **1c-syntax-checker-mcp** | BSL syntax and style via BSL Language Server: `syntaxcheck` (code as text) and `syntaxcheck_file` (check a file on disk by path, optionally line-filtered; exposed only when a sources directory is mounted — prefer it over `syntaxcheck` when available, it is cheaper) | [`docs/1c-syntax-checker-mcp.md`](docs/1c-syntax-checker-mcp.md) |
 | **1c-data-mcp** | Live-IB execution: BSL fragment run (`vcexecutecode`), query run (`vcexecutequery`), query parse-check (`validatequery`), last event-log error (`vcloggetlasterror`) | [`docs/1c-data-mcp.md`](docs/1c-data-mcp.md) |
 
 ## Fallback chain (highest priority to lowest)
@@ -66,7 +66,7 @@ These servers have no `Grep` / `rg` equivalent; call them only when their knowle
 2. `1c-ssl-mcp` — БСП / SSL reusable APIs and patterns.
 3. `1C-docs-mcp` — versioned platform documentation.
 4. `1c-code-check-mcp` — 1С:Напарник checks, ITS standards (`its_help` → `fetch_its` for every document used), AI drafts.
-5. `1c-syntax-checker-mcp` — BSL syntax / style validation after edits.
+5. `1c-syntax-checker-mcp` — BSL syntax / style validation after edits (prefer `syntaxcheck_file` over `syntaxcheck` when it is exposed — file check by path is more economical than passing code text).
 6. `1c-data-mcp` — execution against the **live** infobase (run a BSL fragment, run a query, parse-check a query, fetch the last event-log error). No `Grep` / `rg` equivalent — there is no offline substitute for "what does this running IB do right now". Call only when the question genuinely requires the live IB; default to read-only fragments and ask before any mutation. Details — [`docs/1c-data-mcp.md`](docs/1c-data-mcp.md).
 
 ## Quick map: "task → MCP tool"

@@ -6,6 +6,8 @@ description: Check availability of 1C MCP servers and install/start the missing 
 
 This command checks that all MCP servers from the project catalog (`content/mcp-servers.json`; after 1c-rules installation, rendered into the active tool config such as `.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` / `opencode.json` / `.codex/config.toml`) are actually available in the current session, and helps start or install missing ones. For Kilo Code the rendered file uses the top-level `mcp` key with per-server `{ "type": "remote", "url": "...", "enabled": true }` — **not** the legacy `.kilocode/mcp.json` with `mcpServers` (current Kilo CLI / Kilo Code v7.x+ does not read that file).
 
+**External MCP installation (INSTALL.md, режим 3).** If `.ai-rules.json` has `integrations.mcp.mode = "external"` (or the env `BASESAI_MCP_GLOBAL_ROOT` points at a folder with `install.manifest.json`), the server set, ids, urls, and ports come from the **actual install artifacts**, not from the catalog or the default table below: read `install.manifest.json`, resolve paths via its `artifacts` / `consumers` / `resolution` contract (legacy manifest without `schema_version` → schema-v1 defaults: registry at `<GLOBAL_ROOT>/projects.registry.json`, global servers in `%USERPROFILE%/.cursor/mcp.json`, project servers in `<path_code>/.cursor/mcp.json`), then merge global + project `mcpServers` (project keys win on duplicate id). Ports are parsed **only from each server's `url`** (`localhost:<PORT>`); Docker container names come from the registry's project row (`containers.*`). The `mcp:install_forme` section of `USER-RULES.md` holds the rendered tables as a convenient cache. The catalog and the default ports below apply only to **managed** installs.
+
 The source of truth for images, ports, and environment variables is [docs.onerpa.ru/mcp-servery-1c](https://docs.onerpa.ru/mcp-servery-1c) and [vibecoding1c.ru/mcp_server](https://vibecoding1c.ru/mcp_server).
 
 ## Target server catalog
@@ -22,6 +24,8 @@ The source of truth for images, ports, and environment variables is [docs.onerpa
 | `1c-data-mcp` | 80 / project | — (HTTP service on the infobase, **not** docker) | 1C data management and analysis (HTTP service published on the infobase itself) | Yes — `INFOBASE_PUBLISH_URL` in `.dev.env` + `mcp` HTTP service published on the infobase **with anonymous access** |
 
 > Exact image names may differ by version. If `docker pull` fails with `manifest unknown`, check the current list at [docs.onerpa.ru/mcp-servery-1c/servery.md](https://docs.onerpa.ru/mcp-servery-1c/servery.md).
+
+> In **external** mode the ports differ from this table by design (per-project port blocks like 8200/8206; versioned Help/SSL keys like `1c-docs-mcp-8-3-27`, `1c-ssl-mcp-3-1-11` with their own host ports). Match servers by id prefix (`1c-docs-mcp` / `1C-docs-mcp`, `1c-ssl-mcp`, `1c-code-metadata-mcp`, `1c-graph-metadata-mcp`, …) and always probe the url from the resolved mcp.json, not the port column above.
 
 > `1c-data-mcp` is **not** a docker container — it is an HTTP service (`hs/mcp`) published on the project's infobase. The 1c-rules installer derives its URL from `INFOBASE_PUBLISH_URL` in `.dev.env`: `<INFOBASE_PUBLISH_URL_BASE>/hs/mcp` (trailing `/` and trailing locale segment like `/ru/`, `/en/` are stripped). Docker / `docker ps` / `docker run` steps in this file do not apply to it — instead, verify that the HTTP service `mcp` is published on the infobase and that the URL responds. If `INFOBASE_PUBLISH_URL` is empty when the installer runs, the MCP config will contain the literal placeholder `{INFOBASE_PUBLISH_URL}/hs/mcp` — fill in `.dev.env` and re-run `install.ps1 update` (or edit the MCP config manually).
 >
@@ -44,9 +48,35 @@ The source of truth for images, ports, and environment variables is [docs.onerpa
 
 ### Step 1. Determine the server set
 
-1. If the project has `.ai-rules.json`, take the catalog from the active tool config referenced by the manifest (`.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` under the `mcp` key / `opencode.json` under the `mcp` key / `.codex/config.toml` under `[mcp_servers."<id>"]`). A leftover `.kilocode/mcp.json` is **legacy** — ignore it; current Kilo CLI / Kilo Code (v7.x+) does not read it. In `opencode.json` the server keys are letter-normalized to `onec-...` (e.g. `onec-syntax-checker-mcp`) because OpenCode names tools `<server-key>_<tool>` and providers like Moonshot/Kimi reject digit-leading function names — match them to the canonical `1c-...` ids by the bare tool names below, not by the prefix.
-2. Otherwise use `content/mcp-servers.json` from the rules repository.
-3. If neither source exists, use the table above as the default set.
+1. **External first.** Read `.ai-rules.json` → `integrations.mcp`. If `mode = "external"` (or env `BASESAI_MCP_GLOBAL_ROOT` + `<GLOBAL_ROOT>/install.manifest.json` exists):
+   - Resolve paths from the manifest contract (`artifacts.registry`, `consumers.cursor_global_mcp`, `consumers.cursor_project_mcp`); `integrations.mcp` already carries the resolved `registryPath` / `globalMcpConfig` / `projectMcpConfig`.
+   - Parse the resolved **project** and **global** mcp.json → list `{ id, url, port-from-url }`; merge (project keys win on duplicate id). **Do not** assume ports 8000/8006 for project servers.
+   - Docker container names for Step 4 — from the registry's project row (`containers.*`, matched by `resolution.project_match`, default `path_code` == workspace root), **not** the default names below.
+
+   Helper (PowerShell) — build the probe list from the resolved mcp.json files:
+
+   ```powershell
+   function Get-McpServersFromJson {
+       param([string]$Path)
+       $list = @()
+       if (-not $Path -or -not (Test-Path $Path)) { return $list }
+       $j = Get-Content -Raw $Path | ConvertFrom-Json
+       foreach ($p in $j.mcpServers.PSObject.Properties) {
+           $url = [string]$p.Value.url
+           $port = if ($url -match ':(\d+)(/|$)') { $Matches[1] } else { '' }
+           $list += [PSCustomObject]@{ Id = $p.Name; Url = $url; Port = $port }
+       }
+       return $list
+   }
+   $mcpInfo  = (Get-Content -Raw '.ai-rules.json' | ConvertFrom-Json).integrations.mcp
+   $project  = Get-McpServersFromJson $mcpInfo.projectMcpConfig
+   $global   = Get-McpServersFromJson $mcpInfo.globalMcpConfig
+   $servers  = @($project) + @($global | Where-Object { $_.Id -notin $project.Id })
+   ```
+
+2. Else, if the project has `.ai-rules.json`, take the catalog from the active tool config referenced by the manifest (`.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` under the `mcp` key / `opencode.json` under the `mcp` key / `.codex/config.toml` under `[mcp_servers."<id>"]`). A leftover `.kilocode/mcp.json` is **legacy** — ignore it; current Kilo CLI / Kilo Code (v7.x+) does not read it. In `opencode.json` the server keys are letter-normalized to `onec-...` (e.g. `onec-syntax-checker-mcp`) because OpenCode names tools `<server-key>_<tool>` and providers like Moonshot/Kimi reject digit-leading function names — match them to the canonical `1c-...` ids by the bare tool names below, not by the prefix.
+3. Otherwise use `content/mcp-servers.json` from the rules repository.
+4. If neither source exists, use the table above as the default set.
 
 ### Step 2. Check availability in the current agent session
 
@@ -59,7 +89,7 @@ If status is **TOOLS_OK**, treat the server as working and do not check it furth
 
 ### Step 3. Check HTTP endpoint
 
-For servers with **TOOLS_MISSING**, call the HTTP endpoint. PowerShell (Windows):
+For servers with **TOOLS_MISSING**, call the HTTP endpoint. **External mode:** probe `$s.Url` from the Step 1 list (the actual url from mcp.json), not the hardcoded port table below — the snippet below applies to managed installs only. PowerShell (Windows):
 
 ```powershell
 $servers = @(
@@ -142,11 +172,13 @@ Possible outcomes:
   docker start <container_name>
   ```
 
-  Default names: `1c_syntaxcheck_mcp`, `1c_templates_mcp`, `mcp_ssl_server`, `1c_help_mcp`, `1c_code_metadata_mcp`, `1c_graph_metadata_mcp`, `1c_code_checker_mcp` (check the actual name in `docker ps -a`).
+  Default names: `1c_syntaxcheck_mcp`, `1c_templates_mcp`, `mcp_ssl_server`, `1c_help_mcp`, `1c_code_metadata_mcp`, `1c_graph_metadata_mcp`, `1c_code_checker_mcp` (check the actual name in `docker ps -a`). **External mode:** take the project container names from `projects.registry.json` → project row → `containers.*` (e.g. `mcp_<id>_code_metadata`), not from the defaults.
 
 - The container is absent from `docker ps -a` → **CONTAINER_MISSING**. The image may already be cached (`docker images`), but the container was not created. Create and start it — see Step 5.
 
 ### Step 5. Install missing server
+
+**External mode:** install/recreate missing servers via the MCP distribution's **`INSTALL.md`** (it owns the registry, port assignment, and container naming) — do not `docker run` on port 8000 when the registry says 8200. The templates below apply to managed installs.
 
 **Do not run `docker run` silently.** First ask the user for:
 
@@ -162,8 +194,13 @@ Command templates (minimal set without data preparation):
 
 ```powershell
 # 1c-syntax-checker-mcp
+# Optional: mount the project sources read-only and set FILES_DIR to enable the
+# 'syntaxcheck_file' tool (file check by path — cheaper than passing code text).
+# Without the mount only 'syntaxcheck' (code as text) is available.
 docker run -d -p 8002:8002 --name 1c_syntaxcheck_mcp `
   -e LICENSE_KEY={LICENSE_KEY} `
+  -e FILES_DIR=/files `
+  -v "{PROJECT_ROOT}:/files:ro" `
   comol/1c_syntaxcheck_mcp:latest
 
 # 1c-templates-mcp
@@ -233,5 +270,7 @@ Under the table, list clear next steps with copy-ready commands. Do not list ite
 ## Limits
 
 - The command does not run `docker run` without user confirmation; it needs `LICENSE_KEY`, data paths, and consent to download images (several GB).
+- `/checkmcp` is read-only with respect to MCP configs — never rewrite `.cursor/mcp.json` (or another tool's MCP target) during the check. In external mode the configs belong to the MCP distribution's installer.
+- External multi-project layout: global servers live in the user-profile `mcp.json`, project servers in the workspace `mcp.json` — the client must load both levels; a server missing from the session may simply mean the client was not restarted after the MCP install.
 - Graph MCP (`1c-graph-metadata-mcp`) requires separate Neo4j setup and indexing. This is a multi-step process; execute it by the server documentation page, not from this command.
 - RAG-indexed servers (`1C-docs-mcp`, `1c-code-metadata-mcp`, `1c-graph-metadata-mcp`, `1c-ssl-mcp`) may respond over HTTP before becoming useful while primary indexing is still running. This is normal; monitor progress with `docker logs -f <name>`.

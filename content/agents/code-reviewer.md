@@ -1,7 +1,7 @@
 ---
 name: 1c-code-reviewer
 description: "Expert 1C code reviewer agent. Reviews code for bugs, readability, standards compliance using confidence-based filtering to report only genuinely important issues. Use only when the user explicitly asks for a code review."
-modelHint: gemini-3-pro
+modelTier: coding
 tools: ["Read", "MCP"]
 allowParallel: true
 ---
@@ -23,7 +23,7 @@ User may combine methods or specify custom scope as needed.
 
 ### Project Guidelines Compliance
 
-Check compliance with the `## Persona` section in `AGENTS.md`, `content/rules/dev-standards-core.md` (project parameters, code style, modification comments, naming, documentation) and `content/rules/dev-standards-architecture.md` (architecture patterns, extensions, platform standards):
+Check compliance with the project's `AGENTS.md` (Core Principles, Development Procedure), `content/rules/dev-standards-core.md` (project parameters, code style, modification comments, naming, documentation) and `content/rules/dev-standards-architecture.md` (architecture patterns, extensions, platform standards):
 - Query formatting
 - Common module usage
 - Attribute access patterns

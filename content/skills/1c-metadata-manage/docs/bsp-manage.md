@@ -197,7 +197,7 @@ Result in `ObjectModule.bsl`:
 
 ### Next Steps
 
-- Add more commands: `1c-bsp-command` skill
+- Add more commands: section 2 «Command» of this doc (`1c-bsp-command` procedure)
 - Add a form: `1c-form-scaffold` skill
 - Add a template: `1c-template-manage` skill
 - Build EPF: `1c-epf-build` skill
@@ -208,7 +208,7 @@ Result in `ObjectModule.bsl`:
 
 Adds a command to an existing `СведенияОВнешнейОбработке()` function and generates the corresponding handler.
 
-The data processor must be initialized with BSP registration first (see `1c-bsp-registration` skill).
+The data processor must be initialized with BSP registration first (see section 1 «Registration» of this doc).
 
 ### Usage
 
@@ -365,7 +365,7 @@ If procedure already exists — add `ИначеЕсли` branch.
 ### Instructions
 
 1. Find and read `ObjectModule.bsl` via Glob: `src/{{ProcessorName}}/Ext/ObjectModule.bsl`
-2. Ensure `СведенияОВнешнейОбработке()` exists. If not — suggest using `1c-bsp-registration` skill first
+2. Ensure `СведенияОВнешнейОбработке()` exists. If not — run section 1 «Registration» of this doc first
 3. Determine processor kind from existing code (find the line with `ВидОбработки...()`)
 4. Insert command block **before** `Возврат ПараметрыРегистрации`
 5. Add handler:
