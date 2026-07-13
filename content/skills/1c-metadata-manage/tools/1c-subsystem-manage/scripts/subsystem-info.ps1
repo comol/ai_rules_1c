@@ -1,4 +1,4 @@
-﻿# subsystem-info v1.0 — Compact summary of 1C subsystem structure
+﻿# subsystem-info v1.1 — Compact summary of 1C subsystem structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)][Alias('Path')][string]$SubsystemPath,
@@ -16,6 +16,9 @@ $ErrorActionPreference = 'Stop'
 # --- Output helper ---
 $script:lines = @()
 function Out([string]$text) { $script:lines += $text }
+
+# Get-SupportStatusForPath — see tools/_shared/support-guard.ps1 (docs/support-manage.md).
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
 
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($SubsystemPath)) {
@@ -116,6 +119,7 @@ function Get-SubsystemDir([string]$xmlPath) {
 # --- Show functions for full mode ---
 function Show-Overview {
 	Out "Подсистема: $subName"
+	Out "Поддержка: $(Get-SupportStatusForPath $SubsystemPath)"
 	if ($synonym -and $synonym -ne $subName) { Out "Синоним: $synonym" }
 	if ($commentText) { Out "Комментарий: $commentText" }
 	Out "ВключатьВКомандныйИнтерфейс: $inclCI"

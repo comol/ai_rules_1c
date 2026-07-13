@@ -65,6 +65,16 @@ Params: 18 (7 visible, 11 hidden): Период, Ответственный, ...
 
 Фильтр по номеру батча: `-Batch 3` покажет только 3-й пакет.
 
+### `-Raw` — round-trip без декораций
+
+`-Raw` отдаёт текст запроса целиком, без заголовков, оглавления батчей и разделителей `--- Batch N ---`, и не усекается лимитом `-Limit` (по умолчанию 150 строк). Предназначен для сценария правки запроса вне модели (точный round-trip, включая многопакетные запросы):
+
+```powershell
+skd-info.ps1 -TemplatePath "<path>" -Mode query -Name ДанныеТ13 -Raw -OutFile query.sql
+# отредактировать query.sql
+skd-edit.ps1 -TemplatePath "<path>" -Operation set-query -Value "@query.sql" -DataSet ДанныеТ13
+```
+
 ## fields — поля наборов данных
 
 Без `-Name` — карта: имена полей по наборам:

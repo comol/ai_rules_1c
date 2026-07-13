@@ -1,4 +1,4 @@
-﻿# mxl-info v1.0 — Analyze 1C spreadsheet structure
+﻿# mxl-info v1.1 — Analyze 1C spreadsheet structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Alias('Path')]
@@ -321,11 +321,15 @@ if ($Format -eq "json") {
 	exit 0
 }
 
+# Get-SupportStatusForPath — see tools/_shared/support-guard.ps1 (docs/support-manage.md).
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
 # --- Text format output ---
 
 $lines = @()
 
 $lines += "=== $templateName ==="
+$lines += "Поддержка: $(Get-SupportStatusForPath $TemplatePath)"
 $lines += "  Rows: $docHeight, Columns: $defaultColCount"
 
 if ($columnSets.Count -eq 0) {

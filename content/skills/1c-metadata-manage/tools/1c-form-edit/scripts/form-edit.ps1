@@ -1,4 +1,4 @@
-﻿# form-edit v1.0 — Edit 1C managed form elements
+﻿# form-edit v1.3 — Edit 1C managed form elements
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -12,6 +12,12 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
 # === 1. Load Form.xml ===
 
 if (-not (Test-Path $FormPath)) {
@@ -24,6 +30,7 @@ if (-not (Test-Path $JsonPath)) {
 }
 
 $resolvedFormPath = (Resolve-Path $FormPath).Path
+Assert-EditAllowed $resolvedFormPath 'editable'
 $xmlDoc = New-Object System.Xml.XmlDocument
 $xmlDoc.PreserveWhitespace = $true
 try {
@@ -289,6 +296,16 @@ function Get-ElementName {
 	param($el, [string]$typeKey)
 	if ($el.name) { return "$($el.name)" }
 	return "$($el.$typeKey)"
+}
+
+# Уникальность имён внутри JSON-определения (1С: своя коллекция — свой неймспейс).
+function Assert-EditUnique {
+	param([string]$name, [hashtable]$seen, [string]$ctx)
+	if ($seen.ContainsKey($name)) {
+		Write-Host "[ERROR] Duplicate $ctx '$name' in JSON definition — names must be unique in 1C form"
+		exit 1
+	}
+	$seen[$name] = $true
 }
 
 $script:knownEvents = @{
@@ -864,17 +881,31 @@ if ($def.elements -and $def.elements.Count -gt 0) {
 	# Detect indent level
 	$childIndent = Get-ChildIndent $targetCI
 
-	# Check for duplicate element names
+	# Имена элементов уникальны (требование 1С). Сначала — внутри самого JSON-определения
+	# (рекурсивно по children/columns).
+	$elemTypeKeys = @("group","input","check","label","labelField","table","pages","page","button","picture","picField","calendar","cmdBar","popup")
+	function Walk-ElemNames($el, [hashtable]$seen) {
+		$tk = $null
+		foreach ($k in $elemTypeKeys) { if ($el.$k -ne $null) { $tk = $k; break } }
+		if ($tk) { Assert-EditUnique -name (Get-ElementName -el $el -typeKey $tk) -seen $seen -ctx 'element name' }
+		if ($el.children) { foreach ($c in $el.children) { Walk-ElemNames $c $seen } }
+		if ($el.columns)  { foreach ($c in $el.columns)  { Walk-ElemNames $c $seen } }
+	}
+	$dslElemNames = @{}
+	foreach ($el in $def.elements) { Walk-ElemNames $el $dslElemNames }
+
+	# Затем — против уже существующих элементов формы (дубль = битый XML, форма не откроется)
 	foreach ($el in $def.elements) {
 		$typeKey = $null
-		foreach ($key in @("group","input","check","label","labelField","table","pages","page","button","picture","picField","calendar","cmdBar","popup")) {
+		foreach ($key in $elemTypeKeys) {
 			if ($el.$key -ne $null) { $typeKey = $key; break }
 		}
 		if ($typeKey) {
 			$elName = Get-ElementName -el $el -typeKey $typeKey
 			$existing = Find-Element $rootCI $elName
 			if ($existing) {
-				Write-Host "[WARN] Element '$elName' already exists in form (id=$($existing.GetAttribute('id')))"
+				Write-Host "[ERROR] Element '$elName' already exists in form (id=$($existing.GetAttribute('id'))) — element names must be unique"
+				exit 1
 			}
 		}
 	}
@@ -953,6 +984,22 @@ if ($def.attributes -and $def.attributes.Count -gt 0) {
 	$attrChildIndent = Get-ChildIndent $attrsSection
 	if (-not $attrChildIndent -or $attrChildIndent -eq "") { $attrChildIndent = "`t`t" }
 
+	# Уникальность имён реквизитов: внутри JSON-определения (+ колонки в пределах реквизита) и
+	# против уже существующих реквизитов формы.
+	$dslAttrNames = @{}
+	foreach ($attr in $def.attributes) {
+		Assert-EditUnique -name "$($attr.name)" -seen $dslAttrNames -ctx 'attribute name'
+		if ($attr.columns) {
+			$dslColNames = @{}
+			foreach ($col in $attr.columns) { Assert-EditUnique -name "$($col.name)" -seen $dslColNames -ctx "column name of '$($attr.name)'" }
+		}
+		$existingAttr = $attrsSection.SelectSingleNode("f:Attribute[@name='$($attr.name)']", $nsMgr)
+		if ($existingAttr) {
+			Write-Host "[ERROR] Attribute '$($attr.name)' already exists in form — attribute names must be unique"
+			exit 1
+		}
+	}
+
 	# Generate attribute fragments
 	$script:xml = New-Object System.Text.StringBuilder 2048
 	X "<_F $allNsDecl>"
@@ -1020,6 +1067,17 @@ if ($def.commands -and $def.commands.Count -gt 0) {
 
 	$cmdChildIndent = Get-ChildIndent $cmdsSection
 	if (-not $cmdChildIndent -or $cmdChildIndent -eq "") { $cmdChildIndent = "`t`t" }
+
+	# Уникальность имён команд: внутри JSON-определения и против существующих команд формы.
+	$dslCmdNames = @{}
+	foreach ($cmd in $def.commands) {
+		Assert-EditUnique -name "$($cmd.name)" -seen $dslCmdNames -ctx 'command name'
+		$existingCmd = $cmdsSection.SelectSingleNode("f:Command[@name='$($cmd.name)']", $nsMgr)
+		if ($existingCmd) {
+			Write-Host "[ERROR] Command '$($cmd.name)' already exists in form — command names must be unique"
+			exit 1
+		}
+	}
 
 	# Generate command fragments
 	$script:xml = New-Object System.Text.StringBuilder 1024

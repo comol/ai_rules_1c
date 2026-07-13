@@ -1,4 +1,4 @@
-﻿# form-remove v1.2 — Remove form from 1C object
+﻿# form-remove v1.3 — Remove form from 1C object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -68,10 +68,14 @@ foreach ($node in $formNodes) {
 	}
 }
 
-# Очистить DefaultForm если указывала на эту форму
-$defaultForm = $xmlDoc.SelectSingleNode("//md:DefaultForm", $nsMgr)
-if ($defaultForm -and $defaultForm.InnerText -match "Form\.$FormName$") {
-	$defaultForm.InnerText = ""
+# Очистить любые Default*/Auxiliary* form-слоты, указывавшие на удалённую форму
+# (form-add пишет свойство по назначению: DefaultObjectForm/DefaultListForm/
+#  DefaultChoiceForm/DefaultRecordForm/DefaultForm — не только generic DefaultForm).
+$formRefRe = "Form\.$([regex]::Escape($FormName))$"
+foreach ($node in $xmlDoc.SelectNodes("//md:*", $nsMgr)) {
+	if ($node.LocalName -like "*Form" -and $node.InnerText -and $node.InnerText -match $formRefRe) {
+		$node.InnerText = ""
+	}
 }
 
 # Сохранить с BOM

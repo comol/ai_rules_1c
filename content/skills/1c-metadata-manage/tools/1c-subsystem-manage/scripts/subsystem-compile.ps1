@@ -1,4 +1,4 @@
-﻿# subsystem-compile v1.5 — Create 1C subsystem from JSON definition
+﻿# subsystem-compile v1.8 — Create 1C subsystem from JSON definition
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -47,6 +47,14 @@ $objName = "$($def.name)"
 if (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
 	$OutputDir = Join-Path (Get-Location).Path $OutputDir
 }
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
+Assert-EditAllowed $OutputDir 'editable'
 
 # --- 2. XML helpers ---
 $script:xml = New-Object System.Text.StringBuilder 8192
@@ -534,7 +542,7 @@ if ($parentXmlPath -and (Test-Path $parentXmlPath)) {
 
 # --- 7. Auto-validate ---
 if (-not $NoValidate) {
-	$validateScript = Join-Path (Join-Path $PSScriptRoot "..\..\subsystem-validate") "scripts\subsystem-validate.ps1"
+	$validateScript = Join-Path $PSScriptRoot "subsystem-validate.ps1"
 	$validateScript = [System.IO.Path]::GetFullPath($validateScript)
 	if (Test-Path $validateScript) {
 		Write-Host ""

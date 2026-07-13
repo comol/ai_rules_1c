@@ -18,6 +18,20 @@
 -Operation add-attribute -Value "Склад: CatalogRef.Склады >> after Организация"
 ```
 
+## Составные типы
+
+Для реквизитов с несколькими допустимыми типами — разделитель `+`:
+```powershell
+-Operation add-attribute -Value "Значение: Строка + Число(15,2) + Дата + CatalogRef.Контрагенты"
+-Operation add-attribute -Value "Значение: Строка + Число(15,2) | req"
+-Operation modify-ts-attribute -Value "Данные.Значение: type=Строка + Число(15,2) + Дата"
+```
+
+В JSON DSL — массив в `type`:
+```json
+{ "name": "Значение", "type": ["Строка", "Число(15,2)", "Дата", "CatalogRef.Контрагенты"] }
+```
+
 ## add-attribute / add-dimension / add-resource / add-column
 
 ```powershell

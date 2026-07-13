@@ -543,6 +543,25 @@ Any title/presentation may be either a string or an object:
 
 This works for: form `title`, element `title`, group titles, button titles, `radio` `choiceList[*].presentation`, etc.
 
+## Advanced Constructs (Load as Needed)
+
+The above covers most forms. For a specific task, load the matching file from `tools/1c-form-compile/references/`:
+
+| File | Covers |
+|---|---|
+| `dynamic-list.md` | List form: source, filter, sort, groupings, query parameters |
+| `appearance.md` | Static and conditional element appearance (color/font/border) |
+| `choice-params.md` | Choice parameters and choice-parameter links on input fields |
+| `command-interface.md` | Form command interface |
+| `roles-access.md` | Per-role visibility and access (`userVisible`, attribute `view`/`edit`, command `use`) |
+| `companion-panels.md` | Structured content of extended tooltip and context menu |
+| `special-fields.md` | Document/gauge fields (HTML, text, progress bar, track bar) |
+| `charts.md` | Charts and the Gantt planner |
+| `report-form.md` | Report-form-specific properties |
+| `type-system-advanced.md` | Composite types and type sets |
+| `table-advanced.md` | Advanced table properties |
+| `layout-advanced.md` | Fine-grained layout and geometry |
+
 ## Auto-generation
 
 - **Companion elements** — `ContextMenu`, `ExtendedTooltip`, etc. are emitted automatically.

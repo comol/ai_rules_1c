@@ -292,7 +292,8 @@ Reads a Template.xml Data Composition Schema (DCS) and outputs a compact summary
 | `Mode` | Analysis mode (default `overview`) |
 | `Name` | Name of data set (query), field (fields/calculated/resources/trace), variant (variant), or grouping/field (templates) |
 | `Batch` | Query batch number, 0 = all (query mode only) |
-| `Limit` / `Offset` | Pagination (default 150 lines) |
+| `Raw` | `query` mode only — verbatim query text, no headers/TOC/batch separators, not truncated by `-Limit`. Round-trip workflow: `-Mode query -Name <set> -Raw -OutFile q.sql` → edit `q.sql` → `skd-edit.ps1 -Operation set-query -Value "@q.sql" -DataSet <set>` |
+| `Limit` / `Offset` | Pagination (default 150 lines; ignored when `-Raw` is set) |
 | `OutFile` | Write result to file (UTF-8 BOM) |
 
 ```powershell
@@ -305,6 +306,7 @@ With mode specified:
 ... -Mode fields -Name FieldName
 ... -Mode trace -Name "Field Title"
 ... -Mode variant -Name 1
+... -Mode query -Name DataSetName -Raw -OutFile query.sql
 ```
 
 ### Modes
@@ -397,9 +399,9 @@ Fails fast (exit 2) when the root element is not `DataCompositionSchema` (e.g. a
 4. **Capture existing DCS as DSL**: `1c-skd-decompile` → edit the JSON → `1c-skd-compile` → `1c-skd-validate` (round-trip, draft)
 
 ---
-## Recent Additions (upstream sync `w-2026-05-31`)
+## Recent Additions
 
-The PowerShell scripts under `tools/1c-skd-{compile,edit,info,validate}/scripts/` were refreshed again from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (`skd-compile` → v1.104, `skd-edit` → v1.24, `skd-info` → v1.5, `skd-validate` → v1.2), and the new `1c-skd-decompile` tool (draft, v0.90 — see section 5) was added. Highlights from the prior `w-2026-05-17` batch still apply:
+The PowerShell scripts under `tools/1c-skd-{compile,edit,info,validate}/scripts/` were refreshed again from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (`skd-compile` → v1.107, `skd-edit` → v1.28, `skd-info` → v1.7, `skd-validate` → v1.2), and the new `1c-skd-decompile` tool (draft, v0.90 — see section 5) was added. `skd-compile` and `skd-edit` now go through the project's `tools/_shared/support-guard.ps1` before writing (see `support-manage.md`); `skd-info` appends a `"Поддержка: ..."` status line. Highlights from the prior `w-2026-05-17` batch still apply:
 
 ### `skd-edit` — new operations and flags
 

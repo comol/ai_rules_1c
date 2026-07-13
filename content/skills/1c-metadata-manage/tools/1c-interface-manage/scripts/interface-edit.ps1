@@ -1,4 +1,4 @@
-﻿# interface-edit v1.3 — Edit 1C CommandInterface.xml
+﻿# interface-edit v1.6 — Edit 1C CommandInterface.xml
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)][Alias('Path')][string]$CIPath,
@@ -22,6 +22,14 @@ if (-not [System.IO.Path]::IsPathRooted($CIPath)) {
 	$CIPath = Join-Path (Get-Location).Path $CIPath
 }
 $resolvedPath = $CIPath
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
+Assert-EditAllowed $CIPath 'editable'
 
 # --- Detect format version ---
 
@@ -544,7 +552,7 @@ Info "Saved: $resolvedPath"
 
 # --- Auto-validate ---
 if (-not $NoValidate) {
-	$validateScript = Join-Path (Join-Path $PSScriptRoot "..\..\interface-validate") "scripts\interface-validate.ps1"
+	$validateScript = Join-Path $PSScriptRoot "interface-validate.ps1"
 	$validateScript = [System.IO.Path]::GetFullPath($validateScript)
 	if (Test-Path $validateScript) {
 		Write-Host ""

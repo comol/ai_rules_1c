@@ -1,4 +1,4 @@
-﻿# stub-db-create v1.0 — Create temp 1C infobase with metadata stubs for EPF/ERF build
+﻿# stub-db-create v1.3 — Create temp 1C infobase with metadata stubs for EPF/ERF build
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1250,6 +1250,57 @@ $propsXml		</Properties>$childObjLine
 	if ($registerColumns.Count -gt 0) {
 		Write-Host "WARNING: Register column categories (Dimension/Resource/Attribute) are guessed. Form field bindings may not survive round-trip through a real database." -ForegroundColor Yellow
 	}
+}
+
+# --- 5a. Stub via ibcmd (one call: create [--import --apply]) ---
+function Invoke-IbcmdProcess {
+    # Run ibcmd non-interactively: a closed stdin pipe (EOF) makes ibcmd's auth prompt
+    # fast-fail instead of hanging. Returns @{ Output; ExitCode }. cp866 decodes ibcmd's
+    # native OEM output. The 1cv8/DESIGNER branch keeps using Start-Process.
+    param([string]$Exe, [string[]]$IbArgs)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = ($IbArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    try {
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::GetEncoding(866)
+        $psi.StandardErrorEncoding = [System.Text.Encoding]::GetEncoding(866)
+    } catch {}
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $p.StandardInput.Close()
+    $out = $p.StandardOutput.ReadToEnd()
+    $err = $p.StandardError.ReadToEnd()
+    $p.WaitForExit()
+    if ($err) { $out += $err }
+    return [pscustomobject]@{ Output = $out; ExitCode = $p.ExitCode }
+}
+
+
+$stubEngine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
+if ($stubEngine -eq "ibcmd") {
+	Write-Host "Creating infobase (ibcmd): $TempBasePath"
+	$ibData = Join-Path $env:TEMP "stub_data_$(Get-Random)"
+	New-Item -ItemType Directory -Path $ibData -Force | Out-Null
+	$ibArgs = @("infobase", "create", "--db-path=$TempBasePath", "--create-database")
+	if ($hasRefTypes) { $ibArgs += "--import=$(Join-Path $TempBasePath 'cfg')", "--apply", "--force" }
+	$ibArgs += "--data=$ibData"
+	$__ib = Invoke-IbcmdProcess $V8Path $ibArgs
+	$ibOut = $__ib.Output
+	$ibRc = $__ib.ExitCode
+	Remove-Item -Path $ibData -Recurse -Force -ErrorAction SilentlyContinue
+	if ($ibRc -ne 0) {
+		if ($ibOut) { Write-Host ($ibOut | Out-String) }
+		Write-Error "Failed to create stub infobase (code: $ibRc)"
+		exit 1
+	}
+	if ($hasRefTypes) { Remove-Item -Path (Join-Path $TempBasePath "cfg") -Recurse -Force -ErrorAction SilentlyContinue }
+	Write-Host "[OK] Stub database created: $TempBasePath"
+	Write-Host $TempBasePath
+	exit 0
 }
 
 # --- 5. Create infobase ---

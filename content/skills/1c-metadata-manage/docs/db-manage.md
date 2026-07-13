@@ -331,6 +331,45 @@ After loading: offer to run `db-update`.
 
 ---
 
+### 9. Dump Infobase to DT
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -OutputFile "backup.dt"
+```
+
+Dumps the **whole infobase** (configuration **+ data**) into a single `.dt` file — a full snapshot, unlike `db-dump-cf` which dumps configuration only. Use it as a backup / rollback point, in particular before `db-load-dt`.
+
+| Extra Parameter | Description |
+|-----------------|-------------|
+| `-OutputFile <path>` | Output DT file (required) |
+
+---
+
+### 10. Load Infobase from DT
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -InputFile "backup.dt"
+```
+
+> **Warning — irreversible.** Loading a `.dt` file **completely overwrites the target infobase**: both configuration and all data. The current content of the database is lost and cannot be recovered unless it was saved first. Before executing:
+> 1. Offer to run `db-dump-dt` on the current state first — it is the only rollback point.
+> 2. Request **explicit user confirmation** that the whole base (data + configuration) will be overwritten.
+> 3. Only then run the load.
+>
+> Unlike `db-load-cf` / `db-load-xml`, `db-update` is **not needed afterward** — the database configuration is already in sync inside the snapshot.
+
+Do not use `db-load-dt` to create a **new** database from a `.dt` template — use `db-create` for that instead.
+
+| Extra Parameter | Description |
+|-----------------|-------------|
+| `-InputFile <path>` | Input DT file (required) |
+| `-JobsCount <N>` | Parallel background load jobs (`0` = auto, by CPU count) |
+| `-UnlockCode <code>` | Session-lock unlock code (`/UC`), when infobase login is blocked |
+
+If the infobase is busy (active sessions), the load fails — for a server infobase pass `-UnlockCode`, otherwise free the base and retry.
+
+---
+
 ### Common Workflows
 
 #### Fix a Bug in a Data Processor

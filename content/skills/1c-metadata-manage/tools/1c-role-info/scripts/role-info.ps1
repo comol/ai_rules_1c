@@ -1,4 +1,4 @@
-﻿# role-info v1.0 — Analyze 1C role rights
+﻿# role-info v1.1 — Analyze 1C role rights
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)][Alias('Path')][string]$RightsPath,
@@ -145,11 +145,15 @@ foreach ($tpl in $tplNodes) {
 	}
 }
 
+# Get-SupportStatusForPath — see tools/_shared/support-guard.ps1 (docs/support-manage.md).
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
 # --- Output ---
 $header = "=== Role: $roleName"
 if ($roleSynonym) { $header += " --- `"$roleSynonym`"" }
 $header += " ==="
 Out $header
+Out "Поддержка: $(Get-SupportStatusForPath $RightsPath)"
 Out ""
 
 Out "Properties: setForNewObjects=$setForNew, setForAttributesByDefault=$setForAttrs, independentRightsOfChildObjects=$independentChild"

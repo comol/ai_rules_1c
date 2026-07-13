@@ -7,10 +7,21 @@ Comprehensive configuration management: create scaffold, edit properties/composi
 ## 1. Init — Create Configuration Scaffold
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1 -Name "<Name>" [-OutputDir "<path>"]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1 -Name "<Name>" [-Synonym "<Synonym>"] [-OutputDir "<path>"] [-Version "<version>"] [-Vendor "<vendor>"] [-CompatibilityMode <mode>]
 ```
 
 Creates minimal configuration structure: `Configuration.xml`, `Languages/Русский.xml`, and basic directory structure.
+
+| Parameter | Description |
+|-----------|-------------|
+| `Name` | Configuration name (required) |
+| `Synonym` | Synonym (defaults to `Name`) |
+| `OutputDir` | Directory to create the scaffold in (default: `src`) |
+| `Version` | Configuration version |
+| `Vendor` | Vendor |
+| `CompatibilityMode` | Compatibility mode (default: `Version8_3_24`) |
+
+Verification recipe: `cf-init` → `cf-info` → `cf-validate`.
 
 ---
 
@@ -38,8 +49,28 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scr
 | `add-defaultRole` | `Role.Name` or `Name` | Add default role |
 | `remove-defaultRole` | `Role.Name` or `Name` | Remove default role |
 | `set-defaultRoles` | Names via `;;` | Replace default roles list |
+| `set-panels` | JSON object (see below) | Rewrite `Ext/ClientApplicationInterface.xml` (Taxi workspace panel layout) |
+| `set-home-page` | JSON object (see below) | Rewrite `Ext/HomePageWorkArea.xml` (home page form layout) |
 
 Full property reference: [cf-edit-reference.md](../tools/1c-cf-manage/cf-edit-reference.md).
+
+#### `set-panels` Value Format
+
+Rewrites the whole file from scratch — anything not mentioned in `value` is absent from the panel layout. `value` is an object keyed by `top`/`left`/`right`/`bottom`, each an array of entries; an entry is either a panel alias string (`sections`, `open`, `favorites`, `history`, `functions`) or `{"group": [...]}` for a stacked group in that slot:
+
+```powershell
+... -Operation set-panels -Value '{"top":["open"],"left":["sections"],"right":[{"group":["favorites","history"]}],"bottom":["functions"]}'
+```
+
+#### `set-home-page` Value Format
+
+Rewrites the whole file from scratch. `value` is an object: `template` (`OneColumn` / `TwoColumnsEqualWidth` default / `TwoColumnsVariableWidth`), `left` / `right` (arrays of form entries; `right` forbidden under `OneColumn`). A form entry is either a form name string (defaults: `height=10`, `visibility=true`) or `{form, height?, visibility?, roles?}` (`roles` — per-role visibility override, `{"Role.X": true|false}`):
+
+```powershell
+... -Operation set-home-page -Value '{"template":"TwoColumnsVariableWidth","left":["CommonForm.Start",{"form":"Catalog.Контрагенты.Form.ФормаСписка","height":50}]}'
+```
+
+Both operations accept the same JSON either inline via `-Value` or through `-DefinitionFile`. See "Recent Additions" below for the full alias table and Russian-alias mapping for `set-panels`.
 
 ### Examples
 
@@ -59,10 +90,18 @@ Full property reference: [cf-edit-reference.md](../tools/1c-cf-manage/cf-edit-re
 ## 3. Info — Analyze Configuration Structure
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-info.ps1 -ConfigPath "<path>"
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-info.ps1 -ConfigPath "<path>" [-Mode overview|brief|full] [-Section home-page] [-Limit <N>] [-Offset <N>] [-OutFile "<path>"]
 ```
 
 Displays configuration properties, object counts by type, compatibility mode, version, and other key information.
+
+| Parameter | Description |
+|-----------|-------------|
+| `ConfigPath` | Path to Configuration.xml or export directory |
+| `Mode` | `overview` *(default)* — header + key properties + object-count table by type; `brief` — one line (name, synonym, version, object count, compatibility); `full` — all properties by category + full ChildObjects list + DefaultRoles + mobile features |
+| `Section` (alias `Name`) | Drill-down section. Currently: `home-page` |
+| `Limit` / `Offset` | Pagination (default 150 lines) |
+| `OutFile` | Write result to file (UTF-8 BOM) |
 
 ---
 
