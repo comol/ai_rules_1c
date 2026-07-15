@@ -3444,7 +3444,9 @@ function Place-RootTemplates {
 #   QUICKFIX_MAX_LINES (empty = 40; quick-fix line budget),
 #   DEBUG_FAST_PATH (empty = standard; debugging fast-path mode),
 #   VERIFICATION_DEPTH (empty = full; code-verification depth, toggled by
-#   the /litemode command).
+#   the /litemode command),
+#   CAVEMAN (empty = on; caveman communication-style auto-activation, toggled
+#   by the /caveman command).
 
 function Find-PlatformPath {
     # Returns the path to the most recent installed 1C platform under

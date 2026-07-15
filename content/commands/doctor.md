@@ -116,7 +116,7 @@ Evaluate whether the installed rules match the current repository and current ag
 2. If the repository is only the `1c-rules` source repository, report that BSL validators are not applicable to docs-only edits unless BSL examples are changed.
 3. Confirm that `AGENTS.md` points to source or installed on-demand rules that the current agent can read.
 4. Confirm that command names in `content/commands/` are available in the active tool's command location after installation.
-5. Confirm that `caveman` is dev-only: enabled for implementation / debugging / deployment, off for review / analysis / documentation.
+5. Confirm that `caveman` matches the `.dev.env` `CAVEMAN` mode: `on` (default) — active on all tasks; `auto` — dev-only (on for implementation / debugging / deployment, off for review / analysis / documentation); `off` — never auto-on until an explicit force (`/caveman on` or "caveman please").
 
 Pass criterion: the current agent has the always-on rules, can reach on-demand rules or their source copies, and the rule triggers match the current task type.
 
