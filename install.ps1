@@ -1322,11 +1322,86 @@ function Invoke-OpenSpecScaffold {
     Write-Info "  OpenSpec scaffold: $copied file(s) copied, $skipped preserved"
 }
 
+# Map an OpenSpec bundle relative path to its real install destination for a
+# given tool. The bundle mirrors the layout `openspec init` produces, which for
+# Kilo Code is the legacy `.kilocode/` tree (`workflows/` + `skills/`). Every
+# other piece of Kilo Code content is installed into `.kilo/` (see
+# `adapters/kilocode.yaml`), so copying the bundle verbatim would leave Kilo
+# Code with two project folders (`.kilo` + `.kilocode`). Remap the Kilo Code
+# artefacts onto the same `.kilo/` root — commands into `.kilo/commands/`
+# (Kilo's current location for what upstream calls "workflows") and skills into
+# `.kilo/skills/`. All other tools already match their adapter, so their paths
+# pass through unchanged.
+function Get-OpenSpecBundleDestRel {
+    param(
+        [string]$Tool,
+        [string]$Rel
+    )
+    if ($Tool -eq 'kilocode') {
+        if ($Rel -like '.kilocode/workflows/*') {
+            return '.kilo/commands/' + $Rel.Substring('.kilocode/workflows/'.Length)
+        }
+        if ($Rel -like '.kilocode/skills/*') {
+            return '.kilo/skills/' + $Rel.Substring('.kilocode/skills/'.Length)
+        }
+        if ($Rel -like '.kilocode/*') {
+            return '.kilo/' + $Rel.Substring('.kilocode/'.Length)
+        }
+    }
+    return $Rel
+}
+
+# Remove OpenSpec artefacts left in the legacy `.kilocode/` tree by an earlier
+# installer version (which copied the bundle verbatim into `.kilocode/`). Only
+# files 1c-rules previously managed there are deleted — identified via the
+# current manifest or the pre-update snapshot ($script:PreviousFiles) — and only
+# when not flagged userModified, so user content is never touched. Empty
+# `.kilocode/` sub-directories left behind are pruned. Returns the count of
+# files removed. Safe to call on both `init` (over an existing install) and
+# `update`.
+function Remove-LegacyKilocodeOpenSpec {
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest
+    )
+    $candidates = [System.Collections.Generic.HashSet[string]]::new()
+    if ($Manifest -and $Manifest.files) {
+        foreach ($k in @($Manifest.files.Keys)) { [void]$candidates.Add($k) }
+    }
+    if ($script:PreviousFiles) {
+        foreach ($k in @($script:PreviousFiles.Keys)) { [void]$candidates.Add($k) }
+    }
+    $removed = 0
+    foreach ($rel in @($candidates)) {
+        if ($rel -notlike '.kilocode/workflows/*' -and $rel -notlike '.kilocode/skills/*') { continue }
+        if ($Manifest -and $Manifest.files -and $Manifest.files.Contains($rel)) {
+            $entry = $Manifest.files[$rel]
+            if ($entry -and $entry.userModified) { continue }
+            [void]$Manifest.files.Remove($rel)
+        }
+        $abs = Join-Path $Root $rel
+        if (Test-Path $abs) {
+            Remove-Item -Path $abs -Force -ErrorAction SilentlyContinue
+            $removed++
+        }
+    }
+    foreach ($sub in @('.kilocode/workflows', '.kilocode/skills', '.kilocode')) {
+        $absSub = Join-Path $Root $sub
+        if (Test-Path $absSub) {
+            $left = Get-ChildItem -Recurse -File -Path $absSub -ErrorAction SilentlyContinue
+            if (-not $left -or $left.Count -eq 0) {
+                Remove-Item -Path $absSub -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    return $removed
+}
+
 # Place OpenSpec artefacts (slash commands / workflows + SKILLs) bundled under
 # `content/openspec-bundle/<tool>/...`. Each file under a tool's bundle is
-# copied verbatim to the same relative path in the project root, so the
-# resulting layout exactly matches what `openspec init` would produce — but
-# without requiring npm or the OpenSpec CLI at install time.
+# copied to its real install destination (see Get-OpenSpecBundleDestRel), so the
+# resulting layout matches what the active tool actually reads — but without
+# requiring npm or the OpenSpec CLI at install time.
 #
 # Files are tracked in `manifest.files` like any other managed content, so
 # `update` refreshes them, `remove` deletes them, and `userModified` is
@@ -1365,15 +1440,16 @@ function Invoke-OpenSpecArtifacts {
         $toolKept = 0
         Get-ChildItem -Recurse -File -Path $toolBundle -ErrorAction SilentlyContinue | ForEach-Object {
             $rel = $_.FullName.Substring($toolBundleFull.Length + 1).Replace('\', '/')
-            if ($Manifest.files.Contains($rel)) {
-                $existing = $Manifest.files[$rel]
+            $destRel = Get-OpenSpecBundleDestRel -Tool $tool -Rel $rel
+            if ($Manifest.files.Contains($destRel)) {
+                $existing = $Manifest.files[$destRel]
                 if ($existing -and $existing.userModified) {
                     $toolKept++
                     return
                 }
             }
-            $absTarget = Join-Path $Root $rel
-            if ((Test-Path $absTarget) -and -not $Manifest.files.Contains($rel)) {
+            $absTarget = Join-Path $Root $destRel
+            if ((Test-Path $absTarget) -and -not $Manifest.files.Contains($destRel)) {
                 # Pre-existing OpenSpec command/skill is user-owned. The bundle
                 # is skip-if-exists on first install; never adopt and overwrite it.
                 $toolKept++
@@ -1384,7 +1460,7 @@ function Invoke-OpenSpecArtifacts {
                 New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
             }
             Copy-Item -Path $_.FullName -Destination $absTarget -Force
-            $Manifest.files[$rel] = [ordered]@{
+            $Manifest.files[$destRel] = [ordered]@{
                 source        = "content/openspec-bundle/$tool/$rel"
                 installedHash = (Get-FileSha256 $absTarget)
             }
@@ -1397,6 +1473,13 @@ function Invoke-OpenSpecArtifacts {
         }
         $totalCopied += $toolCopied
         $totalKept += $toolKept
+
+        if ($tool -eq 'kilocode') {
+            $removedLegacy = Remove-LegacyKilocodeOpenSpec -Root $Root -Manifest $Manifest
+            if ($removedLegacy -gt 0) {
+                Write-Info "  [kilocode] legacy .kilocode/ OpenSpec artefacts removed: $removedLegacy (migrated to .kilo/)"
+            }
+        }
     }
 
     if (-not $Manifest.integrations) { $Manifest.integrations = [ordered]@{} }
