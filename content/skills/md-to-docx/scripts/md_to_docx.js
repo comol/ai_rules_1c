@@ -2,29 +2,65 @@
 /**
  * md_to_docx.js — Convert Markdown to DOCX with hyperlinks, tables, code blocks, images.
  *
- * Usage: NODE_PATH=<global_node_modules> node md_to_docx.js input.md [output.docx]
- *        If output is omitted, replaces .md with .docx
+ * Usage:
+ *   node md_to_docx.js input.md [output.docx] \
+ *       [--author "Author Name"] [--title "Document Title"] \
+ *       [--no-shading | --shading=on|off]
  *
- * Requires: npm install -g docx
+ *   - Output is optional; if omitted, replaces .md with .docx next to input.
+ *   - --author writes core property dc:creator and cp:lastModifiedBy.
+ *   - --title overrides the default document title (basename of input).
+ *   - --no-shading (alias: --shading=off) disables grey background fill
+ *     for inline `code` and fenced ``` code blocks. Table header shading
+ *     is structural and is NOT affected by this flag.
+ *   - Both --flag value and --flag=value forms are supported.
+ *
+ * Requires: npm ci in the skill directory (package-lock.json pins docx).
  */
 
 const fs = require("fs");
 const path = require("path");
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  Header, Footer, AlignmentType, ExternalHyperlink, ImageRun,
+  Header, Footer, AlignmentType, ExternalHyperlink, InternalHyperlink,
+  Bookmark, ImageRun,
   HeadingLevel, BorderStyle, WidthType, ShadingType, PageNumber,
   LevelFormat, PageBreak
 } = require("docx");
 
 // --- Args ---
-const inputPath = process.argv[2];
+const rawArgs = process.argv.slice(2);
+const positional = [];
+let author = null;
+let titleOverride = null;
+let codeShading = true;
+for (let k = 0; k < rawArgs.length; k++) {
+  const a = rawArgs[k];
+  if (a === "--author") {
+    author = rawArgs[++k];
+  } else if (a.startsWith("--author=")) {
+    author = a.slice("--author=".length);
+  } else if (a === "--title") {
+    titleOverride = rawArgs[++k];
+  } else if (a.startsWith("--title=")) {
+    titleOverride = a.slice("--title=".length);
+  } else if (a === "--no-shading") {
+    codeShading = false;
+  } else if (a === "--shading") {
+    codeShading = (rawArgs[++k] || "").toLowerCase() !== "off";
+  } else if (a.startsWith("--shading=")) {
+    codeShading = a.slice("--shading=".length).toLowerCase() !== "off";
+  } else {
+    positional.push(a);
+  }
+}
+const inputPath = positional[0];
 if (!inputPath) {
-  console.error("Usage: node md_to_docx.js input.md [output.docx]");
+  console.error('Usage: node md_to_docx.js input.md [output.docx] [--author "Author Name"] [--title "Document Title"] [--no-shading]');
   process.exit(1);
 }
-const outputPath = process.argv[3] || inputPath.replace(/\.md$/i, ".docx");
-const docTitle = path.basename(inputPath, path.extname(inputPath));
+const outputPath = positional[1] || inputPath.replace(/\.md$/i, ".docx");
+const docTitle = titleOverride || path.basename(inputPath, path.extname(inputPath));
 const inputDir = path.dirname(path.resolve(inputPath));
 
 if (!fs.existsSync(inputPath)) {
@@ -50,6 +86,7 @@ let codeLines = [];
 let codeLang = "";
 let inTable = false;
 let tableRows = [];
+let pendingAnchor = null;
 
 function flushTable() {
   if (inTable && tableRows.length > 0) {
@@ -96,10 +133,19 @@ while (i < lines.length) {
     flushTable();
   }
 
+  // HTML anchor <a id="..."></a> -> remember for next heading/block
+  const anchorMatch = line.match(/^\s*<a\s+id="([^"]+)"><\/a>\s*$/i);
+  if (anchorMatch) {
+    pendingAnchor = anchorMatch[1];
+    i++;
+    continue;
+  }
+
   // Heading
   const hMatch = line.match(/^(#{1,6})\s+(.*)/);
   if (hMatch) {
-    blocks.push({ type: "heading", level: hMatch[1].length, text: hMatch[2] });
+    blocks.push({ type: "heading", level: hMatch[1].length, text: hMatch[2], anchor: pendingAnchor });
+    pendingAnchor = null;
     i++;
     continue;
   }
@@ -181,8 +227,11 @@ function makeRuns(text, fontSize) {
   return parsed.map(r => {
     if (r.link) {
       if (r.link.startsWith("#")) {
-        // Anchor links -> plain text (no bookmark targets in generated docs)
-        return new TextRun({ text: r.text, font: "Arial", size: sz });
+        // Internal anchor link -> InternalHyperlink to Bookmark
+        return new InternalHyperlink({
+          anchor: r.link.slice(1),
+          children: [new TextRun({ text: r.text, style: "Hyperlink", font: "Arial", size: sz })],
+        });
       }
       let link = r.link;
       if (!/^https?:\/\//.test(link) && !/^mailto:/.test(link)) {
@@ -196,7 +245,7 @@ function makeRuns(text, fontSize) {
     const opts = { text: r.text, font: r.code ? "Consolas" : "Arial", size: r.code ? sz - 2 : sz };
     if (r.bold) opts.bold = true;
     if (r.italic) opts.italics = true;
-    if (r.code) opts.shading = { type: ShadingType.CLEAR, fill: "F0F0F0" };
+    if (r.code && codeShading) opts.shading = { type: ShadingType.CLEAR, fill: "F0F0F0" };
     return new TextRun(opts);
   });
 }
@@ -271,13 +320,18 @@ const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN; // 9360
 
 for (const block of blocks) {
   switch (block.type) {
-    case "heading":
+    case "heading": {
+      const headingRuns = makeRuns(block.text);
+      const headingChildren = block.anchor
+        ? [new Bookmark({ id: block.anchor, children: headingRuns })]
+        : headingRuns;
       children.push(new Paragraph({
         heading: headingMap[block.level],
-        children: makeRuns(block.text),
+        children: headingChildren,
         spacing: { before: block.level <= 2 ? 360 : 240, after: 120 },
       }));
       break;
+    }
 
     case "paragraph":
       children.push(new Paragraph({
@@ -310,7 +364,7 @@ for (const block of blocks) {
       });
       children.push(new Paragraph({
         children: codeRuns,
-        shading: { type: ShadingType.CLEAR, fill: "F5F5F5" },
+        shading: codeShading ? { type: ShadingType.CLEAR, fill: "F5F5F5" } : undefined,
         spacing: { before: 120, after: 120 },
         indent: { left: 360 },
       }));
@@ -393,6 +447,9 @@ for (const block of blocks) {
 }
 
 const doc = new Document({
+  creator: author || undefined,
+  lastModifiedBy: author || undefined,
+  title: docTitle,
   styles: {
     default: { document: { run: { font: "Arial", size: 22 } } },
     paragraphStyles: [

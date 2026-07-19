@@ -1,6 +1,6 @@
 # 1C SSL/БСП Subsystems Reference
 
-For basic SSL usage (attribute access, user messages) — see `dev-standards-architecture.md §4 → "Data Access — Reference Attribute Access"` and `dev-standards-core.md §2`.
+For basic SSL usage (attribute access, user messages) — see `dev-standards-architecture.md §4 → "Data Access — Reference Attribute Access"` and `dev-standards-code-style.md`.
 
 ## When to Use
 

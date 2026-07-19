@@ -8,7 +8,7 @@ category: development
 
 Registers are the spine of any non-trivial 1C configuration; mistakes here are expensive to undo because they are usually wired into document posting, RLS, and reports. This file consolidates the design decisions worth thinking through **before** running the metadata skill.
 
-> **Scope.** This file owns *design* rules. XML / schema mechanics live in `content/skills/1c-metadata-manage/docs/meta-manage.md`. Anti-patterns of queries against registers — `anti-patterns.md` and `dev-standards-architecture.md §3 → "Queries"`.
+> **Scope.** This file owns *design* rules. XML / schema mechanics live in `content/skills/1c-metadata-manage/docs/meta-manage.md`. Queries against registers — start at the router `query-design.md` (hard rules in `dev-standards-architecture.md §3 → "Queries"`, anti-patterns in `anti-patterns.md`).
 
 ## 1. Choosing the register type
 
@@ -64,7 +64,7 @@ When a register has balances, the platform exposes virtual tables:
 | `СрезПервых(&Период, Условие)` (info reg.) | First record on or after the date. |
 | `СрезПоследних(&Период, Условие)` (info reg.) | Last record on or before the date. |
 
-**Filter virtual tables via parameters, not `ГДЕ` after the call** — hard rule (`anti-patterns.md §4`). Putting the filter into the parameter pushes it into the engine and uses indexes; putting it into `ГДЕ` reads the full virtual table first.
+**Filter virtual tables via parameters, not `ГДЕ` after the call** — hard rule (owner: `dev-standards-architecture.md §3 → "Queries"`; catalog entry with fix template: `anti-patterns.md §4`). Putting the filter into the parameter pushes it into the engine and uses indexes; putting it into `ГДЕ` reads the full virtual table first.
 
 ## 8. Posting / reposting
 

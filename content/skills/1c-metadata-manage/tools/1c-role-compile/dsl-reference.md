@@ -1,6 +1,6 @@
 # Role DSL — полная справка
 
-Подробная справка по JSON DSL для `/role-compile`. Компактное описание — в [SKILL.md](SKILL.md).
+Подробная справка по JSON DSL для `/role-compile`. Компактное описание и workflow — в [`role-manage.md`](../../docs/role-manage.md).
 
 ## Структура верхнего уровня
 

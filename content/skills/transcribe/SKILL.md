@@ -48,7 +48,7 @@ Output files:
 
 - Python packages: `google-genai`, `python-dotenv`
 - System: `ffmpeg`, `ffprobe` in PATH
-- API key: `~/.cursor/skills/transcribe/.env` (or your tool's skill folder) with `GEMINI_API_KEY=...`
+- API key: environment variable `GEMINI_API_KEY`, or `<skill-dir>/.env` with `GEMINI_API_KEY=...` (the script also checks supported user-skill locations and then `cwd/.env`)
 
 ## Procedure
 
@@ -56,11 +56,14 @@ Output files:
 
 2. Run the script:
 
-```bash
-PYTHONUNBUFFERED=1 python <skill-dir>/scripts/transcribe.py "<FilePath>" [--output-dir "<OutputDir>"] [--analyze-ui] [--with-summary] [--format md|txt]
+```powershell
+$env:PYTHONUNBUFFERED = "1"
+python <skill-dir>/scripts/transcribe.py "<FilePath>" [--output-dir "<OutputDir>"] [--analyze-ui] [--with-summary] [--format md|txt]
 ```
 
 **IMPORTANT:** `PYTHONUNBUFFERED=1` is mandatory; otherwise stdout is buffered and progress is not displayed.
+
+On macOS / Linux use `PYTHONUNBUFFERED=1 python ...` instead.
 
 3. The script runs long (5–15 minutes depending on length). Files > 1 hour are split automatically.
 

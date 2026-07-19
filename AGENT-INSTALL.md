@@ -63,20 +63,20 @@ Use this lean sequence:
 4. **Apply frontmatter operations only where needed.** For sections that have `frontmatter.keep` / `drop` / `rename` / `addIf` / `toolsToPermission`:
    - For each placed file, read **only** the YAML frontmatter block (between the leading `---` markers — typically the first 5–20 lines). Do not read the body.
    - Rewrite the frontmatter according to the adapter ops and write it back; the body is left untouched.
-   - **Agents: resolve `modelTier` first.** Source agent files declare an abstract `modelTier` (`coding` | `light`) instead of a concrete model name. Before applying the adapter ops, replace it with `modelHint: <concrete model>` taken from the project `.dev.env`: tier `coding` → `SUBAGENT_MODEL_CODING`, tier `light` → `SUBAGENT_MODEL_LIGHT`. When the corresponding value is empty or `.dev.env` does not exist yet, simply **remove** `modelTier` and emit no model field — the AI client then uses its default model (both parameters are DEFAULTED; never block or re-ask because of them). On first init the values may be asked once as part of the `.dev.env` bootstrap prompts (see *`.dev.env` bootstrap* below). After the resolution, the adapter ops apply as written (`keep`/`rename` reference `modelHint`).
+   - **Agents: resolve `modelTier` first.** Source agent files declare an abstract `modelTier` (`coding` | `analysis` | `light`) instead of a concrete model name. Before applying the adapter ops, replace it with `modelHint: <concrete model>` taken from the project `.dev.env`: tier `coding` → `SUBAGENT_MODEL_CODING`, tier `analysis` → `SUBAGENT_MODEL_ANALYSIS`, tier `light` → `SUBAGENT_MODEL_LIGHT`. When the corresponding value is empty or `.dev.env` does not exist yet, simply **remove** `modelTier` and emit no model field — the AI client then uses its default model (all three parameters are DEFAULTED; never block or re-ask because of them). On first init the values may be asked once as part of the `.dev.env` bootstrap prompts — a benchmark-based profile picker offering `Balanced` / `Economy` / `Quality` (see *`.dev.env` bootstrap* below). After the resolution, the adapter ops apply as written (`keep`/`rename` reference `modelHint`).
    - For OpenCode agents (`agents.frontmatter.toolsToPermission`) — convert the source `tools` array into a `permission` object before applying `keep`/`drop`. See *OpenCode agents: `tools` array → `permission` object* below. **Never** copy the source `tools` array into an OpenCode agent file verbatim — an array fails OpenCode config validation and prevents OpenCode from (re)starting.
    - For sections with `mode: verbatim` (skills) — skip the frontmatter step entirely.
    - For Codex agents (`mode: rebuild-toml`) — render via the adapter's `template`. This is the one case that requires the body, but only for those agent files in `content/agents/` (a small set).
 
 5. **Render the MCP config** from `content/mcp-servers.json` according to the adapter's `mcp.schema`. **External MCP check first:** before rendering anything, detect an external MCP installation (user env `BASESAI_MCP_GLOBAL_ROOT`, fallback `MCP_GLOBAL_ROOT` in the project `.dev.env`, pointing at a folder that contains `install.manifest.json`) — see *External MCP installation (INSTALL.md, режим 3)* below. When detected, **skip this step entirely for every tool** (do not write `.cursor/mcp.json` or any other `mcp.target`), sync the `mcp:install_forme` section of `USER-RULES.md` from the install artifacts, and record `integrations.mcp.mode = "external"` in `.ai-rules.json`. Otherwise render from `content/mcp-servers.json` according to the adapter's `mcp.schema` (mcpServers JSON dictionary, OpenCode `mcp[id]` schema, or Codex TOML `[mcp_servers.<id>]`). **OpenCode only:** normalize each server key to start with a letter before writing it under `mcp` — leading `1c`/`1C` → `onec` (so `1c-syntax-checker-mcp` → `onec-syntax-checker-mcp`, `1C-docs-mcp` → `onec-docs-mcp`), any other non-letter-leading id gets an `mcp-` prefix. OpenCode names MCP tools `<server-key>_<tool>` and providers like Moonshot/Kimi reject function names that do not start with a letter (`^[a-zA-Z_]…`), which otherwise breaks the whole request with *"function name is invalid, must start with a letter"*. Canonical ids in `content/mcp-servers.json` and the docs stay `1c-…`; only the OpenCode-rendered key changes. The other adapters keep the verbatim id (Cursor/Claude prefix tool names with `mcp_`/`mcp__`, so a digit-leading key is already safe there). **Target file & merge:** write each tool's MCP into the path declared by `mcp.target` — for OpenCode this is `opencode.json` at the **project root** (NOT `.opencode/opencode.json`, which OpenCode never reads; `.opencode/` holds only agents/commands/modes/plugins/skills/tools/themes), and for Kilo Code it is `.kilo/kilo.json` under the top-level `mcp` key. Both are **shared** user configs (`mcp.merge: true`): deep-merge **only** the top-level `mcp` key and preserve every other key the user has. **OpenCode validates each MCP entry with a strict schema** — emit only `{ type: "remote", url, enabled }` (or `{ type: "local", command: [...], enabled }`); any extra key such as `description` or `connection_id` makes OpenCode reject the whole config and the servers silently never load. After writing it, **recommend that the user restart the AI client** — see *Recommend a restart after MCP changes* below.
 
-6. **Place the always-on layer** (`AGENTS.md`, `USER-RULES.md`, `memory.md`) — see the next section.
+6. **Place the always-on layer** (`AGENTS.md`, `USER-RULES.md`, `memory.md`, `LLM-RULES.md`) — see the next section.
 
 7. **Place `.dev.env`** at the project root if missing — see *.dev.env bootstrap* below. This is mandatory: `.dev.env` is the single source of truth for project parameters used by all rules / commands / subagents (code-generation params and infobase connection params, including the web-publish URL for UI tests).
 
 8. **Scaffold OpenSpec.** Copy `openspec/` into the project in skip-if-exists mode (no overwrites).
 
-9. **Write the manifest** `.ai-rules.json` at the project root: list all placed files with their content sources, the active tools, the source version (`git describe --tags --always` from the clone), the protocol version (`1.0`), the canonical rules directory used for diagnostics / updates, and any detected foreign user-authored files under `foreignFiles`.
+9. **Write the manifest** `.ai-rules.json` at the project root: list all placed files with their content sources and `owners` (one or more active tools for shared paths), the active tools, the source version (`git describe --tags --always` from the clone), the protocol version (`1.1`), the canonical rules directory used for diagnostics / updates, and any detected foreign user-authored files under `foreignFiles`.
 
 ### OpenCode agents: `tools` array → `permission` object
 
@@ -93,13 +93,13 @@ When OpenCode is an active tool, the `agents` adapter therefore declares `frontm
 | `Shell` | `bash` |
 | `MCP` | *(no key — MCP tools are gated by their own names; leave them enabled by default)* |
 
-Each mapped key granted by the source list is set to `allow`; every mapped key **not** granted is set to `deny`, so read-only agents (`1c-explorer`, `1c-code-reviewer`, `1c-arch-reviewer` — whose source `tools` omit `Write`/`Edit`/`Shell`) end up with `edit: deny` / `bash: deny` instead of silently inheriting OpenCode's permissive default tool set. Example for `1c-developer` (with `SUBAGENT_MODEL_CODING=opus` in `.dev.env`; when the parameter is empty the `model` line is omitted entirely):
+Each mapped key granted by the source list is set to `allow`; every mapped key **not** granted is set to `deny`, so read-only agents (`1c-explorer`, `1c-code-reviewer`, `1c-arch-reviewer` — whose source `tools` omit `Write`/`Edit`/`Shell`) end up with `edit: deny` / `bash: deny` instead of silently inheriting OpenCode's permissive default tool set. Example for `1c-developer` (with `SUBAGENT_MODEL_CODING=anthropic/claude-sonnet-4-5` in `.dev.env`; when the parameter is empty the `model` line is omitted entirely and the subagent inherits the parent session's model):
 
 ```yaml
 ---
 name: 1c-developer
 description: "Expert 1C code developer agent. …"
-model: opus
+model: anthropic/claude-sonnet-4-5
 permission:
   read: allow
   edit: allow
@@ -110,9 +110,15 @@ mode: subagent
 ---
 ```
 
+**OpenCode model format.** OpenCode requires the `model` value in `provider/model` form (optional `#variant`, e.g. `anthropic/claude-sonnet-4-5#high`), using the ids shown by `/models` — a bare slug (`opus`, `glm-5.2-max`) does not resolve and an invalid id can make OpenCode reject the config and fail to start. The installer writes `SUBAGENT_MODEL_*` verbatim, so on OpenCode these keys **must** hold `provider/model` ids; the `/economymode` command enforces this when it asks for models. Cursor / Claude Code / Codex use their own bare-slug formats, so `.dev.env` model values are client-specific — set them for the client actually installed.
+
 ### Recommend a restart after MCP changes
 
 After the MCP config is written (init / update / add), **recommend that the user restart their AI client** (CLI or IDE). Most clients — OpenCode in particular — read the MCP configuration and agent definitions only at startup, so newly added MCP servers and subagents will not appear in an already-running session until the client is restarted. This recommendation applies to all tools; the PowerShell installer prints it automatically at the end of `init` / `update` / `add` whenever at least one MCP server was configured.
+
+### Announce the /economymode command
+
+In the final report of a successful `init` — and of an `update` that placed `content/commands/economymode.md` into the project for the first time — include a short note (in Russian): режим экономии оркестратора включается командой `/economymode` — она записывает `ORCHESTRATION=economy` в `.dev.env`, после чего головной агент делегирует исполнение дешёвым субагентам (модели — по ярусам из `SUBAGENT_MODEL_*`), оставляя себе решения, спеки и верификацию; если модели ярусов не заданы, команда предложит выбрать их (профили по бенчу или свои слаги); действует на весь проект, включая новые чаты; выключение — `/economymode off` (правило `orchestrator-economy.md`). The PowerShell installer prints the equivalent announcement automatically.
 
 ### External MCP installation (INSTALL.md, режим 3)
 
@@ -139,7 +145,7 @@ When the MCP servers were installed by the MCP vendor distribution's **`INSTALL.
 
 ### Always-on layer placement
 
-`AGENTS.md`, `USER-RULES.md`, and `memory.md` always live at the **project root**. This is required: every supported tool (Cursor, Claude Code, Codex, OpenCode, Kilo Code) reads `AGENTS.md` from the project root as its always-on context. Placing them under `.cursor/`, `.claude/` etc. would prevent the tools from picking them up.
+`AGENTS.md`, `USER-RULES.md`, `memory.md`, and `LLM-RULES.md` always live at the **project root**. This is required: every supported tool (Cursor, Claude Code, Codex, OpenCode, Kilo Code) reads `AGENTS.md` from the project root as its always-on context. Placing them under `.cursor/`, `.claude/` etc. would prevent the tools from picking them up.
 
 `AGENTS.md` placement is a readable-copy step with deterministic path rewriting:
 
@@ -154,7 +160,7 @@ When the MCP servers were installed by the MCP vendor distribution's **`INSTALL.
 4. Write the rewritten text to the project root as `AGENTS.md`. Refresh on update only if the local file is unmodified since the previous installer write (manifest hash matches) — preserve user edits otherwise.
 5. If no active tool defines a rules directory (degenerate install set), skip the rewriting step and warn — the source paths are kept as-is so the file at least documents the intended layout.
 
-`USER-RULES.md` and `memory.md` are created from the templates on first install and **never** overwritten thereafter.
+`USER-RULES.md`, `memory.md`, and `LLM-RULES.md` are created from the templates on first install (or on the first `update` for pre-existing installs) and **never** overwritten thereafter.
 
 ### `.dev.env` bootstrap
 
@@ -167,7 +173,7 @@ Bootstrap procedure:
    - `PLATFORM_VERSION` ← `CompatibilityMode` from `Configuration.xml` (or `ConfigurationExtension.xml`).
    - `PLATFORM_PATH` ← scan `C:\Program Files\1cv8\<version>\bin\1cv8.exe` (and `(x86)`) for the highest installed version that matches or exceeds `PLATFORM_VERSION`.
    - `PREFIX` ← `NamePrefix` from `ConfigurationExtension.xml` when the project is an extension.
-3. In interactive mode (agent channel, or PowerShell installer without `-NonInteractive`) — offer a one-time setup prompt for the **highly-desirable** fields that the user is most likely to need: `INFOBASE_PATH` (критично для `/update1cbase`, `/getconfigfiles`, `/loadfrom1cbase`, `/deploy-and-test`), `INFOBASE_PUBLISH_URL` (критично для UI-тестирования через `1c-tester`), and the defaulted `INFOBASE_KIND`, `IB_USER` / `IB_PASSWORD` (empty = no authentication, the `/N` / `/P` flags are simply omitted — fully valid for dev / test infobases), `LOG_PATH` (empty = `$env:TEMP\1cv8.log` / `$TMPDIR/1cv8.log` — fully valid), `SUBAGENT_MODEL_CODING` / `SUBAGENT_MODEL_LIGHT` (empty = the AI client's default model; used to resolve the agents' `modelTier` — see *Lean placement*, step 4). Each prompt must have an obvious "skip" option — **leaving any of them empty is always valid**, it just means the corresponding command will use the documented default (`IB_USER` / `IB_PASSWORD` / `LOG_PATH` / `SUBAGENT_MODEL_*`), ask later when it is actually invoked (`INFOBASE_PATH`), or silently skip UI tests (`INFOBASE_PUBLISH_URL`). Advisory fields (`PREFIX`, `COMPANY`, `DEVELOPER`) may also be offered with the same skip choice, but they MUST NOT be re-asked on every task per `content/rules/dev-standards-core.md §1 → "Advisory parameters"`. **No field in `.dev.env` is mandatory at install time** — the installer must never block install over a missing parameter.
+3. In interactive mode (agent channel, or PowerShell installer without `-NonInteractive`) — offer a one-time setup prompt for the **highly-desirable** fields that the user is most likely to need: `INFOBASE_PATH` (критично для `/update1cbase`, `/getconfigfiles`, `/loadfrom1cbase`, `/deploy-and-test`), `INFOBASE_PUBLISH_URL` (критично для UI-тестирования через `1c-tester`), and the defaulted `INFOBASE_KIND`, `IB_USER` / `IB_PASSWORD` (empty = no authentication, the `/N` / `/P` flags are simply omitted — fully valid for dev / test infobases), `LOG_PATH` (empty = `$env:TEMP\1cv8.log` / `$TMPDIR/1cv8.log` — fully valid), `SUBAGENT_MODEL_CODING` / `SUBAGENT_MODEL_ANALYSIS` / `SUBAGENT_MODEL_LIGHT` (empty = the AI client's default model; a benchmark-based profile picker fills all three at once; used to resolve the agents' `modelTier` — see *Lean placement*, step 4). Each prompt must have an obvious "skip" option — **leaving any of them empty is always valid**, it just means the corresponding command will use the documented default (`IB_USER` / `IB_PASSWORD` / `LOG_PATH` / `SUBAGENT_MODEL_*`), ask later when it is actually invoked (`INFOBASE_PATH`), or silently skip UI tests (`INFOBASE_PUBLISH_URL`). Advisory fields (`PREFIX`, `COMPANY`, `DEVELOPER`) may also be offered with the same skip choice, but they MUST NOT be re-asked on every task per `content/rules/dev-standards-env.md → "Advisory parameters"`. **No field in `.dev.env` is mandatory at install time** — the installer must never block install over a missing parameter.
 4. In non-interactive mode (`-NonInteractive` / agent without ability to ask) — leave non-detected critical fields empty and emit a clear WARNING listing them. Do not block installation.
 5. Write the file to the project root and record it in `.ai-rules.json` with `template: true` so the file is never overwritten by subsequent updates.
 
@@ -180,7 +186,7 @@ The legacy `infobasesettings.md` file (used by earlier versions of `/loadfrom1cb
   - **Skill files** are synced per-file rather than wiped-and-recopied: shipped files are refreshed, files dropped from the source are pruned, user-modified skill files are preserved, and files the user added into the skill directory themselves (never tracked by us) are always kept.
   - As part of update, **migrate** any legacy `.ai-rules/rules/*` entries (from earlier installer versions): delete those files and remove them from the manifest. If the user modified any of them, ask before deleting.
 - **Add `<tool>`** — same as init but for one additional tool only; merge into the existing manifest. After adding, refresh `AGENTS.md` against the **full** active tool set — the canonical rules dir may shift if the new tool has higher priority.
-- **Remove `[<tool>]`** — delete files this tool owns according to the manifest. With no tool argument — delete every managed file and the manifest itself (the user keeps `USER-RULES.md`, `memory.md`, OpenSpec content, and any `*.bak.md`).
+- **Remove `[<tool>]`** — delete files this tool owns according to the manifest. Manifest entries carry an `owners` list because two tools may intentionally share one path (currently Claude Code and OpenCode share `.claude/skills/`); removing one owner keeps the file until the last owner is removed. With no tool argument — delete every managed file and the manifest itself (the user keeps the placed-once templates — `USER-RULES.md`, `memory.md`, `LLM-RULES.md`, `.dev.env` — plus OpenSpec content and any `*.bak.md`).
 
 ### Anti-patterns observed in the wild — do not repeat
 
@@ -207,7 +213,7 @@ If a target file already exists with user modifications (different from any prio
 ### Important constraints
 
 - **Do not edit `AGENTS.md` directly** in the project — it is refreshed on every update from the source `AGENTS.md` when safe.
-- **Do not modify `USER-RULES.md` or `memory.md`** outside the migration markers — they belong to the user/project.
+- **Do not modify `USER-RULES.md`, `memory.md`, or `LLM-RULES.md`** outside the migration markers — they belong to the user/project (`LLM-RULES.md` is maintained solely by the `/evolve` command).
 - **Manifest is authoritative** — if `.ai-rules.json` exists, trust it for "what is currently managed". A file not in the manifest is a foreign file: record it under `foreignFiles`, do not touch it.
 - **Skip-if-exists for OpenSpec** — never overwrite specs or change proposals.
 
@@ -252,8 +258,9 @@ Do not execute raw script text from GitHub with `Invoke-Expression`; download or
 - `AGENTS.md` — copied from the readable source `AGENTS.md` with per-section path rewriting (see *Always-on layer placement* above) and refreshed on every update when safe. The shipped file points at `content/<section>/...` paths in the source repo; the installed file in the project root points at the active tool's installed paths (e.g. `.cursor/rules/...mdc`, `.claude/skills/...`, `.kilo/agents/...`) so every link resolves to an existing project-local file. **Do not edit it directly** — your edits may be overwritten on the next update if the file is still installer-managed and unmodified.
 - `USER-RULES.md` — created empty by the installer on first install and **never** overwritten thereafter. Project- or team-specific conventions go here.
 - `memory.md` — project memory file at the project root. Created on first install and not overwritten by the installer.
+- `LLM-RULES.md` — agent-maintained self-improvement rule layer at the project root, written only by the `/evolve` command with per-entry user approval (precedence and capture discipline — `AGENTS.md → Rules self-improvement`). Created on first install (template) and **never** overwritten by the installer.
 - `.dev.env` — single source of truth for project parameters (code generation + infobase connection + web-publish URL for tests). Created on first install with auto-detected values where possible (PLATFORM_VERSION, PLATFORM_PATH, PREFIX) and prompts for the rest in interactive mode. **Never** overwritten by the installer; gitignored by default.
-- On-demand rule files — placed under each active tool's `rules.copyTo` directory (`.cursor/rules/*.mdc`, `.claude/rules/*.md`, `.kilo/rules/*.md`, `.codex/rules/*.md`, `.opencode/rules/*.md`, `.ai-agent/rules/*.md` for `other`). All copies contain the same authoritative text; per-tool frontmatter differs (e.g. Cursor keeps `globs`/`alwaysApply`; `other` keeps only the minimum portable subset `description` + `alwaysApply`). `AGENTS.md` references one canonical directory — the highest-priority active tool's. Other active tools' rules dirs are still populated so that tool-native auto-loading (Cursor's `.cursor/rules/*.mdc` indexing) keeps working.
+- On-demand rule files — placed under each active tool's `rules.copyTo` directory (`.cursor/rules/*.mdc`, `.claude/rules/*.md`, `.kilo/rules-1c/*.md`, `.codex/rules/*.md`, `.opencode/rules/*.md`, `.ai-agent/rules/*.md` for `other`). Kilo intentionally uses `rules-1c` rather than the eagerly auto-loaded `.kilo/rules/`; its rules are loaded through the rewritten paths in `AGENTS.md`. All copies contain the same authoritative text; per-tool frontmatter differs (e.g. Cursor keeps `globs`/`alwaysApply`; `other` keeps only the minimum portable subset `description` + `alwaysApply`). `AGENTS.md` references one canonical directory — the highest-priority active tool's. Other active tools' rules dirs are still populated for their own discovery or explicit path loading.
 - `content/agents/*.md` — full role descriptions and prompts for the 13 specialized subagents. Source file names use short names such as `developer.md` / `explorer.md`; the installed agent id is defined by each file's frontmatter. Each AI tool discovers them from its own agents directory after install.
 
 ## USER-RULES.md
@@ -274,7 +281,7 @@ The installer detects foreign (user-authored) files and records them in `.ai-rul
 
 ## Migration on first install
 
-If at first install the project already had an `AGENTS.md` or `CLAUDE.md` with custom content, the installer renames those files to `AGENTS.md.bak.md` / `CLAUDE.md.bak.md` and inlines their original content into `USER-RULES.md` between migration markers. The migrated block should be reviewed: keep what is needed and remove the rest.
+If at first install the project already had an `AGENTS.md` or `CLAUDE.md` with custom content, the installer renames those files to `AGENTS.md.bak.md` / `CLAUDE.md.bak.md` and inlines their original content into `USER-RULES.md` between migration markers. If the default backup name already exists, a numeric suffix is added instead of overwriting it. The migrated block should be reviewed: keep what is needed and remove the rest.
 
 ## Migration from earlier `1c-rules` versions
 

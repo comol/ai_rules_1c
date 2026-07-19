@@ -14,7 +14,7 @@ Background reference: `dev-standards-architecture.md §2` (Extensions) — modif
 
 > **Naming convention used in examples.** Below, `Расш1_` / `МоеРасш_` denotes the **extension's own short alias** (set in the extension's properties — typically the `Имя` of the extension or an explicit alias), **not** `{PREFIX}` from `.dev.env`. `{PREFIX}` applies to new metadata objects and attributes; the extension alias applies to procedure / function names introduced by the extension and prevents name collisions between extensions. The two are independent: an extension can both add a new attribute `{PREFIX}Признак` to a typical object and define an interceptor procedure `Расш1_ПриЗаписи` in the same module.
 >
-> The alias itself MUST NOT contain the letter «ё» — see `dev-standards-core.md §6 → Typography`. Use `МоеРасш_`, `Расш1_`, `MyExt_` or any «ё»-free form.
+> The alias itself MUST NOT contain the letter «ё» — see `dev-standards-code-style.md → Typography`. Use `МоеРасш_`, `Расш1_`, `MyExt_` or any «ё»-free form.
 
 ---
 

@@ -113,19 +113,19 @@ Use this when:
 
 ## 4. Web unpublish — remove the publication
 
-Stops Apache, removes the publication block from `httpd.conf`, deletes the corresponding `default.vrd`. The infobase itself is **not** touched.
+Removes the publication block from `httpd.conf` and deletes the publication directory (including `default.vrd`). If this Apache instance is running, the script restarts it when other publications remain or stops it when none remain. The infobase itself is **not** touched.
 
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
     -AppName <publication> `
-    [-ApachePath <path>]
+    [-ApachePath <path>] -DryRun
+
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
+    -AppName <publication> `
+    [-ApachePath <path>] -Force
 ```
 
-Pass `-All` instead of `-AppName` to remove every publication in one call:
-
-```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 -All [-ApachePath <path>]
-```
+Preview is mandatory in the workflow; the script refuses a real unpublish without `-Force`. Use `-All -DryRun` / `-All -Force` for all publications.
 
 ---
 

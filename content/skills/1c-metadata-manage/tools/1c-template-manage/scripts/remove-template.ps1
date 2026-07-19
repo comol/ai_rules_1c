@@ -8,7 +8,11 @@ param(
 	[Parameter(Mandatory)]
 	[string]$TemplateName,
 
-	[string]$SrcDir = "src"
+	[string]$SrcDir = "src",
+
+	[switch]$DryRun,
+
+	[switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,17 +37,7 @@ if (-not (Test-Path $templateMetaPath)) {
 	exit 1
 }
 
-# --- Удаление файлов ---
-
-if (Test-Path $templateDir) {
-	Remove-Item -Path $templateDir -Recurse -Force
-	Write-Host "[OK] Удалён каталог: $templateDir"
-}
-
-Remove-Item -Path $templateMetaPath -Force
-Write-Host "[OK] Удалён файл: $templateMetaPath"
-
-# --- Модификация корневого XML ---
+# --- Preflight: parse and modify XML in memory before deleting anything ---
 
 $rootXmlFull = Resolve-Path $rootXmlPath
 $xmlDoc = New-Object System.Xml.XmlDocument
@@ -55,8 +49,10 @@ $nsMgr.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
 
 # Удалить <Template>TemplateName</Template> из ChildObjects
 $templateNodes = $xmlDoc.SelectNodes("//md:ChildObjects/md:Template", $nsMgr)
+$templateNodeFound = $false
 foreach ($node in $templateNodes) {
 	if ($node.InnerText -eq $TemplateName) {
+		$templateNodeFound = $true
 		$parent = $node.ParentNode
 		# Удалить предшествующий whitespace
 		$prev = $node.PreviousSibling
@@ -67,24 +63,57 @@ foreach ($node in $templateNodes) {
 		break
 	}
 }
+if (-not $templateNodeFound) {
+	Write-Error "Template is not registered in ChildObjects: $TemplateName"
+	exit 1
+}
 
 # Очистить MainDataCompositionSchema если указывала на этот макет
 $mainDCS = $xmlDoc.SelectSingleNode("//md:MainDataCompositionSchema", $nsMgr)
 if ($mainDCS -and $mainDCS.InnerText -match "Template\.$([regex]::Escape($TemplateName))$") {
 	$mainDCS.InnerText = ""
-	Write-Host "[OK] Очищён MainDataCompositionSchema"
+	Write-Host "[PLAN] Clear MainDataCompositionSchema"
 }
 
-# Сохранить с BOM
+# --- Safety gate ---
+
+Write-Host "Planned changes:"
+Write-Host "  modify: $rootXmlPath (remove ChildObjects/Template '$TemplateName')"
+Write-Host "  delete: $templateMetaPath"
+if (Test-Path $templateDir) { Write-Host "  delete: $templateDir (recursive)" }
+
+if ($DryRun) {
+	Write-Host "[DRY-RUN] No files changed."
+	exit 0
+}
+if (-not $Force) {
+	Write-Error "Removal requires explicit -Force. Run with -DryRun first to review the plan."
+	exit 2
+}
+
+# Serialize to a temporary file first. If XML generation fails, the source tree
+# remains untouched. Commit the root registration change before deleting files.
 $encBom = New-Object System.Text.UTF8Encoding($true)
 $settings = New-Object System.Xml.XmlWriterSettings
 $settings.Encoding = $encBom
 $settings.Indent = $false
 
-$stream = New-Object System.IO.FileStream($rootXmlFull.Path, [System.IO.FileMode]::Create)
+$tempRootXml = $rootXmlFull.Path + ".remove-template.tmp"
+$stream = New-Object System.IO.FileStream($tempRootXml, [System.IO.FileMode]::Create)
 $writer = [System.Xml.XmlWriter]::Create($stream, $settings)
-$xmlDoc.Save($writer)
-$writer.Close()
-$stream.Close()
+try {
+	$xmlDoc.Save($writer)
+}
+finally {
+	$writer.Close()
+	$stream.Close()
+}
+Move-Item -Path $tempRootXml -Destination $rootXmlFull.Path -Force
 
-Write-Host "[OK] Макет $TemplateName удалён из $rootXmlPath"
+if (Test-Path $templateDir) {
+	Remove-Item -Path $templateDir -Recurse -Force
+	Write-Host "[OK] Removed directory: $templateDir"
+}
+Remove-Item -Path $templateMetaPath -Force
+Write-Host "[OK] Removed file: $templateMetaPath"
+Write-Host "[OK] Template $TemplateName removed from $rootXmlPath"

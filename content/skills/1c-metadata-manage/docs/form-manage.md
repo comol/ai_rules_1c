@@ -1,4 +1,4 @@
-# 1C Form Manage — Patterns, Scaffold, Compile, Edit, Info, Validate
+﻿# 1C Form Manage — Patterns, Scaffold, Compile, Edit, Info, Validate
 
 Comprehensive managed form management: design patterns reference, create/remove forms, compile from JSON, edit elements, analyze structure, validate correctness.
 
@@ -6,258 +6,18 @@ Comprehensive managed form management: design patterns reference, create/remove 
 
 ## 1. Patterns — Design Reference
 
-Full reference of managed-form layout archetypes, naming conventions, layout principles and advanced ERP-class patterns lives in [`form-patterns.md`](form-patterns.md).
+**Canonical layout patterns:** `content/rules/form-patterns.md` (project rule; Russian event/element names). The skill-local [`form-patterns.md`](form-patterns.md) is a thin pointer to that file — do not duplicate content here.
+
+Also load the project forms router `content/rules/forms.md` first for any managed-form task (it selects `forms-add.md`, `form-module.md`, `async-methods.md`, …).
 
 Load `form-patterns.md` **before** designing a form via `1c-form-compile` when user requirements do not specify element placement (5+ elements or unclear requirements). For simple 1–3 field forms it is not needed.
 
-The reference covers:
+The canonical rule covers:
 
 - **Archetypes** — Document, Data Processor, List, Catalog Item (Simple/Complex), Wizard.
-- **Naming** — group / element / event-handler conventions.
+- **Naming** — group / element / event-handler conventions (`ГруппаШапка`, `Отбор[Поле]` + `Использование`, …).
 - **Layout principles** — reading order, two-column header, action buttons on `autoCmdBar`, totals near table, etc.
 - **Advanced patterns** — collapsible groups, warning banners, popup menus, hyperlink labels, modal dialogs.
-
-<details>
-<summary>Quick archetype index (full versions in <code>form-patterns.md</code>)</summary>
-
-#### Document Form
-
-```
-Header (horizontal, 2 columns)
-├─ Left (vertical): NumberDate (H: Number + Date), Contractor, Contract
-├─ Right (vertical): Organization, Department, PricesAndCurrency (hyperlink label)
-Pages (pages)
-├─ Items: table Object.Items
-├─ Services: table Object.Services (optional)
-└─ Additional: other attributes
-Footer (vertical)
-├─ Totals (horizontal): Total, VAT, Discount
-└─ CommentResponsible (horizontal): Comment + Responsible
-```
-
-**Events:** OnCreateAtServer, OnReadAtServer, OnOpen, BeforeWriteAtServer, AfterWriteAtServer, AfterWrite, NotificationProcessing
-**Properties:** autoTitle=false
-
-#### Data Processor Form
-
-```
-Parameters (vertical)
-├─ Input fields group (Organization, Period, operating modes)
-├─ Information labels (label, hyperlink)
-Working area
-├─ Data table or Pages with tabs
-Action buttons
-├─ Execute / Apply (defaultButton)
-├─ Close (stdCommand: Close)
-```
-
-**Events:** OnCreateAtServer, OnOpen, NotificationProcessing
-**Properties:** windowOpeningMode=LockOwnerWindow (if dialog), autoTitle=false
-
-#### List Form
-
-```
-Filters (group: alwaysHorizontal)
-├─ FilterGroup[Field] (H): Checkbox + InputField (for each filter)
-List (table, DynamicList)
-├─ Columns: labelField (not input — data is read-only)
-```
-
-**Events:** OnCreateAtServer, OnOpen, NotificationProcessing, OnLoadDataFromSettingsAtServer
-**Properties:** autoSaveDataInSettings=Use
-**Filters:** pair of attributes per filter — `Filter[Field]` (value) + `Filter[Field]Use` (boolean)
-
-#### Catalog Item Form
-
-**Simple:**
-```
-AttributeGroup (horizontal)
-├─ Description -> Object.Description
-└─ Code -> Object.Code (if needed)
-```
-
-**Complex:**
-```
-Main (vertical)
-├─ Description -> Object.Description
-├─ Parameters (horizontal, 2 columns)
-│  ├─ Left: main attributes
-│  └─ Right: additional attributes
-└─ ContactInfo / Additional (vertical)
-```
-
-**Events:** OnCreateAtServer, OnReadAtServer, BeforeWriteAtServer, NotificationProcessing
-
-#### Wizard
-
-```
-Pages (pages, OnCurrentPageChange)
-├─ Step1: description + parameters
-├─ Step2: main work
-└─ Step3: result
-Buttons (horizontal)
-├─ Back (command), Next (command, defaultButton), Execute (command)
-└─ Close (stdCommand: Close)
-```
-
-**Properties:** windowOpeningMode=LockOwnerWindow, commandBarLocation=None
-
----
-
-### Naming Conventions
-
-#### Groups
-
-| Purpose | Name | Type |
-|---------|------|------|
-| Header | `HeaderGroup` | horizontal |
-| Left column | `HeaderLeftGroup` | vertical |
-| Right column | `HeaderRightGroup` | vertical |
-| Number+Date | `NumberDateGroup` | horizontal |
-| Footer | `FooterGroup` | vertical |
-| Totals | `TotalsGroup` | horizontal |
-| Buttons | `ButtonsGroup` | horizontal |
-| Pages | `PagesGroup` / `Pages` | pages |
-| Warning | `WarningGroup` | horizontal, visible:false |
-| Additional section | `AdditionalGroup` / `OtherGroup` | vertical, collapse |
-
-#### Elements
-
-| Purpose | Name |
-|---------|------|
-| Field in table | `[Table][Field]` |
-| Total | `Totals[Field]` |
-| Hyperlink label | `[Field]Label` |
-| Filter | `Filter[Field]` |
-| Filter checkbox | `Filter[Field]Use` |
-| Command button | `[Command]Button` |
-| Banner image | `[Banner]Picture` |
-| Banner label | `[Banner]Label` |
-| Submenu | `Submenu[Action]` |
-
-#### Event Handlers
-
-Name = element name + Russian suffix:
-
-| Event | Suffix | Example |
-|-------|--------|---------|
-| OnChange | ПриИзменении | `ОрганизацияПриИзменении` |
-| StartChoice | НачалоВыбора | `КонтрагентНачалоВыбора` |
-| Click | Нажатие | `ЦеныИВалютаНажатие` |
-| OnEditEnd | ПриОкончанииРедактирования | `ТоварыПриОкончанииРедактирования` |
-| OnStartEdit | ПриНачалеРедактирования | `ТоварыПриНачалеРедактирования` |
-
-Form handlers: `ПриСозданииНаСервере`, `ПриОткрытии`, `ПередЗакрытием`, `ОбработкаОповещения`.
-
----
-
-### Layout Principles
-
-1. **Reading order.** Top to bottom, left to right. Most important — at top.
-2. **Two-column header.** Main attributes on left (contractor, warehouse), organizational on right (organization, department).
-3. **Action buttons at bottom.** Main button — `defaultButton: true`. Close — always last.
-4. **Tables are the main area.** Tabular sections occupy most of the form, usually on Pages.
-5. **Totals near table.** In footer, horizontal group, all fields readOnly.
-6. **Filters as separate zone.** Above list, alwaysHorizontal, pair of "checkbox + field" per filter.
-7. **Hidden elements for states.** Banners, warnings — `visible: false`, shown programmatically.
-8. **Hyperlink labels for dialogs.** `labelField` with `hyperlink: true` and Click event.
-
----
-
-### Advanced Patterns
-
-#### Collapsible Groups
-
-For optional sections (signatures, additional, other):
-
-```json
-{ "group": "vertical", "name": "SignaturesGroup", "title": "Signatures",
-  "behavior": "Collapsible", "collapsed": true, "children": [...] }
-```
-
-#### Warning Banner
-
-Group "image + label", hidden by default, shown programmatically:
-
-```json
-{ "group": "horizontal", "name": "WarningGroup", "showTitle": false,
-  "visible": false, "children": [
-    { "picture": "WarningPicture" },
-    { "label": "WarningLabel", "title": "Text", "maxWidth": 76, "autoMaxWidth": false }
-]}
-```
-
-#### Popup Menu in Command Bar
-
-Grouping related commands (print, send) in one button with icon:
-
-```json
-{ "cmdBar": "CommandBar", "children": [
-    { "popup": "SubmenuPrint", "title": "Print",
-      "picture": "StdPicture.Print", "representation": "Picture", "children": [
-        { "button": "PrintInvoice", "command": "Print" },
-        { "button": "PrintReceipt", "command": "PrintReceipt" }
-    ]}
-]}
-```
-
-#### Form Without Standard Command Bar
-
-For modal dialogs and wizards:
-
-```json
-{ "properties": { "commandBarLocation": "None", "windowOpeningMode": "LockWholeInterface" } }
-```
-
-#### Hyperlink Label
-
-Instead of a button for opening subforms (PricesAndCurrency, AccountingPolicy):
-
-```json
-{ "labelField": "PricesAndCurrencyLabel", "path": "PricesAndCurrency", "hyperlink": true, "on": ["Click"] }
-```
-
----
-
-### Full DSL Example: Data Processor Form
-
-```json
-{
-  "title": "CSV Data Import",
-  "properties": { "autoTitle": false, "windowOpeningMode": "LockOwnerWindow" },
-  "events": { "OnCreateAtServer": "OnCreateAtServerHandler" },
-  "elements": [
-    { "group": "vertical", "name": "ParametersGroup", "children": [
-      { "input": "ImportFile", "path": "ImportFile", "title": "File", "clearButton": true, "horizontalStretch": true, "on": ["StartChoice"] },
-      { "input": "Encoding", "path": "Encoding" },
-      { "input": "Delimiter", "path": "Delimiter", "title": "Column Delimiter" }
-    ]},
-    { "table": "Data", "path": "Object.Data", "on": ["OnStartEdit"], "columns": [
-      { "input": "DataRowNumber", "path": "Object.Data.LineNumber", "readOnly": true, "title": "No." },
-      { "input": "DataName", "path": "Object.Data.Name" },
-      { "input": "DataQuantity", "path": "Object.Data.Quantity", "on": ["OnChange"] },
-      { "input": "DataAmount", "path": "Object.Data.Amount", "readOnly": true }
-    ]},
-    { "group": "horizontal", "name": "ButtonsGroup", "children": [
-      { "button": "Import", "command": "Import", "title": "Import from File", "defaultButton": true },
-      { "button": "Clear", "command": "Clear", "title": "Clear Table" },
-      { "button": "Close", "stdCommand": "Close" }
-    ]}
-  ],
-  "attributes": [
-    { "name": "Object", "type": "ExternalDataProcessorObject.CSVImport", "main": true },
-    { "name": "ImportFile", "type": "string" },
-    { "name": "Encoding", "type": "string(20)" },
-    { "name": "Delimiter", "type": "string(5)" }
-  ],
-  "commands": [
-    { "name": "Import", "action": "ImportHandler" },
-    { "name": "Clear", "action": "ClearHandler" }
-  ]
-}
-```
-
-</details>
 
 ---
 
@@ -332,7 +92,7 @@ Document, Catalog, DataProcessor, Report, InformationRegister, ChartOfAccounts, 
 Unified across configuration objects and EPF/ERF — pass the object name (or alias `ProcessorName` for backward compatibility).
 
 ```
-1c-form-scaffold remove <ObjectName> <FormName> [SrcDir]
+1c-form-scaffold remove <ObjectName> <FormName> [SrcDir] [-DryRun | -Force]
 ```
 
 | Parameter | Required | Default | Description |
@@ -340,11 +100,16 @@ Unified across configuration objects and EPF/ERF — pass the object name (or al
 | ObjectName (alias `ProcessorName`) | yes | — | Object name (root XML lives at `<SrcDir>/<ObjectName>.xml`) |
 | FormName | yes | — | Form name to remove |
 | SrcDir | no | `src` | Source directory |
+| DryRun | no | off | Print the root XML and files that would change; do not mutate anything |
+| Force | required to delete | off | Confirm the reviewed removal plan and perform it |
 
-**Command:**
+**Commands (preview first, then execute):**
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1 -ObjectName "<ObjectName>" -FormName "<FormName>" [-SrcDir "<SrcDir>"]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1 -ObjectName "<ObjectName>" -FormName "<FormName>" [-SrcDir "<SrcDir>"] -DryRun
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1 -ObjectName "<ObjectName>" -FormName "<FormName>" [-SrcDir "<SrcDir>"] -Force
 ```
+
+The script refuses a real deletion without `-Force`. It parses and serializes the parent XML before mutating the source tree, then removes the registration before deleting the form files. After execution, run the form / metadata validator required by the main workflow.
 
 #### What Gets Removed
 
@@ -381,8 +146,9 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold
 # EPF / ERF form (same unified script — pass the path to the EPF root XML)
 1c-form-scaffold add src/MyProcessor.xml MainForm --synonym "Main Form" --set-default
 
-# Remove a form (works for both config objects and EPF/ERF)
-1c-form-scaffold remove MyProcessor OldForm
+# Preview, then remove a form (works for both config objects and EPF/ERF)
+1c-form-scaffold remove MyProcessor OldForm -DryRun
+1c-form-scaffold remove MyProcessor OldForm -Force
 ```
 
 ---
@@ -394,7 +160,7 @@ Two modes:
 1. **JSON DSL** — generate `Form.xml` from a JSON definition.
 2. **From-object** (`-FromObject`) — generate a typical form from an object's metadata (Catalog, Document, InformationRegister, AccumulationRegister, ChartOfCharacteristicTypes, ExchangePlan, ChartOfAccounts) using the active preset (default `erp-standard`).
 
-> **Designing a form from scratch (5+ elements or unclear requirements)** — load [`form-patterns.md`](form-patterns.md) first. For simple forms (1–3 fields) it is not needed.
+> **Designing a form from scratch (5+ elements or unclear requirements)** — load canonical `content/rules/form-patterns.md` first (skill-local [`form-patterns.md`](form-patterns.md) is a pointer). For simple forms (1–3 fields) it is not needed.
 >
 > **Full DSL reference** — see [`form-compile-dsl.md`](form-compile-dsl.md). The block below is a quick summary.
 

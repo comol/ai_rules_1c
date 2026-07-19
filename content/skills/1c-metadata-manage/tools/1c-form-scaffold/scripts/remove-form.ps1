@@ -8,7 +8,11 @@ param(
 	[Parameter(Mandatory)]
 	[string]$FormName,
 
-	[string]$SrcDir = "src"
+	[string]$SrcDir = "src",
+
+	[switch]$DryRun,
+
+	[switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,17 +37,7 @@ if (-not (Test-Path $formMetaPath)) {
 	exit 1
 }
 
-# --- Удаление файлов ---
-
-if (Test-Path $formDir) {
-	Remove-Item -Path $formDir -Recurse -Force
-	Write-Host "[OK] Удалён каталог: $formDir"
-}
-
-Remove-Item -Path $formMetaPath -Force
-Write-Host "[OK] Удалён файл: $formMetaPath"
-
-# --- Модификация корневого XML ---
+# --- Preflight: parse and modify XML in memory before deleting anything ---
 
 $rootXmlFull = Resolve-Path $rootXmlPath
 $xmlDoc = New-Object System.Xml.XmlDocument
@@ -55,8 +49,10 @@ $nsMgr.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
 
 # Удалить <Form>FormName</Form> из ChildObjects
 $formNodes = $xmlDoc.SelectNodes("//md:ChildObjects/md:Form", $nsMgr)
+$formNodeFound = $false
 foreach ($node in $formNodes) {
 	if ($node.InnerText -eq $FormName) {
+		$formNodeFound = $true
 		$parent = $node.ParentNode
 		# Удалить предшествующий whitespace
 		$prev = $node.PreviousSibling
@@ -67,27 +63,65 @@ foreach ($node in $formNodes) {
 		break
 	}
 }
+if (-not $formNodeFound) {
+	Write-Error "Form is not registered in ChildObjects: $FormName"
+	exit 1
+}
 
-# Очистить любые Default*/Auxiliary* form-слоты, указывавшие на удалённую форму
-# (form-add пишет свойство по назначению: DefaultObjectForm/DefaultListForm/
-#  DefaultChoiceForm/DefaultRecordForm/DefaultForm — не только generic DefaultForm).
+# Clear any Default*/Auxiliary* form slot pointing at the removed form
+# (form-add writes the property by purpose: DefaultObjectForm/DefaultListForm/
+#  DefaultChoiceForm/DefaultRecordForm/DefaultForm - not only generic DefaultForm).
+$clearedDefaultProperties = @()
 $formRefRe = "Form\.$([regex]::Escape($FormName))$"
 foreach ($node in $xmlDoc.SelectNodes("//md:*", $nsMgr)) {
 	if ($node.LocalName -like "*Form" -and $node.InnerText -and $node.InnerText -match $formRefRe) {
+		$clearedDefaultProperties += $node.LocalName
 		$node.InnerText = ""
 	}
 }
 
-# Сохранить с BOM
+# --- Safety gate ---
+
+Write-Host "Planned changes:"
+Write-Host "  modify: $rootXmlPath (remove ChildObjects/Form '$FormName')"
+foreach ($propertyName in $clearedDefaultProperties) {
+	Write-Host "  modify: $rootXmlPath (clear $propertyName)"
+}
+Write-Host "  delete: $formMetaPath"
+if (Test-Path $formDir) { Write-Host "  delete: $formDir (recursive)" }
+
+if ($DryRun) {
+	Write-Host "[DRY-RUN] No files changed."
+	exit 0
+}
+if (-not $Force) {
+	Write-Error "Removal requires explicit -Force. Run with -DryRun first to review the plan."
+	exit 2
+}
+
+# Serialize to a temporary file first. If XML generation fails, the source tree
+# remains untouched. Commit the root registration change before deleting files.
 $encBom = New-Object System.Text.UTF8Encoding($true)
 $settings = New-Object System.Xml.XmlWriterSettings
 $settings.Encoding = $encBom
 $settings.Indent = $false
 
-$stream = New-Object System.IO.FileStream($rootXmlFull.Path, [System.IO.FileMode]::Create)
+$tempRootXml = $rootXmlFull.Path + ".remove-form.tmp"
+$stream = New-Object System.IO.FileStream($tempRootXml, [System.IO.FileMode]::Create)
 $writer = [System.Xml.XmlWriter]::Create($stream, $settings)
-$xmlDoc.Save($writer)
-$writer.Close()
-$stream.Close()
+try {
+	$xmlDoc.Save($writer)
+}
+finally {
+	$writer.Close()
+	$stream.Close()
+}
+Move-Item -Path $tempRootXml -Destination $rootXmlFull.Path -Force
 
-Write-Host "[OK] Форма $FormName удалена из $rootXmlPath"
+if (Test-Path $formDir) {
+	Remove-Item -Path $formDir -Recurse -Force
+	Write-Host "[OK] Removed directory: $formDir"
+}
+Remove-Item -Path $formMetaPath -Force
+Write-Host "[OK] Removed file: $formMetaPath"
+Write-Host "[OK] Form $FormName removed from $rootXmlPath"

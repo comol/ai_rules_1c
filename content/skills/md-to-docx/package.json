@@ -1,0 +1,10 @@
+{
+  "name": "md-to-docx",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runtime dependency for the md-to-docx Cursor skill",
+  "type": "commonjs",
+  "dependencies": {
+    "docx": "^9.7.1"
+  }
+}

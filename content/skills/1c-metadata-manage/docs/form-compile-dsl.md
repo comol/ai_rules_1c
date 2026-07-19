@@ -9,7 +9,7 @@ Detailed reference for the JSON DSL accepted by `1c-form-compile` (PowerShell sc
 1. **JSON DSL** — generate Form.xml from a JSON definition.
 2. **From object** (`-FromObject`) — generate a typical form from an object's metadata using the ERP preset.
 
-> When designing a form from scratch (5+ elements or unclear requirements) — load `form-patterns.md` first. For simple forms (1–3 fields) it is not needed.
+> When designing a form from scratch (5+ elements or unclear requirements) — load the canonical `content/rules/form-patterns.md` first (skill-local `form-patterns.md` is a pointer). For simple forms (1–3 fields) it is not needed.
 
 ## Parameters
 

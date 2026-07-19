@@ -10,9 +10,7 @@ category: development
 
 ### Code Placement
 - Business logic — **in common modules**, not in form modules
-- Server common modules — suffixes: `*ServerCall`, `*ObjectModule`, `*ManagerModule`
-- Client common modules — suffix: `*Client`
-- Form-related modules — suffix: `*Forms`
+- Common-module names follow the БСП suffix convention: no suffix — server-only module (`РаботаСЗаказами`); `Клиент` — client-only (`РаботаСЗаказамиКлиент`); `КлиентСервер` — compiled on both sides; `ВызовСервера` — server module callable from the client; `Глобальный` — global client module; `ПовтИсп` — cached return values (повторное использование возвращаемых значений); `Переопределяемый` — project override hooks
 - Server object modules — mandatory preprocessor: `#Если Сервер Или ТолстыйКлиентОбычноеПриложение Или ВнешнееСоединение Тогда`
 
 ### "Result-Structure" Pattern
@@ -86,7 +84,7 @@ Always check key existence before access:
 ```
 
 ### Collection Normalization
-Normalize input to a single collection type for uniform processing. Use `CommonClientServer.ValueInArray()` for single-to-array conversion.
+Normalize input to a single collection type for uniform processing. Use `ОбщегоНазначенияКлиентСервер.ЗначениеВМассиве()` (БСП) for single-to-array conversion.
 
 ## 2. Extensions
 
@@ -145,7 +143,7 @@ Visual form editing in extensions — **minimize**. Changes — programmatically
 ### Dates
 - On server — `ТекущаяДатаСеанса()` instead of `ТекущаяДата()`. See `platform-solutions.md §6 → "Time on the server"`.
 
-### Queries — Authoritative Rules
+### Queries
 - Verify metadata attributes (existence, names, types) **before** writing a query — see `AGENTS.md → MCP Tool Calling` (rule #3 «verify before writing»; metadata-first via `get_object_dossier` / `metadatasearch`).
 - Look for existing query examples before writing complex queries (`templatesearch`, `search_code`).
 - Query text formatting — on a new line at the same indentation level as the variable declaration:
@@ -168,7 +166,9 @@ Visual form editing in extensions — **minimize**. Changes — programmatically
 - Use `Запрос.УстановитьПараметр()` instead of string concatenation — prevents SQL injection and improves plan caching.
 - For complex data retrieval prefer batch queries with temporary tables over multiple separate queries.
 - Temporary tables — prefixed with `ВТ_`.
-- `ВНУТРЕННЕЕ СОЕДИНЕНИЕ` is preferred over `ЛЕВОЕ СОЕДИНЕНИЕ` when possible.
+- Choose the join type from the required result semantics. Use `ВНУТРЕННЕЕ СОЕДИНЕНИЕ` when
+  rows without a match must be discarded. Use `ЛЕВОЕ СОЕДИНЕНИЕ` when source rows must be
+  preserved, and handle `NULL` explicitly.
 - When accessing registers — filter by dimensions first (in virtual table parameters, not in `ГДЕ`).
 - Do not modify register movements directly — only via the posting mechanism.
 - When a limited result set is needed — use `ПЕРВЫЕ N`.
@@ -185,7 +185,7 @@ Visual form editing in extensions — **minimize**. Changes — programmatically
 
 ## 4. Data Access — Reference Attribute Access
 
-**Direct dot-notation access on references** (e.g. `Контрагент.ИНН`) loads the entire object from the database. **[Project rule — stricter than ITS standard:** outside trivial single-call handlers, the rule is a hard ban; in simple, non-loop code with one or two attributes ITS allows it, but the project default is to use dedicated БСП methods.**]**
+**Direct dot-notation access on references** (e.g. `Контрагент.ИНН`) loads the entire object from the database. **[Project rule — stricter than ITS standard.]** Outside trivial single-call handlers, the rule is a hard ban; in simple, non-loop code with one or two attributes ITS allows it, but the project default is to use dedicated БСП methods.
 
 Use these methods instead:
 

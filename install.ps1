@@ -119,11 +119,12 @@ param(
 # CONSTANTS
 # ============================================================================
 
-$script:ProtocolVersion = '1.0'
+$script:ProtocolVersion = '1.1'
 $script:ManifestFileName = '.ai-rules.json'
 $script:AgentsMdFileName = 'AGENTS.md'
 $script:UserRulesFileName = 'USER-RULES.md'
 $script:MemoryFileName = 'memory.md'
+$script:LlmRulesFileName = 'LLM-RULES.md'
 $script:DevEnvFileName = '.dev.env'
 $script:DevEnvExampleName = '.dev.env.example'
 $script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'other')
@@ -1321,11 +1322,86 @@ function Invoke-OpenSpecScaffold {
     Write-Info "  OpenSpec scaffold: $copied file(s) copied, $skipped preserved"
 }
 
+# Map an OpenSpec bundle relative path to its real install destination for a
+# given tool. The bundle mirrors the layout `openspec init` produces, which for
+# Kilo Code is the legacy `.kilocode/` tree (`workflows/` + `skills/`). Every
+# other piece of Kilo Code content is installed into `.kilo/` (see
+# `adapters/kilocode.yaml`), so copying the bundle verbatim would leave Kilo
+# Code with two project folders (`.kilo` + `.kilocode`). Remap the Kilo Code
+# artefacts onto the same `.kilo/` root — commands into `.kilo/commands/`
+# (Kilo's current location for what upstream calls "workflows") and skills into
+# `.kilo/skills/`. All other tools already match their adapter, so their paths
+# pass through unchanged.
+function Get-OpenSpecBundleDestRel {
+    param(
+        [string]$Tool,
+        [string]$Rel
+    )
+    if ($Tool -eq 'kilocode') {
+        if ($Rel -like '.kilocode/workflows/*') {
+            return '.kilo/commands/' + $Rel.Substring('.kilocode/workflows/'.Length)
+        }
+        if ($Rel -like '.kilocode/skills/*') {
+            return '.kilo/skills/' + $Rel.Substring('.kilocode/skills/'.Length)
+        }
+        if ($Rel -like '.kilocode/*') {
+            return '.kilo/' + $Rel.Substring('.kilocode/'.Length)
+        }
+    }
+    return $Rel
+}
+
+# Remove OpenSpec artefacts left in the legacy `.kilocode/` tree by an earlier
+# installer version (which copied the bundle verbatim into `.kilocode/`). Only
+# files 1c-rules previously managed there are deleted — identified via the
+# current manifest or the pre-update snapshot ($script:PreviousFiles) — and only
+# when not flagged userModified, so user content is never touched. Empty
+# `.kilocode/` sub-directories left behind are pruned. Returns the count of
+# files removed. Safe to call on both `init` (over an existing install) and
+# `update`.
+function Remove-LegacyKilocodeOpenSpec {
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest
+    )
+    $candidates = [System.Collections.Generic.HashSet[string]]::new()
+    if ($Manifest -and $Manifest.files) {
+        foreach ($k in @($Manifest.files.Keys)) { [void]$candidates.Add($k) }
+    }
+    if ($script:PreviousFiles) {
+        foreach ($k in @($script:PreviousFiles.Keys)) { [void]$candidates.Add($k) }
+    }
+    $removed = 0
+    foreach ($rel in @($candidates)) {
+        if ($rel -notlike '.kilocode/workflows/*' -and $rel -notlike '.kilocode/skills/*') { continue }
+        if ($Manifest -and $Manifest.files -and $Manifest.files.Contains($rel)) {
+            $entry = $Manifest.files[$rel]
+            if ($entry -and $entry.userModified) { continue }
+            [void]$Manifest.files.Remove($rel)
+        }
+        $abs = Join-Path $Root $rel
+        if (Test-Path $abs) {
+            Remove-Item -Path $abs -Force -ErrorAction SilentlyContinue
+            $removed++
+        }
+    }
+    foreach ($sub in @('.kilocode/workflows', '.kilocode/skills', '.kilocode')) {
+        $absSub = Join-Path $Root $sub
+        if (Test-Path $absSub) {
+            $left = Get-ChildItem -Recurse -File -Path $absSub -ErrorAction SilentlyContinue
+            if (-not $left -or $left.Count -eq 0) {
+                Remove-Item -Path $absSub -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    return $removed
+}
+
 # Place OpenSpec artefacts (slash commands / workflows + SKILLs) bundled under
 # `content/openspec-bundle/<tool>/...`. Each file under a tool's bundle is
-# copied verbatim to the same relative path in the project root, so the
-# resulting layout exactly matches what `openspec init` would produce — but
-# without requiring npm or the OpenSpec CLI at install time.
+# copied to its real install destination (see Get-OpenSpecBundleDestRel), so the
+# resulting layout matches what the active tool actually reads — but without
+# requiring npm or the OpenSpec CLI at install time.
 #
 # Files are tracked in `manifest.files` like any other managed content, so
 # `update` refreshes them, `remove` deletes them, and `userModified` is
@@ -1352,28 +1428,39 @@ function Invoke-OpenSpecArtifacts {
 
     $totalCopied = 0
     $totalKept = 0
+    $skippedTools = @()
     foreach ($tool in $ActiveTools) {
         $toolBundle = Join-Path $bundleRoot $tool
-        if (-not (Test-Path $toolBundle)) { continue }
+        if (-not (Test-Path $toolBundle)) {
+            $skippedTools += $tool
+            continue
+        }
         $toolBundleFull = (Resolve-Path $toolBundle).Path.TrimEnd('\', '/')
         $toolCopied = 0
         $toolKept = 0
         Get-ChildItem -Recurse -File -Path $toolBundle -ErrorAction SilentlyContinue | ForEach-Object {
             $rel = $_.FullName.Substring($toolBundleFull.Length + 1).Replace('\', '/')
-            if ($Manifest.files.Contains($rel)) {
-                $existing = $Manifest.files[$rel]
+            $destRel = Get-OpenSpecBundleDestRel -Tool $tool -Rel $rel
+            if ($Manifest.files.Contains($destRel)) {
+                $existing = $Manifest.files[$destRel]
                 if ($existing -and $existing.userModified) {
                     $toolKept++
                     return
                 }
             }
-            $absTarget = Join-Path $Root $rel
+            $absTarget = Join-Path $Root $destRel
+            if ((Test-Path $absTarget) -and -not $Manifest.files.Contains($destRel)) {
+                # Pre-existing OpenSpec command/skill is user-owned. The bundle
+                # is skip-if-exists on first install; never adopt and overwrite it.
+                $toolKept++
+                return
+            }
             $parentDir = Split-Path -Parent $absTarget
             if ($parentDir -and -not (Test-Path $parentDir)) {
                 New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
             }
             Copy-Item -Path $_.FullName -Destination $absTarget -Force
-            $Manifest.files[$rel] = [ordered]@{
+            $Manifest.files[$destRel] = [ordered]@{
                 source        = "content/openspec-bundle/$tool/$rel"
                 installedHash = (Get-FileSha256 $absTarget)
             }
@@ -1386,6 +1473,13 @@ function Invoke-OpenSpecArtifacts {
         }
         $totalCopied += $toolCopied
         $totalKept += $toolKept
+
+        if ($tool -eq 'kilocode') {
+            $removedLegacy = Remove-LegacyKilocodeOpenSpec -Root $Root -Manifest $Manifest
+            if ($removedLegacy -gt 0) {
+                Write-Info "  [kilocode] legacy .kilocode/ OpenSpec artefacts removed: $removedLegacy (migrated to .kilo/)"
+            }
+        }
     }
 
     if (-not $Manifest.integrations) { $Manifest.integrations = [ordered]@{} }
@@ -1394,6 +1488,12 @@ function Invoke-OpenSpecArtifacts {
     }
     if ($bundleVersion) {
         $Manifest.integrations['openspec']['artifactsBundleVersion'] = $bundleVersion
+    }
+    if ($skippedTools.Count -gt 0) {
+        $Manifest.integrations['openspec']['bundleSkipped'] = $skippedTools
+    }
+    elseif ($Manifest.integrations['openspec'].Contains('bundleSkipped')) {
+        [void]$Manifest.integrations['openspec'].Remove('bundleSkipped')
     }
     Write-Info "  OpenSpec artefacts: $totalCopied placed, $totalKept kept (bundle v$bundleVersion)"
 }
@@ -1786,6 +1886,23 @@ function Test-ForcePath {
     return $false
 }
 
+function Merge-ManifestOwners {
+    param(
+        [System.Collections.IDictionary]$Entry,
+        [string]$OwnerTool
+    )
+    $owners = @()
+    if ($Entry -and $Entry.Contains('owners')) {
+        $owners += @($Entry['owners'])
+    }
+    elseif ($Entry -and $Entry.Contains('ownerTool') -and $Entry['ownerTool']) {
+        # Compatibility with short-lived manifests that used a singular field.
+        $owners += [string]$Entry['ownerTool']
+    }
+    if ($OwnerTool) { $owners += $OwnerTool }
+    return @($owners | Where-Object { $_ } | Select-Object -Unique)
+}
+
 function Invoke-PlaceArtifactFile {
     param(
         [string]$Root,
@@ -1797,7 +1914,8 @@ function Invoke-PlaceArtifactFile {
         [string]$Mode,
         [string]$Template,
         [System.Collections.IDictionary]$Manifest,
-        [string]$ContentSource
+        [string]$ContentSource,
+        [string]$OwnerTool
     )
     # Respect user modifications: if manifest marks this path as userModified,
     # keep the user's edits and leave the manifest entry unchanged — unless the
@@ -1806,6 +1924,7 @@ function Invoke-PlaceArtifactFile {
     if ($Manifest -and $Manifest.files -and $Manifest.files.Contains($TargetRel)) {
         $existing = $Manifest.files[$TargetRel]
         if ($existing -and $existing.userModified -and -not (Test-ForcePath $TargetRel)) {
+            $existing['owners'] = @(Merge-ManifestOwners -Entry $existing -OwnerTool $OwnerTool)
             return
         }
     }
@@ -1838,10 +1957,14 @@ function Invoke-PlaceArtifactFile {
         Write-TextFile -Path $absTarget -Content $full
     }
     $hash = Get-FileSha256 $absTarget
-    $Manifest.files[$TargetRel] = [ordered]@{
+    $previousEntry = if ($Manifest.files.Contains($TargetRel)) { $Manifest.files[$TargetRel] } else { $null }
+    $entry = [ordered]@{
         source        = $ContentSource
         installedHash = $hash
     }
+    $owners = @(Merge-ManifestOwners -Entry $previousEntry -OwnerTool $OwnerTool)
+    if ($owners.Count -gt 0) { $entry['owners'] = $owners }
+    $Manifest.files[$TargetRel] = $entry
 }
 
 function Invoke-PlaceSkill {
@@ -1858,7 +1981,8 @@ function Invoke-PlaceSkill {
         [string]$SourceDir,
         [string]$TargetDir,
         [System.Collections.IDictionary]$Manifest,
-        [string]$ContentSource
+        [string]$ContentSource,
+        [string]$OwnerTool
     )
     $absTarget = Join-Path $Root $TargetDir
     $srcFull = (Resolve-Path $SourceDir).Path.TrimEnd('\', '/')
@@ -1876,6 +2000,7 @@ function Invoke-PlaceSkill {
         if ($Manifest.files.Contains($key)) {
             $skEntry = $Manifest.files[$key]
             if ($skEntry -and $skEntry.userModified -and -not (Test-ForcePath $key)) {
+                $skEntry['owners'] = @(Merge-ManifestOwners -Entry $skEntry -OwnerTool $OwnerTool)
                 continue
             }
         }
@@ -1885,10 +2010,14 @@ function Invoke-PlaceSkill {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
         }
         Copy-Item -Path $sf.FullName -Destination $destFull -Force
-        $Manifest.files[$key] = [ordered]@{
+        $previousEntry = if ($Manifest.files.Contains($key)) { $Manifest.files[$key] } else { $null }
+        $entry = [ordered]@{
             source        = $ContentSource
             installedHash = (Get-FileSha256 $destFull)
         }
+        $owners = @(Merge-ManifestOwners -Entry $previousEntry -OwnerTool $OwnerTool)
+        if ($owners.Count -gt 0) { $entry['owners'] = $owners }
+        $Manifest.files[$key] = $entry
     }
 
     # 2) Prune files that are no longer shipped, keeping user-modified ones.
@@ -1918,26 +2047,74 @@ function Invoke-PlaceSkill {
 # ============================================================================
 #
 # Source agent files in content/agents/*.md declare an abstract `modelTier`
-# (coding | light) instead of a concrete model name. The concrete model per
-# tier is a project setting in .dev.env:
-#   SUBAGENT_MODEL_CODING — coding / analysis / review subagents;
-#   SUBAGENT_MODEL_LIGHT  — small bounded tasks (e.g. 1c-error-fixer).
-# Both are DEFAULTED parameters: an empty value means the model field is
+# (coding | analysis | light) instead of a concrete model name. The concrete
+# model per tier is a project setting in .dev.env:
+#   SUBAGENT_MODEL_CODING   — code / metadata authorship, architecture design
+#                             (1c-developer, 1c-metadata-manager, 1c-architect,
+#                             1c-performance-optimizer, 1c-refactoring);
+#   SUBAGENT_MODEL_ANALYSIS — planning / analysis / review / testing / docs
+#                             (1c-planner, 1c-analytic, 1c-arch-reviewer,
+#                             1c-code-reviewer, 1c-doc-writer, 1c-tester);
+#   SUBAGENT_MODEL_LIGHT    — small bounded tasks: repo scouting / search /
+#                             quick fixes (1c-explorer, 1c-error-fixer).
+# All three are DEFAULTED parameters: an empty value means the model field is
 # omitted from the installed agent file and the AI client uses its default
 # model. The install never blocks on them.
 # On first init (no .dev.env yet) the values are asked interactively once
-# during agent placement and persisted into the rendered .dev.env by
+# during agent placement (a benchmark-based profile picker, see
+# Read-SubagentModelProfile) and persisted into the rendered .dev.env by
 # Place-DevEnv. On update they are read from the existing .dev.env silently.
 
-$script:ModelTierKeys = [ordered]@{ coding = 'SUBAGENT_MODEL_CODING'; light = 'SUBAGENT_MODEL_LIGHT' }
+$script:ModelTierKeys = [ordered]@{ coding = 'SUBAGENT_MODEL_CODING'; analysis = 'SUBAGENT_MODEL_ANALYSIS'; light = 'SUBAGENT_MODEL_LIGHT' }
 $script:ModelTierValues = $null
+
+# Recommended model profiles derived from the 1C benchmark
+# (https://onec-llm-bench.lovable.app/). Slugs are Cursor model ids; on other
+# AI clients pick the "custom" option and enter the client's own slug.
+$script:SubagentModelProfiles = [ordered]@{
+    balanced = [ordered]@{ coding = 'gpt-5.6-sol-max';               analysis = 'glm-5.2-max';     light = 'composer-2.5-fast' }
+    economy  = [ordered]@{ coding = 'glm-5.2-max';                   analysis = 'glm-5.2-max';     light = 'composer-2.5-fast' }
+    quality  = [ordered]@{ coding = 'claude-opus-4-8-thinking-high'; analysis = 'gpt-5.6-sol-max'; light = 'cursor-grok-4.5-high-fast' }
+}
+
+function Read-SubagentModelProfile {
+    # Interactive picker for subagent model tiers. Offers benchmark-based
+    # profiles (onec-llm-bench.lovable.app) with a recommended default, an
+    # "inherit from parent" option, and a per-tier custom entry. Returns an
+    # ordered hashtable tier -> model ('' = inherit / AI client default).
+    $b = $script:SubagentModelProfiles['balanced']
+    $e = $script:SubagentModelProfiles['economy']
+    $q = $script:SubagentModelProfiles['quality']
+    Write-Info ''
+    Write-Info '  Модели субагентов — рекомендации по бенчу onec-llm-bench.lovable.app (слаги для Cursor):'
+    Write-Info "    [1] Сбалансированный (реком.): coding=$($b.coding), analysis=$($b.analysis), light=$($b.light)"
+    Write-Info "    [2] Экономия: coding/analysis=$($e.coding), light=$($e.light)"
+    Write-Info "    [3] Качество: coding=$($q.coding), analysis=$($q.analysis), light=$($q.light)"
+    Write-Info '    [4] Наследовать от родителя (модель AI-клиента по умолчанию)'
+    Write-Info '    [5] Настроить вручную (свой слаг на каждый ярус)'
+    $choice = Read-Required '  Выбор профиля моделей субагентов' '1'
+    switch ($choice) {
+        '2' { return [ordered]@{ coding = $e.coding; analysis = $e.analysis; light = $e.light } }
+        '3' { return [ordered]@{ coding = $q.coding; analysis = $q.analysis; light = $q.light } }
+        '4' { return [ordered]@{ coding = ''; analysis = ''; light = '' } }
+        '5' {
+            Write-Info '  Введите слаг модели (Enter — наследовать от родителя):'
+            return [ordered]@{
+                coding   = Read-Required "  SUBAGENT_MODEL_CODING   (код/метаданные/архитектура; реком. $($b.coding))" ''
+                analysis = Read-Required "  SUBAGENT_MODEL_ANALYSIS (план/аналитика/ревью/тест/доки; реком. $($b.analysis))" ''
+                light    = Read-Required "  SUBAGENT_MODEL_LIGHT    (исследование/поиск/фиксы; реком. $($b.light))" ''
+            }
+        }
+        default { return [ordered]@{ coding = $b.coding; analysis = $b.analysis; light = $b.light } }
+    }
+}
 
 function Resolve-ModelTiers {
     # Returns an ordered hashtable tier -> concrete model name ('' = client
     # default). Cached for the whole run so the interactive prompt fires once.
     param([string]$Root)
     if ($null -ne $script:ModelTierValues) { return $script:ModelTierValues }
-    $vals = [ordered]@{ coding = ''; light = '' }
+    $vals = [ordered]@{ coding = ''; analysis = ''; light = '' }
     $envPath = Join-Path $Root $script:DevEnvFileName
     if (Test-Path $envPath) {
         $keys = Read-DevEnvKeys -Path $envPath
@@ -1945,15 +2122,21 @@ function Resolve-ModelTiers {
             $k = $script:ModelTierKeys[$tier]
             if ($keys.Contains($k)) { $vals[$tier] = ([string]$keys[$k]).Trim() }
         }
+        # Backward compatibility with legacy 2-tier .dev.env files (no
+        # SUBAGENT_MODEL_ANALYSIS key): analysis-tier agents keep the previously
+        # configured coding model instead of silently dropping to inherit.
+        if (-not $vals['analysis'] -and $vals['coding'] -and -not $keys.Contains($script:ModelTierKeys['analysis'])) {
+            $vals['analysis'] = $vals['coding']
+        }
     }
     elseif (-not $NonInteractive) {
-        Write-Info ''
-        Write-Info '  Модели субагентов (Enter — модель AI-клиента по умолчанию):'
-        $vals['coding'] = Read-Required 'SUBAGENT_MODEL_CODING (модель для кодинга/анализа/ревью)' ''
-        $vals['light']  = Read-Required 'SUBAGENT_MODEL_LIGHT (модель для небольших задач: быстрые исправления, разведка)' ''
+        $picked = Read-SubagentModelProfile
+        foreach ($tier in @($vals.Keys)) { $vals[$tier] = [string]$picked[$tier] }
     }
-    if (-not $vals['coding'] -and -not $vals['light']) {
-        Write-Info '  subagent models not set (SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_LIGHT in .dev.env) — agents will use the AI client default model'
+    $anySet = $false
+    foreach ($tier in @($vals.Keys)) { if ($vals[$tier]) { $anySet = $true; break } }
+    if (-not $anySet) {
+        Write-Info '  subagent models not set (SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_ANALYSIS / SUBAGENT_MODEL_LIGHT in .dev.env) — agents will use the AI client default model'
     }
     $script:ModelTierValues = $vals
     return $vals
@@ -2008,7 +2191,7 @@ function Invoke-PlacePhase {
                 Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                     -TargetRel $target -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
                     -FrontmatterOps $fmOps -Mode $mode `
-                    -Manifest $Manifest -ContentSource ("content/rules/" + $f.Name)
+                    -Manifest $Manifest -ContentSource ("content/rules/" + $f.Name) -OwnerTool $tool
             }
         }
 
@@ -2026,7 +2209,7 @@ function Invoke-PlacePhase {
                 Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                     -TargetRel $target -SourceFm $agentFm -SourceBody $parts.Body `
                     -FrontmatterOps $fmOps -Mode $mode -Template $template `
-                    -Manifest $Manifest -ContentSource ("content/agents/" + $f.Name)
+                    -Manifest $Manifest -ContentSource ("content/agents/" + $f.Name) -OwnerTool $tool
             }
         }
 
@@ -2044,14 +2227,14 @@ function Invoke-PlacePhase {
                     Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                         -TargetRel $targetRaw -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
                         -FrontmatterOps $fmOps -Mode $mode `
-                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name)
+                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool
                     Write-Warn "  command written to user scope: $targetRaw (shared across projects)"
                 }
                 else {
                     Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                         -TargetRel $targetRaw -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
                         -FrontmatterOps $fmOps -Mode $mode `
-                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name)
+                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool
                 }
             }
         }
@@ -2065,7 +2248,7 @@ function Invoke-PlacePhase {
                 $name = $sd.Name
                 $targetDir = Resolve-CopyToPath $dirTpl $name
                 Invoke-PlaceSkill -Root $Root -SourceDir $sd.FullName -TargetDir $targetDir `
-                    -Manifest $Manifest -ContentSource ("content/skills/" + $name)
+                    -Manifest $Manifest -ContentSource ("content/skills/" + $name) -OwnerTool $tool
             }
         }
 
@@ -3195,9 +3378,84 @@ function Update-AgentsMd {
     # userModified and the installedHash recorded at the time we wrote it).
 }
 
-# Place USER-RULES.md and memory.md from source templates into the project
-# root, but ONLY if they do not already exist. The installer never overwrites
-# these files — they belong to the user/project. Manifest records them with
+function Get-UniqueMigrationBackupPath {
+    param(
+        [string]$Root,
+        [string]$FileName
+    )
+    $candidate = Join-Path $Root ($FileName + '.bak.md')
+    if (-not (Test-Path $candidate)) { return $candidate }
+    $index = 2
+    do {
+        $candidate = Join-Path $Root ($FileName + ".bak.$index.md")
+        $index++
+    } while (Test-Path $candidate)
+    return $candidate
+}
+
+function Invoke-FirstInstallRuleMigration {
+    # Move pre-existing root instruction files out of the installer's target
+    # paths and preserve their active content inside USER-RULES.md.
+    param(
+        [string]$Root,
+        [string]$SourceRoot
+    )
+    try {
+        if ((Resolve-Path $Root).Path -eq (Resolve-Path $SourceRoot).Path) {
+            # The 1c-rules source repository is not an installation target.
+            return
+        }
+    }
+    catch {}
+
+    $blocks = @()
+    foreach ($name in @('AGENTS.md', 'CLAUDE.md')) {
+        $path = Join-Path $Root $name
+        if (-not (Test-Path $path -PathType Leaf)) { continue }
+        $original = Read-TextFile $path
+        $backup = Get-UniqueMigrationBackupPath -Root $Root -FileName $name
+        Move-Item -Path $path -Destination $backup
+        $backupName = Split-Path -Leaf $backup
+        $blocks += "## Migrated from ``$name``"
+        $blocks += ''
+        $blocks += "Backup: ``$backupName``"
+        $blocks += ''
+        $blocks += $original.TrimEnd()
+        $blocks += ''
+        Write-Info "  migrated: $name -> $backupName + USER-RULES.md"
+    }
+    if ($blocks.Count -eq 0) { return }
+
+    $userRulesPath = Join-Path $Root $script:UserRulesFileName
+    if (Test-Path $userRulesPath) {
+        $text = Read-TextFile $userRulesPath
+    }
+    else {
+        $template = Join-Path $SourceRoot $script:UserRulesFileName
+        $text = if (Test-Path $template) { Read-TextFile $template } else { "# User Rules`n" }
+    }
+
+    $startMarker = '<!-- start of migrated content -->'
+    $endMarker = '<!-- end of migrated content -->'
+    $payload = ($blocks -join "`n").Trim()
+    $startIndex = $text.IndexOf($startMarker, [System.StringComparison]::Ordinal)
+    $endIndex = $text.IndexOf($endMarker, [System.StringComparison]::Ordinal)
+    if ($startIndex -ge 0 -and $endIndex -gt $startIndex) {
+        $contentStart = $startIndex + $startMarker.Length
+        $existing = $text.Substring($contentStart, $endIndex - $contentStart).Trim()
+        $combined = if ($existing) { $existing + "`n`n" + $payload } else { $payload }
+        $text = $text.Substring(0, $contentStart) + "`n" + $combined + "`n" + $text.Substring($endIndex)
+    }
+    else {
+        $text = $text.TrimEnd() + "`n`n" + $startMarker + "`n" + $payload + "`n" + $endMarker + "`n"
+    }
+    Write-TextFile -Path $userRulesPath -Content $text
+}
+
+# Place USER-RULES.md, memory.md and LLM-RULES.md from source templates into
+# the project root, but ONLY if they do not already exist. The installer never
+# overwrites these files — they belong to the user/project (LLM-RULES.md is
+# additionally maintained by the /evolve command). Manifest records them with
 # `template = $true` so update flows know these are placed-once templates and
 # their hashes are not re-validated.
 function Place-RootTemplates {
@@ -3206,7 +3464,7 @@ function Place-RootTemplates {
         [string]$SourceRoot,
         [System.Collections.IDictionary]$Manifest
     )
-    $names = @($script:UserRulesFileName, $script:MemoryFileName)
+    $names = @($script:UserRulesFileName, $script:MemoryFileName, $script:LlmRulesFileName)
     foreach ($name in $names) {
         $target = Join-Path $Root $name
         $source = Join-Path $SourceRoot $name
@@ -3263,8 +3521,15 @@ function Place-RootTemplates {
 # never re-asked at task time):
 #   IB_PASSWORD (empty = no password; /P omitted),
 #   LOG_PATH    (empty = $env:TEMP\1cv8.log),
-#   SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_LIGHT (empty = AI client default
-#   model; see SECTION 7b).
+#   SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_ANALYSIS / SUBAGENT_MODEL_LIGHT
+#   (empty = AI client default model; see SECTION 7b),
+#   ORCHESTRATION (empty = standard; toggled by the /economymode command),
+#   QUICKFIX_MAX_LINES (empty = 40; quick-fix line budget),
+#   DEBUG_FAST_PATH (empty = standard; debugging fast-path mode),
+#   VERIFICATION_DEPTH (empty = full; code-verification depth, toggled by
+#   the /litemode command),
+#   CAVEMAN (empty = on; caveman communication-style auto-activation, toggled
+#   by the /caveman command).
 
 function Find-PlatformPath {
     # Returns the path to the most recent installed 1C platform under
@@ -3432,24 +3697,124 @@ function Place-DevEnv {
     if ($detectedPath)    { Write-Info "    autodetected PLATFORM_PATH    = $detectedPath" }
     if ($detectedPrefix)  { Write-Info "    autodetected PREFIX           = $detectedPrefix" }
 
-    # Final sanity check: warn loudly about empty critical fields so the user
-    # knows the file still needs hand-editing before code-gen / IB commands run.
+    # Final sanity check: report only operation-scoped empty fields. No field
+    # is globally mandatory; advisory values must never be presented as errors.
     $values = Read-DevEnvKeys -Path $target
-    $criticalEmpty = @()
-    foreach ($k in @('PREFIX', 'COMPANY', 'DEVELOPER', 'PLATFORM_VERSION', 'PLATFORM_PATH', 'INFOBASE_PATH')) {
-        if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $criticalEmpty += $k }
+    $operationScopedEmpty = @()
+    foreach ($k in @('PLATFORM_VERSION', 'PLATFORM_PATH', 'INFOBASE_PATH', 'INFOBASE_PUBLISH_URL')) {
+        if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $operationScopedEmpty += $k }
     }
-    $recommendedEmpty = @()
-    foreach ($k in @('INFOBASE_PUBLISH_URL')) {
-        if (-not $values.Contains($k) -or [string]::IsNullOrWhiteSpace($values[$k])) { $recommendedEmpty += $k }
+    if ($operationScopedEmpty.Count -gt 0) {
+        Write-Info ("  .dev.env: operation-scoped fields left empty: " + ($operationScopedEmpty -join ', '))
+        Write-Info '  This is valid; the relevant command will ask or apply its documented fallback when invoked.'
     }
-    if ($criticalEmpty.Count -gt 0) {
-        Write-Warn ("  .dev.env: незаполнены критичные поля: " + ($criticalEmpty -join ', '))
-        Write-Warn '  Заполните их вручную перед запуском задач генерации кода / работы с ИБ.'
+}
+
+function Read-LegacyInfobaseSettings {
+    param([string]$Path)
+    $values = [ordered]@{}
+    $unknownLines = @()
+    if (-not (Test-Path $Path -PathType Leaf)) {
+        return [ordered]@{ Values = $values; UnknownLines = $unknownLines }
     }
-    if ($recommendedEmpty.Count -gt 0) {
-        Write-Info ("  .dev.env: рекомендуется также заполнить: " + ($recommendedEmpty -join ', '))
+    foreach ($rawLine in (Get-Content -Path $Path -Encoding UTF8)) {
+        $line = $rawLine.Trim()
+        if (-not $line -or
+            $line.StartsWith('#') -or
+            $line.StartsWith('<!--') -or
+            $line -match '^\|?[\s:\-]+\|[\s|:\-]*$') {
+            continue
+        }
+        $key = ''
+        $value = ''
+        if ($line -match '^\|\s*`?([A-Z_][A-Z0-9_]*)`?\s*\|\s*`?([^|`]*)`?\s*\|') {
+            $key = $Matches[1]
+            $value = $Matches[2].Trim()
+        }
+        else {
+            $normalized = $line -replace '^[\-\*\+]\s*', ''
+            $normalized = $normalized -replace '^`|`$', ''
+            if ($normalized -match '^([A-Z_][A-Z0-9_]*)\s*(?:=|:)\s*(.*)$') {
+                $key = $Matches[1]
+                $value = $Matches[2].Trim().Trim('`').Trim()
+            }
+        }
+        if ($key) {
+            $values[$key] = $value
+        }
+        else {
+            $unknownLines += $line
+        }
     }
+    return [ordered]@{ Values = $values; UnknownLines = $unknownLines }
+}
+
+function Invoke-LegacyInfobaseSettingsMigration {
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest
+    )
+    $legacyPath = Join-Path $Root 'infobasesettings.md'
+    if (-not (Test-Path $legacyPath -PathType Leaf)) { return }
+    $devEnvPath = Join-Path $Root $script:DevEnvFileName
+    if (-not (Test-Path $devEnvPath -PathType Leaf)) {
+        Write-Warn '  infobasesettings.md found, but .dev.env is unavailable; migration skipped'
+        return
+    }
+
+    $legacyData = Read-LegacyInfobaseSettings -Path $legacyPath
+    $legacyValues = $legacyData.Values
+    if ($legacyValues.Count -eq 0) {
+        Write-Warn '  infobasesettings.md contains no recognized KEY=value or KEY: value entries; file kept'
+        return
+    }
+
+    $text = Read-TextFile $devEnvPath
+    $current = Read-DevEnvKeys -Path $devEnvPath
+    $migratedKeys = @()
+    $recognizedKeys = @()
+    foreach ($key in @($legacyValues.Keys)) {
+        if ($text -notmatch ('(?m)^' + [regex]::Escape($key) + '=')) { continue }
+        $recognizedKeys += $key
+        if ($current.Contains($key) -and -not [string]::IsNullOrWhiteSpace([string]$current[$key])) {
+            continue
+        }
+        $value = [string]$legacyValues[$key]
+        if ([string]::IsNullOrWhiteSpace($value)) { continue }
+        $text = Set-DevEnvValue -Text $text -Key $key -Value $value
+        $migratedKeys += $key
+    }
+    if ($recognizedKeys.Count -eq 0) {
+        Write-Warn '  infobasesettings.md has no keys present in .dev.env; file kept'
+        return
+    }
+
+    if ($migratedKeys.Count -gt 0) {
+        Write-TextFile -Path $devEnvPath -Content $text
+        if ($Manifest.files.Contains($script:DevEnvFileName)) {
+            $Manifest.files[$script:DevEnvFileName]['installedHash'] = Get-FileSha256 $devEnvPath
+        }
+    }
+
+    $after = Read-DevEnvKeys -Path $devEnvPath
+    foreach ($key in $recognizedKeys) {
+        $legacyValue = [string]$legacyValues[$key]
+        if ($legacyValue -and
+            (-not $after.Contains($key) -or [string]::IsNullOrWhiteSpace([string]$after[$key]))) {
+            Write-Warn "  infobasesettings.md migration could not persist $key; legacy file kept"
+            return
+        }
+    }
+
+    if ($legacyData.UnknownLines.Count -gt 0) {
+        Write-Warn ("  infobasesettings.md contains unrecognized content and was kept after migrating known keys " +
+            "($($legacyData.UnknownLines.Count) line(s) require manual review)")
+        return
+    }
+
+    Remove-Item -Path $legacyPath -Force
+    Write-Info ("  migrated infobasesettings.md into .dev.env; keys filled: " +
+        $(if ($migratedKeys.Count -gt 0) { $migratedKeys -join ', ' } else { 'none (existing values preserved)' }))
 }
 
 # ============================================================================
@@ -3559,7 +3924,7 @@ function Invoke-Init {
 
     $existing = Read-Manifest -Root $Root
     if ($existing -and -not $AssumeYes -and -not $NonInteractive) {
-        Write-Warn 'Manifest already exists. init will overwrite it.'
+        Write-Warn 'Manifest already exists. init will reuse its ownership and userModified state.'
         if (-not (Read-YesNo 'Proceed with re-init?' $false)) { return }
     }
 
@@ -3567,6 +3932,11 @@ function Invoke-Init {
     Write-Info ("Active tools: " + ($activeTools -join ', '))
 
     $adapters = Load-Adapters -SourceRoot $sourceRoot -Tools $activeTools
+
+    if (-not $existing) {
+        Write-Section 'Migration: existing root instructions'
+        Invoke-FirstInstallRuleMigration -Root $Root -SourceRoot $sourceRoot
+    }
 
     Write-Section 'Phase 2-3: Scan foreign files + integrations'
     $foreign = Invoke-ScanForeign -Root $Root -ActiveTools $activeTools -Manifest $null -Adapters $adapters
@@ -3590,7 +3960,19 @@ function Invoke-Init {
     }
 
     $version = Get-SourceVersion -SourceRoot $sourceRoot
-    $manifest = New-Manifest -Source $sourceRoot -Version $version
+    if ($existing) {
+        $manifest = $existing
+        $manifest.protocol = $script:ProtocolVersion
+        $manifest.source = $sourceRoot
+        $manifest.version = $version
+        $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $manifest.lastChannel = $script:LastChannel
+        if (-not $manifest.files) { $manifest.files = [ordered]@{} }
+        if (-not $manifest.mcpServers) { $manifest.mcpServers = @() }
+    }
+    else {
+        $manifest = New-Manifest -Source $sourceRoot -Version $version
+    }
     $manifest.tools = @($activeTools)
     $manifest.foreignFiles = $foreign
     $manifest.integrations = $integrations
@@ -3624,6 +4006,7 @@ function Invoke-Init {
     # .dev.env when rendering per-tool MCP configs.
     Write-Section 'Phase 7: .dev.env (project parameters, single source of truth)'
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+    Invoke-LegacyInfobaseSettingsMigration -Root $Root -Manifest $manifest
 
     Write-Section 'Phase 8: MCP'
     $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
@@ -3637,7 +4020,7 @@ function Invoke-Init {
     Write-Section 'Phase 8b: AGENTS.md'
     Update-AgentsMd -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
 
-    Write-Section 'Phase 8c: Root templates (USER-RULES.md, memory.md)'
+    Write-Section 'Phase 8c: Root templates (USER-RULES.md, memory.md, LLM-RULES.md)'
     Place-RootTemplates -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
 
     # Runs AFTER Place-RootTemplates so the USER-RULES.md template is placed
@@ -3671,7 +4054,20 @@ function Invoke-Init {
         Write-Info "  OpenSpec$scaffoldedTag$bundleTag : $($os.files.Count) user file(s) in specs/changes"
     }
 
+    Write-EconomyModeAnnouncement
+
     Write-RestartRecommendation -ActiveTools $activeTools -McpCount $manifest.mcpServers.Count
+}
+
+# One-line feature announcement for the orchestrator economy mode. Shown on
+# every init and once on the update that first places the /economymode command.
+function Write-EconomyModeAnnouncement {
+    Write-Info ""
+    Write-Info "Режим экономии оркестратора: введите /economymode в чате AI-клиента — команда запишет"
+    Write-Info "ORCHESTRATION=economy в .dev.env, и головной агент будет делегировать исполнение дешёвым"
+    Write-Info "субагентам (модели — по ярусам из SUBAGENT_MODEL_*), оставляя себе решения и верификацию."
+    Write-Info "Если модели ярусов не заданы, команда предложит выбрать их (профили по бенчу или свои слаги)."
+    Write-Info "Действует на весь проект, включая новые чаты; выключение — /economymode off."
 }
 
 # Tell the user to restart their AI client so it re-reads the freshly written
@@ -3720,6 +4116,9 @@ function Invoke-Update {
     if ($manifest.protocol -and [version]$manifest.protocol -gt [version]$script:ProtocolVersion) {
         throw "Manifest protocol $($manifest.protocol) is newer than installer $($script:ProtocolVersion). Update installer first."
     }
+    # Detect BEFORE placement whether /economymode was already installed, to
+    # announce the feature exactly once — on the update that introduces it.
+    $hadEconomyCommand = @($manifest.files.Keys | Where-Object { $_ -match 'economymode' }).Count -gt 0
 
     $sourceRoot = Resolve-SourceRoot -Requested $SourceRootRequested
     Write-Info "Source: $sourceRoot"
@@ -3869,6 +4268,7 @@ function Invoke-Update {
     # when MCP configs are re-rendered.
     Write-Section '.dev.env (update — placed only if missing)'
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+    Invoke-LegacyInfobaseSettingsMigration -Root $Root -Manifest $manifest
 
     Write-Section 'MCP (update)'
     $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
@@ -3909,6 +4309,7 @@ function Invoke-Update {
         $kept | ForEach-Object { Write-Warn "    $_" }
         Write-Warn '  To pull the shipped version for these files, re-run `update -Force` (all of them) or `update -ForcePaths <path>[,<path>...]` (specific files, comma-separated). Your current edits to those files will be replaced.'
     }
+    if (-not $hadEconomyCommand) { Write-EconomyModeAnnouncement }
     Write-RestartRecommendation -ActiveTools $activeTools -McpCount $manifest.mcpServers.Count
 }
 
@@ -3944,6 +4345,7 @@ function Invoke-Add {
     # placeholders in `content/mcp-servers.json` substitute against the
     # actual project value when rendering the newly-added tool's MCP config.
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+    Invoke-LegacyInfobaseSettingsMigration -Root $Root -Manifest $manifest
     $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
     if ($extMcp.Mode -eq 'external') {
         Write-Info '  Обнаружена внешняя установка MCP (install.manifest.json) — MCP-конфиг для нового инструмента НЕ создаётся.'
@@ -4038,15 +4440,38 @@ function Invoke-Remove {
         }
         $toRemove = @()
         foreach ($rel in @($manifest.files.Keys)) {
+            $entry = $manifest.files[$rel]
+            if ($entry -is [System.Collections.IDictionary] -and
+                $entry.Contains('owners') -and
+                $ScopeTool -in @($entry['owners'])) {
+                $toRemove += $rel
+                continue
+            }
             foreach ($p in $toolPrefixes) {
                 if ($rel -eq $p -or $rel.StartsWith($p.TrimEnd('/') + '/')) {
                     $toRemove += $rel; break
                 }
             }
         }
+        $removedCount = 0
         foreach ($rel in $toRemove) {
-            $abs = Join-Path $Root $rel
-            if (Test-MergedMcpEntry $manifest.files[$rel]) {
+            $entry = $manifest.files[$rel]
+            if ($entry -is [System.Collections.IDictionary] -and $entry.Contains('owners')) {
+                $owners = @($entry['owners'])
+                if ($ScopeTool -notin $owners) {
+                    # The path is under this tool's directory but belongs to a
+                    # different active tool (for example OpenCode skills stored
+                    # in the shared `.claude/skills/` directory).
+                    continue
+                }
+                $remainingOwners = @($owners | Where-Object { $_ -ne $ScopeTool })
+                if ($remainingOwners.Count -gt 0) {
+                    $entry['owners'] = $remainingOwners
+                    continue
+                }
+            }
+            $abs = Resolve-ManifestPath -Root $Root -Rel $rel
+            if (Test-MergedMcpEntry $entry) {
                 # Shared config (opencode.json / .kilo/kilo.json): strip the
                 # `mcp` key only, never delete the user's whole config.
                 Remove-McpKeyFromConfig -Path $abs
@@ -4055,6 +4480,7 @@ function Invoke-Remove {
                 Remove-Item -Force $abs -ErrorAction SilentlyContinue
             }
             $manifest.files.Remove($rel)
+            $removedCount++
         }
         $manifest.tools = @($manifest.tools | Where-Object { $_ -ne $ScopeTool })
         if ($manifest.foreignFiles.Contains($ScopeTool)) { $manifest.foreignFiles.Remove($ScopeTool) }
@@ -4069,13 +4495,23 @@ function Invoke-Remove {
         }
         $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
         Write-Manifest -Root $Root -Manifest $manifest
-        Write-Info "Removed $ScopeTool ($($toRemove.Count) files)."
+        Write-Info "Removed $ScopeTool ($removedCount files; shared files still owned by other tools were kept)."
     }
     else {
         Write-Info 'Removing all installed files.'
+        $keptTemplates = @()
         foreach ($rel in @($manifest.files.Keys)) {
-            $abs = Join-Path $Root $rel
-            if (Test-MergedMcpEntry $manifest.files[$rel]) {
+            $entry = $manifest.files[$rel]
+            # Placed-once templates (USER-RULES.md, memory.md, LLM-RULES.md,
+            # .dev.env) belong to the user/project — `remove` never deletes
+            # them (AGENT-INSTALL.md → Update / add / remove).
+            if ($entry -is [System.Collections.IDictionary] -and
+                $entry.Contains('template') -and $entry['template']) {
+                $keptTemplates += $rel
+                continue
+            }
+            $abs = Resolve-ManifestPath -Root $Root -Rel $rel
+            if (Test-MergedMcpEntry $entry) {
                 # Shared config (opencode.json / .kilo/kilo.json): strip the
                 # `mcp` key only, never delete the user's whole config.
                 Remove-McpKeyFromConfig -Path $abs
@@ -4083,6 +4519,9 @@ function Invoke-Remove {
             elseif (Test-Path $abs) {
                 Remove-Item -Force $abs -ErrorAction SilentlyContinue
             }
+        }
+        if ($keptTemplates.Count -gt 0) {
+            Write-Info ("Kept (user/project files): " + (($keptTemplates | Sort-Object) -join ', '))
         }
         Remove-Item -Force (Join-Path $Root $script:ManifestFileName) -ErrorAction SilentlyContinue
         # Clean up empty per-tool directories

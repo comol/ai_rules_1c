@@ -1,12 +1,12 @@
 ---
-description: Positive logging strategy for 1C — when to write to the event log, which severity levels and category names to use, structured payload via `ДанныеЖурналаРегистрации`, secrets / PII bans. Complements the bans in `dev-standards-core.md §2 → "Forbidden Calls and Constructs"` and `dev-standards-architecture.md §3 → "Error Handling"`.
+description: Positive logging strategy for 1C — when to write to the event log, which severity levels and category names to use, structured payload via `ДанныеЖурналаРегистрации`, secrets / PII bans. Complements the bans in `dev-standards-code-style.md → "Forbidden Calls and Constructs"` and `dev-standards-architecture.md §3 → "Error Handling"`.
 alwaysApply: false
 category: development
 ---
 
 # Logging Strategy
 
-`dev-standards-core.md §2 → "Forbidden Calls and Constructs"` bans `ЗаписьЖурналаРегистрации` without an explicit task; `dev-standards-architecture.md §3 → "Error Handling"` bans empty `Попытка / Исключение`. This file is the **positive** companion: when logging *is* explicitly requested, this is how to do it.
+`dev-standards-code-style.md → "Forbidden Calls and Constructs"` bans `ЗаписьЖурналаРегистрации` without an explicit task; `dev-standards-architecture.md §3 → "Error Handling"` bans empty `Попытка / Исключение`. This file is the **positive** companion: when logging *is* explicitly requested, this is how to do it.
 
 ## 1. When to log
 
@@ -53,16 +53,19 @@ Examples:
 - `ФоновоеЗадание.ОбновлениеКурсовВалют.Старт`
 - `ФоновоеЗадание.ОбновлениеКурсовВалют.Финиш`
 
-Reserved prefix `Debug.*` — **only** during active debugging, must be removed before commit (`verification-checklist.md → Soft gate A`). Never ship `Debug.*` to production.
+Reserved prefix `Debug.*` — **only** during active debugging, must be removed before commit (`verification-delivery.md → Soft gate A`). Never ship `Debug.*` to production.
 
 ## 4. Structured payload
 
 Use `Структура` as the `Данные` argument of `ЗаписьЖурналаРегистрации` whenever the event has any context fields. Plain-string concatenated payloads are not parseable by downstream tooling.
 
+The example assumes `ОрганизацияДокумента` is already available in the calling context. Do not
+dereference `СсылкаДокумента` solely to build a log payload.
+
 ```bsl
 ДанныеСобытия = Новый Структура;
 ДанныеСобытия.Вставить("Документ", СсылкаДокумента);
-ДанныеСобытия.Вставить("Организация", СсылкаДокумента.Организация);
+ДанныеСобытия.Вставить("Организация", ОрганизацияДокумента);
 ДанныеСобытия.Вставить("Длительность_мс", Длительность);
 ДанныеСобытия.Вставить("HTTPСтатус", ОтветHTTP.КодСостояния);
 
@@ -134,8 +137,8 @@ Rules:
 
 | Concern | File |
 |---|---|
-| Ban on uninvited `ЗаписьЖурналаРегистрации` calls | `dev-standards-core.md §2 → "Forbidden Calls and Constructs"` |
+| Ban on uninvited `ЗаписьЖурналаРегистрации` calls | `dev-standards-code-style.md → "Forbidden Calls and Constructs"` |
 | Ban on empty `Попытка / Исключение` | `dev-standards-architecture.md §3 → "Error Handling"` |
-| Removing `Debug.*` log entries before commit | `verification-checklist.md → "Soft gate A"`, `systematic-debugging.md → "Phase 4"` |
+| Removing `Debug.*` log entries before commit | `verification-delivery.md → "Soft gate A"`, `systematic-debugging.md → "Phase 4"` |
 | Background-job lifecycle logging | `platform-solutions.md §2 → "Long-running operations"` |
 | Integration request / response logging | `integrations-add.md` |

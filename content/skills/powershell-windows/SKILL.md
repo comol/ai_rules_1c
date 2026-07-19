@@ -8,8 +8,13 @@ description: "PowerShell scripting rules for Windows environment. Use when runni
 ## Core Principles
 
 ### 1. Command Separation
-- **Wrong**: `cd "path" && command` (bash syntax)
-- **Correct**: `cd "path"; command` (PowerShell syntax)
+- Windows PowerShell 5.1 does not support `&&`; PowerShell 7 does.
+- For independent commands use `;`: `Set-Location "path"; Get-ChildItem`.
+- For dependent native commands preserve short-circuit semantics explicitly:
+  ```powershell
+  git add .
+  if ($LASTEXITCODE -eq 0) { git commit -m "message" }
+  ```
 
 ### 2. Path Quoting
 - **Always use double quotes** for paths with spaces:
@@ -31,8 +36,8 @@ description: "PowerShell scripting rules for Windows environment. Use when runni
   ```
 
 ### 5. HTTP Requests
-- **Wrong**: `curl -s http://localhost:9090/status`
-- **Correct**:
+- Prefer PowerShell-native HTTP so behavior does not depend on whether `curl`
+  resolves to an alias or `curl.exe`:
   ```powershell
   Invoke-WebRequest -Uri "http://localhost:9090/status" -UseBasicParsing
   ```
@@ -78,9 +83,9 @@ description: "PowerShell scripting rules for Windows environment. Use when runni
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `&& is not recognized` | Using bash syntax | Replace `&&` with `;` |
-| `curl not found` | curl not installed on Windows | Use `Invoke-WebRequest` |
-| `timeout not found` | timeout not supported | Use `Start-Sleep` |
+| `&& is not recognized` | Running Windows PowerShell 5.1 | Use `;` only for independent commands; use `$LASTEXITCODE` for conditional chaining |
+| `curl` behaves unexpectedly | Windows PowerShell alias / executable resolution differs | Use `Invoke-WebRequest`, or call `curl.exe` explicitly when its CLI semantics are required |
+| `timeout` behaves unexpectedly | Console utility semantics differ from shell sleep | Use `Start-Sleep` |
 | `Path not found` | Missing quotes on spaced path | Wrap path in double quotes |
 
 ## Correct Command Examples

@@ -12,14 +12,15 @@ This file is the **router** for managed-form work. Load it first, then load only
 
 | Task | Load |
 |---|---|
+| Design a form layout from scratch, or when requirements do not specify element placement | `form-patterns.md` |
 | Create or structurally modify `Form.xml` | `forms-add.md`, `metadata-xml-workarounds.md` |
-| Add or rename form event handlers | `forms-events-add.md`, `form-module.md` |
+| Programmatic modification of typical forms (element placement, fill checking, form commands) | `forms-add.md → Form-Presentation Rules` |
+| Add or rename form event handlers | `form-module.md → Adding Form Event Handlers` |
 | Edit `Form.Module.bsl` logic | `form-module.md` |
+| Server-side form-module code (reserved names `ПараметрыВыбора`, `СвязиПараметровВыбора`, `СписокВыбора`, `ПараметрыОтбора`, `ОтборСтрок`) | `form-module.md → Reserved Names` |
 | Set up module regions in a new form module | `module-structure.md → Form Module` (5 mandatory regions) |
-| Server-side form-module code (reserved names) | `form-reserved-names.md` |
 | Client-server architecture (directives, round trips) | `dev-standards-architecture.md §3 → "Client-Server Interaction"`, `anti-patterns.md → "Excessive Client-Server Calls"`, `anti-patterns.md → "Using &НаСервере Instead of &НаСервереБезКонтекста"` |
 | Client-side async code (`Асинх` / `Ждать`) | `async-methods.md` |
-| Programmatic modification of typical forms (element placement, fill checking, form commands) | `dev-standards-forms.md` |
 | Working on an adopted form of an extension | `extension-patterns.md`, `dev-standards-architecture.md §2` |
 
 Each companion file is self-contained — load only the ones that match the task. Do not preload the whole set "to be safe".

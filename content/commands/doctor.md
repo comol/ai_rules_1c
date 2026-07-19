@@ -25,7 +25,7 @@ After the table, list only actionable fixes. Do not include secret values from `
 
 1. Identify the current AI tool when possible: Cursor, Claude Code, Codex, OpenCode, Kilo Code, or `other`.
 2. Check that `AGENTS.md` exists at the project root and is readable.
-3. Check that `USER-RULES.md` and `memory.md` exist at the project root.
+3. Check that `USER-RULES.md` and `memory.md` exist at the project root. Check `LLM-RULES.md` too, but report a missing `LLM-RULES.md` as **WARN**, not FAIL — older installs predate it; it is placed by `install.ps1 update` or created by the first `/evolve` write.
 4. If `.ai-rules.json` exists, read it and verify:
    - `activeTools` contains the current tool, or explain why the current tool is still supported through `other`;
    - managed files listed in the manifest still exist;
@@ -38,7 +38,7 @@ After the table, list only actionable fixes. Do not include secret values from `
    - Claude Code: `.claude/rules/`, `.claude/agents/`, `.claude/commands/`, MCP config when installed;
    - Codex: `.codex/skills/`, `.codex/config.toml` when installed;
    - OpenCode: `.opencode/command/`, `.opencode/agent/`, `.opencode/rules/`, and `opencode.json` at the **project root** (top-level `mcp` key) when installed — MCP lives in the root `opencode.json`, **not** `.opencode/opencode.json` (OpenCode does not read a config file under `.opencode/`); a leftover `.opencode/opencode.json` from older installs is **legacy** and the `update` flow removes it;
-   - Kilo Code: `.kilo/rules/`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`, `.kilo/kilo.json` (top-level `mcp` key) when installed; a leftover `.kilocode/mcp.json` from older installs is **legacy** — current Kilo CLI / Kilo Code v7.x+ no longer reads it and the `update` flow removes it;
+   - Kilo Code: `.kilo/rules-1c/` (on-demand rules referenced through `AGENTS.md`), `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`, `.kilo/kilo.json` (top-level `mcp` key) when installed; a leftover `.kilocode/mcp.json` from older installs is **legacy** — current Kilo CLI / Kilo Code v7.x+ no longer reads it and the `update` flow removes it;
    - other: `.ai-agent/rules/`, `.ai-agent/agents/`, `.ai-agent/commands/`, `.ai-agent/skills/`, `.ai-agent/mcp.json`.
 
 Pass criterion: the root always-on files exist, and either the installed tool layout is present or the repository is clearly the `1c-rules` source repository being edited directly.
@@ -69,15 +69,16 @@ Also check:
 2. If missing, report **FAIL** for operational commands and recommend creating it from `.dev.env.example` or running `install.ps1 init`.
 3. If present, verify that critical fields are non-empty:
    - `PLATFORM_PATH`;
-   - `INFOBASE_KIND`;
    - `INFOBASE_PATH`;
    - `EXPORT_PATH` when the repository root is not the configuration source directory;
    - `PLATFORM_VERSION` when platform-version-specific docs or checks are needed.
 
-   Do **not** treat `IB_USER`, `IB_PASSWORD`, or `LOG_PATH` as critical even when empty — they are **Defaulted** per `content/rules/dev-standards-core.md §1`. Empty `IB_USER` / `IB_PASSWORD` = no authentication / no password (the `/N` / `/P` flags are simply omitted), empty `LOG_PATH` = `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). Report them as "uses default" rather than as a missing value.
+   Do **not** treat `INFOBASE_KIND`, `IB_USER`, `IB_PASSWORD`, `LOG_PATH`, `UI_TESTING`, `QUICKFIX_MAX_LINES`, `DEBUG_FAST_PATH`, or `VERIFICATION_DEPTH` as critical even when empty — they are **Defaulted** per `content/rules/dev-standards-env.md`. Empty `INFOBASE_KIND` = `file`, empty `IB_USER` / `IB_PASSWORD` = no authentication / no password (the `/N` / `/P` flags are simply omitted), empty `LOG_PATH` = `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX), empty `UI_TESTING` = `manual` (UI tests run only on explicit request), empty `QUICKFIX_MAX_LINES` = `40`, empty `DEBUG_FAST_PATH` = `standard`, empty `VERIFICATION_DEPTH` = `full`. Report them as "uses default" rather than as a missing value.
 4. Verify that `PLATFORM_PATH` contains `bin\1cv8.exe`.
-5. Verify that `INFOBASE_KIND` is `file` or `server`.
-6. Never print `IB_PASSWORD`, tokens, license keys, or full connection strings. Report only whether they are set.
+5. When `INFOBASE_KIND` is non-empty, verify that it is `file` or `server`.
+6. When `UI_TESTING` is non-empty, verify that it is `manual`, `auto`, or `off`; any other value is treated as `manual` (report **WARN**).
+7. When `VERIFICATION_DEPTH` is non-empty, verify that it is `full`, `standard`, or `lite`; any other value is treated as `full` (report **WARN**).
+8. Never print `IB_PASSWORD`, tokens, license keys, or full connection strings. Report only whether they are set.
 
 Pass criterion: `.dev.env` exists, has the critical operational fields needed for load/dump/deploy/test commands, and does not require guessing.
 
@@ -115,7 +116,7 @@ Evaluate whether the installed rules match the current repository and current ag
 2. If the repository is only the `1c-rules` source repository, report that BSL validators are not applicable to docs-only edits unless BSL examples are changed.
 3. Confirm that `AGENTS.md` points to source or installed on-demand rules that the current agent can read.
 4. Confirm that command names in `content/commands/` are available in the active tool's command location after installation.
-5. Confirm that `caveman` is dev-only: enabled for implementation / debugging / deployment, off for review / analysis / documentation.
+5. Confirm that `caveman` matches the `.dev.env` `CAVEMAN` mode: `on` (default) — active on all tasks; `auto` — dev-only (on for implementation / debugging / deployment, off for review / analysis / documentation); `off` — never auto-on until an explicit force (`/caveman on` or "caveman please").
 
 Pass criterion: the current agent has the always-on rules, can reach on-demand rules or their source copies, and the rule triggers match the current task type.
 
@@ -134,7 +135,7 @@ Scope:
 7. **Script path integrity.** PowerShell examples in skill docs reference scripts that exist under the source skill folder or the active tool's installed skill folder. Examples must not point to a non-existent root-level `skills/` directory unless that directory is part of the installed layout.
 8. **Adapter-layout consistency.** Paths mentioned in `README.md`, `AGENT-INSTALL.md`, `openspec/README.md`, command docs, and skill docs match `adapters/*.yaml`. Check Codex, Kilo Code, OpenCode, and `other` explicitly because their command / skill / MCP locations differ from the common `.cursor` / `.claude` layout.
 9. **Policy drift.** Flag duplicate or conflicting rule wording for the same behavior, especially `.dev.env`, `infobasesettings.md` migration, MCP fallback order, and docs-fix vs BSL validation.
-10. **Convention checks.** Topics declared as a single source of truth (`.dev.env`, `mcp-1c-tools` skill, `dev-standards-core.md §2 → "Forbidden Calls and Constructs"`, `dev-standards-architecture.md §3 → "Queries"`, `coding-standards.md` as the index of detail files, etc.) are claimed by **exactly one** file; the same topic is not declared authoritative in two different places. Flag any duplicate authoritative claims.
+10. **Convention checks.** Topics declared as a single source of truth (`.dev.env`, `mcp-1c-tools` skill, `dev-standards-code-style.md → "Forbidden Calls and Constructs"`, `dev-standards-architecture.md §3 → "Queries"`, `coding-standards.md` as the index of detail files, etc.) are claimed by **exactly one** file; the same topic is not declared authoritative in two different places. Flag any duplicate authoritative claims.
 
 For each finding, report file and line. Group by severity: **FAIL** for broken paths, dangling index entries, orphan rules, missing scripts, and stale adapter-layout descriptions; **WARN** for stale anchor styles, missing skill mentions, policy drift, and conventional-style violations. Do not auto-fix — produce a fix list with concrete edits. External HTTP links are **SKIP** unless the user explicitly asks for live link checking.
 

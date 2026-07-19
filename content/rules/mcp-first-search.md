@@ -33,12 +33,12 @@ External-knowledge servers (`1c-templates-mcp`, `1c-ssl-mcp`, `1C-docs-mcp`, `1c
 | Find BSL code by behaviour / description | `search_code` (`semantic`, `detail_level=L1`) | `search_code` (`hybrid`) → `codesearch` |
 | Find BSL code by exact identifier / literal | `search_code` (`fulltext`) | `codesearch(grep=true)` → only then `Grep` |
 | Find a routine by name | `search_function(name, exact=true)` | `search_function(grep=true)` → `Grep` |
-| Understand a metadata object | `get_object_dossier(name)` | `get_metadata_details` |
+| Understand a metadata object | `get_object_dossier(object_name=...)` | `get_metadata_details(object_name=...)` |
 | Metadata search by name / structure | `search_metadata` (JSON template) | `metadatasearch` (`names_only=true`) |
 | Metadata search by Russian description / synonym | `search_metadata_by_description` or `business_search` | `metadatasearch` |
-| Usages of an object | `find_usages_of_object` / `find_objects_using_object` | `graph_dependencies(direction="reverse")` |
-| Impact of a change | `trace_impact(direction="downstream", depth=3)` | `graph_dependencies` (single-level) |
-| Call graph (who calls / who is called) | `trace_call_chain(direction="callers" \| "callees", depth=3)` | `get_method_call_hierarchy` |
+| Usages of an object | `find_usages_of_object(object_name=...)` / `find_objects_using_object(object_name=...)` | `graph_dependencies(object_name=..., direction="reverse")` |
+| Impact of an object change | `trace_impact(object_name=..., direction="downstream", depth=3)` | `graph_dependencies(object_name=...)` (single-level) |
+| Call graph (who calls / who is called) | `trace_call_chain(routine_name=..., object_name=..., direction="callers" \| "callees", depth=3)` | `get_method_call_hierarchy(method_name=...)` |
 | Module structure overview | `get_module_structure(module_path)` | `inspect_form_layout` for forms |
 | Form layout | `inspect_form_layout(object_name)` | `search_forms` |
 | Canonical pattern / template | `templatesearch(query)` (+ `ssl_search` for БСП) | — |

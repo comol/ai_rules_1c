@@ -14,23 +14,27 @@ For a partial object-by-object export, use `/getconfigfiles` (rule `getconfigfil
 
 If the project still has legacy `infobasesettings.md`, migrate values to `.dev.env` (same key names, `KEY=value` format instead of a markdown list), preserving already-filled `.dev.env` keys, and delete the legacy file after successful migration. The ruleset has no other connection-settings location.
 
-Used `.dev.env` keys:
+Used `.dev.env` keys (behavior of an empty value in parentheses):
 
 | Key | Purpose |
 |---|---|
-| `PLATFORM_PATH` | Platform installation directory containing `bin\1cv8.exe` |
-| `INFOBASE_KIND` | `file` or `server` |
-| `INFOBASE_PATH` | File infobase path or server connection string |
-| `IB_USER` | Infobase user; empty = no authentication, `/N` / `--user` is omitted. **Do not ask up front.** |
-| `IB_PASSWORD` | Password; empty = no password, `/P` / `--password` is omitted. An empty password is a fully valid configuration for dev / test infobases — **do not ask up front**. Re-ask only if the platform itself returns an authentication error. |
-| `EXTENSION_NAME` | Extension name; empty means main configuration |
-| `EXPORT_PATH` | Dump directory; empty means repository root |
-| `LOG_PATH` | Designer log file; empty resolves to `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). **Do not ask up front** — any writable path works equally well. Re-ask only if the resolved path turns out to be non-writable. |
-| `IBCMD_CONFIG` | Path to standalone server `config.yml` for `ibcmd`, optional |
+| `PLATFORM_PATH` | Platform installation directory containing `bin\1cv8.exe` — **blocking** |
+| `INFOBASE_PATH` | File infobase path or server connection string — **blocking** |
+| `INFOBASE_KIND` | `file` or `server` (empty = `file`) |
+| `IB_USER` / `IB_PASSWORD` | Credentials (empty = no authentication / no password; `/N` / `/P` / `--user` / `--password` are omitted) |
+| `EXTENSION_NAME` | Extension name (empty = main configuration) |
+| `EXPORT_PATH` | Dump directory (empty = repository root) |
+| `LOG_PATH` | Designer log file (empty = `$env:TEMP\1cv8.log` on Windows / `$TMPDIR/1cv8.log` on POSIX) |
+| `IBCMD_CONFIG` | Standalone server `config.yml` for `ibcmd` (empty = Designer fallback) |
 
-Only `INFOBASE_PATH` and `PLATFORM_PATH` are blocking — if either is empty, ask the user and write the value to `.dev.env`. **Do not** ask about `IB_USER` / `IB_PASSWORD` / `LOG_PATH` when they are empty; apply the documented defaults silently.
+Ask-policy (canon — `dev-standards-env.md`): only `INFOBASE_PATH` and `PLATFORM_PATH` are blocking — if either is empty, ask the user once and write the value to `.dev.env`. **Never ask up front** about the defaulted keys — apply the defaults from the table silently; re-ask `IB_USER` / `IB_PASSWORD` only if the platform itself returns an authentication error, `LOG_PATH` only if the resolved path turns out to be non-writable. An empty password is a fully valid configuration for dev / test infobases.
 
-When substituting `.dev.env` values into the templates below: if `LOG_PATH` is empty, replace `{LOG_PATH}` with `"$env:TEMP\1cv8.log"` (PowerShell expands the env var when the string is double-quoted).
+When substituting `.dev.env` values into the templates below:
+
+- if `LOG_PATH` is empty, replace `{LOG_PATH}` with `"$env:TEMP\1cv8.log"` (PowerShell expands the env var when the string is double-quoted);
+- resolve `{INFOBASE_FLAG}` once: `/F` for empty / `file`, `/S` for `server`; reject any other `INFOBASE_KIND`.
+
+Before a full dump, inspect `git status --short` for `{EXPORT_PATH}`. The dump may overwrite generated source files. If that path contains uncommitted changes, stop and ask the user to commit, stash, or explicitly accept the overwrite; never discard the working tree silently.
 
 ## Step 1. Choose tool: `ibcmd` or Designer
 
@@ -70,7 +74,7 @@ Map `.dev.env` keys to Designer flags:
 
 ```powershell
 & '{PLATFORM_PATH}\bin\1cv8.exe' DESIGNER `
-    /F '{INFOBASE_PATH}' `
+    {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
     /DisableStartupMessages `
@@ -79,7 +83,7 @@ Map `.dev.env` keys to Designer flags:
     /Out '{LOG_PATH}'
 ```
 
-Remove empty optional keys (`/N`, `/P`, `-Extension`). When exporting the main configuration, remove `-Extension {EXTENSION_NAME}` entirely. For a server infobase, replace `/F` with `/S`.
+Remove empty optional keys (`/N`, `/P`, `-Extension`). When exporting the main configuration, remove `-Extension {EXTENSION_NAME}` entirely.
 
 The export goes **strictly into the specified directory**; no extra subdirectories are created.
 

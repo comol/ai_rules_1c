@@ -8,7 +8,7 @@ Source: `https://github.com/comol/ai_rules_1c`.
 
 Action: update managed files in the current installation to the latest repository version (on-demand rules, subagent descriptions, slash commands, SKILL packages, MCP config, OpenSpec bundle, rendered `AGENTS.md`). Preserve:
 
-- `USER-RULES.md` and `memory.md` — one-time templates, never overwritten;
+- `USER-RULES.md`, `memory.md`, and `LLM-RULES.md` — one-time templates, never overwritten (a missing `LLM-RULES.md` on an older install is placed by this update);
 - contents of `openspec/specs/` and `openspec/changes/` — copied in skip-if-exists mode;
 - any managed file marked `userModified: true` in `.ai-rules.json`.
 
@@ -34,7 +34,7 @@ if (Test-Path (Join-Path $src '.git')) {
    - `User-modified files detected: N` — files with local edits; they are marked `userModified` and preserved;
    - `Verification OK` / `Verification found N mismatch(es)` — state of freshly placed files.
 
-4. If PowerShell is unavailable (restricted environment, no `git`/`pwsh`), execute *Update / add / remove* from `AGENT-INSTALL.md` through the agent channel: re-place managed files from the updated clone, re-render `AGENTS.md`, and update `version` and `updatedAt` in `.ai-rules.json`. Do not touch `USER-RULES.md` or `memory.md`.
+4. If PowerShell is unavailable (restricted environment, no `git`/`pwsh`), execute *Update / add / remove* from `AGENT-INSTALL.md` through the agent channel: re-place managed files from the updated clone, re-render `AGENTS.md`, and update `version` and `updatedAt` in `.ai-rules.json`. Do not touch `USER-RULES.md`, `memory.md`, or `LLM-RULES.md` (place the latter from the template only if absent).
 
 ## Parameters
 

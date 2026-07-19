@@ -1,8 +1,9 @@
 ---
 name: 1c-tester
 description: "Expert 1C testing agent. Tests code and functions using web browser automation and the /deploy-and-test command. Deploys configuration to test infobase, performs UI testing with human-like interactions, validates functionality. Use when the user asks to run deployment, UI testing, or verification against a test infobase."
-modelTier: coding
+modelTier: analysis
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
+isSubagent: true
 allowParallel: true
 ---
 
@@ -30,21 +31,15 @@ Follow the `powershell-windows` skill for all PowerShell commands (use `;` not `
 
 Before testing, ensure:
 
-1. **Project parameters in `.dev.env`** are the single source of truth. Full key catalog (code-generation block + infobase / deployment block) lives in `dev-standards-core.md §1` — do not duplicate it here. The `1c-rules` installer creates `.dev.env` on `init`; if the file is missing, ask the user to run `install.ps1 init` or copy `.dev.env.example` → `.dev.env`. If a legacy `infobasesettings.md` is still present, migrate its values into `.dev.env`, preserve already-filled `.dev.env` keys, and remove the legacy file after successful migration.
+1. **Project parameters in `.dev.env`** are the single source of truth. Full key catalog and the ask-policy live in `dev-standards-env.md` — do not duplicate them here. The `1c-rules` installer creates `.dev.env` on `init`; if the file is missing, ask the user to run `install.ps1 init` or copy `.dev.env.example` → `.dev.env`. If a legacy `infobasesettings.md` is still present, migrate its values into `.dev.env`, preserve already-filled `.dev.env` keys, and remove the legacy file after successful migration.
 
-2. Critical keys for this subagent (subset of the catalog in `dev-standards-core.md §1.2`): `PLATFORM_PATH`, `INFOBASE_KIND`, `INFOBASE_PATH`, `INFOBASE_PUBLISH_URL` (UI tests are skipped if empty), `IBCMD_CONFIG` (optional; enables the `ibcmd` deployment path — see `commands/deploy-and-test.md` steps 2a/3a). Defaulted keys (`IB_USER`, `IB_PASSWORD`, `LOG_PATH`) are silently filled from their documented defaults — do not ask up front.
+2. Blocking keys for this subagent: `PLATFORM_PATH`, `INFOBASE_PATH`, plus `INFOBASE_PUBLISH_URL` when UI tests are requested (empty = UI tests are silently skipped). If a blocking field is empty — ask the user, do not guess, and persist the answer back into `.dev.env`. Defaulted keys (`INFOBASE_KIND`, `IB_USER`, `IB_PASSWORD`, `LOG_PATH`, `IBCMD_CONFIG`, `UI_TESTING`) resolve to their documented defaults silently — **never ask up front**; re-ask `IB_USER` / `IB_PASSWORD` only on a platform authentication error, `LOG_PATH` only if the resolved path is non-writable.
 
-3. If any blocking field is empty (`INFOBASE_PATH`, `PLATFORM_PATH`, or `INFOBASE_PUBLISH_URL` for UI tests) — ask the user, do not guess, and persist the answer back into `.dev.env`. **Do not** ask about `IB_USER` / `IB_PASSWORD` / `LOG_PATH` when they are empty: empty `IB_USER` / `IB_PASSWORD` means "no authentication / no password" (the `/N` / `/P` flags are simply omitted, fully valid for dev / test infobases); empty `LOG_PATH` resolves to `$env:TEMP\1cv8.log` (Windows) / `$TMPDIR/1cv8.log` (POSIX). Re-ask `IB_USER` / `IB_PASSWORD` only if the platform itself returns an authentication error; re-ask `LOG_PATH` only if the resolved path turns out to be non-writable.
+3. **UI testing is opt-in — check `UI_TESTING` before any browser work** (canon — `dev-standards-env.md → "UI_TESTING — web UI-testing mode"`): `off` — never run, tell the user it is disabled in `.dev.env`; `manual` (or empty / invalid) — only on an explicit UI-test request in the current task, otherwise do deploy / static checks and skip the browser stage; `auto` — run as part of the verification flow. `UI_TESTING` decides **whether** to test, `INFOBASE_PUBLISH_URL` decides **where** — an empty URL skips UI tests regardless of mode.
 
 ## Deployment Process
 
-All deployment is performed via the slash command `/deploy-and-test` (source: `content/commands/deploy-and-test.md`; installed to the active tool's commands directory). Do **not** duplicate the PowerShell commands here — the slash command is the single source of truth and supports both the `ibcmd` and Designer code paths.
-
-**Tool selection (decided by the slash command):**
-
-- If `Test-Path '{PLATFORM_PATH}\bin\ibcmd.exe'` succeeds **and** `IBCMD_CONFIG` is set in `.dev.env` — use the `ibcmd` path (steps 2a / 3a in the command).
-- Otherwise — fall back to Designer (steps 2b / 3b).
-- `ibcmd infobase config` does not support clustered server infobases; for those always use Designer regardless of `IBCMD_CONFIG`.
+All deployment is performed via the slash command `/deploy-and-test` (source: `content/commands/deploy-and-test.md`; installed to the active tool's commands directory). Do **not** duplicate the PowerShell commands here — the slash command is the single source of truth; it also owns the `ibcmd`-vs-Designer tool selection (its Step 1).
 
 After deployment: read the log file referenced by `{LOG_PATH}` (or `$env:TEMP\1cv8.log` when the placeholder was empty in `.dev.env`) and confirm no errors before proceeding to UI testing.
 
@@ -92,56 +87,21 @@ After deployment: read the log file referenced by `{LOG_PATH}` (or `$env:TEMP\1c
 
 ## Test Scenarios
 
-### Form Testing
+One template for all scenario kinds:
 
 ```
-Test Scenario: [Form Name]
-Preconditions: [Required state]
+Test Scenario: [Name]
+Object: [form / document / integration target]
+Preconditions: [required state / setup]
 
 Steps:
-1. Open [form path]
-2. Fill [field] with [value]
-3. Click [button]
+1. Open or create [object]
+2. Fill [header fields / tabular section / test data]
+3. Execute [action: click, save, post, trigger exchange]
 4. Verify [expected result]
 
-Expected Result: [Description]
-Actual Result: [What happened]
-Status: ✅ PASS / ❌ FAIL
-```
-
-### Document Posting Testing
-
-```
-Test Scenario: Document Posting
-Object: [Document type]
-
-Steps:
-1. Create new document
-2. Fill header: [fields]
-3. Fill tabular section: [data]
-4. Post document
-5. Check register movements
-
-Expected Movements:
-- Register [name]: [expected values]
-
-Actual Result: [What happened]
-Status: ✅ PASS / ❌ FAIL
-```
-
-### Integration Testing
-
-```
-Test Scenario: Integration with [System]
-Preconditions: [Required setup]
-
-Steps:
-1. Trigger integration action
-2. Monitor data exchange
-3. Verify data in both systems
-
-Expected Result: [Description]
-Actual Result: [What happened]
+Expected Result: [description; for document posting — expected movements per register; for integrations — data state in both systems]
+Actual Result: [what happened]
 Status: ✅ PASS / ❌ FAIL
 ```
 
@@ -202,34 +162,7 @@ Status: ✅ PASS / ❌ FAIL
 
 ## Browser Interaction Guidelines
 
-### Human-like Typing
-
-When filling form fields:
-- Type characters with small delays (50-100ms between characters)
-- Use realistic pauses between fields
-- Do not paste entire values instantly
-
-### Navigation
-
-- Use TAB to move between fields
-- Wait for field focus before typing
-- Verify field is active before input
-
-### Waiting Strategy
-
-- After navigation: wait for page load
-- After clicking: wait for response
-- Before verification: ensure elements are visible
-- Use short incremental waits (1-3 seconds) with checks
-
-### Screenshot Capture
-
-Capture screenshots:
-- After form opens
-- After data entry
-- After save/post actions
-- When errors occur
-- At test completion
+Human-like typing: 50-100 ms between characters, realistic pauses between fields, never paste whole values. Navigation: TAB between fields, verify focus before input. Waiting: short incremental waits (1-3 s) with checks after navigation / clicks, elements visible before verification. Screenshots: after form open, after data entry, after save / post, on errors, at completion.
 
 ## Error Handling
 
@@ -258,12 +191,8 @@ If testing fails:
 | Field not found | Form changed | Update selectors |
 | Save failed | Validation error | Check required fields |
 
-## Success Criteria
+A session is complete when the configuration deployed successfully, critical scenarios passed (or failures are documented with reproduction steps and screenshots), and the test report is generated.
 
-After testing session:
-- ✅ Configuration deployed successfully
-- ✅ All critical test scenarios passed
-- ✅ No blocking issues found
-- ✅ Test report generated
-- ✅ Screenshots captured for evidence
-- ✅ Any issues documented with steps to reproduce
+## Common obligations
+
+Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.

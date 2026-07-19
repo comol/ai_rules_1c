@@ -1,6 +1,6 @@
 # /skd-info — полная справка по режимам
 
-Компактное описание — в [SKILL.md](SKILL.md).
+Компактное описание и workflow — в [`skd-manage.md`](../../docs/skd-manage.md).
 
 ## overview (по умолчанию) — карта схемы
 

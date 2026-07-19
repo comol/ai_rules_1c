@@ -8,8 +8,9 @@
 # Notes:
 #   - Current Kilo Code (VSCode extension and CLI, built on the Kilo CLI core)
 #     loads project content from the `.kilo/` directory:
-#       rules    -> .kilo/rules/         (legacy `.kilocode/rules/` still works
-#                                         via backward compatibility)
+#       rules    -> .kilo/rules-1c/      (an explicit on-demand directory read
+#                                         through AGENTS.md; `.kilo/rules/`
+#                                         would be auto-loaded eagerly)
 #       agents   -> .kilo/agents/        (markdown subagent files; the legacy
 #                                         extension did not expose a folder for
 #                                         these — `.kilocode/subagents/` was
@@ -69,12 +70,15 @@ rules:
 agents:
   copyTo: ".kilo/agents/{name}.md"
   frontmatter:
-    keep: [name, description]
-    drop: [tools, modelHint]
+    # Kilo custom-agent frontmatter supports `model`; preserve the
+    # installer-resolved model tier instead of silently dropping it.
+    keep: [name, description, modelHint]
+    rename:
+      modelHint: model
+    drop: [tools, allowParallel, reasoningEffort]
     addIf:
       isSubagent: { mode: subagent }
       "!isSubagent": { mode: all }
-    drop: [allowParallel, reasoningEffort]
 
 commands:
   copyTo: ".kilo/commands/{name}.md"

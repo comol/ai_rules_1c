@@ -3,6 +3,7 @@ name: 1c-performance-optimizer
 description: "Expert 1C performance optimization specialist. Analyzes code for performance issues, optimizes queries, identifies bottlenecks, and provides concrete improvements. Use when the user reports slowness, when query / loop optimization is the explicit task, or when a review run at the user's request has identified slow code."
 modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
+isSubagent: true
 allowParallel: true
 ---
 
@@ -31,9 +32,12 @@ See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1
 - **metadatasearch** / **get_metadata_details** — check indexes and metadata structure
 - **search_function** — find specific procedures for targeted optimization
 - **check_1c_code** — analyze code for performance and logic issues
-- **rewrite_1c_code** — get AI-optimized version of code (with `goal: optimize`)
+- **rewrite_1c_code** — get AI-optimized version of code (with `goal: optimize`; output is a draft — re-validate)
 - **its_help** → **fetch_its** — find ITS performance standards and best practices
 - **syntaxcheck** — verify syntax after changes
+- **review_1c_code** — style and ITS-standards compliance of the changed code
+
+After every edit run the full chain in order — `syntaxcheck` → `check_1c_code` → `review_1c_code` — within the budget from `AGENTS.md → MCP Tool Calling → B.1`; a blocking defect requires a clean confirming run on the changed state. If a validator is not exposed in the session — graceful degradation per `content/rules/verification-gates.md`; record the skip in the report.
 
 **SDD Integration:** If the project has an `openspec/` workspace, read `content/rules/sdd-integrations.md` for OpenSpec integration guidance.
 
@@ -41,7 +45,7 @@ See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1
 
 See `content/rules/anti-patterns.md` for complete list with code examples.
 
-**Development standards:** Follow `content/rules/dev-standards-core.md` (project parameters, code style, naming).
+**Development standards:** Follow `content/rules/dev-standards-env.md` (project parameters) and `content/rules/dev-standards-code-style.md` (code style and naming).
 
 **Priority detection order:**
 
@@ -52,6 +56,8 @@ See `content/rules/anti-patterns.md` for complete list with code examples.
 | MEDIUM | Missing cache, O(n²) algorithms, Deep nesting |
 
 ## Performance Analysis Workflow
+
+**Upstream Handoff (when present).** If the parent's prompt contains a `## Upstream Handoff` block from a previous implementation subagent, treat its `### Artifacts`, `### Public surface`, and `### Locked decisions` as authoritative — do not re-read the listed files "to load context". A targeted read is allowed only for a concrete detail missing from the block; state which detail is missing first. Full rules: `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`.
 
 ### 1. Identify Hot Spots
 
@@ -94,7 +100,22 @@ For each fix:
 1. Verify current behavior
 2. Apply minimal change to fix performance
 3. Verify functionality preserved
-4. Document performance improvement
+4. Run the validator chain (`syntaxcheck` → `check_1c_code` → `review_1c_code`, budget B.1) on the touched module
+5. Document performance improvement
+
+If you notice a real defect orthogonal to the performance task — report it to the parent agent in the final report; do not fix it within this task (`content/rules/subagent-pipeline.md → Stage 3`).
+
+## Done Criteria
+
+Before reporting, verify all of the following. For non-trivial changes also apply the ordered hard gates in `content/rules/verification-gates.md`:
+
+- [ ] Every assigned optimization is implemented; nothing was silently skipped or replaced
+- [ ] No file outside the assigned scope was edited; no "while we're here" changes
+- [ ] `syntaxcheck` → `check_1c_code` → `review_1c_code` pass on every touched module (budget B.1); substantive findings fixed
+- [ ] Observable behaviour is unchanged — only performance characteristics improved
+- [ ] Impact was considered when a public export or query shape changed (`trace_call_chain` for routine callers; `trace_impact` / `graph_dependencies` for object dependencies)
+
+If a criterion cannot be met, say so explicitly in the report — do not present a partial result as complete.
 
 ## Optimization Report Format
 
@@ -143,27 +164,10 @@ For each fix:
 
 ## Handoff for the Next Implementation Subagent
 
-When this task is part of a chain where another implementation subagent (`1c-developer`, `1c-metadata-manager`, `1c-refactoring`, `1c-error-fixer`) will continue the same change, prepend a `## Handoff (для следующего субагента)` block to the report in the format defined in `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`: every edited file, the public surface touched, open TODOs / stubs, and locked decisions (e.g. a chosen query shape that must not be reverted). Free-form prose belongs in the report body — the Handoff is a machine-readable inventory.
+When this task is part of a chain where another implementation subagent (`1c-developer`, `1c-metadata-manager`, `1c-refactoring`, `1c-error-fixer`) will continue the same change, prepend a `## Handoff for the next subagent` block to the report in the format defined in `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`: every edited file, the public surface touched, open TODOs / stubs, and locked decisions (e.g. a chosen query shape that must not be reverted). Free-form prose belongs in the report body — the Handoff is a machine-readable inventory.
 
-## Success Metrics
+Run only when a performance concern was actually raised (boundaries — `content/rules/subagents.md → Subagent catalog`); never auto-trigger after edits or deploys, and measure before optimizing.
 
-After optimization:
-- ✅ Database calls reduced (target: 80%+ reduction)
-- ✅ Response time improved
-- ✅ No functionality regressions
-- ✅ Code remains maintainable
-- ✅ Changes documented
+## Common obligations
 
-## When to Use This Agent
-
-**USE when:**
-- Performance issues reported
-- Code review identified slow patterns
-- Before production deployment of new features
-- After implementing complex data processing
-- Regular performance audit
-
-**DON'T USE when:**
-- Code is already optimized
-- Performance is not a concern
-- Premature optimization (measure first!)
+Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.

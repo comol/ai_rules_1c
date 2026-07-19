@@ -14,7 +14,7 @@
     python transcribe.py "подкаст.wav" --with-summary --output-dir "./результат"
 
 API-ключ: переменная окружения GEMINI_API_KEY или файл .env
-(ищет в ~/.claude/skills/transcribe/.env, ~/.claude/skills/video-transcribe/.env, затем в cwd).
+(рядом со SKILL.md, в каталоге skill поддерживаемого клиента, затем в cwd).
 """
 
 import argparse
@@ -30,11 +30,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Загрузка .env: приоритет transcribe > video-transcribe > cwd
+# Load .env from the actual skill first, then supported user-skill locations.
 _home = Path.home()
+_skill_dir = Path(__file__).resolve().parent.parent
 for _env_path in [
+    _skill_dir / ".env",
+    _home / ".cursor" / "skills" / "transcribe" / ".env",
     _home / ".claude" / "skills" / "transcribe" / ".env",
-    _home / ".claude" / "skills" / "video-transcribe" / ".env",
+    _home / ".kilo" / "skills" / "transcribe" / ".env",
+    _home / ".codex" / "skills" / "transcribe" / ".env",
+    _home / ".ai-agent" / "skills" / "transcribe" / ".env",
 ]:
     if _env_path.exists():
         load_dotenv(_env_path)
@@ -416,10 +421,9 @@ def process_file(path, output_dir, mode, with_summary, output_format):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("API-ключ не найден. Варианты:")
-        print("  1. Файл ~/.claude/skills/transcribe/.env с GEMINI_API_KEY=...")
-        print("  2. Файл ~/.claude/skills/video-transcribe/.env с GEMINI_API_KEY=...")
-        print("  3. Файл .env в текущей директории")
-        print("  4. Переменная окружения: set GEMINI_API_KEY=ваш_ключ")
+        print(f"  1. Файл {_skill_dir / '.env'} с GEMINI_API_KEY=...")
+        print("  2. Файл .env в текущей директории")
+        print("  3. Переменная окружения GEMINI_API_KEY")
         sys.exit(1)
 
     size_mb = path.stat().st_size / (1024 * 1024)

@@ -10,20 +10,23 @@ Converts a Markdown file to a Word document (`.docx`) preserving headings, table
 ## Usage
 
 ```
-/md-to-docx <input.md> [output.docx]
+/md-to-docx <input.md> [output.docx] [--author "Name"] [--title "Title"] [--no-shading]
 ```
 
 | Parameter | Required | Description |
 |-----------|:--------:|-------------|
 | `input.md` | yes | Path to the source Markdown file |
 | `output.docx` | no | Path to the output file (default: alongside source, `.md` → `.docx`) |
+| `--author` | no | Document author. Written to core properties (`dc:creator` + `cp:lastModifiedBy`). Also accepts the `--author=Name` form |
+| `--title` | no | Document title in core properties and in the header. Default: input file name without extension |
+| `--no-shading` | no | Disables the grey background for inline `code` and fenced ``` code blocks. Alias: `--shading=off`. On by default. Does not affect the table header (it keeps its structural fill) |
 
-If the path is not provided — ask the user.
+If the path is not provided — ask the user. The `--author`, `--title`, `--no-shading` flags are optional — pass them only when the user explicitly asks for an author, a custom title, or removal of code shading.
 
 ## Dependencies
 
 - **Node.js** — to run the script
-- **npm package `docx`** — install globally: `npm install -g docx`
+- **npm package `docx`** — pinned by this skill's `package-lock.json`; install locally with `npm ci --prefix "<skill-dir>"`
 
 ## Command
 
@@ -32,15 +35,21 @@ If the path is not provided — ask the user.
 PowerShell (Windows, default for this project):
 
 ```powershell
-$env:NODE_PATH = (npm root -g)
-node <skill-dir>/scripts/md_to_docx.js "<input.md>" "[output.docx]"
+npm ci --prefix "<skill-dir>"
+node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]"
+
+# With author and title
+node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]" --author "I. Ivanov" --title "Analytical note"
+
+# Without the grey code background
+node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]" --no-shading
 ```
 
 Bash (macOS / Linux):
 
 ```bash
-NODE_MODULES=$(npm root -g)
-NODE_PATH="$NODE_MODULES" node <skill-dir>/scripts/md_to_docx.js "<input.md>" "[output.docx]"
+npm ci --prefix "<skill-dir>"
+node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]"
 ```
 
 ## Supported Markdown features
@@ -50,9 +59,11 @@ NODE_PATH="$NODE_MODULES" node <skill-dir>/scripts/md_to_docx.js "<input.md>" "[
 - Code blocks (monospace font, gray background)
 - Lists: bulleted and numbered (with nesting)
 - Inline formatting: **bold**, *italic*, `code`, [links](url)
+- Internal anchor links: `<a id="name"></a>` before a heading becomes a bookmark; `[text](#name)` links resolve to it (external `http(s)` / `mailto:` links stay external)
 - Images (`![alt](path)`) — resolved relative to the source MD folder
 - Horizontal rules (`---`)
-- Headers/footers: filename in the top, page number in the bottom
+- Headers/footers: title in the top, page number in the bottom
+- Core properties: author and title (via `--author` / `--title`)
 
 If an image is not found — a red text placeholder is inserted.
 

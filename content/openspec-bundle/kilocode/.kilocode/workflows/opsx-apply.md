@@ -123,13 +123,24 @@ The agent MAY include its own preference inside the block as a recommendation ("
 
    e. **If `## Genuine blockers` is non-empty** — submit the consolidated `AskUserQuestion` round (one call, all questions in it). On the user's response, apply the answers to the artifacts: write resolved Open Questions into `design.md → ## Architecture decisions` and strike them from `## Open Questions`; persist `.dev.env` values. Then enter the implementation loop. **The preflight round is the only apply-time question surface** — no further `AskUserQuestion` calls during step 6 except for the narrow critical exceptions below.
 
-6. **Implement tasks (loop until done or blocked)**
+6. **Run the 1C pipeline and implement tasks (loop until done or blocked)**
+
+   Before the first edit, load `content/rules/subagent-pipeline.md` and
+   `content/rules/verification-checklist.md`, then classify the current session plan using
+   `AGENTS.md → Triage`. Quick-fix / docs-fix / spec-authoring work follows its dedicated
+   route. Full-cycle work runs either the standard path (direct execution by the parent per
+   `AGENTS.md → Development Procedure`) or the pipeline when delegation is chosen per
+   `content/rules/subagents.md` (the default under `ORCHESTRATION=economy`). Either way the
+   approved OpenSpec artifacts are the approved plan — do not ask for duplicate approval —
+   and the spec-compliance review (pipeline Stage 4a) plus the closing verification gate
+   (`verification-checklist.md`) still run.
 
    For each pending task:
    - Show which task is being worked on
    - Make the code changes required
    - Keep changes minimal and focused
-   - Mark task complete in the tasks file: `- [ ]` → `- [x]`
+   - Run the task-local checks named in `tasks.md` and retain fresh validator evidence
+   - Record the task as implemented, but leave `- [ ]` unchanged until step 7 passes
    - Continue to next task
 
    **Mid-loop pause is reserved for true live-state surprises only.** Pause if **and only if**:
@@ -144,7 +155,21 @@ The agent MAY include its own preference inside the block as a recommendation ("
    - "Should I pause now to re-confirm decision X from `design.md`?" — never. Confirmation is not a question.
    - "Should I pause for an empty `.dev.env` field that the user already declined in preflight?" — never. The dependent block is marked `deferred-to-user` in `tasks.md`; proceed with everything else.
 
-7. **On completion or pause, show status**
+7. **Run spec-compliance and closing verification**
+
+   Before marking any implemented task complete:
+   - Run Stage 4a from `content/rules/subagent-pipeline.md` against the implemented task set.
+   - Run Stage 4b only when the user explicitly requested a code review.
+   - Run Stage 5 via `content/rules/verification-checklist.md`, including every applicable hard
+     and soft gate.
+   - Reuse fresh validator evidence produced after the latest edit. Run only missing or stale
+     gates; never repeat a validator against unchanged content.
+   - If a gate finds a defect, fix it and rerun only the affected stale gate within its budget.
+     If verification is blocked, keep the affected tasks unchecked and report the blocker.
+   - Only after Stage 4a and the closing gate pass, update each verified task:
+     `- [ ]` → `- [x]`.
+
+8. **On completion or pause, show status**
 
    Display:
    - Tasks completed this session
@@ -159,11 +184,11 @@ The agent MAY include its own preference inside the block as a recommendation ("
 
 Working on task 3/7: <task description>
 [...implementation happening...]
-✓ Task complete
+Implementation complete; closing verification pending
 
 Working on task 4/7: <task description>
 [...implementation happening...]
-✓ Task complete
+Implementation complete; closing verification pending
 ```
 
 **Output On Completion**
@@ -174,6 +199,7 @@ Working on task 4/7: <task description>
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Progress:** 7/7 tasks complete ✓
+**Verification:** Stage 4a and all applicable closing gates passed
 
 ### Completed This Session
 - [x] Task 1
@@ -209,7 +235,8 @@ What would you like to do?
 - **Bundle every legitimate question into the single preflight round at step 5b — no mid-loop questions except for the narrow critical exceptions in step 6.** "If task is ambiguous, pause and ask" is **not** the apply rule for this project — the rule is in `content/rules/sdd-integrations.md → Apply-phase clarification discipline`. Routine ambiguity is a propose-phase defect; make a reasonable, codebase-consistent choice and record it via `remember` or `memory.md` Captured-during-work.
 - If a live-state fact conflicts with a locked artifact decision, raise a `CONFUSION` block and pause; this is the only routine mid-loop pause.
 - Keep code changes minimal and scoped to each task
-- Update task checkbox immediately after completing each task
+- Load `subagent-pipeline.md` and `verification-checklist.md` before the first edit
+- Update task checkboxes only after step 7 passes; implementation alone is not completion
 - Pause on hard errors / blockers (failing validator with a substantive defect, missing metadata, deadlock), never on routine style warnings or naming choices
 - Use contextFiles from CLI output, don't assume specific file names
 

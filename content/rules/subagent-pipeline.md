@@ -1,14 +1,16 @@
 ---
-description: Formalized subagent pipeline for non-trivial 1C changes — planner → developer → spec-compliance review → optional code-reviewer → verification gate
+description: Formalized subagent pipeline for delegated full-cycle 1C changes — planner → developer → spec-compliance review → optional code-reviewer → verification gate
 alwaysApply: false
 category: workflow
 ---
 
 # Subagent Pipeline — Full-Cycle Flow
 
-**When to load this file:** any task that exceeds the **quick-fix** threshold defined in `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle` (more than ~20 changed lines, more than one module, any metadata change, any architectural impact, any non-trivial bug). For quick-fix tasks the pipeline is unnecessary overhead — a direct edit + `syntaxcheck` is enough.
+**When to load this file:** a **full-cycle** task (per `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle`: over the quick-fix line budget, more than one module, any metadata change **except an isolated addition allowed by that triage**, any architectural impact, any non-trivial bug) **for which delegation to subagents has been chosen** per `subagents.md` — or is the default because `ORCHESTRATION=economy`.
 
-**Companion files:** `subagents.md` (catalog of subagents and when to delegate), `verification-checklist.md` (the closing gate of the pipeline).
+Full-cycle alone does **not** trigger the pipeline. The **standard path** for a full-cycle task is the parent agent executing the 5-step Development Procedure from `AGENTS.md` directly: plan stated in chat → implementation → closing gate from `verification-checklist.md`. It is usually faster for medium tasks that fit the parent's context; the pipeline pays off when the work is bulky enough to justify subagent launches (`subagents.md → Delegation principle`). For quick-fix tasks the pipeline is unnecessary overhead — use a direct edit plus the strict quick-fix gate from `verification-checklist.md`.
+
+**Companion files:** `subagents.md` (catalog of subagents and when to delegate), `verification-checklist.md` (the closing gate of the pipeline), `orchestrator-economy.md` (optional project mode — `ORCHESTRATION=economy` in `.dev.env`, toggled by `/economymode` — makes stage 2/3 delegation the default and shifts bulk reads to subagents; stages and gates are unchanged).
 
 The pipeline is adapted from the `subagent-driven-development` skill of [obra/superpowers](https://github.com/obra/superpowers) and combined with the 13 specialized 1C subagents already shipped in `content/agents/`.
 
@@ -74,9 +76,9 @@ The pipeline removes those failure modes by separating **what to build** (planne
 
 ### Stage 1 — Triage (parent agent)
 
-Apply the matrix from `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle`. **Only** full-cycle tasks enter the pipeline. If the task is a quick-fix, edit directly and skip to stage 5 with a minimal verification (`syntaxcheck` only). Tasks on the **docs-fix** path (Markdown / rules / docs only) bypass the pipeline and the BSL validators — apply the structural checks from `AGENTS.md → Triage` instead. Tasks on the **spec-authoring** path (OpenSpec artifacts with 1C facts) also bypass the pipeline but carry the MCP evidence obligations from `sdd-integrations.md`.
+Apply the matrix from `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle`. **Only** full-cycle tasks for which delegation was chosen enter the pipeline; other full-cycle tasks follow the standard path (direct execution by the parent per `AGENTS.md`, same closing gate). If the task is a quick-fix, edit directly and run the strict applicable gate from `verification-checklist.md` (Gates 1–3 for BSL; Gate 5 for pure metadata XML; both when metadata embeds BSL). Tasks on the **docs-fix** path (Markdown / rules / docs only) bypass the pipeline and the BSL validators — apply the structural checks from `AGENTS.md → Triage` instead. Tasks on the **spec-authoring** path (OpenSpec artifacts with 1C facts) also bypass the pipeline but carry the MCP evidence obligations from `sdd-integrations.md`.
 
-If the user asks for a small change that **looks** like a quick-fix but the change touches a transactional path, a public common-module export, an extension's adopted object, an event subscription / scheduled job / RLS condition, or metadata wired into existing behavior (rename / remove / immediate-use, RLS / indexing / fill-check changes) — promote it to full-cycle. **Isolated metadata additions** that satisfy the "Isolated metadata addition" clause in `AGENTS.md → Triage` (new independent register / defined type / enumeration / constant / unwired attribute, with no consumer touched in the same change) stay on the quick-fix path. When in doubt, full-cycle wins.
+The detailed promotion triggers (transactional paths, public exports, adopted objects, subscriptions / jobs / RLS, wired metadata) and the isolated-metadata-addition eligibility are owned by `verification-policy.md → Triage details` — apply them as written. When in doubt, full-cycle wins.
 
 ### Stage 2 — Plan (delegate to a planning subagent)
 
@@ -90,13 +92,22 @@ Choose by task shape:
 
 The plan must satisfy these acceptance criteria before stage 3:
 
-- Each task is small enough that an enthusiastic junior 1C developer with no project context can execute it: typically 1 file / 1 procedure / ≤ ~20 changed lines per task.
+- Each task is **one coherent unit of work** that an enthusiastic junior 1C developer with no project context can execute: a procedure / function, an event handler, a form, a register, or a coherent group of related edits within one module. Do not shred the plan into ≤20-line fragments — over-fragmentation multiplies verification points and handoffs without adding safety.
 - Each task names exact file paths and exact procedure names — no "update the related modules".
-- Each task has a verification step (`syntaxcheck`, an MCP query, an assertion, a manual reproduction).
+- Verification points are attached per module / coherent group (`syntaxcheck`, an MCP query, an assertion, a manual reproduction) — not per every few lines.
 - Risks and rollback are explicit, especially for metadata changes (UUID stability, register movements, role grants).
-- The plan is reviewed by the user. The user's approval is a hard gate — do not proceed to stage 3 without it.
+- The plan is approved — see the approval gate below.
 
-For projects on the OpenSpec workflow (`/opsx:propose`), the plan lives in `openspec/changes/<change-name>/tasks.md` and the design in `design.md`. The pipeline does not replace OpenSpec — it slots into the **apply** phase of OpenSpec.
+**Plan approval gate — scaled by risk.**
+
+- **User approval is a hard gate** when the plan touches any promotion trigger from `verification-policy.md → Triage details`: metadata wired into existing behavior, transactional paths, public common-module contracts, RLS / roles / event subscriptions / scheduled jobs, adopted extension objects — or anything hard to reverse. Do not proceed to stage 3 without it.
+- **Approved OpenSpec artifacts count as the approval.** When the pipeline runs inside the OpenSpec **apply** phase (an active `openspec/changes/<change-name>/` with `proposal.md` / `design.md` / `tasks.md` exists — the common case on this workflow), those artifacts **are** the approved plan: do not run a separate plan-approval round, quote the locked decisions and proceed (`sdd-integrations.md → Apply-phase clarification discipline`). Deviating from the artifacts still requires explicit user authorization.
+- **Medium pure-code full-cycle tasks** with no trigger from the risk list: publish the plan in chat and proceed without waiting for an approval round-trip — the user can interrupt or correct. State in one line that implementation continues on this plan.
+- An explicit user pre-approval ("plan and implement without confirmation", a pre-approving launch prompt) is always honored; record it in the final report as the approval source.
+
+**Unattended runs.** When approval **is** required by the risk list above and no human is in the loop (autonomous / scheduled / CI-style run), do **not** self-approve: stop after stage 2 and deliver the plan itself as the run's result, marked as awaiting approval. Approved OpenSpec artifacts or an explicit pre-approval in the launch prompt satisfy the gate — record the approval source in the final report.
+
+For projects on the OpenSpec workflow (`/opsx:propose`), the plan lives in `openspec/changes/<change-name>/tasks.md` and the design in `design.md`. The pipeline does not replace OpenSpec — it slots into the **apply** phase of OpenSpec, and its stage 2 is normally already done there (the artifacts replace a fresh plan; re-planning an approved change is a defect).
 
 ### Stage 3 — Implement (delegate to an implementation subagent)
 
@@ -113,8 +124,11 @@ The implementation subagent is bound by the plan from stage 2. Out-of-plan chang
 The implementation subagent is responsible for:
 
 - editing the BSL / XML;
-- running its own pre-handoff `syntaxcheck` on every touched module;
-- preserving module headers, regions and the project's code style (`dev-standards-core.md`);
+- running the ordered validator chain on every touched module:
+  `syntaxcheck` → `check_1c_code` → `review_1c_code`;
+- recording per-artifact validator results and run counts after the final edit so Stage 5 can
+  reuse them without duplicate calls;
+- preserving module headers, regions and the project's code style (`dev-standards-code-style.md`);
 - removing only the imports / variables / procedures **that its own changes made unused** — never pre-existing dead code;
 - summarizing the diff against the plan, file by file;
 - producing a structured **Handoff** block (see "Stage 3 — Handoff between implementation subagents" below) when the same change is going to continue under another implementation subagent.
@@ -128,7 +142,7 @@ The mechanism is a fixed-format **Handoff** block that every upstream implementa
 **Mandatory Handoff format (emitted by the upstream subagent at the very top of its final report):**
 
 ```text
-## Handoff (для следующего субагента)
+## Handoff for the next subagent
 
 ### Artifacts
 - <full repo path> — <one-line role> [stub | done | edited]
@@ -139,11 +153,11 @@ The mechanism is a fixed-format **Handoff** block that every upstream implementa
 - <Metadata.Object> — <attribute / tabular section / form name>: <type / role>
 - ...
 
-### Open TODOs / stubs (для следующего субагента)
+### Open TODOs / stubs for the next subagent
 - <file>:<region or routine> — <what to implement> — <signature hint, if pre-agreed>
 - ...
 
-### Locked decisions (не пересматривать без согласования)
+### Locked decisions (do not revisit without approval)
 - <decision> — <one-line rationale>
 - ...
 
@@ -183,16 +197,15 @@ Checklist:
 - No file outside the plan was edited (use `git diff --name-only` to verify).
 - The names, parameter types, return types of new public procedures match the plan.
 - New / removed metadata objects match the plan; UUIDs were preserved on edits, not regenerated.
-- Module headers (the `// Возвращает / Параметры` comment blocks per `dev-standards-core.md §5`) are present on new public procedures.
+- Module headers (the `// Возвращает / Параметры` comment blocks per `dev-standards-code-style.md → "Procedure/Function Documentation"`) are present on new public procedures.
 
 If anything fails — bounce back to stage 3 with a precise delta. If optional 4b is applicable, do not proceed to it until 4a is clean. This is the cheap gate; running 4b before 4a is wasted compute.
 
+Record the 4a result (checked items, diff-vs-plan verdict). Stage 5's plan-adherence check (`verification-delivery.md → Soft gate B`) **reuses this evidence** — it confirms the 4a result is still fresh (no edits after the review) instead of re-running the file-by-file diff.
+
 ### Stage 4b — Code-quality review (delegate to `1c-code-reviewer`, when applicable)
 
-Two important constraints from the existing `subagents.md`:
-
-- The `1c-code-reviewer` subagent runs **only when the user explicitly asks for a code review**. Auto-triggering after every edit is forbidden.
-- For non-review-requested tasks, the parent agent still runs `check_1c_code` + `review_1c_code` itself in stage 5 — this is enough for routine work.
+Constraints: `1c-code-reviewer` runs **only when the user explicitly asks for a code review** (canon — `subagents.md`); auto-triggering is forbidden. For non-review-requested tasks the Stage 3 agent supplies the routine validator evidence; the parent checks its freshness in Stage 5 and runs only missing or stale gates.
 
 When the user asks for a review, the subagent looks at:
 
@@ -205,11 +218,13 @@ The subagent reports issues by severity (critical / major / minor). Critical iss
 
 ### Stage 5 — Verification gate (parent agent)
 
-Run the closing gate from `verification-checklist.md`. This is non-negotiable for full-cycle tasks.
+Run the closing gate from `verification-checklist.md`. This is non-negotiable for full-cycle
+tasks. Apply its **Gate execution and evidence reuse** rule: accept fresh Stage 3 evidence for
+Gates 1–3, run only missing or stale gates, then complete every other applicable hard / soft gate.
 
 ## Anti-patterns of the pipeline
 
-- **Skipping stage 2** "because the change is small" — if it is small, it should have been quick-fix in stage 1.
+- **Skipping stage 2** "because the change is small" — if it is small, it should have been a quick-fix or the standard path (direct execution) in stage 1, not a pipeline with holes.
 - **Letting the implementation subagent re-plan** — if the plan turns out wrong, return to stage 2, do not let stage 3 silently rewrite it.
 - **Running optional 4b before 4a** — wastes the code-reviewer subagent on a structurally wrong implementation.
 - **Auto-triggering `1c-code-reviewer`** — explicitly forbidden by `subagents.md`.
@@ -218,10 +233,12 @@ Run the closing gate from `verification-checklist.md`. This is non-negotiable fo
 
 ## When to deviate
 
-The pipeline is the default for full-cycle tasks. Deviate only with an explicit reason:
+The pipeline is the default for **delegated** full-cycle tasks (a non-delegated full-cycle task follows the standard path — see the top of this file). Once inside the pipeline, deviate from its stages only with an explicit reason:
 
 - pure documentation changes — `1c-doc-writer` directly, no plan / dev / review pipeline;
-- pure UI test runs against an existing build — `1c-tester` directly;
+- pure UI test runs against an existing build — `1c-tester` directly, **only when `UI_TESTING` allows it** (see below);
 - a pure architectural review with no code change — `1c-arch-reviewer` directly.
+
+**UI testing is never an automatic stage of this pipeline.** It is opt-in, gated by `UI_TESTING` in `.dev.env` (canon — `dev-standards-env.md → "UI_TESTING — web UI-testing mode"`; see also `verification-delivery.md → Soft gate D`). Stage 5 relies on the static validator chain and impact analysis; it does **not** require a UI-test run unless `UI_TESTING=auto` or the user explicitly asked.
 
 Document the deviation in the delivery summary so the user can audit the choice.
