@@ -127,7 +127,7 @@ $script:MemoryFileName = 'memory.md'
 $script:LlmRulesFileName = 'LLM-RULES.md'
 $script:DevEnvFileName = '.dev.env'
 $script:DevEnvExampleName = '.dev.env.example'
-$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'other')
+$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'other')
 $script:ManagedBlocks = @('core', 'user-defined', 'openspec')
 $script:LastChannel = 'powershell'
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -1039,6 +1039,7 @@ function New-McpConfig {
         'codex' { return (New-McpConfig-Codex $Servers) }
         'opencode' { return (New-McpConfig-OpenCode $Servers) }
         'kilocode' { return (New-McpConfig-Kilocode $Servers) }
+        'kimi' { return (New-McpConfig-Other $Servers) }
         'other' { return (New-McpConfig-Other $Servers) }
         default { throw "Unknown tool id: $ToolId" }
     }
@@ -1127,6 +1128,7 @@ function Get-ToolDetectionSignals {
         'codex'       = @((Test-Path (Join-Path $Root '.codex')))
         'opencode'    = @((Test-Path (Join-Path $Root '.opencode')), (Test-Path (Join-Path $Root 'opencode.json')))
         'kilocode'    = @((Test-Path (Join-Path $Root '.kilo')), (Test-Path (Join-Path $Root '.kilocode')))
+        'kimi'        = @((Test-Path (Join-Path $Root '.kimi-code')), (Test-Path (Join-Path $Root '.kimi')))
         # 'other' is a manual-only fallback — never auto-detected.
         'other'       = @()
     }
@@ -2312,7 +2314,7 @@ function Invoke-PlacePhase {
 # `other` is intentionally last: when combined with any "real" tool the real
 # tool's rules dir wins; `.ai-agent/rules/` becomes canonical only when
 # `other` is the only active tool.
-$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'opencode', 'codex', 'other')
+$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'opencode', 'codex', 'other')
 
 function Resolve-CanonicalRulesLayout {
     # Returns @{ Dir = <path>; Ext = <ext-without-dot> } for the highest-priority
@@ -4435,6 +4437,7 @@ function Invoke-Remove {
             'codex'       { $toolPrefixes = @('.codex/') }
             'opencode'    { $toolPrefixes = @('.opencode/', 'opencode.json') }
             'kilocode'    { $toolPrefixes = @('.kilo/', '.kilocode/') }
+            'kimi'        { $toolPrefixes = @('.kimi-code/', '.kimi/') }
             'cursor'      { $toolPrefixes = @('.cursor/') }
             'other'       { $toolPrefixes = @('.ai-agent/') }
         }

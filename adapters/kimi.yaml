@@ -1,0 +1,53 @@
+# Adapter: Kimi Code CLI
+#
+# Describes how to copy and adapt files from content/ for Kimi Code CLI.
+# Read by both installation channels (AI-agent installer and install.ps1).
+#
+# Schema: closed adapter schema described in AGENT-INSTALL.md (Lean placement)
+# and implemented by install.ps1.
+# Notes:
+#   - Kimi Code reads project instructions from root AGENTS.md and also from
+#     `.kimi-code/AGENTS.md`; this toolkit keeps the shared root AGENTS.md as
+#     the always-on entry point and puts on-demand material under `.kimi-code/`.
+#   - Project-level Skills are discovered from `.kimi-code/skills/` (or the
+#     generic `.agents/skills/`). Directory-form Skills require `SKILL.md` with
+#     `name` and `description`, which the source skill files already provide.
+#   - Kimi Code does not have a simple project-local "commands" directory.
+#     Slash commands are registered by installed plugins, and external Skills
+#     are invokable as `/skill:<name>`. Therefore this adapter intentionally
+#     does not copy `content/commands/` into an invented path.
+#   - Project-level MCP config lives in `.kimi-code/mcp.json` using the
+#     well-known `mcpServers` JSON schema. Kimi exposes MCP tools as
+#     `mcp__<server>__<tool>`, so the verbatim server ids from
+#     `content/mcp-servers.json` are safe.
+
+tool: kimi
+schemaVersion: 1
+
+detection:
+  - exists: ".kimi-code/"
+  - exists: ".kimi/"
+
+rules:
+  copyTo: ".kimi-code/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+agents:
+  copyTo: ".kimi-code/agents/{name}.md"
+  frontmatter:
+    keep: [name, description, tools, modelHint, isSubagent]
+    rename:
+      modelHint: model
+    drop: [allowParallel, reasoningEffort]
+
+skills:
+  copyTo: ".kimi-code/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".kimi-code/mcp.json"
+  schema: mcpServers
+  format: json
