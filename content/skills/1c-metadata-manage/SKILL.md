@@ -42,7 +42,7 @@ The subagent already knows how to read the skill docs, execute PowerShell script
 | Task Domain | Keywords | File |
 |---|---|---|
 | Metadata objects — create, edit, analyze, remove, validate | catalog, document, register, enum, constant, module, attribute, tabular section | [meta-manage.md](docs/meta-manage.md) |
-| Managed forms — design, create, edit, analyze, validate | form, Form.xml, UI, elements, commands, events | [form-manage.md](docs/form-manage.md) |
+| Managed forms — design, create, edit, analyze, validate, decompile | form, Form.xml, UI, elements, commands, events, decompile | [form-manage.md](docs/form-manage.md) |
 | Managed-form layout patterns — archetypes, naming conventions, advanced patterns | form patterns, archetype, layout, naming, ERP form, list form, document form, wizard | [form-patterns.md](docs/form-patterns.md) → canonical `content/rules/form-patterns.md` |
 | Form-compile DSL reference — full JSON DSL spec for `1c-form-compile`, `--from-object` mode, presets | form DSL, form-compile, autoCmdBar, columnGroup, RadioButtonField, --from-object, form preset | [form-compile-dsl.md](docs/form-compile-dsl.md) |
 | Data Composition Schema (DCS/SKD) — create, edit, analyze, decompile, validate | report, DCS, SKD, data composition, data set, query, decompile | [skd-manage.md](docs/skd-manage.md) |
@@ -53,6 +53,7 @@ The subagent already knows how to read the skill docs, execute PowerShell script
 | Configuration (CF) — create, edit, analyze, validate | configuration, Configuration.xml, CF | [cf-manage.md](docs/cf-manage.md) |
 | Extensions (CFE) — create, borrow, diff, patch, validate | extension, CFE, borrow, interceptor, patch | [cfe-manage.md](docs/cfe-manage.md) |
 | Databases — registry, create, run, load, dump | database, infobase, .v8-project.json, create DB, run 1C | [db-manage.md](docs/db-manage.md) |
+| Support state — check / toggle vendor-lock ("на поддержке"/"на замке") before editing typical objects | support, поддержка, замок, на поддержке, ParentConfigurations, SUPPORT_EDIT_POLICY | [support-manage.md](docs/support-manage.md) |
 | Subsystems — create, edit, analyze, validate | subsystem, command interface, ChildObjects | [subsystem-manage.md](docs/subsystem-manage.md) |
 | Command interface — edit, validate | CommandInterface.xml, commands visibility, groups | [interface-manage.md](docs/interface-manage.md) |
 | Templates/layouts management — add, remove | template, layout, SpreadsheetDocument, HTML template | [template-manage.md](docs/template-manage.md) |

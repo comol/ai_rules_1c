@@ -1,4 +1,4 @@
-﻿# meta-compile v1.12 — Compile 1C metadata object from JSON
+﻿# meta-compile v1.14 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -20,6 +20,14 @@ if (-not (Test-Path $JsonPath)) {
 
 $json = Get-Content -Raw -Encoding UTF8 $JsonPath
 $def = $json | ConvertFrom-Json
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
+Assert-EditAllowed $OutputDir 'editable'
 
 # --- Batch mode: JSON array of objects ---
 if ($def -is [array] -or ($null -ne $def -and $def.GetType().BaseType.Name -eq 'Array')) {

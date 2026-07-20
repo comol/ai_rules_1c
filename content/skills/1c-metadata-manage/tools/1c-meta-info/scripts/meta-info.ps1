@@ -1,4 +1,4 @@
-﻿# meta-info v1.2 — Compact summary of 1C metadata object
+﻿# meta-info v1.3 — Compact summary of 1C metadata object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)][Alias('Path')][string]$ObjectPath,
@@ -415,6 +415,51 @@ function Get-WSOperations($childObjs) {
 	return $result
 }
 
+# --- Support status of this object (Ext/ParentConfigurations.bin) ---
+# See docs/1c-support-state-spec.md. Walks up to the config root, decodes the
+# object's support rule. Never throws — degrades to "не на поддержке".
+function Get-ObjectSupportStatus([string]$objUuid) {
+	try {
+		# Walk up to the config root (dir with Configuration.xml or Ext/ParentConfigurations.bin).
+		$d = [System.IO.Path]::GetDirectoryName($ObjectPath)
+		$binPath = $null
+		for ($i = 0; $i -lt 8 -and $d; $i++) {
+			$cand = Join-Path (Join-Path $d "Ext") "ParentConfigurations.bin"
+			if ((Test-Path $cand) -or (Test-Path (Join-Path $d "Configuration.xml"))) { $binPath = $cand; break }
+			$parent = [System.IO.Path]::GetDirectoryName($d)
+			if ($parent -eq $d) { break }
+			$d = $parent
+		}
+		if (-not $binPath -or -not (Test-Path $binPath)) { return "не на поддержке" }
+		$bytes = [System.IO.File]::ReadAllBytes($binPath)
+		if ($bytes.Length -le 32) { return "снято с поддержки (правки свободны)" }
+		$start = 0
+		if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
+		$text = [System.Text.Encoding]::UTF8.GetString($bytes, $start, $bytes.Length - $start)
+		$h = [regex]::Match($text, '^\{6,(\d+),(\d+),')
+		if (-not $h.Success) { return "не на поддержке" }
+		$G = [int]$h.Groups[1].Value
+		$K = [int]$h.Groups[2].Value
+		if ($K -eq 0) { return "снято с поддержки (правки свободны)" }
+		if ($G -eq 1) { return "конфигурация read-only (возможность изменения выключена) — правки невозможны без включения" }
+		if (-not $objUuid) { return "не на поддержке" }
+		# Conservative fold: locked if f1=0 in ANY vendor block.
+		$u = [regex]::Escape($objUuid.ToLower())
+		$best = $null
+		foreach ($m in [regex]::Matches($text, "([0-2]),0,$u")) {
+			$f1 = [int]$m.Groups[1].Value
+			if ($null -eq $best -or $f1 -lt $best) { $best = $f1 }
+		}
+		if ($null -eq $best) { return "не на поддержке" }
+		switch ($best) {
+			0 { return "на замке — прямая правка сломает обновления; дорабатывай через cfe-* либо включи редактирование объекта" }
+			1 { return "редактируется с сохранением поддержки" }
+			2 { return "снято с поддержки (правки свободны)" }
+		}
+		return "не на поддержке"
+	} catch { return "не на поддержке" }
+}
+
 # --- Extract metadata ---
 $props = $typeNode.SelectSingleNode("md:Properties", $ns)
 $childObjs = $typeNode.SelectSingleNode("md:ChildObjects", $ns)
@@ -608,6 +653,7 @@ if (-not $drillDone) {
 	if ($synonym -and $synonym -ne $objName) { $header += " — `"$synonym`"" }
 	$header += " ==="
 	Out $header
+	Out "Поддержка: $(Get-ObjectSupportStatus $typeNode.GetAttribute('uuid'))"
 
 	# --- Type presentation (ref objects) ---
 	if ($isRefObject) {

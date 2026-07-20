@@ -1,4 +1,4 @@
-﻿# form-add v1.5 — Add managed form to 1C config object
+﻿# form-add v1.7 — Add managed form to 1C config object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -17,6 +17,12 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
 
 # --- Detect XML format version ---
 
@@ -55,6 +61,7 @@ if (-not (Test-Path $ObjectPath)) {
 }
 
 $objectXmlFull = Resolve-Path $ObjectPath
+Assert-EditAllowed $objectXmlFull.Path 'editable'
 $script:formatVersion = Detect-FormatVersion (Split-Path $objectXmlFull.Path -Parent)
 
 $xmlDoc = New-Object System.Xml.XmlDocument

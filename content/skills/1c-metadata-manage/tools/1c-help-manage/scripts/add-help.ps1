@@ -1,4 +1,4 @@
-﻿# help-add v1.4 — Add built-in help to 1C object
+﻿# help-add v1.7 — Add built-in help to 1C object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -13,6 +13,12 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
 # --- Detect format version ---
 
 function Detect-FormatVersion([string]$dir) {
@@ -20,7 +26,8 @@ function Detect-FormatVersion([string]$dir) {
 	while ($d) {
 		$cfgPath = Join-Path $d "Configuration.xml"
 		if (Test-Path $cfgPath) {
-			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			$content = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			$head = $content.Substring(0, [Math]::Min(2000, $content.Length))
 			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
 		}
 		$parent = Split-Path $d -Parent
@@ -47,6 +54,8 @@ if (Test-Path $helpXmlPath) {
 	Write-Error "Справка уже существует: $helpXmlPath"
 	exit 1
 }
+
+Assert-EditAllowed $objectDir 'editable'
 
 # --- Кодировка ---
 

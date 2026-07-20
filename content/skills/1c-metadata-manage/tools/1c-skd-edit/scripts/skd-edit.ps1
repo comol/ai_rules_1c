@@ -1,5 +1,6 @@
-﻿# skd-edit v1.24 — Atomic 1C DCS editor
+﻿# skd-edit v1.28 — Atomic 1C DCS editor
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# NB: парный .py собирает выражения автодат вне f-string ради совместимости с python 3.9 (PEP 701).
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -47,6 +48,14 @@ if (-not (Test-Path $TemplatePath)) {
 }
 
 $resolvedPath = (Resolve-Path $TemplatePath).Path
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
+Assert-EditAllowed $resolvedPath 'editable'
 
 function Esc-Xml {
 	param([string]$s)
@@ -378,7 +387,19 @@ function Parse-ParamShorthand {
 		$hasEq = $null -ne $Matches[3]
 		$rhs = $Matches[4]
 		if ($hasEq) {
-			$result.value = if ($rhs) { $rhs.Trim() } else { "" }
+			if ($rhs -and $rhs.Trim()) {
+				$items = Parse-ValueList $rhs.Trim()
+				if ($items.Count -ge 2) {
+					# Multi-value default → list; valueListAllowed implied
+					$result.value = $items
+					$result.valueListAllowed = $true
+				} else {
+					# Scalar (single item, quotes stripped) or empty sentinel
+					$result.value = if ($items.Count -eq 1) { $items[0] } else { "" }
+				}
+			} else {
+				$result.value = ""
+			}
 		}
 	} else {
 		$result.name = $s.Trim()
@@ -679,16 +700,13 @@ function Parse-OutputParamShorthand {
 	return @{ key = $s.Trim(); value = "" }
 }
 
-function Parse-AvailableValueList {
-	# Returns array of @{ value=...; presentation=... } from comma-separated list.
-	# Items can use 'single' or "double" quotes (stripped). Quoted spans preserve commas/colons.
+function Split-QuotedCsv {
+	# Splits on top-level commas, respecting 'single' and "double" quoted spans.
+	# Returns raw (un-stripped, un-trimmed) item spans. Used by both availableValue
+	# (value:presentation) and value-list (values only) parsing.
 	param([string]$s)
-
-	$result = @()
-	if (-not $s) { return ,$result }
-
-	# Tokenize by ',' respecting quoted spans
 	$items = @()
+	if ($null -eq $s) { return ,$items }
 	$buf = New-Object System.Text.StringBuilder
 	$inQuote = $null
 	for ($i = 0; $i -lt $s.Length; $i++) {
@@ -707,16 +725,42 @@ function Parse-AvailableValueList {
 		}
 	}
 	if ($buf.Length -gt 0) { $items += $buf.ToString() }
+	return ,$items
+}
 
-	# For each item: split into value[:presentation], strip quotes
-	$stripQuotes = {
-		param($t)
-		$t = $t.Trim()
-		if ($t.Length -ge 2 -and (($t[0] -eq "'" -and $t[-1] -eq "'") -or ($t[0] -eq '"' -and $t[-1] -eq '"'))) {
-			return $t.Substring(1, $t.Length - 2)
-		}
-		return $t
+function Strip-Quotes {
+	# Strips a single surrounding pair of matching quotes; trims first.
+	param([string]$t)
+	$t = $t.Trim()
+	if ($t.Length -ge 2 -and (($t[0] -eq "'" -and $t[-1] -eq "'") -or ($t[0] -eq '"' -and $t[-1] -eq '"'))) {
+		return $t.Substring(1, $t.Length - 2)
 	}
+	return $t
+}
+
+function Parse-ValueList {
+	# Returns array of value strings (quotes stripped) split by top-level commas.
+	# No ':' handling — values may contain colons (e.g. dateTime 2024-01-01T12:30:00).
+	param([string]$s)
+	$result = @()
+	if ($null -eq $s) { return ,$result }
+	foreach ($raw in (Split-QuotedCsv $s)) {
+		$v = Strip-Quotes $raw
+		if ($v -ne "") { $result += $v }
+	}
+	return ,$result
+}
+
+function Parse-AvailableValueList {
+	# Returns array of @{ value=...; presentation=... } from comma-separated list.
+	# Items can use 'single' or "double" quotes (stripped). Quoted spans preserve commas/colons.
+	param([string]$s)
+
+	$result = @()
+	if (-not $s) { return ,$result }
+
+	$items = Split-QuotedCsv $s
+	$stripQuotes = { param($t) Strip-Quotes $t }
 
 	foreach ($raw in $items) {
 		$item = $raw.Trim()
@@ -1135,7 +1179,14 @@ function Build-ParamFragment {
 	}
 
 	$vla = [bool]$parsed.valueListAllowed
-	if ($null -ne $parsed.value) {
+	$valIsArray = ($parsed.value -is [array]) -or ($parsed.value -is [System.Collections.IList] -and $parsed.value -isnot [string])
+	if ($valIsArray) {
+		# Multi-value default (value-list): one <value> per item
+		foreach ($v in $parsed.value) {
+			$valueLines = Build-ParamValueXml -type $parsed.type -value $v -indent "$i`t"
+			foreach ($vl in $valueLines) { $lines += $vl }
+		}
+	} elseif ($null -ne $parsed.value) {
 		if (Test-EmptyValue $parsed.value) {
 			$emptyXml = Build-EmptyValueXml -type $parsed.type -indent "$i`t" -tagPrefix "" -tagName "value" -valueListAllowed $vla
 			if ($emptyXml) { $lines += $emptyXml }
@@ -2292,6 +2343,20 @@ switch ($Operation) {
 				$avPart = $rest.Substring($avIdx)
 			}
 
+			# Separate a multi-value value=... (list) — kv-regex below grabs only a single
+			# \S+ token, so a comma-separated list (with spaces) wouldn't be captured.
+			# availableValue already peeled, so 'value=' here is the real value key.
+			$valueListItems = $null
+			$vlIdx = $simpleRest.IndexOf('value=')
+			if ($vlIdx -ge 0) {
+				$vlRhs = $simpleRest.Substring($vlIdx + 'value='.Length)
+				$cand = Parse-ValueList $vlRhs
+				if ($cand.Count -ge 2) {
+					$valueListItems = $cand
+					$simpleRest = $simpleRest.Substring(0, $vlIdx).Trim()
+				}
+			}
+
 			# Process simple key=value pairs (use, denyIncompleteValues, value, etc.)
 			if ($simpleRest) {
 				$kvPairs = [regex]::Matches($simpleRest, '(\w+)=(\S+)')
@@ -2337,14 +2402,20 @@ switch ($Operation) {
 							$fragXml = $valueLines -join "`n"
 						}
 
-						$wasExisting = ($null -ne $existing)
-						if ($existing) {
-							# Capture position by next-element sibling, then remove existing
-							$refNode = $existing.NextSibling
+						# Collect ALL existing <value> (a param may carry a value-list) — scalar
+						# value= collapses them to one, so remove every <value>, not just the first.
+						$allValueEls = @()
+						foreach ($ch in $paramEl.ChildNodes) {
+							if ($ch.NodeType -eq 'Element' -and $ch.LocalName -eq 'value' -and $ch.NamespaceURI -eq $schNs) { $allValueEls += $ch }
+						}
+						$wasExisting = ($allValueEls.Count -gt 0)
+						if ($wasExisting) {
+							# Capture position after the last existing value, then remove all
+							$refNode = $allValueEls[$allValueEls.Count - 1].NextSibling
 							while ($refNode -and ($refNode.NodeType -eq 'Whitespace' -or $refNode.NodeType -eq 'SignificantWhitespace')) {
 								$refNode = $refNode.NextSibling
 							}
-							Remove-NodeWithWhitespace $existing
+							foreach ($ve in $allValueEls) { Remove-NodeWithWhitespace $ve }
 						} else {
 							# Insert before useRestriction/availableValue/denyIncompleteValues/use
 							$refNode = $null
@@ -2383,6 +2454,60 @@ switch ($Operation) {
 						$script:Dirty = $true; Write-Host "[OK] Parameter `"$paramName`": $key=$value added"
 					}
 				}
+			}
+
+			# Process multi-value list (value=v1, v2, ...) — replace ALL <value>, ensure valueListAllowed=true
+			if ($valueListItems) {
+				# Declared type from <valueType>
+				$declaredType = ""
+				$vtEl = $null
+				foreach ($ch in $paramEl.ChildNodes) {
+					if ($ch.NodeType -eq 'Element' -and $ch.LocalName -eq 'valueType' -and $ch.NamespaceURI -eq $schNs) { $vtEl = $ch; break }
+				}
+				if ($vtEl) {
+					foreach ($tnode in $vtEl.ChildNodes) {
+						if ($tnode.NodeType -eq 'Element' -and $tnode.LocalName -eq 'Type') {
+							$declaredType = $tnode.InnerText.Trim() -replace '^d\d+p\d+:', ''
+							break
+						}
+					}
+				}
+				# Remove ALL existing <value>; capture insertion ref after the last one
+				$valueEls = @()
+				foreach ($child in $paramEl.ChildNodes) {
+					if ($child.NodeType -eq 'Element' -and $child.LocalName -eq 'value' -and $child.NamespaceURI -eq $schNs) { $valueEls += $child }
+				}
+				$refNode = $null
+				if ($valueEls.Count -gt 0) {
+					$refNode = $valueEls[$valueEls.Count - 1].NextSibling
+					while ($refNode -and ($refNode.NodeType -eq 'Whitespace' -or $refNode.NodeType -eq 'SignificantWhitespace')) { $refNode = $refNode.NextSibling }
+					foreach ($ve in $valueEls) { Remove-NodeWithWhitespace $ve }
+				} else {
+					foreach ($child in $paramEl.ChildNodes) {
+						if ($child.NodeType -eq 'Element' -and $child.LocalName -in @('useRestriction','availableValue','denyIncompleteValues','use')) { $refNode = $child; break }
+					}
+				}
+				foreach ($v in $valueListItems) {
+					$fragXml = (Build-ParamValueXml -type $declaredType -value $v -indent $childIndent) -join "`n"
+					$nodes = Import-Fragment $xmlDoc $fragXml
+					foreach ($node in $nodes) { Insert-BeforeElement $paramEl $node $refNode $childIndent }
+				}
+				# Ensure <valueListAllowed>true</valueListAllowed> (schema order: after useRestriction, before availableValue/use)
+				$vlaEl = $null
+				foreach ($ch in $paramEl.ChildNodes) {
+					if ($ch.NodeType -eq 'Element' -and $ch.LocalName -eq 'valueListAllowed' -and $ch.NamespaceURI -eq $schNs) { $vlaEl = $ch; break }
+				}
+				if ($vlaEl) {
+					if ($vlaEl.InnerText.Trim() -ne 'true') { $vlaEl.InnerText = 'true' }
+				} else {
+					$refVla = $null
+					foreach ($child in $paramEl.ChildNodes) {
+						if ($child.NodeType -eq 'Element' -and $child.LocalName -in @('availableValue','denyIncompleteValues','use')) { $refVla = $child; break }
+					}
+					$nodes = Import-Fragment $xmlDoc "$childIndent<valueListAllowed>true</valueListAllowed>"
+					foreach ($node in $nodes) { Insert-BeforeElement $paramEl $node $refVla $childIndent }
+				}
+				$script:Dirty = $true; Write-Host "[OK] Parameter `"$paramName`": value set to list of $($valueListItems.Count) item(s)"
 			}
 
 			# Process availableValue — replace whole list with new items

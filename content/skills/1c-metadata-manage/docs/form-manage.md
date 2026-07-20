@@ -483,6 +483,38 @@ Or, if table is bound to a form attribute (not Object):
 
 ---
 
+## 3a. Decompile — Form.xml to JSON Draft
+
+Reads an existing `Form.xml` and emits a compact JSON draft in the `form-compile` format (§3). Use it to scaffold a new form from an existing example, or for structural refactoring of a form's element tree, attributes, and commands.
+
+> **Not for point edits.** The result is a **draft**, not a lossless round-trip representation — `xml → json → xml` is not guaranteed, and some DSL constructs are silently not covered. For adding a single element/attribute/command to an existing form, use `1c-form-edit` (§4) instead — it edits in place and produces a small, targeted diff.
+
+### Command
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-decompile/scripts/form-decompile.ps1 -FormPath "<Form.xml>" -OutputPath "<out.json>"
+```
+
+| Parameter | Description |
+|---|---|
+| `-FormPath` | Path to `Form.xml` (required) |
+| `-OutputPath` | Path to the output JSON. If omitted, JSON is written to stdout |
+
+### Critical constructs that abort the decompile
+
+The script exits with a non-zero code and an stderr message (instead of silently dropping data) on: `ConditionalAppearance` with a scope, design-time chart/planner data on an attribute, an unknown element type, or a non-`Form` root. For a form hitting any of these, use `1c-form-edit` for the intended change instead.
+
+### Workflow
+
+```
+1c-form-decompile <Form.xml> -OutputPath draft.json   — get a draft
+                                                        — edit draft.json for the task
+1c-form-compile -JsonPath draft.json -OutputPath new/Form.xml  — compile back
+1c-form-validate + 1c-form-info                        — verify the result
+```
+
+---
+
 ## 4. Edit — Add Elements, Attributes, Commands
 
 Adds elements, attributes, and/or commands to an existing Form.xml. Automatically allocates IDs from the correct pool, generates companion elements (ContextMenu, ExtendedTooltip, etc.) and event handlers.
@@ -521,6 +553,41 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-edit/scr
   ]
 }
 ```
+
+#### Extension Forms
+
+For borrowed forms (with `<BaseForm>`) extension mode activates automatically: IDs start at 1000000+. Additional sections become available:
+
+```json
+{
+  "formEvents": [
+    { "name": "OnCreateAtServer", "handler": "Ext1_OnCreateAfter", "callType": "After" },
+    { "name": "OnOpen", "handler": "Ext1_OnOpenBefore", "callType": "Before" }
+  ],
+  "elementEvents": [
+    { "element": "Bank", "name": "OnChange", "handler": "Ext1_BankOnChangeBefore", "callType": "Before" }
+  ],
+  "commands": [
+    { "name": "Pick", "action": "Ext1_PickAfter", "callType": "After" },
+    { "name": "Query", "actions": [
+      { "callType": "Before", "handler": "Ext1_QueryBefore" },
+      { "callType": "After", "handler": "Ext1_QueryAfter" }
+    ]}
+  ],
+  "elements": [
+    { "input": "Field", "path": "Object.Field", "on": [{ "event": "OnChange", "callType": "After" }] }
+  ]
+}
+```
+
+| Section | Purpose |
+|---|---|
+| `formEvents` | Form-level events with `callType` (Before/After/Override) |
+| `elementEvents` | Events on existing elements of the borrowed form |
+| `callType` on `commands` | callType on the command's Action |
+| `callType` on `on` | callType on new elements' events (object form) |
+
+All extension sections are optional — without them the tool works on regular forms as usual.
 
 #### Element Positioning
 

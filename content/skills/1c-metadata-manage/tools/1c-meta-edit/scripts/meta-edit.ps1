@@ -1,4 +1,4 @@
-﻿# meta-edit v1.6 — Edit existing 1C metadata object XML (inline mode + complex properties + TS attribute ops + modify-ts)
+﻿# meta-edit v1.9 — Edit existing 1C metadata object XML (inline mode + complex properties + TS attribute ops + modify-ts)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -151,6 +151,14 @@ if (-not (Test-Path $ObjectPath)) {
 	exit 1
 }
 $resolvedPath = (Resolve-Path $ObjectPath).Path
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
+Assert-EditAllowed $resolvedPath 'editable'
 
 # --- Load XML ---
 $script:xmlDoc = New-Object System.Xml.XmlDocument
@@ -2384,7 +2392,7 @@ Info "Saved: $resolvedPath"
 # ============================================================
 
 if (-not $NoValidate) {
-	$validateScript = Join-Path (Join-Path $PSScriptRoot "..\..\meta-validate") "scripts\meta-validate.ps1"
+	$validateScript = Join-Path (Join-Path $PSScriptRoot "..\..\1c-meta-validate") "scripts\meta-validate.ps1"
 	$validateScript = [System.IO.Path]::GetFullPath($validateScript)
 	if (Test-Path $validateScript) {
 		Write-Host ""

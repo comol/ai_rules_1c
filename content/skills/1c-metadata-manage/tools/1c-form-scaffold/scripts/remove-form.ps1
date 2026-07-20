@@ -1,4 +1,4 @@
-﻿# form-remove v1.2 — Remove form from 1C object
+﻿# form-remove v1.3 — Remove form from 1C object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -68,20 +68,15 @@ if (-not $formNodeFound) {
 	exit 1
 }
 
-# Clear every supported default-form property that points to this form.
+# Clear any Default*/Auxiliary* form slot pointing at the removed form
+# (form-add writes the property by purpose: DefaultObjectForm/DefaultListForm/
+#  DefaultChoiceForm/DefaultRecordForm/DefaultForm - not only generic DefaultForm).
 $clearedDefaultProperties = @()
-foreach ($propertyName in @(
-	"DefaultForm",
-	"DefaultObjectForm",
-	"DefaultListForm",
-	"DefaultChoiceForm",
-	"DefaultFolderForm",
-	"DefaultRecordForm"
-)) {
-	$defaultForm = $xmlDoc.SelectSingleNode("//md:$propertyName", $nsMgr)
-	if ($defaultForm -and $defaultForm.InnerText -match "Form\.$([regex]::Escape($FormName))$") {
-		$defaultForm.InnerText = ""
-		$clearedDefaultProperties += $propertyName
+$formRefRe = "Form\.$([regex]::Escape($FormName))$"
+foreach ($node in $xmlDoc.SelectNodes("//md:*", $nsMgr)) {
+	if ($node.LocalName -like "*Form" -and $node.InnerText -and $node.InnerText -match $formRefRe) {
+		$clearedDefaultProperties += $node.LocalName
+		$node.InnerText = ""
 	}
 }
 

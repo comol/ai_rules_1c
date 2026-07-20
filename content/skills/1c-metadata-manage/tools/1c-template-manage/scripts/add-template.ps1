@@ -1,4 +1,4 @@
-﻿# template-add v1.5 — Add template to 1C object
+﻿# template-add v1.7 — Add template to 1C object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -22,6 +22,12 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
 
 # --- Маппинг типов ---
 
@@ -72,6 +78,8 @@ if (Test-Path $templateMetaPath) {
 	Write-Error "Макет уже существует: $templateMetaPath"
 	exit 1
 }
+
+Assert-EditAllowed $rootXmlPath 'editable'
 
 # --- Создание каталогов ---
 

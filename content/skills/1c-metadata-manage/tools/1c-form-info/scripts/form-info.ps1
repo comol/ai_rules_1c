@@ -1,4 +1,4 @@
-﻿# form-info v1.3 — Analyze 1C managed form structure
+﻿# form-info v1.4 — Analyze 1C managed form structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)]
@@ -368,6 +368,13 @@ if ($formsIdx -ge 0 -and ($formsIdx + 1) -lt $parts.Count) {
 	}
 }
 
+# --- Support status (Ext/ParentConfigurations.bin) ---
+# See docs/1c-support-state-spec.md. Walks up from the target path, taking the
+# uuid of the nearest element meta-xml (form/template/etc.) and the config root
+# bin. Never throws — degrades to "не на поддержке".
+# Get-SupportStatusForPath — see tools/_shared/support-guard.ps1 (docs/support-manage.md).
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
 # --- Collect output ---
 
 $lines = @()
@@ -385,6 +392,7 @@ if ($formTitle) { $header += " — `"$formTitle`"" }
 if ($objectContext) { $header += " ($objectContext)" }
 $header += " ==="
 $lines += $header
+$lines += "Поддержка: $(Get-SupportStatusForPath $FormPath)"
 
 # --- Form properties (Title excluded — shown in header) ---
 

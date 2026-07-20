@@ -1,4 +1,4 @@
-﻿# meta-remove v1.1 — Remove metadata object from 1C configuration dump
+﻿# meta-remove v1.3 — Remove metadata object from 1C configuration dump
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -78,6 +78,12 @@ if (-not (Test-Path $configXml)) {
 	exit 1
 }
 
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
 # --- Parse object spec ---
 
 $parts = $Object -split "\.", 2
@@ -112,6 +118,9 @@ $errors = 0
 $typeDir = Join-Path $ConfigDir $typePlural
 $objXml = Join-Path $typeDir "$objName.xml"
 $objDir = Join-Path $typeDir $objName
+
+# Support guard — removal requires the object be снят-с-поддержки (f1=2).
+Assert-EditAllowed $objXml 'removed'
 
 $hasXml = Test-Path $objXml
 $hasDir = Test-Path $objDir -PathType Container

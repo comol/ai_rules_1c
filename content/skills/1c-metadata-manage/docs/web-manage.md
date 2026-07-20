@@ -97,10 +97,10 @@ After success, report:
 
 ## 3. Web stop — halt without removing the publication
 
-Stops Apache but keeps the publication entries in `httpd.conf` and the generated `default.vrd` files. The next `web-publish` call (or `web-stop -Start`) brings it back up unchanged.
+Stops Apache but keeps the publication entries in `httpd.conf` and the generated `default.vrd` files. The next `web-publish` call brings it back up unchanged.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1 [-ApachePath <path>] [-Force]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1 [-ApachePath <path>]
 ```
 
 Use this when:

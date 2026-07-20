@@ -1,5 +1,6 @@
-﻿# db-run v1.0 — Launch 1C:Enterprise
+﻿# db-run v1.2 — Launch 1C:Enterprise
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
     Запуск 1С:Предприятие
@@ -79,20 +80,27 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Resolve V8Path ---
+# -V8Path is normally supplied explicitly by the calling agent, populated from
+# .dev.env's PLATFORM_PATH (see AGENTS.md / dev-standards-core.md §1). The
+# scan below is only a fallback for when it isn't passed.
 if (-not $V8Path) {
-    $found = Get-ChildItem "C:\Program Files\1cv8\*\bin\1cv8.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+    $found = Get-ChildItem @("C:\Program Files\1cv8\*\bin\1cv8.exe", "C:\Program Files (x86)\1cv8\*\bin\1cv8.exe") -ErrorAction SilentlyContinue |
+        Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]"0.0" } } -Descending |
+        Select-Object -First 1
     if ($found) {
         $V8Path = $found.FullName
+        Write-Host "Auto-selected platform $($found.Directory.Parent.Name): $V8Path" -ForegroundColor Yellow
     } else {
-        Write-Host "Error: 1cv8.exe not found. Specify -V8Path" -ForegroundColor Red
+        Write-Host "Error: 1C executable not found. Specify -V8Path" -ForegroundColor Red
         exit 1
     }
-} elseif (Test-Path $V8Path -PathType Container) {
+}
+if (Test-Path $V8Path -PathType Container) {
     $V8Path = Join-Path $V8Path "1cv8.exe"
 }
 
 if (-not (Test-Path $V8Path)) {
-    Write-Host "Error: 1cv8.exe not found at $V8Path" -ForegroundColor Red
+    Write-Host "Error: 1C executable not found at $V8Path" -ForegroundColor Red
     exit 1
 }
 

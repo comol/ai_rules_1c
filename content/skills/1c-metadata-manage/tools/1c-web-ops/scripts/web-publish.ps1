@@ -1,4 +1,4 @@
-﻿# web-publish v1.2 — Publish 1C infobase via Apache
+﻿# web-publish v1.4 — Publish 1C infobase via Apache
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 <#
 .SYNOPSIS
@@ -87,10 +87,16 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Resolve V8Path ---
+# -V8Path is normally supplied explicitly by the calling agent, populated from
+# .dev.env's PLATFORM_PATH (see AGENTS.md / dev-standards-core.md §1). The
+# scan below is only a fallback for when it isn't passed.
 if (-not $V8Path) {
-    $found = Get-ChildItem "C:\Program Files\1cv8\*\bin\1cv8.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+    $found = Get-ChildItem @("C:\Program Files\1cv8\*\bin\1cv8.exe", "C:\Program Files (x86)\1cv8\*\bin\1cv8.exe") -ErrorAction SilentlyContinue |
+        Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]"0.0" } } -Descending |
+        Select-Object -First 1
     if ($found) {
         $V8Path = Split-Path $found.FullName -Parent
+        Write-Host "Auto-selected platform $($found.Directory.Parent.Name): $V8Path" -ForegroundColor Yellow
     } else {
         Write-Host "Error: платформа 1С не найдена. Укажите -V8Path" -ForegroundColor Red
         exit 1
@@ -114,7 +120,7 @@ if (-not $InfoBasePath -and (-not $InfoBaseServer -or -not $InfoBaseRef)) {
 
 # --- Resolve ApachePath ---
 if (-not $ApachePath) {
-    $projectRoot = (Get-Location).Path  # consolidated skill layout: project root = current working directory
+    $projectRoot = (Get-Item $PSScriptRoot).Parent.Parent.Parent.Parent.FullName
     $ApachePath = Join-Path $projectRoot "tools\apache24"
 }
 # Ensure absolute path (agent may pass relative like "tools/apache24")
@@ -254,8 +260,8 @@ $vrdContent = @"
        xmlns:xs="http://www.w3.org/2001/XMLSchema"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        base="/$AppName"
-       ib="$ibString"
-       enableStandardOdata="true">
+       ib="$ibString">
+    <standardOdata enable="true"/>
     <ws pointEnableCommon="true"/>
     <httpServices publishByDefault="true"/>
 </point>

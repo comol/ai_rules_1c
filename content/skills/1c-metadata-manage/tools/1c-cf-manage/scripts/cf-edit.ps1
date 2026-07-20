@@ -1,4 +1,4 @@
-﻿# cf-edit v1.4 — Edit 1C configuration root (Configuration.xml)
+﻿# cf-edit v1.7 — Edit 1C configuration root (Configuration.xml)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)][Alias('Path')][string]$ConfigPath,
@@ -28,6 +28,14 @@ if (Test-Path $ConfigPath -PathType Container) {
 if (-not (Test-Path $ConfigPath)) { Write-Error "File not found: $ConfigPath"; exit 1 }
 $resolvedPath = (Resolve-Path $ConfigPath).Path
 $script:configDir = [System.IO.Path]::GetDirectoryName($resolvedPath)
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
+
+Assert-EditAllowed $resolvedPath 'editable'
 
 # --- Load XML with PreserveWhitespace ---
 $script:xmlDoc = New-Object System.Xml.XmlDocument
@@ -850,7 +858,7 @@ Info "Saved: $resolvedPath"
 
 # --- Auto-validate ---
 if (-not $NoValidate) {
-	$validateScript = Join-Path (Join-Path $PSScriptRoot "..\..\cf-validate") "scripts\cf-validate.ps1"
+	$validateScript = Join-Path $PSScriptRoot "cf-validate.ps1"
 	$validateScript = [System.IO.Path]::GetFullPath($validateScript)
 	if (Test-Path $validateScript) {
 		Write-Host ""

@@ -65,6 +65,10 @@ Russian type synonyms: `Строка`, `Число`, `Булево`, `Дата`,
 
 Flags: `req`, `index`, `indexAdditional`, `nonneg`, `master`, `mainFilter`, `denyIncomplete`, `useInTotals`.
 
+### Composite Types
+
+For attributes with more than one allowed type — `+` separator in shorthand: `"Значение: String + Number(15,2) + CatalogRef.Контрагенты"`. In the JSON DSL, use an array in `type`: `{ "name": "Значение", "type": ["String", "Number(15,2)", "CatalogRef.Контрагенты"] }`.
+
 ## Examples
 
 ### Catalog

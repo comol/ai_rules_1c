@@ -1,4 +1,4 @@
-﻿# cf-info v1.2 — Compact summary of 1C configuration root
+﻿# cf-info v1.3 — Compact summary of 1C configuration root
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)][Alias('Path')][string]$ConfigPath,
@@ -218,6 +218,78 @@ function Get-HomePageLayout {
 
 $script:homePage = Get-HomePageLayout
 
+# --- Support state (Ext/ParentConfigurations.bin) ---
+# Decodes the 1C support-state file. See docs/1c-support-state-spec.md.
+# Returns $null on absent/error; else hashtable: State='absent'|'removed'|'parsed',
+#   G (0=editing on, 1=off), K (vendor configs), Vendors @(@{Vendor;Name;Version}),
+#   Counts @(locked, editable, removed) by f1 — record tally (K>1 counts each
+#   vendor block separately); only computed when G=0.
+function Read-SupportState([string]$binPath) {
+	try {
+		if (-not (Test-Path $binPath)) { return @{ State = 'absent' } }
+		$bytes = [System.IO.File]::ReadAllBytes($binPath)
+		if ($bytes.Length -le 32) { return @{ State = 'removed' } }
+		$startIdx = 0
+		if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $startIdx = 3 }
+		$text = [System.Text.Encoding]::UTF8.GetString($bytes, $startIdx, $bytes.Length - $startIdx)
+		$h = [regex]::Match($text, '^\{6,(\d+),(\d+),')
+		if (-not $h.Success) { return $null }
+		$G = [int]$h.Groups[1].Value
+		$K = [int]$h.Groups[2].Value
+		if ($K -eq 0) { return @{ State = 'removed' } }
+		# Vendor descriptors: ...,"ver","vendor","name",count,
+		$vendors = @()
+		$vRe = [regex]'"((?:[^"]|"")*)","((?:[^"]|"")*)","((?:[^"]|"")*)",\d+,'
+		foreach ($m in $vRe.Matches($text)) {
+			$vendors += @{
+				Version = ($m.Groups[1].Value -replace '""','"')
+				Vendor  = ($m.Groups[2].Value -replace '""','"')
+				Name    = ($m.Groups[3].Value -replace '""','"')
+			}
+		}
+		# Per-object counts only matter when editing is enabled (G=0); when G=1 the
+		# whole config is read-only and stored f1 values are the inactive default.
+		$counts = $null
+		if ($G -eq 0) {
+			$counts = @(0, 0, 0)
+			# Object records: f1,0,uuidLocal[,uuidVendor] — flags precede the uuid.
+			$rRe = [regex]'([0-2]),0,[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+			foreach ($m in $rRe.Matches($text)) {
+				$counts[[int]$m.Groups[1].Value]++
+			}
+		}
+		return @{ State = 'parsed'; G = $G; K = $K; Vendors = $vendors; Counts = $counts }
+	} catch { return $null }
+}
+
+function Get-SupportLines {
+	$configDir = [System.IO.Path]::GetDirectoryName($ConfigPath)
+	$binPath = Join-Path (Join-Path $configDir "Ext") "ParentConfigurations.bin"
+	$st = Read-SupportState $binPath
+	$out = @()
+	if (-not $st -or $st.State -eq 'absent') {
+		if ($cfgExtPurpose) { $out += "Поддержка:      расширение (CFE), правки свободны" }
+		else { $out += "Поддержка:      не на поддержке (своя конфигурация)" }
+		return $out
+	}
+	if ($st.State -eq 'removed') {
+		$out += "Поддержка:      снята с поддержки полностью"
+		return $out
+	}
+	$out += "Поддержка:      на поддержке"
+	if ($st.G -eq 0) {
+		$out += "  Возможность изменения: включена"
+		$out += "  Объектов: на замке $($st.Counts[0]) / редактируется $($st.Counts[1]) / снято $($st.Counts[2])"
+	} else {
+		$out += "  Возможность изменения: выключена — вся конфигурация read-only (правки заблокированы)"
+	}
+	$out += "  Конфигураций поставщика: $($st.K)"
+	if ($st.K -gt 1) {
+		foreach ($v in $st.Vendors) { $out += "  Поставщик: $($v.Vendor) — $($v.Name) $($v.Version)" }
+	}
+	return $out
+}
+
 function Format-HomePageItem($it, [bool]$detailed) {
 	$badges = @()
 	$badges += "h=$($it.height)"
@@ -253,6 +325,7 @@ $cfgVersion = Get-PropText "Version"
 $cfgVendor = Get-PropText "Vendor"
 $cfgCompat = Get-PropText "CompatibilityMode"
 $cfgExtCompat = Get-PropText "ConfigurationExtensionCompatibilityMode"
+$cfgExtPurpose = Get-PropText "ConfigurationExtensionPurpose"
 $cfgDefaultRun = Get-PropText "DefaultRunMode"
 $cfgScript = Get-PropText "ScriptVariant"
 $cfgDefaultLang = Get-PropText "DefaultLanguage"
@@ -284,6 +357,7 @@ if ($Mode -eq "overview" -and -not $Section) {
 	Out "Формат:         $version"
 	if ($cfgVendor)     { Out "Поставщик:      $cfgVendor" }
 	if ($cfgVersion)    { Out "Версия:         $cfgVersion" }
+	foreach ($l in (Get-SupportLines)) { Out $l }
 	Out "Совместимость:  $cfgCompat"
 	Out "Режим запуска:  $cfgDefaultRun"
 	Out "Язык скриптов:  $cfgScript"
@@ -386,6 +460,7 @@ if ($Mode -eq "full" -and -not $Section) {
 	if ($cfgPrefix)   { Out "Префикс:        $cfgPrefix" }
 	if ($cfgVendor)   { Out "Поставщик:      $cfgVendor" }
 	if ($cfgVersion)  { Out "Версия:         $cfgVersion" }
+	foreach ($l in (Get-SupportLines)) { Out $l }
 	$cfgUpdateAddr = Get-PropText "UpdateCatalogAddress"
 	if ($cfgUpdateAddr) { Out "Каталог обн.:   $cfgUpdateAddr" }
 	Out ""

@@ -1,4 +1,4 @@
-﻿# form-validate v1.6 — Validate 1C managed form
+﻿# form-validate v1.8 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -155,7 +155,8 @@ if (-not $stopped) {
 
 # --- Collect all elements with IDs ---
 
-$elementIds = @{}  # id -> name (element ID pool)
+$elementIds = @{}    # id -> name (element ID pool)
+$elementNames = @{}  # name -> id (имена элементов уникальны в пределах формы)
 $allElements = @() # @{Name; Tag; Id; ParentName; Node}
 
 function Collect-Elements {
@@ -184,6 +185,13 @@ function Collect-Elements {
 					Report-Error "Duplicate element id=${id}: '$name' and '$($elementIds[$id])'"
 				} else {
 					$elementIds[$id] = $name
+				}
+
+				# Имена элементов уникальны (требование 1С)
+				if ($elementNames.ContainsKey($name)) {
+					Report-Error "Duplicate element name '$name': id=${id} and id=$($elementNames[$name])"
+				} else {
+					$elementNames[$name] = $id
 				}
 			}
 
@@ -229,6 +237,10 @@ foreach ($attr in $attrNodes) {
 	$attrName = $attr.GetAttribute("name")
 	$attrId = $attr.GetAttribute("id")
 	if ($attrName) {
+		# Имена реквизитов уникальны среди реквизитов (отдельный неймспейс от элементов)
+		if ($attrMap.ContainsKey($attrName)) {
+			Report-Error "Duplicate attribute name '$attrName': id=${attrId} and id=$($attrMap[$attrName].GetAttribute('id'))"
+		}
 		$attrMap[$attrName] = $attr
 	}
 	if ($attrId -and $attrId -ne "") {
@@ -241,6 +253,7 @@ foreach ($attr in $attrNodes) {
 
 	# Column IDs are a separate sub-pool per attribute — check uniqueness within parent
 	$colIds = @{}
+	$colNames = @{}  # имена колонок уникальны в пределах своего реквизита
 	foreach ($col in $attr.SelectNodes("f:Columns/f:Column", $nsMgr)) {
 		$colId = $col.GetAttribute("id")
 		$colName = $col.GetAttribute("name")
@@ -249,6 +262,13 @@ foreach ($attr in $attrNodes) {
 				Report-Error "Duplicate column id=${colId} in '$attrName': '$colName' and '$($colIds[$colId])'"
 			} else {
 				$colIds[$colId] = $colName
+			}
+		}
+		if ($colName) {
+			if ($colNames.ContainsKey($colName)) {
+				Report-Error "Duplicate column name '$colName' in '$attrName': id=${colId} and id=$($colNames[$colName])"
+			} else {
+				$colNames[$colName] = $colId
 			}
 		}
 	}
@@ -270,6 +290,10 @@ foreach ($cmd in $cmdNodes) {
 	$cmdName = $cmd.GetAttribute("name")
 	$cmdId = $cmd.GetAttribute("id")
 	if ($cmdName) {
+		# Имена команд уникальны среди команд (отдельный неймспейс)
+		if ($cmdMap.ContainsKey($cmdName)) {
+			Report-Error "Duplicate command name '$cmdName': id=${cmdId} and id=$($cmdMap[$cmdName].GetAttribute('id'))"
+		}
 		$cmdMap[$cmdName] = $cmd
 	}
 	if ($cmdId -and $cmdId -ne "") {
@@ -286,6 +310,20 @@ if (-not $stopped) {
 		$cmdDupCount = ($cmdIds.GetEnumerator() | Group-Object Value | Where-Object { $_.Count -gt 1 }).Count
 		if ($cmdDupCount -eq 0) {
 			Report-OK "Unique command IDs: $($cmdIds.Count) entries"
+		}
+	}
+}
+
+# --- Collect parameters (separate name pool, без id) ---
+
+$paramNames = @{}  # name -> $true (имена параметров уникальны среди параметров)
+foreach ($param in $root.SelectNodes("f:Parameters/f:Parameter", $nsMgr)) {
+	$paramName = $param.GetAttribute("name")
+	if ($paramName) {
+		if ($paramNames.ContainsKey($paramName)) {
+			Report-Error "Duplicate parameter name '$paramName'"
+		} else {
+			$paramNames[$paramName] = $true
 		}
 	}
 }
@@ -344,6 +382,10 @@ if (-not $stopped) {
 	$pathChecked = 0
 	$pathBaseSkipped = 0
 
+	# All data-binding tags whose value is an attribute path (root must exist in <Attributes>).
+	$bindingTags = @('DataPath','TitleDataPath','FooterDataPath','HeaderDataPath',
+		'MultipleValueDataPath','MultipleValuePresentDataPath','RowPictureDataPath','MultipleValuePictureDataPath')
+
 	foreach ($el in $allElements) {
 		if ($stopped) { break }
 		$tag = $el.Tag
@@ -360,60 +402,63 @@ if (-not $stopped) {
 			try { if ([int]$el.Id -lt 1000000) { $pathBaseSkipped++; continue } } catch {}
 		}
 
-		$dpNode = $node.SelectSingleNode("f:DataPath", $nsMgr)
-		if (-not $dpNode) { continue }
+		foreach ($bTag in $bindingTags) {
+			if ($stopped) { break }
+			$dpNode = $node.SelectSingleNode("f:$bTag", $nsMgr)
+			if (-not $dpNode) { continue }
 
-		$dataPath = $dpNode.InnerText.Trim()
-		if (-not $dataPath) { continue }
+			$dataPath = $dpNode.InnerText.Trim()
+			if (-not $dataPath) { continue }
 
-		# Opaque platform-internal DataPath shapes — not validatable from Form.xml alone:
-		#   - bare numeric (e.g. "10", "1000003") — internal index
-		#   - "N/M:<uuid>" — metadata reference by UUID
-		if ($dataPath -match '^\d+$' -or $dataPath -match '^\d+/\d+:[0-9a-fA-F-]+$') {
-			continue
-		}
-
-		$pathChecked++
-
-		# Extract root segment of path, strip array indices like [0]
-		$cleanPath = $dataPath -replace '\[\d+\]', ''
-		# Strip leading '~' (current row of DynamicList: ~Список.Поле)
-		if ($cleanPath.StartsWith('~')) { $cleanPath = $cleanPath.Substring(1) }
-		$segments = $cleanPath -split '\.'
-		$rootAttr = $segments[0]
-
-		# Resolve Items.<TableName>.CurrentData.<Field>... — table element, not attribute
-		if ($rootAttr -eq 'Items') {
-			if ($segments.Count -lt 3 -or $segments[2] -ne 'CurrentData') {
-				Report-Warn "[$tag] '$elName': DataPath='$dataPath' — unknown Items.* shape, expected Items.<Table>.CurrentData.*"
+			# Opaque platform-internal shapes — not validatable from Form.xml alone:
+			#   - bare numeric (e.g. "10", "1000003") — internal index
+			#   - "N/M:<uuid>" — metadata reference by UUID
+			if ($dataPath -match '^\d+$' -or $dataPath -match '^\d+/\d+:[0-9a-fA-F-]+$') {
 				continue
 			}
-			$tableName = $segments[1]
-			$tableEl = $null
-			foreach ($candidate in $allElements) {
-				if ($candidate.Tag -eq 'Table' -and $candidate.Name -eq $tableName) {
-					$tableEl = $candidate
-					break
+
+			$pathChecked++
+
+			# Extract root segment of path, strip array indices like [0]
+			$cleanPath = $dataPath -replace '\[\d+\]', ''
+			# Strip leading '~' (current row of DynamicList: ~Список.Поле)
+			if ($cleanPath.StartsWith('~')) { $cleanPath = $cleanPath.Substring(1) }
+			$segments = $cleanPath -split '\.'
+			$rootAttr = $segments[0]
+
+			# Resolve Items.<TableName>.CurrentData.<Field>... — table element, not attribute
+			if ($rootAttr -eq 'Items') {
+				if ($segments.Count -lt 3 -or $segments[2] -ne 'CurrentData') {
+					Report-Warn "[$tag] '$elName': $bTag='$dataPath' — unknown Items.* shape, expected Items.<Table>.CurrentData.*"
+					continue
 				}
+				$tableName = $segments[1]
+				$tableEl = $null
+				foreach ($candidate in $allElements) {
+					if ($candidate.Tag -eq 'Table' -and $candidate.Name -eq $tableName) {
+						$tableEl = $candidate
+						break
+					}
+				}
+				if (-not $tableEl) {
+					Report-Error "[$tag] '$elName': $bTag='$dataPath' — table element '$tableName' not found"
+					$pathErrors++
+					continue
+				}
+				$tableDpNode = $tableEl.Node.SelectSingleNode("f:DataPath", $nsMgr)
+				if (-not $tableDpNode -or -not $tableDpNode.InnerText.Trim()) {
+					# Table without DataPath — can't resolve further, accept silently
+					continue
+				}
+				$tableDp = $tableDpNode.InnerText.Trim() -replace '\[\d+\]', ''
+				if ($tableDp.StartsWith('~')) { $tableDp = $tableDp.Substring(1) }
+				$rootAttr = ($tableDp -split '\.')[0]
 			}
-			if (-not $tableEl) {
-				Report-Error "[$tag] '$elName': DataPath='$dataPath' — table element '$tableName' not found"
-				$pathErrors++
-				continue
-			}
-			$tableDpNode = $tableEl.Node.SelectSingleNode("f:DataPath", $nsMgr)
-			if (-not $tableDpNode -or -not $tableDpNode.InnerText.Trim()) {
-				# Table without DataPath — can't resolve further, accept silently
-				continue
-			}
-			$tableDp = $tableDpNode.InnerText.Trim() -replace '\[\d+\]', ''
-			if ($tableDp.StartsWith('~')) { $tableDp = $tableDp.Substring(1) }
-			$rootAttr = ($tableDp -split '\.')[0]
-		}
 
-		if (-not $attrMap.ContainsKey($rootAttr)) {
-			Report-Error "[$tag] '$elName': DataPath='$dataPath' — attribute '$rootAttr' not found"
-			$pathErrors++
+			if (-not $attrMap.ContainsKey($rootAttr)) {
+				Report-Error "[$tag] '$elName': $bTag='$dataPath' — attribute '$rootAttr' not found"
+				$pathErrors++
+			}
 		}
 	}
 
@@ -424,9 +469,9 @@ if (-not $stopped) {
 		$pathMsg = if ($pathMsg) { "$pathMsg, $skipNote" } else { $skipNote }
 	}
 	if ($pathErrors -eq 0 -and $pathMsg) {
-		Report-OK "DataPath references: $pathMsg"
+		Report-OK "Data bindings: $pathMsg"
 	} elseif ($pathErrors -eq 0) {
-		Report-OK "DataPath references: none"
+		Report-OK "Data bindings: none"
 	}
 }
 

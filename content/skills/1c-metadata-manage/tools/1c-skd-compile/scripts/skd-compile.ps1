@@ -1,4 +1,4 @@
-﻿# skd-compile v1.104 — Compile 1C DCS from JSON
+﻿# skd-compile v1.107 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -9,6 +9,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
 
 # --- 1. Load and validate JSON ---
 
@@ -475,6 +481,31 @@ function Parse-TotalShorthand {
 
 # --- 7. Parameter shorthand parser ---
 
+function Split-ValueListCsv {
+	# Split on top-level commas (respecting 'single'/"double" quotes), strip quotes,
+	# drop empties. No ':' handling — values may contain colons (dateTime).
+	param([string]$s)
+	$result = @()
+	if ($null -eq $s) { return ,$result }
+	$items = @()
+	$buf = New-Object System.Text.StringBuilder
+	$inQuote = $null
+	for ($i = 0; $i -lt $s.Length; $i++) {
+		$ch = $s[$i]
+		if ($inQuote) { [void]$buf.Append($ch); if ($ch -eq $inQuote) { $inQuote = $null } }
+		elseif ($ch -eq "'" -or $ch -eq '"') { $inQuote = $ch; [void]$buf.Append($ch) }
+		elseif ($ch -eq ',') { $items += $buf.ToString(); [void]$buf.Clear() }
+		else { [void]$buf.Append($ch) }
+	}
+	if ($buf.Length -gt 0) { $items += $buf.ToString() }
+	foreach ($raw in $items) {
+		$t = $raw.Trim()
+		if ($t.Length -ge 2 -and (($t[0] -eq "'" -and $t[-1] -eq "'") -or ($t[0] -eq '"' -and $t[-1] -eq '"'))) { $t = $t.Substring(1, $t.Length - 2) }
+		if ($t -ne "") { $result += $t }
+	}
+	return ,$result
+}
+
 function Parse-ParamShorthand {
 	param([string]$s)
 
@@ -509,7 +540,17 @@ function Parse-ParamShorthand {
 		$result.name = $Matches[1].Trim()
 		$result.type = Resolve-TypeStr ($Matches[2].Trim())
 		if ($Matches[4]) {
-			$result.value = $Matches[4].Trim()
+			$rhs = $Matches[4].Trim()
+			$items = Split-ValueListCsv $rhs
+			if ($items.Count -ge 2) {
+				# Multi-value default → list; valueListAllowed implied
+				$result.value = $items
+				$result.valueListAllowed = $true
+			} elseif ($items.Count -eq 1) {
+				$result.value = $items[0]
+			} else {
+				$result.value = $rhs
+			}
 		}
 	} else {
 		$result.name = $s.Trim()
@@ -3503,6 +3544,8 @@ Emit-SettingsVariants
 X '</DataCompositionSchema>'
 
 # --- 13. Write output ---
+
+Assert-EditAllowed $OutputPath 'editable'
 
 $parentDir = [System.IO.Path]::GetDirectoryName($OutputPath)
 if ($parentDir -and -not (Test-Path $parentDir)) {

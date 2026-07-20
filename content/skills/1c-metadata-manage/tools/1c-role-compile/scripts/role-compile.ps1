@@ -1,4 +1,4 @@
-﻿# role-compile v1.5 — Compile 1C role from JSON
+﻿# role-compile v1.7 — Compile 1C role from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -10,6 +10,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
 
 # --- 1. Load and validate JSON ---
 
@@ -523,6 +529,7 @@ function Detect-FormatVersion([string]$dir) {
 }
 
 $resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path (Get-Location) $OutputDir }
+Assert-EditAllowed $resolvedOutputDir 'editable'
 $formatVersion = Detect-FormatVersion $resolvedOutputDir
 
 # --- 8. Generate UUID ---

@@ -1,4 +1,4 @@
-﻿# mxl-compile v1.1 — Compile 1C spreadsheet from JSON
+﻿# mxl-compile v1.3 — Compile 1C spreadsheet from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -10,6 +10,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# --- Support guard (Ext/ParentConfigurations.bin) ---
+# See docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Policy source: .dev.env SUPPORT_EDIT_POLICY
+# (deny|warn|off, default deny) — see tools/_shared/support-guard.ps1.
+. (Join-Path $PSScriptRoot "..\..\_shared\support-guard.ps1")
 
 # --- 1. Load and validate JSON ---
 
@@ -720,6 +726,7 @@ X '</document>'
 
 $enc = New-Object System.Text.UTF8Encoding($true)
 $resolvedPath = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location) $OutputPath }
+Assert-EditAllowed $resolvedPath 'editable'
 [System.IO.File]::WriteAllText($resolvedPath, $xml.ToString(), $enc)
 
 # --- 9. Summary ---

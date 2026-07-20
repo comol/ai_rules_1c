@@ -1,5 +1,6 @@
-﻿# db-load-git v1.3 — Load Git changes into 1C database
+﻿# db-load-git v1.11 — Load Git changes into 1C database
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
     Загрузка изменений из Git в базу 1С
@@ -120,27 +121,68 @@ function Get-ObjectXmlFromSubFile {
 
 # --- Resolve V8Path (skip if DryRun) ---
 if (-not $DryRun) {
+    # -V8Path is normally supplied explicitly by the calling agent, populated from
+    # .dev.env's PLATFORM_PATH (see AGENTS.md / dev-standards-core.md §1). The
+    # scan below is only a fallback for when it isn't passed.
     if (-not $V8Path) {
-        $found = Get-ChildItem "C:\Program Files\1cv8\*\bin\1cv8.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+        $found = Get-ChildItem @("C:\Program Files\1cv8\*\bin\1cv8.exe", "C:\Program Files (x86)\1cv8\*\bin\1cv8.exe") -ErrorAction SilentlyContinue |
+            Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]"0.0" } } -Descending |
+            Select-Object -First 1
         if ($found) {
             $V8Path = $found.FullName
+            Write-Host "Auto-selected platform $($found.Directory.Parent.Name): $V8Path" -ForegroundColor Yellow
         } else {
-            Write-Host "Error: 1cv8.exe not found. Specify -V8Path" -ForegroundColor Red
+            Write-Host "Error: 1C executable not found. Specify -V8Path" -ForegroundColor Red
             exit 1
         }
-    } elseif (Test-Path $V8Path -PathType Container) {
+    }
+    if (Test-Path $V8Path -PathType Container) {
         $V8Path = Join-Path $V8Path "1cv8.exe"
     }
 
     if (-not (Test-Path $V8Path)) {
-        Write-Host "Error: 1cv8.exe not found at $V8Path" -ForegroundColor Red
+        Write-Host "Error: 1C executable not found at $V8Path" -ForegroundColor Red
         exit 1
     }
 }
 
-# --- Validate connection (skip if DryRun) ---
+# --- Detect engine + validate connection (skip if DryRun) ---
+$engine = "1cv8"
 if (-not $DryRun) {
-    if (-not $InfoBasePath -and (-not $InfoBaseServer -or -not $InfoBaseRef)) {
+function Invoke-IbcmdProcess {
+    # Run ibcmd non-interactively: a closed stdin pipe (EOF) makes ibcmd's auth prompt
+    # fast-fail instead of hanging. Returns @{ Output; ExitCode }. cp866 decodes ibcmd's
+    # native OEM output. The 1cv8/DESIGNER branch keeps using Start-Process.
+    param([string]$Exe, [string[]]$IbArgs)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = ($IbArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    try {
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::GetEncoding(866)
+        $psi.StandardErrorEncoding = [System.Text.Encoding]::GetEncoding(866)
+    } catch {}
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $p.StandardInput.Close()
+    $out = $p.StandardOutput.ReadToEnd()
+    $err = $p.StandardError.ReadToEnd()
+    $p.WaitForExit()
+    if ($err) { $out += $err }
+    return [pscustomobject]@{ Output = $out; ExitCode = $p.ExitCode }
+}
+
+
+    $engine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
+    if ($engine -eq "ibcmd") {
+        if (-not $InfoBasePath) {
+            Write-Host "Error: ibcmd supports file infobases only (use -InfoBasePath)" -ForegroundColor Red
+            exit 1
+        }
+    } elseif (-not $InfoBasePath -and (-not $InfoBaseServer -or -not $InfoBaseRef)) {
         Write-Host "Error: specify -InfoBasePath or -InfoBaseServer + -InfoBaseRef" -ForegroundColor Red
         exit 1
     }
@@ -167,6 +209,15 @@ try {
 }
 
 # --- Get changed files from Git ---
+# Все git-вызовы для сбора путей идут через один хелпер с -c core.quotePath=false,
+# иначе кириллические пути возвращаются в octal-виде и не распознаются (зеркало run_git в .py).
+function Invoke-GitLines {
+    param([string[]]$GitArgs)
+    $out = git -c core.quotePath=false @GitArgs 2>&1
+    if ($LASTEXITCODE -eq 0) { return $out }
+    return @()
+}
+
 $changedFiles = @()
 $ConfigDir = (Resolve-Path $ConfigDir).Path.TrimEnd('\')
 $configDirNormalized = $ConfigDir.Replace('\', '/')
@@ -176,29 +227,22 @@ try {
     switch ($Source) {
         "Staged" {
             Write-Host "Getting staged changes..."
-            $raw = git diff --cached --name-only --relative 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--cached', '--name-only', '--relative')
         }
         "Unstaged" {
             Write-Host "Getting unstaged changes..."
-            $raw = git diff --name-only --relative 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
-            $raw = git ls-files --others --exclude-standard 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('ls-files', '--others', '--exclude-standard')
         }
         "Commit" {
             Write-Host "Getting changes from $CommitRange..."
-            $raw = git diff --name-only --relative $CommitRange 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--relative', $CommitRange)
         }
         "All" {
             Write-Host "Getting all uncommitted changes..."
-            $raw = git diff --cached --name-only --relative 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
-            $raw = git diff --name-only --relative 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
-            $raw = git ls-files --others --exclude-standard 2>&1
-            if ($LASTEXITCODE -eq 0) { $changedFiles += $raw }
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--cached', '--name-only', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('ls-files', '--others', '--exclude-standard')
         }
     }
 } finally {
@@ -216,13 +260,16 @@ Write-Host "Git changes detected: $($changedFiles.Count) files"
 
 # --- Filter and map to config files ---
 $configFiles = @()
+$supportSkipped = @()
 
 foreach ($file in $changedFiles) {
     $file = $file.Trim().Replace('\', '/')
     if ([string]::IsNullOrWhiteSpace($file)) { continue }
 
-    # Skip service files
-    if ($file -eq "ConfigDumpInfo.xml") { continue }
+    # Skip service files (not partially loadable). Support-state files are tracked
+    # to warn the user: support changes apply only via a full load.
+    if ($file -match 'ParentConfigurations\.bin$') { $supportSkipped += $file; continue }
+    if ($file -eq "ConfigDumpInfo.xml" -or $file -match '(^|/)ConfigDumpInfo\.xml$') { continue }
 
     $fullPath = Join-Path $ConfigDir $file
 
@@ -265,6 +312,12 @@ foreach ($file in $changedFiles) {
     }
 }
 
+if ($supportSkipped.Count -gt 0) {
+    Write-Host "[ВНИМАНИЕ] Состояние поддержки изменено в коммите, но частично не загружается (исключено):" -ForegroundColor Yellow
+    foreach ($sf in $supportSkipped) { Write-Host "  - $sf" -ForegroundColor Yellow }
+    Write-Host "  Смена состояния поддержки применяется только полной загрузкой (db-load-xml -Mode Full)." -ForegroundColor Yellow
+}
+
 if ($configFiles.Count -eq 0) {
     Write-Host "No configuration files found in changes"
     exit 0
@@ -285,6 +338,53 @@ $tempDir = Join-Path $env:TEMP "db_load_git_$(Get-Random)"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
 try {
+    if ($engine -eq "ibcmd") {
+        # --- ibcmd branch (file infobase only; import specific files) ---
+        if ($Format -eq "Plain") {
+            Write-Host "Error: ibcmd config import supports hierarchical format only (use -Format Hierarchical or 1cv8)" -ForegroundColor Red
+            exit 1
+        }
+        if ($AllExtensions) {
+            Write-Host "Error: ibcmd config import does not support -AllExtensions (use -Extension or 1cv8)" -ForegroundColor Red
+            exit 1
+        }
+        $arguments = @("infobase", "config", "import", "files") + $configFiles
+        $arguments += "--base-dir=$ConfigDir", "--db-path=$InfoBasePath"
+        if ($Extension) { $arguments += "--extension=$Extension" }
+        if ($UserName) { $arguments += "--user=$UserName" }
+        if ($Password) { $arguments += "--password=$Password" }
+        $arguments += "--data=$tempDir"
+        Write-Host "Running: ibcmd $($arguments -join ' ')"
+        $__ib = Invoke-IbcmdProcess $V8Path $arguments
+        $output = $__ib.Output
+        $exitCode = $__ib.ExitCode
+        if ($exitCode -ne 0) {
+            Write-Host "Error loading changes (code: $exitCode)" -ForegroundColor Red
+            if ($output) { Write-Host ($output | Out-String) }
+            exit $exitCode
+        }
+        Write-Host "Changes loaded successfully ($($configFiles.Count) files)" -ForegroundColor Green
+        if ($output) { Write-Host ($output | Out-String) }
+        if ($UpdateDB) {
+            $applyArgs = @("infobase", "config", "apply", "--db-path=$InfoBasePath", "--force")
+            if ($UserName) { $applyArgs += "--user=$UserName" }
+            if ($Password) { $applyArgs += "--password=$Password" }
+            $applyArgs += "--data=$tempDir"
+            Write-Host "Running: ibcmd $($applyArgs -join ' ')"
+            $__ib = Invoke-IbcmdProcess $V8Path $applyArgs
+            $applyOut = $__ib.Output
+            $exitCode = $__ib.ExitCode
+            if ($exitCode -eq 0) {
+                Write-Host "Database configuration updated successfully" -ForegroundColor Green
+            } else {
+                Write-Host "Error updating database configuration (code: $exitCode)" -ForegroundColor Red
+            }
+            if ($applyOut) { Write-Host ($applyOut | Out-String) }
+        }
+        exit $exitCode
+    }
+
+    # --- 1cv8 branch ---
     # --- Write list file (UTF-8 with BOM) ---
     $listFile = Join-Path $tempDir "load_list.txt"
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)

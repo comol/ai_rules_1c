@@ -10,16 +10,17 @@ Creates or removes a template (layout) of specified type and registers/unregiste
 
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
-| ObjectName | yes | — | Object name (for EPF) or object path |
+| ObjectName (alias `ProcessorName`) | yes | — | Object name (for EPF) or object path |
 | TemplateName | yes | — | Template name |
-| TemplateType | yes | — | Type: HTML, Text, SpreadsheetDocument, BinaryData |
+| TemplateType | yes | — | Type: HTML, Text, SpreadsheetDocument, BinaryData, DataCompositionSchema |
 | Synonym | no | = TemplateName | Template synonym |
 | SrcDir | no | `src` | Source directory |
+| SetMainSKD | no | — | Force-set `MainDataCompositionSchema` even if it already has a value (see below) |
 
 ### Command (EPF)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" -TemplateType "<TemplateType>" [-Synonym "<Synonym>"] [-SrcDir "<SrcDir>"]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1 -ObjectName "<ObjectName>" -TemplateName "<TemplateName>" -TemplateType "<TemplateType>" [-Synonym "<Synonym>"] [-SrcDir "<SrcDir>"] [-SetMainSKD]
 ```
 
 ### Type Mapping
@@ -32,6 +33,13 @@ User may specify type in free form. Determine the correct one from context:
 | Text, text document | TextDocument | `.txt` | Empty file |
 | SpreadsheetDocument, MXL, spreadsheet | SpreadsheetDocument | `.xml` | Minimal spreadsheet |
 | BinaryData, binary | BinaryData | `.bin` | Empty file |
+| DataCompositionSchema, DCS | DataCompositionSchema | `.xml` | Minimal DCS schema |
+
+### MainDataCompositionSchema (Automatic)
+
+When adding a `DataCompositionSchema` template to an `ExternalReport` or `Report`:
+- If `MainDataCompositionSchema` is empty, it is automatically filled with a reference to the new template.
+- Use `-SetMainSKD` to overwrite an existing value.
 
 ### Print Form Naming Convention
 
@@ -57,6 +65,7 @@ If user provides a name without prefix but context is a print form, **add the `P
 ### What Gets Modified
 
 - `<SrcDir>/<ObjectName>.xml` — adds `<Template>` to the end of `ChildObjects`
+- For ExternalReport/Report: `MainDataCompositionSchema` may be updated (see above)
 
 ---
 
