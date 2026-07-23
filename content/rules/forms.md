@@ -8,6 +8,8 @@ category: forms
 
 This file is the **router** for managed-form work. Load it first, then load only the companion rules selected by the table below — companion files are not auto-attached by file pattern.
 
+> **Execution gate.** Companion rules define *what* a correct form looks like; the *mutation* of `Form.xml` / layouts itself goes through the **`1c-metadata-manage`** skill (`form-manage.md`, form-compile DSL) or the `1c-metadata-manager` subagent — hard gate per `AGENTS.md → Skills and Subagents`, exceptions only per the skill's `SKILL.md → Hard rule`. Editing `Form.Module.bsl` logic is regular BSL work and is not covered by this gate.
+
 ## Routing
 
 | Task | Load |

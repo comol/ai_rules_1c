@@ -86,17 +86,18 @@ param(
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-# --- Resolve V8Path ---
+. (Join-Path $PSScriptRoot '..\..\_common\Resolve-V8Exe.ps1')
+
+# --- Resolve V8Path (bin directory for wsap24.dll) ---
+$v8Input = $V8Path
+$V8Path = Resolve-V8BinPath -V8Path $V8Path
 if (-not $V8Path) {
-    $found = Get-ChildItem "C:\Program Files\1cv8\*\bin\1cv8.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
-    if ($found) {
-        $V8Path = Split-Path $found.FullName -Parent
+    if ($v8Input) {
+        Write-Host "Error: каталог bin платформы не найден для $v8Input (ожидался $v8Input\bin или каталог с 1cv8.exe)" -ForegroundColor Red
     } else {
         Write-Host "Error: платформа 1С не найдена. Укажите -V8Path" -ForegroundColor Red
-        exit 1
     }
-} elseif (Test-Path $V8Path -PathType Leaf) {
-    $V8Path = Split-Path $V8Path -Parent
+    exit 1
 }
 
 # Validate wsap24.dll

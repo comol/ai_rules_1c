@@ -156,7 +156,7 @@ All scripts accept the same connection parameters:
 
 | Parameter | Description |
 |-----------|-------------|
-| `-V8Path <path>` | Platform bin directory (auto-detect if not set) |
+| `-V8Path <path>` | Platform path passed to `-V8Path`: **version install directory** (same shape as `.dev.env` `PLATFORM_PATH`, e.g. `C:\Program Files (x86)\1cv8\8.3.27.2130`), **`bin` directory**, or full path to `1cv8.exe`. Scripts resolve `bin\1cv8.exe` automatically when the version root is supplied. Auto-detect if not set. |
 | `-InfoBasePath <path>` | File infobase path |
 | `-InfoBaseServer <server>` | 1C server (for server databases) |
 | `-InfoBaseRef <name>` | Database name on server |
@@ -363,11 +363,20 @@ After loading: offer to run `db-update`.
 | 0 | Success |
 | 1 | Error (check log) |
 
+### Update retry discipline — mandatory for load / update operations
+
+`db-load-cf` / `db-load-xml` / `db-load-git` / `db-update` failures are handled **iteratively**, mirroring `content/commands/update1cbase.md → Update retry loop`:
+
+1. **Log after every attempt, success or not.** Exit code 0 does not prove success — the platform writes errors like `Неверное свойство объекта метаданных`, `Неизвестное имя типа`, `Ошибка при обновлении конфигурации базы данных` to the log while formally exiting clean (`db-load-xml` already parses for these; still read the log output the script shows). Any `Ошибка` / `Error` line = failed attempt.
+2. **Terminate a hung / failed Configurator before retrying.** A dead-but-alive Designer process holds the configuration lock, and every next attempt fails with `База данных заблокирована`. Kill only the process this run started (by PID with a timeout); never blanket-kill all `1cv8` processes — the user's own Designer / client sessions may be among them. A lock that survives your process's death is foreign — report it, do not kill further.
+3. **Fix before retry.** Re-running against unchanged sources is forbidden. Fix the logged cause first (source XML/BSL — through this skill's tools plus `verify_xml` / `syntaxcheck`; parameters — in `.dev.env` / flags). After a failed **load**, restart from the load step, not from `db-update` — the half-loaded state is not trustworthy.
+4. **Budget: 3 full attempts.** Then stop and report the last log fragment, the fixes applied between attempts, and the remaining error. A failed update is never reported as done.
+
 ### Important
 
 - **DO NOT READ the scripts — just RUN them**
 - After any load operation, suggest running `db-update`
-- Check logs after execution and show results to user
+- Check logs after execution and show results to user — following the retry discipline above on any failure
 
 ---
 

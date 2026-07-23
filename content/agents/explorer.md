@@ -42,13 +42,15 @@ See the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1
    - **`answer_metadata_question`** — natural-language Q&A. Treat its output as a draft hint; verify each fact against deterministic tools before reporting.
 2. **`1c-code-metadata-mcp`** (fallback when graph server is unavailable or returns nothing)
    - `codesearch`, `metadatasearch` (`names_only=true` for compact lists), `get_metadata_details`, `search_function`, `get_module_structure`, `get_method_call_hierarchy`, `graph_dependencies`, `bsl_scope_members`, `helpsearch`, `search_forms`, `inspect_form_layout`.
-3. **`1c-templates-mcp`** — `templatesearch` to find canonical implementation patterns; **`recall`** to retrieve earlier project-specific notes for the same topic.
+3. **`1c-templates-mcp`** — **`templatesearch` only:** task-description `query` + pre-flight (`docs/1c-templates-mcp.md → Query formulation (templatesearch only)`); **`recall`** for project notes. Does not change how other tools are queried.
 4. **`1c-ssl-mcp`** — `ssl_search` to check whether a standard SSL/БСП function already covers the need.
 5. **`1C-docs-mcp`** — `docinfo` for known names, `docsearch` for description-based lookup of platform APIs.
 6. **`1c-code-check-mcp`** — `its_help` → **always follow up with** `fetch_its` to read full ITS articles.
-7. **Grep / Glob** — only as an absolute last resort.
+7. **Grep / Glob / `Read`-scanning** — only as an absolute last resort. Locating files by mask (`**/*.bsl`, `**/*.xml`), listing directories, reading modules one after another to find something, and reading a whole module for the sake of one routine (prefer `get_module_structure` / `search_code` `detail_level="L0"` / `search_function`) are the same last-resort step as `Grep` — not a separate free action. Reading a file whose path came from an MCP result is normal work and needs no justification.
 
-**Before falling back to Grep / Glob, state explicitly in the response which MCP tools were tried and why they did not return what was needed (one or two sentences).**
+**Before falling back to Grep / Glob / `Read`-scanning, state explicitly in the response which MCP tools were tried and why they did not return what was needed (one or two sentences).**
+
+**Bounded priority, not a ban:** if the project-index servers are not exposed in the session — work with native tools normally and state the unavailability once. If a tuned MCP attempt plus the documented retry missed, or an MCP result contradicts the disk state after fresh edits — fall back / verify with native tools immediately; no further MCP calls are owed to the chain. Boundary cases — `content/rules/mcp-first-search.md`.
 
 **Tool calling discipline.** Each call must add information that is not already available. Re-calling the same tool is allowed only when parameters change substantially or when state may have changed.
 

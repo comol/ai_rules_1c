@@ -98,21 +98,17 @@ param(
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+. (Join-Path $PSScriptRoot '..\..\_common\Resolve-V8Exe.ps1')
+
 # --- Resolve V8Path ---
+$v8Input = $V8Path
+$V8Path = Resolve-V8ExePath -V8Path $V8Path
 if (-not $V8Path) {
-    $found = Get-ChildItem "C:\Program Files\1cv8\*\bin\1cv8.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
-    if ($found) {
-        $V8Path = $found.FullName
+    if ($v8Input) {
+        Write-Host "Error: 1cv8.exe not found at $v8Input (also checked $v8Input\bin\1cv8.exe)" -ForegroundColor Red
     } else {
         Write-Host "Error: 1cv8.exe not found. Specify -V8Path" -ForegroundColor Red
-        exit 1
     }
-} elseif (Test-Path $V8Path -PathType Container) {
-    $V8Path = Join-Path $V8Path "1cv8.exe"
-}
-
-if (-not (Test-Path $V8Path)) {
-    Write-Host "Error: 1cv8.exe not found at $V8Path" -ForegroundColor Red
     exit 1
 }
 

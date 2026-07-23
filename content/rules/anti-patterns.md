@@ -87,6 +87,37 @@ category: quality
 |       ПО Заказы.Ссылка = Оплаты.Заказ"
 ```
 
+### 3a. Correlated Subquery in WHERE (per-row semi-join)
+
+**Impact:** Subquery executed for every row of the outer source — quadratic on large tables
+**Severity:** CRITICAL
+
+```bsl
+// ❌ CRITICAL: ИСТИНА В (ВЫБРАТЬ ПЕРВЫЕ 1 …) runs per row
+"ВЫБРАТЬ ...
+|ИЗ
+|   РегистрСведений.ЗначенияПоУмолчанию КАК Значения
+|ГДЕ
+|   ИСТИНА В (ВЫБРАТЬ ПЕРВЫЕ 1 ИСТИНА
+|       ИЗ Справочник.ГруппыДоступа.Пользователи КАК ГП
+|       ГДЕ ГП.Ссылка = Значения.ГруппаДоступа
+|           И ГП.Пользователь = &Пользователь)"
+
+// ✅ OPTIMIZED: collect the independent set once → index → inner join
+"ВЫБРАТЬ РАЗЛИЧНЫЕ ГП.Ссылка КАК ГруппаДоступа
+|ПОМЕСТИТЬ ВТ_ГруппыПользователя
+|ИЗ Справочник.ГруппыДоступа.Пользователи КАК ГП
+|ГДЕ ГП.Пользователь = &Пользователь
+|ИНДЕКСИРОВАТЬ ПО ГруппаДоступа
+|;
+|ВЫБРАТЬ ...
+|ИЗ РегистрСведений.ЗначенияПоУмолчанию КАК Значения
+|   ВНУТРЕННЕЕ СОЕДИНЕНИЕ ВТ_ГруппыПользователя КАК Группы
+|   ПО Группы.ГруппаДоступа = Значения.ГруппаДоступа"
+```
+
+Full pattern (incl. join-before-grouping) — `query-optimization.md → Pre-collect and Index Before Join / Group`.
+
 ## High Priority Anti-Patterns
 
 ### 4. Virtual Table Filter in WHERE
@@ -135,6 +166,25 @@ category: quality
 ```
 
 Always pair `ПЕРВЫЕ N` with `УПОРЯДОЧИТЬ ПО` — without an explicit ordering the returned subset is non-deterministic and may differ between runs and DBMS engines.
+
+### 5a. Unindexed Temp Table in Join or Union
+
+**Impact:** Scan of the temp table per joined row; expensive dedup in `ОБЪЕДИНИТЬ`
+**Severity:** HIGH
+
+A temp table has no indexes by default. If it later participates in a `СОЕДИНЕНИЕ` (worst case), an `ОБЪЕДИНИТЬ` dedup, or a `В (ВЫБРАТЬ …)` filter — it must be created with `ИНДЕКСИРОВАТЬ ПО` on the join / dedup keys. Index the **2–3 most selective fields**, not the whole column list.
+
+```bsl
+// ❌ HIGH: ВТ joined in the next batch, no index
+"ВЫБРАТЬ ... ПОМЕСТИТЬ ВТ_Ключи ИЗ &Таблица КАК Т"
+
+// ✅ OPTIMIZED
+"ВЫБРАТЬ ... ПОМЕСТИТЬ ВТ_Ключи ИЗ &Таблица КАК Т
+|ИНДЕКСИРОВАТЬ ПО
+|   Номенклатура, Склад"
+```
+
+Mandatory cases and the selectivity guidance — `query-optimization.md → Temporary Table Indexing`.
 
 ### 6. Excessive Client-Server Calls
 
@@ -211,6 +261,27 @@ Always pair `ПЕРВЫЕ N` with `УПОРЯДОЧИТЬ ПО` — without an e
 ```
 
 ## Medium Priority Anti-Patterns
+
+### 7b. Redundant РАЗЛИЧНЫЕ (union / grouping already deduplicates)
+
+**Impact:** Extra sort/group passes over the same data
+**Severity:** MEDIUM
+
+`ОБЪЕДИНИТЬ` (without `ВСЕ`) collapses duplicates over the combined result — `РАЗЛИЧНЫЕ` inside its operands is dead weight. `РАЗЛИЧНЫЕ` together with `СГРУППИРОВАТЬ ПО` over the same fields is equally redundant. When duplicates are impossible, use `ОБЪЕДИНИТЬ ВСЕ` and drop the dedup entirely.
+
+```bsl
+// ❌ MEDIUM: triple dedup — РАЗЛИЧНЫЕ in both operands + union collapse
+"ВЫБРАТЬ РАЗЛИЧНЫЕ ... ИЗ ВТ_Движения
+|ОБЪЕДИНИТЬ
+|ВЫБРАТЬ РАЗЛИЧНЫЕ ... ИЗ РегистрНакопления.Запасы"
+
+// ✅ OPTIMIZED: single dedup by the union itself
+"ВЫБРАТЬ ... ИЗ ВТ_Движения
+|ОБЪЕДИНИТЬ
+|ВЫБРАТЬ ... ИЗ РегистрНакопления.Запасы"
+```
+
+Details — `query-optimization.md → No РАЗЛИЧНЫЕ inside ОБЪЕДИНИТЬ operands`.
 
 ### 8. Missing Caching
 

@@ -48,11 +48,15 @@ When the task forks **materially** (interpretations diverge on data integrity, t
 
 ### MCP-first search
 
-Before any `Grep` / `Glob` / `rg` on 1C project source, follow `content/rules/mcp-first-search.md` (graph → code-metadata → `grep=true` retry → `Grep`). State what was tried when falling back.
+Before any native discovery call on 1C project source — `Grep` / `Glob` / `rg`, file search by pattern, directory listing, sequential `Read`-scanning to locate code, or a full-module `Read` for the sake of one routine — follow `content/rules/mcp-first-search.md` (graph → code-metadata → `grep=true` retry → native tools). State what was tried when falling back. The priority is bounded, not a ban: servers not exposed, or a tuned attempt missed, or the index is stale against fresh edits → native fallback with a one-line note is correct, not a defect.
+
+### Metadata mutations via the skill (mutating agents)
+
+Any mutation of metadata structure or forms (`Configuration.xml`, object XML, `Form.xml`, MXL / SKD layouts, roles, subsystems) is executed through the **`1c-metadata-manage`** skill — hard gate per `AGENTS.md → Skills and Subagents`, exceptions only per `content/skills/1c-metadata-manage/SKILL.md → Hard rule` (unambiguous one-line fix; skill not available — stated once). This binds every mutating subagent, not only `1c-metadata-manager`: a `1c-developer` / `1c-error-fixer` / `1c-refactoring` task that turns out to require a form or metadata change either drives it through the skill itself or reports it back to the parent for delegation — it does not hand-edit the XML. Name the path used in the report (`Metadata tooling: …`).
 
 ### Verification checklist (mutating agents)
 
-Before declaring a non-trivial mutating change done, apply `content/rules/verification-checklist.md` (ordered hard gates: `syntaxcheck` → `check_1c_code` → `review_1c_code` → impact analysis → metadata XML validation, as applicable). For every mutated artifact, report each applicable validator's result and run count after the final edit; the parent reuses this evidence instead of repeating validators on unchanged content. Read-only agents (`1c-explorer`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-doc-writer` when not writing project sources) skip the mutating gates but still follow CONFUSION and MCP-first search.
+Before declaring a non-trivial mutating change done, apply `content/rules/verification-checklist.md` (ordered hard gates: `syntaxcheck` → `check_1c_code` → `review_1c_code` → impact analysis → metadata XML validation, as applicable). For every mutated artifact, report each applicable validator's result and run count after the final edit; the parent reuses this evidence instead of repeating validators on unchanged content. Read-only agents (`1c-explorer`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-doc-writer` when not writing project sources) skip the mutating gates and the metadata-skill gate but still follow CONFUSION and MCP-first search.
 
 Each agent prompt ends with a short **Common obligations** pointer to this section — keep that pointer in sync when editing this file.
 

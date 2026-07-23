@@ -41,28 +41,29 @@ Key rules to always remember:
 - Use MCP tools — see the **MCP Tool Calling** section in the project's `AGENTS.md` and the `mcp-1c-tools` skill (`content/skills/mcp-1c-tools/SKILL.md`) for descriptions
 - **Search discipline** — follow `content/rules/mcp-first-search.md`: MCP project-index tools first; `Grep` / `Glob` only as a justified last resort on 1C project source
 - Follow the `powershell-windows` skill for shell commands
-- ALWAYS search for templates before writing code
+- ALWAYS search templates via **`templatesearch`** before writing code — query rule `A.8`; **if a fitting template is found — use it as base, adapt only what's needed** (`A.9`)
+- When platform docs confirm a built-in mechanism — **use it** (`A.7`); do not hand-roll a parallel implementation without a stated reason
 - ALWAYS verify syntax after writing code
 - Follow BSL Language Server recommendations
 - **SDD Integration:** If the project has an `openspec/` workspace, read `content/rules/sdd-integrations.md` for OpenSpec integration guidance
 
 ### Form and Query Rules
 
-- **Forms:** load `content/rules/forms.md` first, then companions it selects (`form-patterns.md`, `forms-add.md`, `form-module.md`, `async-methods.md`, …).
+- **Forms:** load `content/rules/forms.md` first, then companions it selects (`form-patterns.md`, `forms-add.md`, `form-module.md`, `async-methods.md`, …). Creating or structurally modifying `Form.xml` / layouts / metadata objects goes **through the `1c-metadata-manage` skill** (or report back for delegation to `1c-metadata-manager`) — hard gate per `AGENTS.md → Skills and Subagents`; do not hand-write metadata / form XML outside the skill's documented exceptions. Form-module BSL logic stays regular code work.
 - Minimize client-server round trips; prefer `&НаСервереБезКонтекста` over `&НаСервере` when form context is not needed; prefer `Асинх` over `ОписаниеОповещения`.
 - **Queries:** load `content/rules/query-design.md` first for any non-trivial query; hard rules in `dev-standards-architecture.md §3 → "Queries"`.
 
 ## Development Workflow
 
 1. Study the task and context. **If the parent's prompt contains a `## Upstream Handoff` block** (a previous implementation subagent in the same change has already produced artifacts), treat its `### Artifacts`, `### Public surface`, and `### Locked decisions` as authoritative — do not re-read those files via `Read` / `get_module_structure` / `metadatasearch` / `get_metadata_details` / `inspect_form_layout` to "verify what is there". Targeted reads are allowed only for a concrete detail missing from the Handoff (e.g. an exact line of a TODO marker, a full attribute list); state which detail is missing before each such read. Full rules: `content/rules/subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`.
-2. Search for code templates via `templatesearch`
+2. Search for code templates via **`templatesearch`** — `A.8` (query pre-flight) then **`A.9`**: if a matching template is returned, **start from it**; adapt only required details; do not rewrite from scratch
 3. Check existing patterns via `codesearch`; use `search_function` to find specific procedures/functions
 4. Use `get_module_structure` to understand the module you're about to edit (skip for files already inventoried in `## Upstream Handoff`)
 5. If unclear — ask the user for clarification
 6. Design solution considering DRY, and project rules
 7. Verify metadata via `metadatasearch` and `get_metadata_details` for attribute types
 8. Use `bsl_scope_members` to discover available methods/properties for the context
-9. Use `docsearch` and `ssl_search` as needed
+9. Use `docsearch` and `ssl_search` as needed; for specialized capabilities the platform-capability check is mandatory **before** custom design — `AGENTS.md → A.7`; **when a mechanism is found — use it**, do not invent a parallel one (`1C-docs-mcp.md → Using a found platform mechanism`)
 10. Write code strictly following the rules
 11. Check code via `syntaxcheck`, `check_1c_code` and `review_1c_code` — within the verification budget from `AGENTS.md → MCP Tool Calling → B.1`
 12. Before refactoring, use `graph_dependencies` and `get_method_call_hierarchy` to understand impact
@@ -117,4 +118,4 @@ All rows describe validator runs after the final edit; any later edit makes that
 
 ## Common obligations
 
-Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.
+Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **metadata mutations through the `1c-metadata-manage` skill** (`AGENTS.md → Skills and Subagents`) — no hand-edited metadata / form XML outside its documented exceptions; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.

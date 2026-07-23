@@ -111,6 +111,10 @@ Read `{LOG_PATH}`; it must contain `Конфигурация успешно за
 
 Read `{LOG_PATH}`. On errors, show the relevant log fragment and **do not run** UI tests.
 
+## Failure handling for Steps 2–3 — retry loop
+
+Apply the **Update retry loop** from `/update1cbase` (`content/commands/update1cbase.md → Update retry loop`) verbatim: read `{LOG_PATH}` after every attempt (errors in the log override exit code 0); on failure terminate the hung / failed Configurator by its own PID only (never blanket-kill `1cv8` processes); fix the logged cause before any retry (re-running unchanged is forbidden); after a failed load restart from Step 2; at most 3 full attempts, then stop and report. UI tests (Step 4) run only after a clean pass.
+
 ## Step 4. UI tests in the web client
 
 UI testing is an **opt-in** step controlled by `UI_TESTING` (empty = `manual`; see `dev-standards-env.md → "UI_TESTING — web UI-testing mode"`). It burns a lot of tokens, so it is not run by default. Resolve whether to run this step:

@@ -173,6 +173,9 @@ Visual form editing in extensions — **minimize**. Changes — programmatically
 - Do not modify register movements directly — only via the posting mechanism.
 - When a limited result set is needed — use `ПЕРВЫЕ N`.
 - Index all fields that participate in filters/joins via metadata.
+- **Temp tables used in a join or `ОБЪЕДИНИТЬ` must be indexed.** Any `ПОМЕСТИТЬ ВТ_*` whose table later participates in a `СОЕДИНЕНИЕ` (mandatory), an `ОБЪЕДИНИТЬ` dedup, or feeds a `В (ВЫБРАТЬ …)` filter over a large set — add `ИНДЕКСИРОВАТЬ ПО` on the join / dedup key fields. Index the **2–3 most selective fields**, not the full column list — enumerating every field bloats the index and does not improve the plan. See `query-optimization.md → Temporary Table Indexing` and `anti-patterns.md §5a`.
+- **Pre-collect, index, then join — before heavy work.** Replace correlated / per-row subqueries (`ИСТИНА В (ВЫБРАТЬ ПЕРВЫЕ 1 …)` in `ГДЕ`, subquery per row) with a temp table collected once, indexed, and joined via `ВНУТРЕННЕЕ СОЕДИНЕНИЕ`. Likewise, when a join feeds a `СГРУППИРОВАТЬ ПО` over a large source — join into an indexed temp table first, group afterwards. See `anti-patterns.md §3a` and `query-optimization.md → Pre-collect and Index Before Join / Group`.
+- `ОБЪЕДИНИТЬ` (without `ВСЕ`) already deduplicates the combined result — `РАЗЛИЧНЫЕ` inside its operands is redundant double work; when duplicates are impossible, prefer `ОБЪЕДИНИТЬ ВСЕ`. Similarly, do not combine `РАЗЛИЧНЫЕ` with `СГРУППИРОВАТЬ ПО` over the same fields.
 
 ### Cross-Platform Compatibility
 - **COM objects** (`Новый COMОбъект(...)`) are **PROHIBITED** unless explicitly specified in the task.

@@ -8,7 +8,7 @@ category: metadata
 
 Concrete recurring mistakes when generating or editing 1C metadata XML / MDO and managed-form XML by hand or with scripts. Apply when authoring metadata XML directly (rather than via the `1c-metadata-manage` skill).
 
-> Strong preference: use the `1c-metadata-manage` skill or the `1c-metadata-manager` subagent (see `content/agents/metadata-manager.md`) to mutate metadata XML. The cases below are for reviewing or fixing existing files.
+> **Hand-editing is the exception, not a parallel path.** Mutating metadata XML goes through the `1c-metadata-manage` skill or the `1c-metadata-manager` subagent (see `content/agents/metadata-manager.md`) — hard gate per `AGENTS.md → Skills and Subagents`. This file applies only inside the documented exceptions (`content/skills/1c-metadata-manage/SKILL.md → Hard rule`: one-line fix, skill unavailable) and for reviewing existing files.
 
 ---
 

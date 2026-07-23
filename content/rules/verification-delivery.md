@@ -53,6 +53,7 @@ After all gates pass, the delivery report MUST contain:
 1. **What was done** — 1–3 lines, no preamble.
 2. **Files changed** — every path in backticks, one line per file describing the nature of the change.
 3. **Context sources** — required for non-trivial BSL / metadata changes (per `AGENTS.md → MCP Tool Calling → A.3`). List the sources actually used (templates, project code, metadata, platform / БСП / ITS docs, ITS standards) and briefly state why any normally relevant source was skipped. Skipping a relevant source silently counts as a defect. Omit this section only for docs-fix / quick-fix tasks where no BSL / metadata change was made.
+   - **Metadata tooling** — when the change mutated metadata / forms / layouts, one line naming the execution path: `Metadata tooling: <1c-metadata-manage tool / 1c-metadata-manager>` or `hand-edit — <documented exception>` (hard gate — `AGENTS.md → Skills and Subagents`, exceptions — `content/skills/1c-metadata-manage/SKILL.md → Hard rule`).
 4. **Risks / nuances** — only real ones. If any gate fell back to graceful-degradation mode (validator or impact-analysis MCP not exposed — see `verification-gates.md` Gates 1–4), record it here verbatim. If there are no real risks, omit the section.
 5. **Follow-ups** — any defects observed but **not** fixed (out-of-scope dead code, pre-existing lints, downstream callers flagged by Gate 4 that need future review). Empty = omit.
 

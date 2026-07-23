@@ -125,4 +125,4 @@ When-to-use boundaries are owned by the frontmatter description and `content/rul
 
 ## Common obligations
 
-Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.
+Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **metadata mutations through the `1c-metadata-manage` skill** (`AGENTS.md → Skills and Subagents`) — no hand-edited metadata / form XML outside its documented exceptions; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.

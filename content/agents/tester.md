@@ -168,11 +168,11 @@ Human-like typing: 50-100 ms between characters, realistic pauses between fields
 
 ### Deployment Errors
 
-If deployment fails:
-1. Read the log file carefully
-2. Identify the specific error
-3. Report the error to user
-4. Suggest possible fixes
+If deployment fails, follow the retry loop from `content/commands/update1cbase.md → Update retry loop` (referenced by `/deploy-and-test`):
+1. Read the log file in full — log errors override a clean exit code
+2. Terminate the hung / failed Configurator by its own PID only (never blanket-kill `1cv8` processes)
+3. Identify the specific error; fix its cause before any retry — re-running unchanged is forbidden
+4. At most 3 full attempts; then report the error, the fixes tried, and suggest next steps to the user
 
 ### UI Errors
 
@@ -195,4 +195,4 @@ A session is complete when the configuration deployed successfully, critical sce
 
 ## Common obligations
 
-Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.
+Inherited from `content/rules/subagents.md → Common obligations` — do not weaken: **CONFUSION** format for ambiguous / conflicting tasks; **MCP-first search** (`content/rules/mcp-first-search.md`) before any `Grep` / `Glob` on 1C project source; **metadata mutations through the `1c-metadata-manage` skill** (`AGENTS.md → Skills and Subagents`) — no hand-edited metadata / form XML outside its documented exceptions; **verification checklist** (`content/rules/verification-checklist.md`) before declaring mutating work done.

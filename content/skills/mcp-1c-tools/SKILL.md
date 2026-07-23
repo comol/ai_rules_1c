@@ -26,9 +26,10 @@ If `docs/<server>.md` conflicts with the descriptor exposed by the current envir
 ## When to use this skill
 
 - Before writing code / a query / metadata XML — pick the MCP tool that best fits the task (template search, metadata check, syntax validation, code review).
+- Before implementing a specialized capability (cryptography, СЛАУ / numerical methods, data analysis, collaboration system / bots, integration bus / queues, full-text search, regular expressions, …) — run the platform-capability check: `docsearch` → `docinfo` on `1C-docs-mcp` (+ `ssl_search` where a БСП solution is plausible). Do not trust model memory about what the platform does or does not have. Canon — `AGENTS.md → MCP Tool Calling → A.7`; procedure and trigger domains — [`docs/1C-docs-mcp.md`](docs/1C-docs-mcp.md) → *Platform capability discovery*.
 - For impact analysis and code navigation — decide which server to use first (`graph` → `code-metadata` → `Grep` — see *Fallback chain* below).
 - For ITS standards (`its_help` → `fetch_its`) and platform documentation (`docinfo` / `docsearch`).
-- For code templates and project memory (`templatesearch`, `remember`, `recall`).
+- For code templates and project memory (`templatesearch`, `remember`, `recall`). Before **`templatesearch`**: load `docs/1c-templates-mcp.md → Query formulation (templatesearch only)` — that rule applies **only** to `templatesearch`, not to other MCP searches.
 
 > Short obligation rules and verification budgets live in `AGENTS.md → MCP Tool Calling` (sections A, B, C). This skill owns the MCP catalog, routing, and fallback details.
 
@@ -49,22 +50,24 @@ If `docs/<server>.md` conflicts with the descriptor exposed by the current envir
 
 Use only the applicable branch; stop as soon as the collected evidence is sufficient. Before each call, check that it closes a concrete context gap and is not a duplicate of an earlier call.
 
-### Project-source search before `Grep` / `rg`
+### Project-source search before `Grep` / `Glob` / `rg`
 
-`Grep` / `rg` substitute only the project-indexing layer. Before falling back to them for 1C project-source search, exhaust:
+Native discovery tools (`Grep` / `rg`, `Glob` / file search by pattern, directory listing, sequential `Read`-scanning) substitute only the project-indexing layer — locating files by mask (`**/*.bsl`, `**/*.xml`) or bulk-reading modules "to get oriented" is the same fallback as `Grep`, not a separate free action. Before falling back to any of them for 1C project-source search, exhaust:
 
 1. `1c-graph-metadata-mcp` — `search_code`, `search_metadata`, `search_metadata_by_description`, `get_object_dossier`, `trace_impact`, `trace_call_chain` as appropriate.
 2. `1c-code-metadata-mcp` — default indexed search / navigation (`codesearch`, `metadatasearch`, `search_function`, `search_forms`, `get_module_structure`, etc.).
 3. `1c-code-metadata-mcp` with `grep=true` — substring retry inside the MCP index **only after** indexed / semantic / exact search did not find enough and only for tools that expose the parameter: `codesearch`, `metadatasearch`, `search_function`, `helpsearch`, `search_forms`. Typical scenarios: exact identifier, fragment of a query, metadata path, event handler name, error text, or literal string where semantic search is likely to miss.
-4. Only then `Grep` / `rg` — with a mandatory short note in the response listing which project-index MCP attempts were tried and why they did not return what was needed.
+4. Only then a native discovery tool (`Grep` / `rg` / `Glob` / `Read`-scanning) — with a mandatory short note in the response listing which project-index MCP attempts were tried and why they did not return what was needed.
+
+The chain is a **bounded priority, not a prohibition**: when the project-index servers are not exposed, the chain collapses and native tools apply immediately (one-line note). When a tuned call plus the documented retry missed — fall back without spending further MCP calls on this rule. After fresh local edits the index may be stale — reading the disk state directly is legitimate. For understanding a single routine prefer fragment-level retrieval (`get_module_structure`, `search_code` `detail_level="L0"`, `search_function`) over a full-module `Read`; reading a direct edit target or an MCP-located file is normal work. Boundary cases — `content/rules/mcp-first-search.md`.
 
 ### External knowledge
 
 These servers have no `Grep` / `rg` equivalent; call them only when their knowledge is needed:
 
-1. `1c-templates-mcp` — code templates and project memory (`templatesearch`, `remember`, `recall`).
+1. `1c-templates-mcp` — code templates and project memory (`templatesearch`, `remember`, `recall`). **`templatesearch` only:** query pre-flight (`A.8`) + **reuse found template** (`A.9`, `docs/1c-templates-mcp.md → Using a found template`).
 2. `1c-ssl-mcp` — БСП / SSL reusable APIs and patterns.
-3. `1C-docs-mcp` — versioned platform documentation.
+3. `1C-docs-mcp` — versioned platform documentation; also the mandatory platform-capability check before hand-rolling a specialized mechanism (see `docs/1C-docs-mcp.md → Platform capability discovery`).
 4. `1c-code-check-mcp` — 1С:Напарник checks, ITS standards (`its_help` → `fetch_its` for every document used), AI drafts.
 5. `1c-syntax-checker-mcp` — BSL syntax / style validation after edits (prefer `syntaxcheck_file` over `syntaxcheck` when it is exposed — file check by path is more economical than passing code text).
 6. `1c-data-mcp` — execution against the **live** infobase (run a BSL fragment, run a query, parse-check a query, fetch the last event-log error). No `Grep` / `rg` equivalent — there is no offline substitute for "what does this running IB do right now". Call only when the question genuinely requires the live IB; default to read-only fragments and ask before any mutation. Details — [`docs/1c-data-mcp.md`](docs/1c-data-mcp.md).

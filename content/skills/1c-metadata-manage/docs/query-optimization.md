@@ -10,12 +10,132 @@ Invoke this skill when:
 - Implementing DCS reports
 - Processing large datasets in portions
 
+## Mandatory Optimization Checklist
+
+Walk this list explicitly for **every** query-optimization task (and for every new multi-batch query). Each item is a known miss with a case below:
+
+1. Virtual-table filters — in **parameters**, not `ГДЕ` (`anti-patterns.md §4`).
+2. Virtual-table **periodicity matches the join granularity** — joining by `Регистратор` requires periodicity `Регистратор`, not `Авто`.
+3. Every temp table later used in a `СОЕДИНЕНИЕ`, `ОБЪЕДИНИТЬ`, or `В (ВЫБРАТЬ …)` filter — created with `ИНДЕКСИРОВАТЬ ПО` on the join / dedup keys (see *Temporary Table Indexing* below).
+4. No redundant deduplication — `РАЗЛИЧНЫЕ` inside `ОБЪЕДИНИТЬ` operands or on top of `СГРУППИРОВАТЬ ПО` (see *ОБЪЕДИНИТЬ vs ОБЪЕДИНИТЬ ВСЕ* below).
+5. Correlated / per-row subqueries replaced with a pre-collected indexed temp table + join (see *Pre-collect and Index Before Join / Group*).
+6. Heavy join feeding a `СГРУППИРОВАТЬ ПО` — narrowed and joined through an indexed temp table first.
+7. Field lists minimal — temp tables carry only join keys + fields consumed downstream.
+8. Composite references dereferenced via `ВЫРАЗИТЬ`; display-only fields via `ПРЕДСТАВЛЕНИЕ`.
+
 ## Temporary Tables
 
 Use temporary tables for:
 - Complex multi-step data processing
 - Joining data from multiple sources
 - Reusing intermediate results
+
+### Temporary Table Indexing (ИНДЕКСИРОВАТЬ ПО) — mandatory cases
+
+A temp table has **no indexes by default**. Creating one that later participates in a join is the single most common optimization miss. `ИНДЕКСИРОВАТЬ ПО` is **mandatory** when the temp table:
+
+1. **Participates in a `СОЕДИНЕНИЕ`** — index the join-condition fields. This is the strongest case: an unindexed probe side forces a scan per joined row.
+2. **Participates in an `ОБЪЕДИНИТЬ`** (without `ВСЕ`) — the dedup sort/merge over the combined result benefits from the index on the dedup keys.
+3. **Feeds a `В (ВЫБРАТЬ …)` filter** over a large set — index the filtered field.
+
+**Pick the 2–3 most selective fields — do not enumerate every column.** When a join spans many fields (e.g. `Номенклатура, Характеристика, Ячейка, Серия, Упаковка, Регистратор`), index the selective subset (`ИНДЕКСИРОВАТЬ ПО Номенклатура, Ячейка, Регистратор`) — a full-column index costs more to build than it saves, and the remaining equalities are cheap to check on the narrowed set.
+
+```bsl
+// ❌ SLOW: temp table joined/united later, no index
+"ВЫБРАТЬ РАЗЛИЧНЫЕ
+|	Товары.Номенклатура КАК Номенклатура,
+|	Товары.Склад КАК Склад,
+|	Товары.Заказ КАК Заказ
+|ПОМЕСТИТЬ ВТ_ДвиженияПриЗаписи
+|ИЗ
+|	&ТаблицаТовары КАК Товары
+|ГДЕ
+|	Товары.Активность"
+
+// ✅ OPTIMIZED: indexed by the selective join/dedup keys
+"ВЫБРАТЬ РАЗЛИЧНЫЕ
+|	Товары.Номенклатура КАК Номенклатура,
+|	Товары.Склад КАК Склад,
+|	Товары.Заказ КАК Заказ
+|ПОМЕСТИТЬ ВТ_ДвиженияПриЗаписи
+|ИЗ
+|	&ТаблицаТовары КАК Товары
+|ГДЕ
+|	Товары.Активность
+|ИНДЕКСИРОВАТЬ ПО
+|	Номенклатура, Склад"
+```
+
+### Pre-collect and Index Before Join / Group
+
+Two related patterns that replace per-row work with one indexed pass:
+
+**A. Correlated subquery → indexed temp table + join.** A `ГДЕ ИСТИНА В (ВЫБРАТЬ ПЕРВЫЕ 1 …)` (or any subquery referencing outer-query fields) executes per source row — quadratic on large tables. The subquery's data set usually does **not** depend on the row: collect it once, index it, join.
+
+```bsl
+// ❌ SLOW: semi-join subquery executed for EVERY row of РегистрСведений
+"ВЫБРАТЬ РАЗЛИЧНЫЕ
+|	Значения.ТипЗначений КАК ТипЗначений
+|ПОМЕСТИТЬ ВТ_Значения
+|ИЗ
+|	РегистрСведений.ЗначенияПоУмолчанию КАК Значения
+|ГДЕ
+|	ИСТИНА В (ВЫБРАТЬ ПЕРВЫЕ 1 ИСТИНА
+|		ИЗ Справочник.ГруппыДоступа.Пользователи КАК ГруппыПользователи
+|		ГДЕ ГруппыПользователи.Ссылка = Значения.ГруппаДоступа
+|			И ГруппыПользователи.Пользователь = &Пользователь)"
+
+// ✅ OPTIMIZED: collect the independent set once, index, inner join
+"ВЫБРАТЬ РАЗЛИЧНЫЕ
+|	ГруппыПользователи.Ссылка КАК ГруппаДоступа
+|ПОМЕСТИТЬ ВТ_ГруппыПользователя
+|ИЗ
+|	Справочник.ГруппыДоступа.Пользователи КАК ГруппыПользователи
+|ГДЕ
+|	ГруппыПользователи.Пользователь = &Пользователь
+|ИНДЕКСИРОВАТЬ ПО
+|	ГруппаДоступа
+|;
+|ВЫБРАТЬ РАЗЛИЧНЫЕ
+|	Значения.ТипЗначений КАК ТипЗначений
+|ПОМЕСТИТЬ ВТ_Значения
+|ИЗ
+|	РегистрСведений.ЗначенияПоУмолчанию КАК Значения
+|	ВНУТРЕННЕЕ СОЕДИНЕНИЕ ВТ_ГруппыПользователя КАК Группы
+|	ПО Группы.ГруппаДоступа = Значения.ГруппаДоступа"
+```
+
+**B. Narrow keys → virtual table with parameters → join → group.** When a virtual table (`Обороты` / `Остатки`) is joined with a data set and then grouped: build a small key temp table first (`РАЗЛИЧНЫЕ` + `ИНДЕКСИРОВАТЬ ПО`), push the selective filters into the **virtual-table parameters** via `В (ВЫБРАТЬ … ИЗ ВТ_Ключи)`, and only then join and group. Also set the virtual-table **periodicity to match the join**: joining by `Регистратор` with periodicity `Авто` breaks the plan — use explicit `Регистратор`.
+
+```bsl
+// ✅ Key steps of the pattern
+"ВЫБРАТЬ РАЗЛИЧНЫЕ
+|	Движения.Номенклатура КАК Номенклатура,
+|	Движения.Ячейка КАК Ячейка,
+|	Движения.Регистратор КАК Регистратор
+|ПОМЕСТИТЬ ВТ_Ключи
+|ИЗ
+|	ВТ_ДвиженияПоНазначению КАК Движения
+|ИНДЕКСИРОВАТЬ ПО
+|	Номенклатура, Ячейка, Регистратор
+|;
+|ВЫБРАТЬ
+|	Обороты.Номенклатура КАК Номенклатура,
+|	СУММА(Обороты.КоличествоОборот) КАК КоличествоОборот
+|ИЗ
+|	РегистрНакопления.ТоварыВЯчейках.Обороты(
+|		, , Регистратор,
+|		Номенклатура В (ВЫБРАТЬ Ключи.Номенклатура ИЗ ВТ_Ключи КАК Ключи)
+|			И Ячейка В (ВЫБРАТЬ Ключи.Ячейка ИЗ ВТ_Ключи КАК Ключи)) КАК Обороты
+|	ВНУТРЕННЕЕ СОЕДИНЕНИЕ ВТ_Ключи КАК Ключи
+|	ПО Обороты.Номенклатура = Ключи.Номенклатура
+|		И Обороты.Ячейка = Ключи.Ячейка
+|		И Обороты.Регистратор = Ключи.Регистратор
+|СГРУППИРОВАТЬ ПО
+|	Обороты.Номенклатура"
+```
+
+Notes: the virtual-table parameter filter uses only the **selective** key fields (not all join fields); the join condition then applies the full key. If a field (e.g. `Регистратор`) is not actually needed by the business logic — drop it from both the join and the periodicity: cheaper still.
 
 ### Join vs Subquery
 
@@ -237,6 +357,24 @@ Prefer `ОБЪЕДИНИТЬ ВСЕ` when no duplicate rows expected:
 |ОБЪЕДИНИТЬ ВСЕ
 |ВЫБРАТЬ ... ИЗ Документ.Расход"
 ```
+
+### No РАЗЛИЧНЫЕ inside ОБЪЕДИНИТЬ operands
+
+`ОБЪЕДИНИТЬ` (without `ВСЕ`) already collapses duplicates over the **combined** result. `РАЗЛИЧНЫЕ` in the operands adds a second sort/group over the same data for nothing:
+
+```bsl
+// ❌ Redundant: three dedup passes (2 × РАЗЛИЧНЫЕ + union collapse)
+"ВЫБРАТЬ РАЗЛИЧНЫЕ Поля... ИЗ ВТ_Движения
+|ОБЪЕДИНИТЬ
+|ВЫБРАТЬ РАЗЛИЧНЫЕ Поля... ИЗ РегистрНакопления.Запасы"
+
+// ✅ One dedup pass — the union's own collapse
+"ВЫБРАТЬ Поля... ИЗ ВТ_Движения
+|ОБЪЕДИНИТЬ
+|ВЫБРАТЬ Поля... ИЗ РегистрНакопления.Запасы"
+```
+
+Keep `РАЗЛИЧНЫЕ` only where it does unique work — e.g. when first materializing the temp table. The same logic bans `РАЗЛИЧНЫЕ` on top of `СГРУППИРОВАТЬ ПО` over the same fields: grouping already yields unique rows.
 
 ## Index Alignment (ITS Standard)
 
