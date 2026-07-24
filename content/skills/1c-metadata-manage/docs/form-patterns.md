@@ -1,6 +1,6 @@
 # Form Patterns — pointer to canonical rule
 
-**Canonical source:** `content/rules/form-patterns.md` (or its installed copy under the active tool's rules directory — `.cursor/rules/form-patterns.mdc`, `.claude/rules/`, …).
+**Canonical source:** `content/rules/form-patterns.md` (or its installed copy under the active tool's rules directory — `.cursor/rules/form-patterns.mdc`, `.claude/rules-1c/`, …).
 
 This file is intentionally a thin pointer. Do **not** duplicate archetypes, naming conventions, or advanced ERP patterns here — edit the rule file only.
 

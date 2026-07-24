@@ -6,7 +6,12 @@
 # Schema: closed adapter schema described in AGENT-INSTALL.md (Lean placement)
 # and implemented by install.ps1.
 # Notes:
-#   - Rules are placed under .claude/rules/ (supported via automatic discovery).
+#   - Rules are placed under .claude/rules-1c/ — deliberately NOT .claude/rules/:
+#     Claude Code (v2.0.64+) auto-loads every .md under .claude/rules/ without
+#     `paths` frontmatter into context at session start, which would make the
+#     whole on-demand set always-on (~130k tokens per request). The non-standard
+#     directory keeps lazy loading intact — AGENTS.md references resolve by
+#     file name, and the agent reads a rule only when it is actually needed.
 #   - Slash-command frontmatter fields use hyphen-separated names natively.
 #   - Skills follow the Anthropic SKILL.md standard and are copied verbatim.
 #   - A minimal CLAUDE.md is generated as an entry point pointing to AGENTS.md.
@@ -19,7 +24,7 @@ detection:
   - exists: "CLAUDE.md"
 
 rules:
-  copyTo: ".claude/rules/{name}.md"
+  copyTo: ".claude/rules-1c/{name}.md"
   frontmatter:
     keep: [description, alwaysApply]
     drop: [globs, category]

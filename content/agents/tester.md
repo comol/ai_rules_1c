@@ -41,7 +41,7 @@ Before testing, ensure:
 
 All deployment is performed via the slash command `/deploy-and-test` (source: `content/commands/deploy-and-test.md`; installed to the active tool's commands directory). Do **not** duplicate the PowerShell commands here — the slash command is the single source of truth; it also owns the `ibcmd`-vs-Designer tool selection (its Step 1).
 
-After deployment: read the log file referenced by `{LOG_PATH}` (or `$env:TEMP\1cv8.log` when the placeholder was empty in `.dev.env`) and confirm no errors before proceeding to UI testing.
+After deployment: read the log file referenced by `{LOG_PATH}` (or `$env:TEMP/1cv8.log` when the placeholder was empty in `.dev.env`) and confirm no errors before proceeding to UI testing.
 
 ## Web UI Testing
 

@@ -51,11 +51,11 @@
 
 .PARAMETER ForcePaths
     For `update`: restrict -Force to the listed project-relative paths
-    (exact match or `*` wildcard, e.g. `.claude/rules/tooling-playbooks.md`
+    (exact match or `*` wildcard, e.g. `.claude/rules-1c/tooling-playbooks.md`
     or `.claude/skills/*`). Implies -Force for the matching paths only; all
     other drifted files keep the user's edits. Multiple paths are passed
     COMMA-separated (PowerShell array syntax):
-    `-ForcePaths .claude/skills/*,.claude/rules/forms.md` — a space-separated
+    `-ForcePaths .claude/skills/*,.claude/rules-1c/forms.md` — a space-separated
     list would bind only the first path.
 
 .PARAMETER McpMode
@@ -4221,6 +4221,48 @@ function Invoke-Update {
             }
         }
         Write-Info "Migrated: removed $($legacyKeys.Count) legacy .ai-rules/rules/ entries"
+    }
+
+    # Claude Code (v2.0.64+) auto-loads every .md under .claude/rules/ without
+    # `paths` frontmatter into context at session start, so the adapter now
+    # installs on-demand rules under .claude/rules-1c/. Remove OUR tracked
+    # files from the legacy directory; files the user placed there personally
+    # are never tracked in the manifest and are kept, and the directory itself
+    # is removed only when it ends up empty.
+    Write-Section 'Migration: legacy .claude/rules/ (auto-loaded by Claude Code)'
+    $claudeLegacyKeys = @($manifest.files.Keys | Where-Object { $_ -like '.claude/rules/*' })
+    $claudeLegacyDirty = @()
+    foreach ($k in $claudeLegacyKeys) {
+        $abs = Join-Path $Root $k
+        if (Test-Path $abs) {
+            $entry = $manifest.files[$k]
+            $expected = if ($entry -and $entry.installedHash) { $entry.installedHash } else { '' }
+            $actual = Get-FileSha256 $abs
+            if ($expected -and ($actual -ne $expected)) { $claudeLegacyDirty += $k }
+        }
+    }
+    $proceedClaudeLegacy = $true
+    if ($claudeLegacyDirty.Count -gt 0) {
+        Write-Warn "Legacy .claude/rules/ contains user-modified managed files: $($claudeLegacyDirty.Count)"
+        $claudeLegacyDirty | ForEach-Object { Write-Warn "  $_" }
+        if (-not $NonInteractive -and -not $AssumeYes) {
+            $proceedClaudeLegacy = Read-YesNo 'Delete legacy .claude/rules/ copies anyway? (your edits will be lost; fresh copies go to .claude/rules-1c/)' $false
+        }
+    }
+    if ($proceedClaudeLegacy -and $claudeLegacyKeys.Count -gt 0) {
+        foreach ($k in $claudeLegacyKeys) {
+            $abs = Join-Path $Root $k
+            if (Test-Path $abs) { Remove-Item -Force $abs -ErrorAction SilentlyContinue }
+            $manifest.files.Remove($k)
+        }
+        $claudeRulesDir = Join-Path $Root '.claude/rules'
+        if (Test-Path $claudeRulesDir) {
+            $remaining = Get-ChildItem -File -Recurse $claudeRulesDir -ErrorAction SilentlyContinue
+            if (-not $remaining -or $remaining.Count -eq 0) {
+                Remove-Item -Recurse -Force $claudeRulesDir -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Info "Migrated: removed $($claudeLegacyKeys.Count) managed entries from legacy .claude/rules/ (on-demand rules now live in .claude/rules-1c/)"
     }
 
     # Snapshot every path we currently track, before the per-update prune below

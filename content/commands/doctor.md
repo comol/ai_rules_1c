@@ -35,7 +35,7 @@ After the table, list only actionable fixes. Do not include secret values from `
    - in the source repository of `1c-rules`, report **WARN** and continue with source-layout checks.
 6. Verify that the current tool has the files it can actually load:
    - Cursor: `.cursor/rules/`, `.cursor/commands/`, `.cursor/mcp.json` when installed;
-   - Claude Code: `.claude/rules/`, `.claude/agents/`, `.claude/commands/`, MCP config when installed;
+   - Claude Code: `.claude/rules-1c/` (on-demand rules referenced through `AGENTS.md` — deliberately **not** `.claude/rules/`, which Claude Code v2.0.64+ auto-loads in full at session start), `.claude/agents/`, `.claude/commands/`, MCP config when installed; managed rule files left in `.claude/rules/` from older installs are **legacy** and the `update` flow removes them (user-authored files there are kept);
    - Codex: `.codex/skills/`, `.codex/config.toml` when installed;
    - OpenCode: `.opencode/command/`, `.opencode/agent/`, `.opencode/rules/`, and `opencode.json` at the **project root** (top-level `mcp` key) when installed — MCP lives in the root `opencode.json`, **not** `.opencode/opencode.json` (OpenCode does not read a config file under `.opencode/`); a leftover `.opencode/opencode.json` from older installs is **legacy** and the `update` flow removes it;
    - Kilo Code: `.kilo/rules-1c/` (on-demand rules referenced through `AGENTS.md`), `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`, `.kilo/kilo.json` (top-level `mcp` key) when installed; a leftover `.kilocode/mcp.json` from older installs is **legacy** — current Kilo CLI / Kilo Code v7.x+ no longer reads it and the `update` flow removes it;

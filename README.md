@@ -9,7 +9,7 @@
 Правила и команды собираются под конкретный инструмент адаптерами из `adapters/*.yaml`. Поддерживаются:
 
 - **Cursor** (`.cursor/rules/`, `.cursor/agents/`, `.cursor/commands/`, `.cursor/skills/`)
-- **Claude Code** (`.claude/rules/`, `.claude/agents/`, `.claude/commands/`)
+- **Claude Code** (`.claude/rules-1c/`, `.claude/agents/`, `.claude/commands/`)
 - **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/skills/`, `.codex/config.toml`; slash-команды ставятся в пользовательский `~/.codex/prompts/`)
 - **OpenCode** (`.opencode/command/`)
 - **Kilo Code** (`.kilo/rules-1c/` for on-demand rules referenced by `AGENTS.md`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`)
