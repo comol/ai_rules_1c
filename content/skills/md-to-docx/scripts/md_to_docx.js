@@ -5,7 +5,7 @@
  * Usage:
  *   node md_to_docx.js input.md [output.docx] \
  *       [--author "Author Name"] [--title "Document Title"] \
- *       [--no-shading | --shading=on|off]
+ *       [--no-shading | --shading=on|off] [--justify]
  *
  *   - Output is optional; if omitted, replaces .md with .docx next to input.
  *   - --author writes core property dc:creator and cp:lastModifiedBy.
@@ -13,6 +13,9 @@
  *   - --no-shading (alias: --shading=off) disables grey background fill
  *     for inline `code` and fenced ``` code blocks. Table header shading
  *     is structural and is NOT affected by this flag.
+ *   - --justify (alias: --align=justify) sets justified alignment for body
+ *     paragraphs and list items. Headings and table cells stay left-aligned.
+ *     Off by default.
  *   - Both --flag value and --flag=value forms are supported.
  *
  * Requires: npm ci in the skill directory (package-lock.json pins docx).
@@ -34,6 +37,7 @@ const positional = [];
 let author = null;
 let titleOverride = null;
 let codeShading = true;
+let justify = false;
 for (let k = 0; k < rawArgs.length; k++) {
   const a = rawArgs[k];
   if (a === "--author") {
@@ -50,13 +54,17 @@ for (let k = 0; k < rawArgs.length; k++) {
     codeShading = (rawArgs[++k] || "").toLowerCase() !== "off";
   } else if (a.startsWith("--shading=")) {
     codeShading = a.slice("--shading=".length).toLowerCase() !== "off";
+  } else if (a === "--justify") {
+    justify = true;
+  } else if (a.startsWith("--align=")) {
+    justify = a.slice("--align=".length).toLowerCase() === "justify";
   } else {
     positional.push(a);
   }
 }
 const inputPath = positional[0];
 if (!inputPath) {
-  console.error('Usage: node md_to_docx.js input.md [output.docx] [--author "Author Name"] [--title "Document Title"] [--no-shading]');
+  console.error('Usage: node md_to_docx.js input.md [output.docx] [--author "Author Name"] [--title "Document Title"] [--no-shading] [--justify]');
   process.exit(1);
 }
 const outputPath = positional[1] || inputPath.replace(/\.md$/i, ".docx");
@@ -173,7 +181,7 @@ while (i < lines.length) {
   const numMatch = line.match(/^(\s*)\d+\.\s+(.*)/);
   if (numMatch) {
     const indent = Math.floor((numMatch[1] || "").length / 2);
-    blocks.push({ type: "numbered", indent, text: numMatch[2] });
+    blocks.push({ type: "numbered", indent, text: numMatch[2], num: parseInt(line.trim(), 10) });
     i++;
     continue;
   }
@@ -302,6 +310,13 @@ function tryLoadImage(src) {
     width = maxWidth;
     height = Math.round(height * scale);
   }
+  // Printable height of an 11in page with 1in margins, less room for the caption
+  const maxHeight = 780;
+  if (height > maxHeight) {
+    const vScale = maxHeight / height;
+    height = maxHeight;
+    width = Math.round(width * vScale);
+  }
   return { data, type, width, height };
 }
 
@@ -317,8 +332,28 @@ const cellBorders = { top: border, bottom: border, left: border, right: border }
 const PAGE_WIDTH = 12240; // US Letter
 const MARGIN = 1440; // 1 inch
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN; // 9360
+const bodyAlignment = justify ? AlignmentType.JUSTIFIED : undefined;
+
+// Each numbered list gets its own numbering reference, starting at the ordinal
+// written in the markdown. A single shared reference would number every list in
+// the document continuously.
+const numberLists = [];
+let curNumList = null;
+function numberingRefFor(block) {
+  const n = Number.isFinite(block.num) ? block.num : 1;
+  if (block.indent > 0 && curNumList) return curNumList.reference;
+  if (!curNumList || n !== curNumList.expected) {
+    const reference = `numbers-${numberLists.length + 1}`;
+    numberLists.push({ reference, start: n });
+    curNumList = { reference, expected: n + 1 };
+  } else {
+    curNumList.expected = n + 1;
+  }
+  return curNumList.reference;
+}
 
 for (const block of blocks) {
+  if (block.type !== "numbered") curNumList = null;
   switch (block.type) {
     case "heading": {
       const headingRuns = makeRuns(block.text);
@@ -337,6 +372,7 @@ for (const block of blocks) {
       children.push(new Paragraph({
         children: makeRuns(block.text),
         spacing: { before: 80, after: 80 },
+        alignment: bodyAlignment,
       }));
       break;
 
@@ -345,16 +381,20 @@ for (const block of blocks) {
         numbering: { reference: "bullets", level: Math.min(block.indent, 1) },
         children: makeRuns(block.text),
         spacing: { before: 40, after: 40 },
+        alignment: bodyAlignment,
       }));
       break;
 
-    case "numbered":
+    case "numbered": {
+      const numRef = numberingRefFor(block);
       children.push(new Paragraph({
-        numbering: { reference: "numbers", level: Math.min(block.indent, 1) },
+        numbering: { reference: numRef, level: Math.min(block.indent, 1) },
         children: makeRuns(block.text),
         spacing: { before: 40, after: 40 },
+        alignment: bodyAlignment,
       }));
       break;
+    }
 
     case "code": {
       const codeRuns = block.text.split("\n").flatMap((line, idx, arr) => {
@@ -476,13 +516,15 @@ const doc = new Document({
           { level: 1, format: LevelFormat.BULLET, text: "-", alignment: AlignmentType.LEFT,
             style: { paragraph: { indent: { left: 1440, hanging: 360 } } } },
         ] },
-      { reference: "numbers",
+      ...numberLists.map(l => ({
+        reference: l.reference,
         levels: [
-          { level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.LEFT,
+          { level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.LEFT, start: l.start,
             style: { paragraph: { indent: { left: 720, hanging: 360 } } } },
           { level: 1, format: LevelFormat.DECIMAL, text: "%2.", alignment: AlignmentType.LEFT,
             style: { paragraph: { indent: { left: 1440, hanging: 360 } } } },
-        ] },
+        ],
+      })),
     ],
   },
   sections: [{
