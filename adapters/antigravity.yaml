@@ -1,0 +1,47 @@
+# Adapter: Google Antigravity
+#
+# Describes how to copy and adapt files from content/ for Google Antigravity.
+# Read by both installation channels (AI-agent installer and install.ps1).
+
+tool: antigravity
+schemaVersion: 1
+
+detection:
+  - exists: ".gemini/"
+
+rules:
+  copyTo: ".gemini/rules-1c/{name}.md"
+  frontmatter:
+    keep:
+      - description
+      - alwaysApply
+    drop:
+      - globs
+      - category
+
+agents:
+  copyTo: ".gemini/agents/{name}.md"
+  frontmatter:
+    keep:
+      - name
+      - description
+      - modelHint
+      - tools
+    drop:
+      - toolsToPermission
+
+commands:
+  copyTo: ".gemini/commands/{name}.md"
+  frontmatter:
+    keep:
+      - description
+      - argument-hint
+      - allowed-tools
+
+skills:
+  copyTo: ".gemini/skills/{name}"
+  mode: verbatim
+
+mcp:
+  target: ".gemini/mcp.json"
+  schema: mcpServers
