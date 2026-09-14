@@ -10,7 +10,7 @@ Converts a Markdown file to a Word document (`.docx`) preserving headings, table
 ## Usage
 
 ```
-/md-to-docx <input.md> [output.docx] [--author "Name"] [--title "Title"] [--no-shading]
+/md-to-docx <input.md> [output.docx] [--author "Name"] [--title "Title"] [--no-shading] [--justify]
 ```
 
 | Parameter | Required | Description |
@@ -20,8 +20,9 @@ Converts a Markdown file to a Word document (`.docx`) preserving headings, table
 | `--author` | no | Document author. Written to core properties (`dc:creator` + `cp:lastModifiedBy`). Also accepts the `--author=Name` form |
 | `--title` | no | Document title in core properties and in the header. Default: input file name without extension |
 | `--no-shading` | no | Disables the grey background for inline `code` and fenced ``` code blocks. Alias: `--shading=off`. On by default. Does not affect the table header (it keeps its structural fill) |
+| `--justify` | no | Justified alignment for body paragraphs and list items. Alias: `--align=justify`. Off by default; headings and table cells always stay left-aligned |
 
-If the path is not provided — ask the user. The `--author`, `--title`, `--no-shading` flags are optional — pass them only when the user explicitly asks for an author, a custom title, or removal of code shading.
+If the path is not provided — ask the user. The `--author`, `--title`, `--no-shading`, `--justify` flags are optional — pass them only when the user explicitly asks for an author, a custom title, removal of code shading, or justified text.
 
 ## Dependencies
 
@@ -43,6 +44,9 @@ node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]" --author "
 
 # Without the grey code background
 node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]" --no-shading
+
+# With justified body text
+node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]" --justify
 ```
 
 Bash (macOS / Linux):
@@ -57,10 +61,10 @@ node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]"
 - Headings (H1–H6) with styles and colors
 - Tables with header row
 - Code blocks (monospace font, gray background)
-- Lists: bulleted and numbered (with nesting)
+- Lists: bulleted and numbered (with nesting). Every numbered list is numbered independently and starts at the ordinal written in the markdown — a list opening with `4.` renders as `4.`
 - Inline formatting: **bold**, *italic*, `code`, [links](url)
 - Internal anchor links: `<a id="name"></a>` before a heading becomes a bookmark; `[text](#name)` links resolve to it (external `http(s)` / `mailto:` links stay external)
-- Images (`![alt](path)`) — resolved relative to the source MD folder
+- Images (`![alt](path)`) — resolved relative to the source MD folder; scaled down to fit both the content width and the printable page height
 - Horizontal rules (`---`)
 - Headers/footers: title in the top, page number in the bottom
 - Core properties: author and title (via `--author` / `--title`)
