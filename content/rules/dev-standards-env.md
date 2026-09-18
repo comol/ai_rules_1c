@@ -178,7 +178,7 @@ Consumed by the triage and debugging rules at task time. All are **Defaulted** �
 | `{DEBUG_FAST_PATH}` | Debugging fast-path mode (`standards(name="systematic-debugging") → Fast path`): `standard` \| `extended` \| `off`. Controls when a directly evidenced bug may skip the full 4-phase loop. | Defaulted | Empty / invalid = `standard` |
 | `{VERIFICATION_DEPTH}` | Static code-verification depth (`verification-policy.md → "Verification depth levels"`): `full` \| `standard` \| `lite`. Tunes the depth of Gates 1–3 for low-risk edits. Toggled by `/litemode`. | Defaulted | Empty / invalid = `standard` |
 | `{CAVEMAN}` | caveman communication-style auto-activation (`content/skills/caveman/SKILL.md`): `on` \| `auto` \| `off`. Controls whether the terse style turns on automatically and for which tasks. Does not affect the mandatory report structure or verification. | Defaulted | Empty / invalid = `auto` |
-| `{METADATA_PREVIEW}` | When wrapper `-Preview` on `Invoke-1CEdit.ps1` runs before a metadata write: `auto` \| `on` \| `off`. Toggled by `/previewmode`. Does not relax native `-DryRun` / `-Force` on deletions. | Defaulted | Empty / invalid = `auto` — preview only in the cases listed below |
+| `{METADATA_PREVIEW}` | When wrapper `-Preview` on `Invoke-1CEdit.ps1` runs before a metadata write: `auto` \| `on` \| `off`. Toggled by `/previewmode`. Does not relax native `-DryRun` / `-Force` on deletions. | Defaulted | Empty / invalid = `auto` — preview only for DSL generation and an operation new to the project |
 | `{AGENT_MODEL}` | Active-model behaviour profile of the parent agent (`model-adaptation.md`): `opus5` \| `sonnet5` \| `fable5` \| `gpt56` \| `gpt6`. Tunes verbosity, narration, planning depth, delegation eagerness and self-invented extra passes; never weakens a hard gate. Toggled by `/rulesmodel`. Full description — `#### AGENT_MODEL` above. | Defaulted | Empty / unrecognised = no profile; the base model-neutral ruleset applies |
 
 #### `VERIFICATION_DEPTH` — static code-verification depth
@@ -207,17 +207,15 @@ Controls **whether** the terse `caveman` communication style (`content/skills/ca
 
 #### `METADATA_PREVIEW` — wrapper dry-run before a metadata write
 
-Controls **when** `Invoke-1CEdit.ps1 -Preview` (run the tool, show a unified diff, restore the tree) precedes the same call without `-Preview`. It is **Defaulted** — empty / invalid resolves to `auto`, and the agent **must not** ask for the value. The canonical editor is the `/previewmode` slash command (`on` / `auto` / `off`, plus `once` for a single session-scoped preview); manual edits are allowed but not required. Canonical semantics and the case list — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`.
+Controls **when** `Invoke-1CEdit.ps1 -Preview` (run the tool, show a unified diff, restore the tree) precedes the same call without `-Preview`. It is **Defaulted** — empty / invalid resolves to `auto`, and the agent **must not** ask for the value. The canonical editor is the `/previewmode` slash command (`on` / `auto` / `off`, plus `once` for a single session-scoped preview).
 
 | Value | Meaning |
 |---|---|
-| `auto` (default / empty) | Preview only where the write's shape is unpredictable and late discovery is expensive: DSL generation / compilation (`form-compile`, `meta-compile`, `role-compile`, `skd-edit` batches); an object of a typical configuration while `SUPPORT_GUARD` is `warn` / `off`; determining the lock list in repository mode, on a clean tree **before** `lock`; a tool or `-Operation` not yet run in this project. Everything else applies immediately. |
-| `on` | Preview before every wrapper-driven write, minus the skips. |
-| `off` | Never automatic — only on an explicit user request (`/previewmode once`). |
+| `auto` (default / empty) | Preview only where the write's shape is unpredictable: generation from a DSL (`form-compile`, `meta-compile`, `role-compile`, `skd-edit` batches) and a tool or `-Operation` not yet run in this project. Everything else applies immediately. |
+| `on` | Preview before every wrapper-driven write. |
+| `off` | Only on an explicit user request (`/previewmode once`). |
 
-Skips apply in every mode, `on` included: a dirty watched tree (the git backend refuses), edits the host's own file tools make rather than a skill script (Cursor apply/reject, Claude Code rewrite — that UI is the review), and BSL `rewrite_1c_code` / `modify_1c_code` proposals, which never go through this wrapper. The skips are identical on every host; do not fork a host-specific dry-run.
-
-`METADATA_PREVIEW` never disables the native `-DryRun` / `-Force` gate on deletions (`remove-form`, `meta-remove`, `remove-template`, `web-unpublish`), and preview is never a verification gate — `meta-validate`, `verify_xml` and `syntaxcheck` are unaffected. Logical addressing (`-Object`) and the post-apply unified diff stay available without `-Preview`.
+The wrapper previews its own script writes only; host-made edits and BSL rewrite proposals never pass through it, a dirty tree applies with a note, deletions keep native `-DryRun` / `-Force`, and no mode turns preview into a verification gate. Canon — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`.
 
 Task number `{TASK}` is **only required when modification comment markers are produced** — i.e. when the change touches **typical (standard) configuration code** and the templates `{COMMENT_OPEN}` / `{COMMENT_CLOSE}` reference `{TASK}`. For new objects with `{PREFIX}` (no per-method markers), review / analysis / documentation tasks, and any task where `COMPANY` / `DEVELOPER` are empty (markers skipped) — `{TASK}` is **not required**. Do not block on it.
 

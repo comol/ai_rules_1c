@@ -16,7 +16,7 @@ Two scopes, do not mix them:
 
 Parse the argument: `on` (or empty) → set `on`; `auto` → set `auto`; `off` → set `off`; `once` → session-only preview; `status` → report without editing. Matching is case-insensitive and tolerates trailing punctuation; an unrecognised argument is reported back, never guessed. The command edits **only** the `METADATA_PREVIEW` line in `.dev.env` — never other keys, never other files. Rewrite the `METADATA_PREVIEW=` line in place, or append `METADATA_PREVIEW=<value>` at the end; if `.dev.env` is missing, run the installer (`install.ps1 init`) instead of creating a partial file — until then apply the mode for the current session only.
 
-## on (default) / auto / off
+## on / auto / off
 
 1. Read `.dev.env`: the `METADATA_PREVIEW` key.
 2. Set `METADATA_PREVIEW=<value>` (`on` | `auto` | `off`).
@@ -41,4 +41,4 @@ Read `.dev.env` and report, without editing anything:
 
 ## Constraints (always)
 
-The mode decides only whether the **wrapper** preview runs. It never disables the native `-DryRun` / `-Force` gate on deletions (`remove-form`, `meta-remove`, `remove-template`, `web-unpublish`), never replaces validation (`meta-validate`, `verify_xml`, `syntaxcheck`), and never turns preview into a verification gate. `off` still allows an explicit user request; `on` still skips what `content/skills/1c-metadata-manage/docs/edit-preview.md` lists as skips (dirty tree, host-made edits, BSL rewrite proposals).
+The mode decides only whether the **wrapper** preview runs. It never disables the native `-DryRun` / `-Force` gate on deletions (`remove-form`, `meta-remove`, `remove-template`, `web-unpublish`), never replaces validation (`meta-validate`, `verify_xml`, `syntaxcheck`), and never turns preview into a verification gate. `off` still allows an explicit user request; `on` still previews only the wrapper's own script writes (a dirty tree applies with a note; host-made edits and BSL rewrite proposals never pass through it).

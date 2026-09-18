@@ -588,6 +588,85 @@ foreach ($ps in $psFiles) {
 }
 
 # --------------------------------------------------------------------------
+# Gate scenarios - a rule claims only what it checks
+# --------------------------------------------------------------------------
+# tools/tests/gate-scenarios.json registers the hard gates of AGENTS.md and the
+# acceptance scenarios that exercise them. A gate without a scenario is an
+# unchecked claim; a scenario naming an unknown gate or a tool no skill
+# documents is dead weight. Both are reported here, so the registry and the
+# always-on file cannot drift apart silently.
+
+$scenarioPath = Join-Path $Root 'tools/tests/gate-scenarios.json'
+$gateCount = 0
+$scenarioCount = 0
+if (Test-Path -LiteralPath $scenarioPath) {
+    $agentsText = ''
+    if (Test-Path -LiteralPath (Join-Path $Root 'AGENTS.md')) {
+        $agentsText = [System.IO.File]::ReadAllText((Join-Path $Root 'AGENTS.md'), [System.Text.Encoding]::UTF8)
+    }
+    $agentsHeadings = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($line in ($agentsText -split "`r?`n")) {
+        if ($line -match '^#{1,4}\s') { [void]$agentsHeadings.Add($line.TrimEnd()) }
+    }
+    $skillsText = ''
+    foreach ($f in (Get-RulesetFiles -Subpath 'content/skills')) {
+        $skillsText += [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8) + "`n"
+    }
+    $corpus = $null
+    try {
+        $corpus = [System.IO.File]::ReadAllText($scenarioPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    } catch {
+        Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: invalid JSON - ' + $_.Exception.Message)
+    }
+    if ($corpus) {
+        $servers = @{}
+        foreach ($prop in $corpus.servers.PSObject.Properties) { $servers[$prop.Name] = [string]$prop.Value }
+        $gateIds = New-Object System.Collections.Generic.HashSet[string]
+        $gateUse = @{}
+        foreach ($gate in @($corpus.gates)) {
+            $gateCount++
+            $id = [string]$gate.id
+            if (-not $gateIds.Add($id)) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: duplicate gate id ' + $id) }
+            $gateUse[$id] = 0
+            $heading = [string]$gate.heading
+            if (-not $agentsHeadings.Contains($heading)) {
+                Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: gate ' + $id + ' points at a heading AGENTS.md does not have: "' + $heading + '"')
+            }
+            if (-not [string]$gate.claim) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: gate ' + $id + ' has no claim') }
+        }
+        $scenarioIds = New-Object System.Collections.Generic.HashSet[string]
+        foreach ($sc in @($corpus.scenarios)) {
+            $scenarioCount++
+            $sid = [string]$sc.id
+            if (-not $scenarioIds.Add($sid)) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: duplicate scenario id ' + $sid) }
+            $g = [string]$sc.gate
+            if ($gateIds.Contains($g)) { $gateUse[$g]++ } else { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' names unknown gate ' + $g) }
+            if (-not [string]$sc.task) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' has no task') }
+            if (-not [string]$sc.criteria) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' has no criteria') }
+            foreach ($step in @($sc.wire)) {
+                $srv = [string]$step.server
+                $tool = [string]$step.tool
+                if (-not $servers.ContainsKey($srv)) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' uses unknown server key ' + $srv) }
+                if ($skillsText -notmatch ('(?<![A-Za-z0-9_])' + [regex]::Escape($tool) + '(?![A-Za-z0-9_])')) {
+                    Add-Problem -Level warning -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' calls ' + $tool + ', which no skill under content/skills documents')
+                }
+            }
+            foreach ($entry in @($sc.forbid)) {
+                $parts = ([string]$entry) -split ':', 2
+                if ($parts.Count -eq 2 -and $servers.ContainsKey($parts[0]) -and $skillsText -notmatch ('(?<![A-Za-z0-9_])' + [regex]::Escape($parts[1]) + '(?![A-Za-z0-9_])')) {
+                    Add-Problem -Level warning -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' forbids ' + $entry + ', which no skill under content/skills documents')
+                }
+            }
+        }
+        foreach ($id in $gateUse.Keys) {
+            if ($gateUse[$id] -eq 0) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: gate ' + $id + ' has no scenario - a rule claims only what it checks; add a scenario or drop the gate') }
+        }
+    }
+} else {
+    Add-Problem -Level warning -File $scenarioPath -Message 'gate scenarios: corpus missing - the hard gates of AGENTS.md are unchecked claims'
+}
+
+# --------------------------------------------------------------------------
 # Always-on budget
 # --------------------------------------------------------------------------
 
@@ -605,8 +684,8 @@ if (Test-Path -LiteralPath $agentsPath) {
 # Report
 # --------------------------------------------------------------------------
 
-Write-Host ('Checked: {0} rules ({1} routed to the standards corpus), {2} agents, {3} commands, {4} skills, {5} non-ASCII scripts.' -f `
-    $ruleFiles.Count, $routedCount, $agentFiles.Count, $commandFiles.Count, $skillFiles.Count, $bomChecked)
+Write-Host ('Checked: {0} rules ({1} routed to the standards corpus), {2} agents, {3} commands, {4} skills, {5} non-ASCII scripts, {6} gates / {7} scenarios.' -f `
+    $ruleFiles.Count, $routedCount, $agentFiles.Count, $commandFiles.Count, $skillFiles.Count, $bomChecked, $gateCount, $scenarioCount)
 Write-Host ''
 
 if ($script:Warnings.Count -gt 0) {

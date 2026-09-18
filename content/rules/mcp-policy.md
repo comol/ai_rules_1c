@@ -25,12 +25,31 @@ This file owns the detailed obligations summarized in `AGENTS.md → MCP Tool Ca
 1. **Verification budget.** One clean pass per validator (`syntaxcheck`, `check_1c_code`, `review_1c_code`) on the latest artifact state; a blocking defect requires a fix and a clean confirming run — one confirmation at the default `VERIFICATION_DEPTH=standard`, up to two at `full`; no run against unchanged content; non-blocking style findings never start another AI-validator loop. Pure metadata-XML changes with no BSL use `verify_xml` once. If the budget ends without a clean pass, the gate failed — report the artifact as unverified, do not declare it done. Blocking-severity definitions, depth levels and the promotion-trigger floor — `content/rules/verification-policy.md → Validator budget`.
 2. **AI-based MCP tools are non-deterministic.** `ask_1c_ai`, `rewrite_1c_code`, `modify_1c_code`, `answer_metadata_question` produce drafts, not authority; re-validate their output with the chain above before delivery.
 
-### C. Call discipline (no duplication)
+### C. Call discipline and server answers
 
-1. **Every call adds information** that is not already in the collected context; «just to be safe» is not a reason.
-2. **No-change repeats are forbidden** — same search, query, validator input or file against the same unchanged state. A repeat is allowed when parameters change substantially, the state changed (edit, generation, resumed session, user edit), or freshness matters before a destructive action / final verification.
-3. **Tune each query to the tool's schema** before calling a parameter-rich tool (`search_type`, `detail_level`, `object_type`, `direction`, `depth`, `names_only`, `exact`, `top_k`, `project_name`); on a miss reformulate before switching tools. Call quality never relaxes the obligation to call.
-4. **Prefer structural tools over manual grep** — `search_function`, `get_module_structure`, `get_method_call_hierarchy` before substring search.
-5. **Exact parameter names, never guessed.** Use the names from the live tool schema and `content/skills/mcp-1c-tools/SKILL.md → Parameter names` (`object_name`, `query`, `routine_name`, `module_path`, …); on `Missing required argument` / `Unexpected keyword argument` re-read `docs/<server>.md`, never retry with another alias.
-6. **Lookups are budgeted.** A tool named in the skill tables needs no schema fetch (`get_mcp_tools`, `get_graph_tool_schema`, …) before the call; fetch a schema at most once per tool per session and only for a tool the tables do not cover or after a validation error; read `docs/<server>.md` once per server per session. `list_graph_projects` once per session. In the analysed sessions 20 of 60 calls were schema lookups that changed nothing.
-7. **A closed lane stays closed.** A typed error (`lane_disabled`, `timeout`, `invalid_argument` naming a missing template or index) or a warning naming a missing index (`tabular_part_columns_not_indexed`) is the answer for this session: switch to the documented fallback in one step. Confirming the same gap through sibling tools is blind chaining (`content/rules/mcp-first-search.md → Hard rule 3`).
+1. **Every call adds information** that is not already in the collected context; «just to be safe» is not a reason. **No-change repeats:** the same search, validator input or file against the same unchanged state is forbidden; repeat only when parameters change substantially, the state changed (edit, generation, resumed session, user edit), or freshness matters before a destructive action / final verification.
+2. **Tune each query to the tool's schema** before calling a parameter-rich tool (`search_type`, `detail_level`, `object_type`, `direction`, `depth`, `names_only`, `exact`, `top_k`, `project_name`); on a miss reformulate once before switching tools. Call quality never relaxes the obligation to call.
+3. **Prefer structural tools over manual grep** — `search_function`, `get_module_structure`, `get_method_call_hierarchy` before substring search.
+4. **Argument names come from the operation skill**, never from intuition: `content/skills/1c-code-search`, `1c-meta-info`, `1c-impact`, `1c-form-inspect`, `1c-validate`, `1c-platform-help`, `1c-templates-memory`, `1c-live-ib` (`SKILL.md` each). A tool named there needs no schema fetch; fetch a schema (`get_graph_tool_schema` and the like) at most once per tool per session, only for a tool no skill names or after a schema rejection. `list_graph_projects` once per session. In the analysed sessions 20 of 60 calls were schema lookups that changed nothing.
+5. **A server answer maps to an action by its code, not by prose.** The table is the whole recovery strategy; confirming the same gap through sibling tools is blind chaining (`content/rules/mcp-first-search.md → Hard rule 3`).
+
+#### C. Server answers → actions
+
+| Answer (code, field or text) | Servers | Action |
+|---|---|---|
+| `Missing required argument` / `Unexpected keyword argument` / `invalid_argument` naming a parameter | all | Re-read the argument table of the operation skill, retry **once** with the corrected name; never a second alias guess |
+| `invalid_argument` naming a missing template / index / operation | graph | The lane is closed for this session: take the documented fallback in one step (`1c-meta-info`, `1c-impact`) |
+| `lane_disabled`, a tool absent from `tools/list`, `degraded: true` | graph | Closed lane: change lanes, do not rephrase; `list_graph_capabilities` once if the state is unclear |
+| `tabular_part_columns_not_indexed`, `form_not_indexed` warnings | graph, code | One call to the named fallback (`get_metadata_details(..., sections="tabular_parts")`, `search_forms`); no further graph attempts |
+| `timeout` (`error.code`) | graph, checker | Do not resend: narrow the query, lower `max_items`, or switch to a structural tool; a first-call `fetch failed` is a transport reconnect — repeat that one call once |
+| `not_found`, `outcome: "not_found"`, empty `items` with a ready generation | docs, ssl, graph, code | A finished negative answer: reformulate once if wording can help, then the next lane; with no freshness evidence report «inconclusive», not «absent» |
+| `ambiguous_name` with candidates | ssl, docs | Refine by signature or fetch the intended `doc_id`; never pick an overload silently |
+| `stale_cursor`, `invalid_cursor`, `stale_generation` | ssl, graph | Restart that search with the same arguments; do not reuse the cursor |
+| `truncated: true`, `exhaustive: false`, `next_cursor` | all paged tools | Continue paging with identical arguments before any exhaustive claim |
+| `project_not_registered`, `refresh_capability_unavailable` | graph | Operator matter: report, do not register projects or force refreshes from the agent |
+| `mutation_auth_required` | templates | Repair the client `Authorization` header; never retry blindly, never print the token |
+| `provenance.index` = `absent` / `building` / `failed` | syntax | Read the boundary (syntax and local rules only); never wait, restart or reconfigure |
+| `status: invalid` with `errors` | code `verify_xml` | Fix the XML, one confirming `verify_xml` |
+| Blocking `error` / `critical` from a validator | syntax, checker | Fix, then the confirmation budget of `verification-policy.md`; after the budget the gate failed and the artifact is unverified |
+| HTTP 401 / 403, tools not exposed | data, any | The server is unavailable in this session: say so once, use the documented degradation, never synthesise its output |
+| Untyped prose error | any | Treat as `timeout`-class: one reformulation, then the next lane, and name the text in the delivery |

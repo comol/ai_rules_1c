@@ -32,7 +32,7 @@ Discovery/health/contract tools (`get_metadata_prompt`, `get_indexing_status`, `
 
 These are conditional steps, not a mandatory preamble for every lookup. Reuse the selected project, resolved identity and known tool schema within the session; discover only the missing contract information. Check schemas again after a contract change or validation error.
 
-**Schema lookups are not free.** `get_graph_tool_schema` / the client's tool-schema lookup is for a tool that is absent from this file and from `mcp-1c-tools/SKILL.md → Parameter names`, or after an `invalid_argument` / schema rejection — never before every call. One project list per session: `list_graph_projects` once, then keep `project_id`. The analysed sessions spent a third of all calls on schema and project lookups that returned nothing new.
+**Schema lookups are not free.** `get_graph_tool_schema` / the client's tool-schema lookup is for a tool that is absent from this file and from the operation skills (`1c-meta-info`, `1c-impact`, `1c-code-search`, `1c-form-inspect`), or after an `invalid_argument` / schema rejection — never before every call. One project list per session: `list_graph_projects` once, then keep `project_id`. The analysed sessions spent a third of all calls on schema and project lookups that returned nothing new.
 
 **Time budget.** The server answers with a typed `error.code = "timeout"` after `GRAPH_TOOL_TIMEOUT_SECONDS` (default 25 s, below the client's 30 s). Do not resend the same call: narrow the query, lower `max_items`, or switch to a structural tool. A client-side `fetch failed` on the first call of a session is a transport reconnect, not a server answer — repeat that one call once.
 

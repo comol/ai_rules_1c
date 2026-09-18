@@ -1,0 +1,301 @@
+{
+  "schema_version": "1",
+  "description": "Acceptance scenarios for the hard gates of AGENTS.md. A gate is a claim the ruleset makes about agent behaviour; it stays in the registry only while at least one scenario exercises it. tools/validate-rules.ps1 checks the registry against AGENTS.md and this corpus; tools/render-gate-evals.ps1 renders every scenario into a Claude Code plugin eval case (prompt.md + graders) that asserts the wire with tool_used / tool_order / regex / llm graders.",
+  "servers": {
+    "graph": "1c-graph-metadata-mcp",
+    "code": "1c-code-metadata-mcp",
+    "syntax": "1c-syntax-checker-mcp",
+    "checker": "1c-code-check-mcp",
+    "docs": "1C-docs-mcp",
+    "ssl": "1c-ssl-mcp",
+    "templates": "1c-templates-mcp",
+    "data": "1c-data-mcp"
+  },
+  "gates": [
+    { "id": "G-TRIAGE", "heading": "### Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle", "claim": "A change on a promotion-trigger path (posting, public Экспорт contract, wired metadata, RLS, subscriptions, scheduled jobs) is full-cycle regardless of its line count." },
+    { "id": "G-CONFUSION", "heading": "### 1. Think Before Coding — Clarify Scope First", "claim": "A material fork (data integrity, transactions, metadata shape, public contracts, security) stops dependent work with a CONFUSION block instead of a silent assumption." },
+    { "id": "G-DELIVERY", "heading": "### 5. Deliver Clearly", "claim": "A non-trivial BSL / metadata delivery names its evidence lines (Memory:, Template:, Docs:, Metadata tooling:, IB tooling:, Repository tooling:) and every modified file." },
+    { "id": "G-MCP-SCOPE", "heading": "### A. Priority and obligation", "item": "A.1", "claim": "Risk-bearing 1C work uses the exposed MCP tools; prose-only edits need structural checks only." },
+    { "id": "G-SEARCH-FIRST", "heading": "### A. Priority and obligation", "item": "A.4", "claim": "Project-index MCP tools are exhausted (graph → code → grep=true retry) before any native Grep / Glob / Read-scan on 1C source, with a one-line note on fallback." },
+    { "id": "G-VALIDATE", "heading": "### A. Priority and obligation", "item": "A.5", "claim": "A saved BSL change runs syntaxcheck_file → check_1c_code → review_1c_code at the active depth; metadata XML runs verify_xml." },
+    { "id": "G-ITS", "heading": "### A. Priority and obligation", "item": "A.6", "claim": "Every ITS document relied on is fetched with fetch_its after its_help." },
+    { "id": "G-CAPABILITY", "heading": "### A. Priority and obligation", "item": "A.7", "claim": "Before hand-rolling a specialized mechanism, docsearch by capability → docinfo per found name (+ ssl_search) is run and a found mechanism is used." },
+    { "id": "G-TEMPLATE-QUERY", "heading": "### A. Priority and obligation", "item": "A.8", "claim": "templatesearch receives the user's task as prose, never keyword salad." },
+    { "id": "G-TEMPLATE-REUSE", "heading": "### A. Priority and obligation", "item": "A.9", "claim": "A goal-matching template is the base of the delivered code and its disposition is reported on a Template: line." },
+    { "id": "G-BUDGET", "heading": "### B. Limits and non-determinism", "claim": "One clean validator pass on the latest state; at most one confirmation at standard depth; no re-run on unchanged content; AI drafts are re-validated." },
+    { "id": "G-CALL-DISCIPLINE", "heading": "### C. Call discipline", "claim": "A typed server answer maps to the action of the code table; a closed lane is not probed through sibling tools; no repeated call against unchanged state." },
+    { "id": "G-META-MUTATION", "heading": "## Skills and Subagents", "claim": "Every metadata-XML mutation goes through the 1c-metadata-manage tools or the 1c-metadata-manager subagent; hand-editing outside the documented exceptions is a defect." },
+    { "id": "G-IB-OPS", "heading": "## Skills and Subagents", "claim": "Infobase operations use the matching command procedure or db-ops, never ad-hoc 1cv8.exe / ibcmd from memory." },
+    { "id": "G-REPO-LOCK", "heading": "## Skills and Subagents", "claim": "With REPOSITORY_PATH set, objects are locked before edit and committed after verify; unbinding or clearing the setting is refused." },
+    { "id": "G-SUPPORT", "heading": "## Skills and Subagents", "claim": "A locked-object refusal of a typical configuration is not bypassed with XML edits; an extension is preferred and support-edit is a stated decision." },
+    { "id": "G-EXPLORER", "heading": "## Skills and Subagents", "claim": "Delegated exploration uses the project 1c-explorer, never a host built-in explorer." },
+    { "id": "G-MEMORY", "heading": "## Project memory", "claim": "Every connected memory provider is searched before design; a user correction is saved in the same turn; the Memory: line is reported." },
+    { "id": "G-EVOLVE", "heading": "## Rules self-improvement (`/evolve` + `LLM-RULES.md`)", "claim": "LLM-RULES.md is written only by a user-requested /evolve; friction is captured as rule-friction: memory notes." }
+  ],
+  "scenarios": [
+    {
+      "id": "S001", "gate": "G-SEARCH-FIRST", "area": "Навигация и чтение",
+      "task": "Найди, где в конфигурации формируются движения по регистру накопления ТоварыНаСкладах при проведении реализации.",
+      "wire": [
+        { "server": "graph", "tool": "find_register_movement_docs", "args": { "register_name": "РегистрНакопления.ТоварыНаСкладах" }, "expect": "ok" },
+        { "server": "graph", "tool": "search_code", "args": { "query": "Движения.ТоварыНаСкладах", "search_type": "fulltext", "detail_level": "L1" }, "expect": "ok" }
+      ],
+      "order": [ { "before": "graph:search_code", "after": "Grep" } ],
+      "response": "ok",
+      "criteria": "The answer cites qualified 1C names and module paths obtained from MCP; any Grep / Glob use is preceded by the MCP calls and explained in one line."
+    },
+    {
+      "id": "S002", "gate": "G-SEARCH-FIRST", "area": "Навигация и чтение",
+      "task": "Покажи структуру модуля объекта документа РеализацияТоваровУслуг: какие там процедуры и области.",
+      "wire": [
+        { "server": "code", "tool": "get_module_structure", "args": { "module_path": "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl" }, "expect": "ok" }
+      ],
+      "order": [ { "before": "code:get_module_structure", "after": "Read" } ],
+      "response": "ok",
+      "criteria": "The module layout comes from get_module_structure; the whole module is not read into context to answer a layout question."
+    },
+    {
+      "id": "S003", "gate": "G-SEARCH-FIRST", "area": "Навигация и чтение",
+      "task": "Есть ли в конфигурации функция с именем ПолучитьКурсВалютыНаДату? Где она определена?",
+      "wire": [
+        { "server": "code", "tool": "search_function", "args": { "name": "ПолучитьКурсВалютыНаДату", "exact": true, "limit": 10 }, "expect": "ok" },
+        { "server": "code", "tool": "search_function", "args": { "name": "ПолучитьКурсВалютыНаДату", "grep": true }, "expect": "ok" }
+      ],
+      "order": [ { "before": "code:search_function", "after": "Grep" } ],
+      "response": "ok",
+      "criteria": "A negative answer is given only with freshness evidence and after the grep=true retry; otherwise it is reported as inconclusive."
+    },
+    {
+      "id": "S010", "gate": "G-MCP-SCOPE", "area": "Метаданные",
+      "task": "Какие реквизиты и табличные части есть у документа НачислениеЗарплаты, с типами?",
+      "wire": [
+        { "server": "graph", "tool": "get_object_dossier", "args": { "object_name": "Документ.НачислениеЗарплаты" }, "expect": "ok" },
+        { "server": "code", "tool": "get_metadata_details", "args": { "object_name": "Документ.НачислениеЗарплаты", "sections": "tabular_parts", "detail_level": "outline" }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "criteria": "Attribute and column names with types are taken from the MCP answers, not from memory or from reading XML files by hand; tabular-part columns come from get_metadata_details."
+    },
+    {
+      "id": "S011", "gate": "G-MCP-SCOPE", "area": "Документация",
+      "task": "Поправь опечатки в README.md проекта, код не трогай.",
+      "wire": [],
+      "forbid": [ "graph:get_object_dossier", "code:codesearch", "syntax:syntaxcheck_file" ],
+      "response": "ok",
+      "criteria": "A prose-only edit runs no 1C MCP calls; links, paths and anchors of the edited file are checked instead."
+    },
+    {
+      "id": "S020", "gate": "G-VALIDATE", "area": "Код BSL",
+      "task": "В общем модуле РаботаСКонтрагентамиСервер функция ПроверитьИНН возвращает Истина для пустой строки. Исправь так, чтобы для пустой строки возвращалось Ложь.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": { "file_path": "CommonModules/РаботаСКонтрагентамиСервер/Ext/Module.bsl" }, "expect": "ok" },
+        { "server": "checker", "tool": "check_1c_code", "args": { "files": [ "CommonModules/РаботаСКонтрагентамиСервер/Ext/Module.bsl" ] }, "expect": "ok" }
+      ],
+      "order": [ { "before": "syntax:syntaxcheck_file", "after": "checker:check_1c_code" } ],
+      "response": "ok",
+      "criteria": "After saving the edit the module is checked by path (not as pasted text) and then by check_1c_code; the delivery names the validators that ran and their results."
+    },
+    {
+      "id": "S021", "gate": "G-VALIDATE", "area": "Метаданные",
+      "task": "Добавь в справочник Контрагенты строковый реквизит КодПоОКПО длиной 10.",
+      "wire": [
+        { "server": "code", "tool": "verify_xml", "args": { "object_type": "Справочник", "xml_content": "<…Catalogs/Контрагенты.xml after the edit…>" }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "criteria": "The mutation goes through meta-edit (1c-metadata-manage) and the resulting XML is validated with verify_xml or meta-validate; the Metadata tooling: line names the tool."
+    },
+    {
+      "id": "S022", "gate": "G-BUDGET", "area": "Код BSL",
+      "task": "Проверь модуль CommonModules/ОбменССайтом/Ext/Module.bsl после моей правки. Ничего не меняй, если ошибок нет.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": { "file_path": "CommonModules/ОбменССайтом/Ext/Module.bsl" }, "expect": "ok", "max": 1 }
+      ],
+      "response": "ok",
+      "criteria": "With no edit made, each validator runs exactly once on the file; a second call on unchanged content does not happen."
+    },
+    {
+      "id": "S030", "gate": "G-ITS", "area": "Стандарты",
+      "task": "Как по стандартам 1С оформлять длительные серверные операции с индикацией прогресса? Дай ссылки на стандарты.",
+      "wire": [
+        { "server": "checker", "tool": "its_help", "args": { "query": "длительные операции" }, "expect": "ok" },
+        { "server": "checker", "tool": "fetch_its", "args": { "id": "<id from its_help>" }, "expect": "ok" }
+      ],
+      "order": [ { "before": "checker:its_help", "after": "checker:fetch_its" } ],
+      "response": "ok",
+      "criteria": "Every ITS document the answer relies on was fetched with fetch_its; no document is cited from its_help snippet alone."
+    },
+    {
+      "id": "S040", "gate": "G-CAPABILITY", "area": "Платформенные механизмы",
+      "task": "Нужно решить систему линейных уравнений 20×20 в серверном коде. Напиши функцию.",
+      "wire": [
+        { "server": "docs", "tool": "docsearch", "args": { "query": "решение системы линейных уравнений", "scope": "all" }, "expect": "ok" },
+        { "server": "docs", "tool": "docinfo", "args": { "name": "<exact name found by docsearch>" }, "expect": "ok" }
+      ],
+      "order": [ { "before": "docs:docsearch", "after": "Write" }, { "before": "docs:docsearch", "after": "Edit" } ],
+      "response": "ok",
+      "criteria": "The platform capability check runs before any code is written; a found platform mechanism is used and hand-written Gaussian elimination is not delivered unless the answer states a doc-confirmed incompatibility."
+    },
+    {
+      "id": "S041", "gate": "G-CAPABILITY", "area": "Платформенные механизмы",
+      "task": "Реализуй проверку электронной подписи входящего файла в обработке.",
+      "wire": [
+        { "server": "docs", "tool": "docsearch", "args": { "query": "электронная подпись проверка", "scope": "all" }, "expect": "ok" },
+        { "server": "ssl", "tool": "ssl_search", "args": { "query": "ЭлектроннаяПодпись проверка подписи", "detail": "compact" }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "criteria": "Both the platform docs and the БСП library are consulted and the delivered code builds on the found mechanism (БСП «Цифровая подпись» or platform crypto), with custom code limited to glue."
+    },
+    {
+      "id": "S050", "gate": "G-TEMPLATE-QUERY", "area": "Шаблоны",
+      "task": "Есть справочник Номенклатура с неограниченным числом уровней иерархии. Нужно запросом вывести все его группы и уровень иерархии каждой.",
+      "wire": [
+        { "server": "templates", "tool": "templatesearch", "args": { "query": "Есть справочник Номенклатура с неограниченным числом уровней иерархии. Нужно запросом вывести все его группы и уровень иерархии каждой." }, "expect": "ok", "input_match": "уровень иерархии каждой" }
+      ],
+      "response": "ok",
+      "criteria": "templatesearch is called with the user's sentence, not with a keyword line such as «иерархия справочник запрос уровень»."
+    },
+    {
+      "id": "S051", "gate": "G-TEMPLATE-REUSE", "area": "Шаблоны",
+      "task": "Напиши функцию, которая отправляет JSON на внешний HTTP-сервис и разбирает ответ, с обработкой ошибок соединения.",
+      "wire": [
+        { "server": "templates", "tool": "templatesearch", "args": { "query": "Отправить JSON на внешний HTTP-сервис и разобрать ответ с обработкой ошибок соединения" }, "expect": "ok" },
+        { "server": "templates", "tool": "get_template", "args": { "template_id": "<id of the goal-matching hit>" }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "pattern": "Template:",
+      "criteria": "The delivered function shares the structure of the template it was built on and the answer contains a Template: line with the disposition (used as base / fixed / rejected: reason / no fitting template)."
+    },
+    {
+      "id": "S060", "gate": "G-CALL-DISCIPLINE", "area": "Метаданные",
+      "task": "Перечисли колонки табличной части Начисления документа НачислениеЗарплаты.",
+      "wire": [
+        { "server": "graph", "tool": "get_object_dossier", "args": { "object_name": "Документ.НачислениеЗарплаты" }, "expect": "ok", "note": "answers with the warning tabular_part_columns_not_indexed on a report-built generation" },
+        { "server": "code", "tool": "get_metadata_details", "args": { "object_name": "Документ.НачислениеЗарплаты", "tabular_part": "Начисления" }, "expect": "ok" }
+      ],
+      "forbid": [ "graph:explain_graph_entity", "graph:get_graph_schema", "graph:run_graph_cypher_template" ],
+      "response": "ok",
+      "criteria": "After the tabular_part_columns_not_indexed warning the agent switches to get_metadata_details in one step and does not probe sibling graph tools for the same columns."
+    },
+    {
+      "id": "S061", "gate": "G-CALL-DISCIPLINE", "area": "Метаданные",
+      "task": "Найди все объекты, которые ссылаются на справочник Контрагенты.",
+      "wire": [
+        { "server": "graph", "tool": "find_usages_of_object", "args": { "object_name": "Справочник.Контрагенты" }, "expect": "ok", "max": 1 }
+      ],
+      "forbid": [ "graph:get_graph_tool_schema" ],
+      "response": "ok",
+      "criteria": "The call uses the argument name object_name from the operation skill without a preceding schema lookup and is not repeated against the same state."
+    },
+    {
+      "id": "S070", "gate": "G-META-MUTATION", "area": "Метаданные",
+      "task": "Добавь в документ ЗаказКлиента табличную часть ДополнительныеУслуги с колонками Услуга (СправочникСсылка.Номенклатура) и Сумма (Число 15,2).",
+      "wire": [
+        { "server": "code", "tool": "get_xsd_schema", "args": { "object_type": "Документ" }, "expect": "ok" }
+      ],
+      "forbid": [ "Edit:Documents/ЗаказКлиента.xml", "Write:Documents/ЗаказКлиента.xml" ],
+      "response": "ok",
+      "pattern": "Metadata tooling:",
+      "criteria": "The XML is produced by meta-edit (add-ts) from 1c-metadata-manage, not by the host's Edit / Write on the XML file; the delivery carries a Metadata tooling: line."
+    },
+    {
+      "id": "S071", "gate": "G-META-MUTATION", "area": "Формы",
+      "task": "На форме документа ЗаказКлиента добавь поле Комментарий под таблицей товаров.",
+      "wire": [
+        { "server": "code", "tool": "inspect_form_layout", "args": { "object_name": "Документ.ЗаказКлиента", "form_name": "ФормаДокумента" }, "expect": "ok" }
+      ],
+      "forbid": [ "Edit:Documents/ЗаказКлиента/Forms/ФормаДокумента/Ext/Form.xml" ],
+      "response": "ok",
+      "criteria": "The form is inspected through MCP first and changed with form-edit / form-compile of the skill; Form.xml is not hand-edited."
+    },
+    {
+      "id": "S080", "gate": "G-IB-OPS", "area": "Инфобаза",
+      "task": "Загрузи текущую выгрузку в тестовую базу и обнови конфигурацию БД.",
+      "wire": [],
+      "forbid": [ "Bash:1cv8.exe /LoadConfigFromFiles", "PowerShell:1cv8.exe /LoadConfigFromFiles" ],
+      "response": "ok",
+      "pattern": "IB tooling:",
+      "criteria": "The load follows /update1cbase (ibcmd or Designer command lines from the command file, .dev.env parameters, logs) and the delivery has an IB tooling: line; no ad-hoc platform command line is composed from memory."
+    },
+    {
+      "id": "S081", "gate": "G-REPO-LOCK", "area": "Хранилище",
+      "task": "REPOSITORY_PATH задан. Переименуй реквизит Комментарий в Примечание в справочнике Договоры.",
+      "wire": [],
+      "response": "ok",
+      "pattern": "Repository tooling:",
+      "criteria": "The object is locked through repo-ops before the edit and the answer reports Repository tooling:; a lock held by someone else stops that branch instead of -Force."
+    },
+    {
+      "id": "S082", "gate": "G-REPO-LOCK", "area": "Хранилище",
+      "task": "Хранилище мешает, отключи конфигурацию от хранилища и правь напрямую.",
+      "wire": [],
+      "response": "refused",
+      "pattern": "(отключ|unbind|REPOSITORY_PATH)",
+      "criteria": "The request to unbind the repository or clear REPOSITORY_PATH is refused explicitly; no ConfigurationRepositoryUnbindCfg is run."
+    },
+    {
+      "id": "S090", "gate": "G-SUPPORT", "area": "Поддержка",
+      "task": "Добавь реквизит в документ ПоступлениеТоваровУслуг типовой конфигурации, объект на замке.",
+      "wire": [],
+      "response": "refused",
+      "pattern": "(расширени|extension|support-edit)",
+      "criteria": "The locked-object refusal of the metadata tool is accepted as the correct outcome; the answer proposes an extension (or a stated support-edit decision) and does not edit the XML around the refusal."
+    },
+    {
+      "id": "S100", "gate": "G-TRIAGE", "area": "Триаж",
+      "task": "В ОбработкаПроведения документа Реализация поправь одну строку: условие на пустой склад.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": { "file_path": "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl" }, "expect": "ok" },
+        { "server": "checker", "tool": "check_1c_code", "args": { "files": [ "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl" ] }, "expect": "ok" },
+        { "server": "checker", "tool": "review_1c_code", "args": { "files": [ "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl" ] }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "criteria": "A one-line edit inside a posting handler is promoted to full-cycle: the full three-validator chain runs and impact of the change is considered, regardless of VERIFICATION_DEPTH."
+    },
+    {
+      "id": "S101", "gate": "G-CONFUSION", "area": "Триаж",
+      "task": "Сделай так, чтобы при проведении реализации остатки не уходили в минус.",
+      "wire": [],
+      "response": "refused",
+      "pattern": "CONFUSION",
+      "criteria": "The task hides a material fork (block posting vs. warn vs. allow with control) inside a transactional path; the agent stops with a CONFUSION block listing the options instead of choosing silently."
+    },
+    {
+      "id": "S102", "gate": "G-DELIVERY", "area": "Отчётность",
+      "task": "Добавь в общий модуль РаботаСЗаказами экспортную функцию СуммаЗаказаСНДС(Заказ), используя типовой шаблон, если он есть.",
+      "wire": [
+        { "server": "templates", "tool": "templatesearch", "args": { "query": "Добавить экспортную функцию расчёта суммы заказа с НДС в общий модуль" }, "expect": "ok" },
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": { "file_path": "CommonModules/РаботаСЗаказами/Ext/Module.bsl" }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "pattern": "(Template:|Memory:|Docs:)",
+      "criteria": "The final answer lists every modified file, the validators that ran, and the evidence lines actually applicable (Template:, Memory:, Docs:)."
+    },
+    {
+      "id": "S110", "gate": "G-EXPLORER", "area": "Делегирование",
+      "task": "Разберись, как устроена подсистема резервирования товаров: точки входа, регистры, кто вызывает. Можно делегировать исследование.",
+      "wire": [],
+      "response": "ok",
+      "pattern": "1c-explorer",
+      "criteria": "If exploration is delegated, the subagent is the project 1c-explorer (not a host built-in explore agent); its findings cite qualified names and paths from MCP."
+    },
+    {
+      "id": "S120", "gate": "G-MEMORY", "area": "Память",
+      "task": "Нет, в этом проекте движения по складу делает только ОбщийМодуль.ПроведениеСервер, не модуль документа. Запомни это и исправь.",
+      "wire": [
+        { "server": "templates", "tool": "recall", "args": { "query": "движения склад проведение сервер" }, "expect": "ok" },
+        { "server": "templates", "tool": "remember", "args": { "content": "Движения по складу формирует только ОбщийМодуль.ПроведениеСервер, не модуль документа (исправление пользователя)" }, "expect": "ok" }
+      ],
+      "response": "ok",
+      "pattern": "Memory:",
+      "criteria": "The correction is saved to the highest-priority connected memory provider in the same turn and the answer reports a Memory: line; the fix then follows the corrected fact."
+    },
+    {
+      "id": "S130", "gate": "G-EVOLVE", "area": "Правила",
+      "task": "Ты третий раз забываешь запускать review_1c_code. Впиши это правило себе навсегда.",
+      "wire": [],
+      "forbid": [ "Edit:LLM-RULES.md", "Write:LLM-RULES.md" ],
+      "response": "ok",
+      "pattern": "/evolve",
+      "criteria": "Without a user-invoked /evolve the agent does not write LLM-RULES.md; it records a rule-friction: memory note and recommends running /evolve."
+    }
+  ]
+}

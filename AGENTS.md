@@ -17,7 +17,7 @@ Act as a senior 1C/BSL developer. Documentation is authoritative: verify platfor
 
 ## Active model adaptation
 
-`AGENT_MODEL` in `.dev.env`: `opus5`, `sonnet5`, `fable5`, `gpt56`, `gpt6` select `content/rules/model-<slug>.md`. Load at most one profile, before the first non-trivial task. Prefer the known running model's profile over a mismatched setting; state the mismatch and recommend `/rulesmodel`. A model without a profile uses these rules unchanged; never substitute a neighbouring profile. Missing/invalid setting = no profile, never ask. Profiles tune communication and initiative, never gates. Contract: `content/rules/model-adaptation.md`. `SUBAGENT_MODEL_*` controls subagent tiers, not the parent.
+`AGENT_MODEL` in `.dev.env` (`opus5`, `sonnet5`, `fable5`, `gpt56`, `gpt6`) selects `content/rules/model-<slug>.md`: at most one profile, loaded before the first non-trivial task; the known running model wins over a mismatched setting (state it, recommend `/rulesmodel`); missing / invalid value or a model without a profile = base rules, never ask, never a neighbouring profile. Profiles tune communication and initiative, never gates. Contract: `content/rules/model-adaptation.md`; `SUBAGENT_MODEL_*` governs subagents only.
 
 ## Development Procedure
 
@@ -74,13 +74,13 @@ Report changes, every modified file, checks and real limitations. For non-trivia
 
 `content/rules/<name>.md`, `content/agents/<name>.md`, `content/commands/<name>.md` and `content/skills/<name>/SKILL.md` denote source files here or the active tool's installed copies. Match by filename when extensions differ (Cursor `.mdc`); the installer rewrites paths. Use the active tool's canonical directory, not a second vendor tree.
 
-`standards(name="<name>")` denotes a routed standard retrieved **only through 1C-docs-mcp**. Disk routers hold headings, not normative bodies. No GitHub/raw URL or local-copy runtime fallback; follow `content/rules/help-corpus-retrieval.md` for paging and unavailable standards. Bodies are authored in the `1C-docs-mcp` repository, not here.
+`standards(name="<name>")` denotes a routed standard retrieved **only through 1C-docs-mcp**. Disk routers hold headings, not normative bodies. No GitHub/raw URL or local-copy runtime fallback; follow `content/rules/help-corpus-retrieval.md` for paging and unavailable standards.
 
 # Tooling & Standards
 
 ## MCP Tool Calling
 
-Before selecting 1C MCP tools, load `content/rules/mcp-policy.md` and `content/skills/mcp-1c-tools/SKILL.md`: detailed obligations and tool routing respectively. Load server details when the skill tables do not cover the call. Availability means tools exposed in this session, not client configuration. Stable obligation references follow.
+Before selecting 1C MCP tools, load `content/rules/mcp-policy.md` (obligations, server answers → actions) and the router `content/skills/mcp-1c-tools/SKILL.md`, then the operation skill it names (`1c-code-search`, `1c-meta-info`, `1c-impact`, `1c-form-inspect`, `1c-validate`, `1c-platform-help`, `1c-templates-memory`, `1c-live-ib`) for exact argument names and calls. Availability means tools exposed in this session, not client configuration. Stable obligation references follow.
 
 ### A. Priority and obligation
 
@@ -88,10 +88,10 @@ Before selecting 1C MCP tools, load `content/rules/mcp-policy.md` and `content/s
 2. **External knowledge:** platform/БСП/ITS tools only when their facts affect the task.
 3. **Evidence first:** use the minimum set from `content/rules/tooling-playbooks.md`; confirm concrete 1C facts before code/metadata/specs and disclose relevant gaps.
 4. **Source discovery:** load `content/rules/mcp-first-search.md` before searching 1C sources. Follow its bounded project-index chain, including applicable `grep=true` retry; explain native fallback once. No exposed index → native tools immediately. Check freshness before claiming absence. Direct reads of edit targets are allowed.
-5. **Saved changes:** `syntaxcheck_file` by path by default → `check_1c_code` → `review_1c_code`, subject to depth/availability/budget. `syntaxcheck` text is for unavailable file tools or unsaved fragments; confirm saved fragments by path. XML uses `verify_xml`; embedded/generated BSL also uses the BSL chain.
+5. **Saved changes:** `syntaxcheck_file` by path → `check_1c_code` → `review_1c_code` at the active depth and budget; `syntaxcheck` text only for an unsaved fragment or an unexposed file tool, then confirm by path. XML → `verify_xml`; embedded/generated BSL also runs the chain.
 6. **ITS:** follow `its_help` with `fetch_its` for every document relied on.
-7. **Platform capability:** before custom specialized mechanisms, `docsearch` by capability → `docinfo` for found names, plus `ssl_search` where plausible. Use a suitable platform/БСП mechanism; near-fit needs glue, not reinvention. Partial fit → `CONFUSION`, or platform-first when no operator is available. Reject only for documented incompatibility/core mismatch and report why; details in `mcp-policy.md`.
-8. **Template query:** `templatesearch` alone uses the user's task or a same-goal prose paraphrase; retry with a different task description, never keywords. Load its pre-flight from `content/skills/mcp-1c-tools/docs/1c-templates-mcp.md`.
+7. **Platform capability:** before a custom specialized mechanism — `docsearch` by capability → `docinfo` per found name, `ssl_search` where plausible; build on a found mechanism, custom code for glue only; partial fit → `CONFUSION` (platform-first when nobody can answer); reject only for documented incompatibility, stated in the answer.
+8. **Template query:** `templatesearch` alone uses the user's task or a same-goal prose paraphrase; retry with a different task description, never keywords. Pre-flight: `content/skills/1c-templates-memory/SKILL.md`.
 9. **Template reuse:** a fitting template is the base. Adapt it; reject only for documented incompatibility, explicit requirements or a named rule violation. Report its disposition; details in the template tool doc.
 
 ### B. Limits and non-determinism
@@ -99,13 +99,10 @@ Before selecting 1C MCP tools, load `content/rules/mcp-policy.md` and `content/s
 1. One clean pass on the latest state; a blocking fix requires confirmation within `content/rules/verification-policy.md` budgets. No unchanged-input retries or AI loops for style noise. Failed/unconfirmed gates remain unverified.
 2. AI-generated rewrites and answers are drafts, not authority; validate before delivery.
 
-### C. Call discipline (no duplication)
+### C. Call discipline
 
-1. Every call closes a concrete information gap.
-2. Reuse unchanged evidence. Repeat only for changed inputs/state, resumed context missing evidence, or necessary freshness checks; respect validator budgets.
-3. Tune parameter-rich queries to the live schema; reformulate a miss before fallback.
-4. Prefer structural/fragment retrieval to full-module scans.
-5. Never guess aliases; on schema rejection read the server doc, then retry once; the live descriptor wins. Lookups are budgeted and closed lanes stay closed (`mcp-policy.md` C.6, C.7).
+1. Every call closes a concrete gap; no repeats against unchanged state; tune a miss once before fallback; structural retrieval before full-module scans.
+2. Argument names come from the operation skill, never guessed. A typed server answer maps to an action by its code — `mcp-policy.md → C. Server answers → actions`; a closed lane stays closed.
 
 ## Coding Standards
 

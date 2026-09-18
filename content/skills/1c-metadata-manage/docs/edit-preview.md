@@ -10,38 +10,17 @@ The trade this makes: the wrapper cannot know what a tool *intends* to write, on
 
 ## When preview runs
 
-`METADATA_PREVIEW` in `.dev.env` (`dev-standards-env.md → Process-tuning parameters`) is **Defaulted** — empty / invalid = `auto`. The agent must not ask for the value; the editor is `/previewmode`.
+`METADATA_PREVIEW` in `.dev.env` (`dev-standards-env.md → Process-tuning parameters`) is **Defaulted** — empty / invalid = `auto`. The agent never asks for the value; the editor is `/previewmode`.
 
 | Value | Meaning |
 |---|---|
-| `auto` (default / empty) | Preview only in the four cases below. Every other write applies immediately. |
-| `on` | Preview before every wrapper-driven write, minus the skips below. |
-| `off` | Never automatic. Preview only when the user asks (`/previewmode once` or "покажи, что изменится"). |
+| `auto` (default / empty) | Preview only when the shape of the write cannot be predicted from the call: **generation from a DSL** — `form-compile`, `meta-compile`, `role-compile`, an `skd-edit` batch — and **a tool or `-Operation` this project has not run before** (one preview, then proceed normally). Every other write applies immediately: a single attribute, a synonym, a flag, one form field — the post-apply diff already answers "what changed". |
+| `on` | Preview before every wrapper-driven write. |
+| `off` | Only on an explicit request (`/previewmode once`, «покажи, что изменится»). |
 
-### The cases that earn a preview (`auto`)
+One boundary in every mode, `on` included: the wrapper previews **its own script writes only**. Edits made with the host's file tools (Cursor apply / reject, Claude Code rewrite — that UI is the review) and BSL proposals from `rewrite_1c_code` / `modify_1c_code` never pass through it. When the git backend refuses a dirty tree, apply and say so in one line — never stash or commit the user's work to force a preview, and never fork a host-specific dry-run.
 
-Preview is worth its second run only when **the shape of the write cannot be predicted from the call** and **finding the damage afterwards is expensive**. That is these four, and deliberately not "a metadata change":
-
-1. **Generation from a DSL, not a single field edit** — `form-compile`, `meta-compile`, `role-compile`, an `skd-edit` batch: one call writes many elements or files, and the input does not tell you what comes out.
-2. **An object of a typical configuration while the support gate is not denying** — `SUPPORT_GUARD=warn` or `off` (`dev-standards-env.md → "SUPPORT_GUARD"`). The write proceeds against an object "на замке", where a wrong edit surfaces at the next vendor update rather than now.
-3. **The lock list is not obvious in repository mode** — a preview on a **clean tree, before `lock`**, names the files the operation touches, which is the object list to lock (`1c-repository-manage/docs/repo-sdlc.md`). Never preview while locks are held.
-4. **A tool or `-Operation` this project has not run before**, when its blast radius is genuinely unknown. One preview, then proceed normally; unfamiliarity is not a permanent state.
-
-Outside these, apply immediately. A single attribute, a synonym, a flag, one form field — the post-apply diff and `git diff` already answer "what changed", and a second run buys nothing.
-
-### Skips — in every mode, including `on`
-
-1. **The git backend would refuse** (dirty watched path). Apply and say so in one line. Do not stash or commit the user's work to force a preview.
-2. **The edit is made by the host's own file tools**, not by a skill script — the hand-edit exceptions, BSL modules, anything applied through the agent's Write / Edit with Cursor apply/reject or Claude Code rewrite in front of it. That UI is the review. Script writes are different: the host shows no card for them, which is why this wrapper prints a unified diff **after** the apply. Do not fork a host-specific dry-run — the skip is the same everywhere.
-3. **`rewrite_1c_code` / `modify_1c_code`** — BSL proposals, not metadata mutations. They never go through this wrapper. Re-validate the applied BSL; they neither replace nor require `-Preview`.
-
-**Still required regardless of `METADATA_PREVIEW`:** native `-DryRun` then `-Force` on deletions (`remove-form`, `meta-remove`, `remove-template`, `web-unpublish`). That prints a plan without writing; it is not this wrapper.
-
-### Fit with the existing cycle
-
-The cycle is unchanged: triage → [repository `status` / `lock`] → mutate → verify → [repository `commit`] → report. Preview is an extra mutate+undo **inside** the mutate step, not a new stage and not a verification gate — `meta-validate`, `verify_xml` and `syntaxcheck` run exactly as before.
-
-Two properties keep it from becoming a mandatory step. After the first real apply the git backend sees a dirty tree and refuses the next `-Preview`, so a blanket two-step cannot survive a multi-object task. And holding repository locks across a "show me, then apply" pause blocks teammates while the diff says nothing `repo-ops diff` would not. Hence case 3 above sits **before** the lock, not after it.
+Deletions keep their own gate regardless of the mode: native `-DryRun` then `-Force` on `remove-form`, `meta-remove`, `remove-template`, `web-unpublish` — a plan the tool itself prints without writing. A preview is never a verification gate: `meta-validate`, `verify_xml` and `syntaxcheck` run exactly as before, and the cycle — triage → [repository `lock`] → mutate → verify → [repository `commit`] → report — is unchanged; the preview is an extra mutate-and-undo inside the mutate step. Never hold repository locks across a write-then-rollback pause.
 
 ## Invocation
 

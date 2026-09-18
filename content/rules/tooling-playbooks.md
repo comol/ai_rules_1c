@@ -6,7 +6,7 @@ category: tooling
 
 # Tool Usage by Task — Playbooks
 
-Server catalog, parameter names and fallback order — `content/skills/mcp-1c-tools/SKILL.md`; search discipline — `content/rules/mcp-first-search.md`. In EDT projects (`.dev.env` `USE_EDT=true`) the playbooks apply unchanged and `content/rules/edt-workflow.md` adds the source-format check, EDT validation markers, EDT-side DB update and form snapshots.
+Server catalog and routing — `content/skills/mcp-1c-tools/SKILL.md`; exact argument names and example calls — the operation skill it names (`1c-code-search`, `1c-meta-info`, `1c-impact`, `1c-form-inspect`, `1c-validate`, `1c-platform-help`, `1c-templates-memory`, `1c-live-ib`); search discipline — `content/rules/mcp-first-search.md`. In EDT projects (`.dev.env` `USE_EDT=true`) the playbooks apply unchanged and `content/rules/edt-workflow.md` adds the source-format check, EDT validation markers, EDT-side DB update and form snapshots.
 
 ## Minimum Evidence Matrix
 

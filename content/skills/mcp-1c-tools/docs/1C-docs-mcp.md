@@ -27,7 +27,7 @@ formatspec(name="1c-form-spec")      # that specification, entire
 formatspec(query="реквизиты формы")  # search inside the specifications only
 ```
 
-- **There is no `corpus` argument on any tool of this server.** Passing one is an unknown-argument error and the guessed-parameter defect of `AGENTS.md → MCP Tool Calling → C.5`.
+- **There is no `corpus` argument on any tool of this server.** Passing one is an unknown-argument error and the guessed-parameter defect of `AGENTS.md → MCP Tool Calling → C.2`.
 - **`scope` does not reach the collections.** `standards` and `formatspec` are the only routes to them; `docsearch(scope="all")` still searches only the syntax reference and the prose.
 - **Documents are paged, not cut.** A document over `max_chars` returns `collection.parts` and `next_cursor`; continue until you have what you need. A first page is not the whole standard.
 - **Returned identifiers are opaque.** Copy `doc_id` and cursors exactly; do not manufacture them from names, paths, or call expressions.

@@ -1,79 +1,48 @@
 ---
 name: mcp-1c-tools
-description: "Catalog of MCP servers for 1C development — search, code navigation, metadata, code review, docs, ITS, templates, live-IB execution — with the exact parameter names of every routinely called tool. Use whenever a 1C task requires calling tools from any 1c-*-mcp / 1C-*-mcp server. Each server has a detail file under `docs/` for rare modes and response formats."
+description: "Router for the 1C MCP ecosystem — which server answers which need, which operation skill carries the exact calls, and the fallback chain. Load before selecting any 1c-*-mcp / 1C-*-mcp tool; the per-operation skills (1c-code-search, 1c-meta-info, 1c-impact, 1c-form-inspect, 1c-validate, 1c-platform-help, 1c-templates-memory, 1c-live-ib) hold parameter names and JSON call examples, docs/<server>.md hold rare modes and response formats."
 ---
 
-# MCP tools for 1C — dispatcher
+# MCP tools for 1C — router
 
-Single source of truth for the server catalog, task → server routing and parameter names. Open `docs/<server>.md` only when the tables below do not cover the call: rare modes and response formats, a schema validation error (`Missing required argument` / `Unexpected keyword argument`), or reformulating a missed search (search modes, `detail_level`, filters). A server counts as available only when its tools are exposed in the current session's tool schema; an entry in `mcp-servers.json` proves nothing.
+A server counts as available only when its tools are exposed in the current session's tool schema; an entry in `mcp-servers.json` proves nothing. Obligations (what is mandatory, budgets, how a typed server answer maps to an action) — `content/rules/mcp-policy.md`. Search discipline — `content/rules/mcp-first-search.md`. Per-task sequences — `content/rules/tooling-playbooks.md`.
 
-**Schema lookups are budgeted.** A tool named in the tables below needs no schema fetch before the call (`get_mcp_tools`, `get_graph_tool_schema` and the like). Fetch a schema at most once per tool per session, and only for a tool absent from the tables or after a validation error. Reading `docs/<server>.md` counts the same way: once per server per session, when needed.
+## Need → operation skill
 
-## What is mandatory vs. conditional
+Load the skill for the operation, not this whole catalogue. Each skill lists the exact argument names of its tools and example calls; no schema fetch is needed for a tool it names.
 
-- **Mandatory for risk-bearing 1C work** when a relevant server is exposed — the scope list in `AGENTS.md → MCP Tool Calling → A.1` (BSL / metadata edits or review, metadata XML, forms, integrations, refactoring, performance, runtime errors, platform API checks, impact analysis, validation, project memory, OpenSpec artifacts that state 1C facts).
-- **Conditional for external knowledge** — platform docs, БСП / SSL and ITS tools when the task depends on versioned platform behaviour, reusable БСП APIs or standards compliance; never for prose cleanup.
-- **Not required for Markdown / rules / documentation-only work** — validate structure, links, paths and consistency instead.
+| Need | Skill | Servers |
+|---|---|---|
+| Locate or read BSL code, module layout, members of a context | `content/skills/1c-code-search/SKILL.md` | graph, code |
+| Facts about a metadata object: passport, attributes, tabular-part columns, objects by category or description | `content/skills/1c-meta-info/SKILL.md` | graph, code |
+| Usages, call chains, downstream impact, register writers, extension layers | `content/skills/1c-impact/SKILL.md` | graph, code |
+| Read forms, form artifacts, XSD / format specs before a form change | `content/skills/1c-form-inspect/SKILL.md` | code, graph, docs |
+| Validate changed BSL and metadata XML (Gates 1–3, 5) | `content/skills/1c-validate/SKILL.md` | syntax, checker, code |
+| Platform reference, capability check, БСП API, routed standards, ITS, configuration docs | `content/skills/1c-platform-help/SKILL.md` | docs, ssl, checker, code |
+| Templates as the base, project memory recall / save | `content/skills/1c-templates-memory/SKILL.md` | templates, cognee, openviking |
+| Run a query or fragment in the live infobase, last event-log error | `content/skills/1c-live-ib/SKILL.md` | data |
+| Create / edit / remove metadata, forms, roles, DCS, MXL, infobases | `content/skills/1c-metadata-manage/SKILL.md` | scripts, not MCP |
+| Live 1C:EDT workspace (`USE_EDT=true` only) | `docs/edt-mcp.md`, `content/rules/edt-workflow.md` | edt |
 
 ## Server catalog
 
-| Server (id) | Purpose | Details |
+| Server id | Purpose | Details |
 |---|---|---|
-| **1c-graph-metadata-mcp** | Graph metadata (Neo4j / Cypher): structural object passport, impact analysis, call graph, usage search, business semantic search | [`docs/1c-graph-metadata-mcp.md`](docs/1c-graph-metadata-mcp.md) |
-| **1c-code-metadata-mcp** | Metadata and BSL code search, navigation (modules, procedures, functions, call hierarchy), forms, XSD schemas, validation | [`docs/1c-code-metadata-mcp.md`](docs/1c-code-metadata-mcp.md) |
-| **1c-templates-mcp** | Code templates + memory search; fallback memory writes after Cognee / OpenViking | [`docs/1c-templates-mcp.md`](docs/1c-templates-mcp.md) |
-| **cognee / cognee-memory** *(optional)* | Primary durable memory writes when connected; include in every memory search | [`docs/memory-providers.md`](docs/memory-providers.md) |
-| **openviking** *(optional)* | Memory search alongside all connected providers; primary writes when Cognee is unavailable | [`docs/memory-providers.md`](docs/memory-providers.md) |
-| **1c-ssl-mcp** | Standard Subsystems Library (БСП / SSL) search | [`docs/1c-ssl-mcp.md`](docs/1c-ssl-mcp.md) |
-| **1C-docs-mcp** | 1C platform documentation (by description / by exact name), the platform-capability check, and the `1c-standards` corpus (`standards` tool) | [`docs/1C-docs-mcp.md`](docs/1C-docs-mcp.md) |
-| **1c-code-check-mcp** | 1С:Напарник — code review, technical check, AI rewrite / modify, ITS documentation | [`docs/1c-code-check-mcp.md`](docs/1c-code-check-mcp.md) |
-| **1c-syntax-checker-mcp** | BSL syntax and style via BSL Language Server: `syntaxcheck_file` (**default** — a file on disk by path, optionally line-filtered) and `syntaxcheck` (fallback — code as text for a fragment that has no file yet) | [`docs/1c-syntax-checker-mcp.md`](docs/1c-syntax-checker-mcp.md) |
-| **1c-data-mcp** | Live-IB execution: BSL fragment (`vcexecutecode`), query (`vcexecutequery`), query parse-check (`validatequery`), last event-log error (`vcloggetlasterror`). Read-only by default; ask before any mutation | [`docs/1c-data-mcp.md`](docs/1c-data-mcp.md) |
-| **edt-mcp** *(conditional)* | Live 1C:EDT workspace: validation markers, native navigation / references, MDO-format metadata and modules, form snapshots, DB update. Only in EDT projects (`USE_EDT=true`); never replaces the bundle — routing in `content/rules/edt-workflow.md` | [`docs/edt-mcp.md`](docs/edt-mcp.md) |
-
-## Parameter names — exact, never guessed
-
-Use the names below (they match the live schema); never substitute a natural-sounding alias. On a schema rejection re-read `docs/<server>.md` — do not retry with another guess.
-
-| Server | Tools | Input parameter |
-|---|---|---|
-| graph | `get_object_dossier`, `find_objects_using_object`, `find_usages_of_object`, `trace_impact`, `compare_base_and_extension` (+ `extension_name`) | **`object_name`** — not `object_full_name`, `full_name`, `fullName`, `qualified_name`, `name` |
-| graph | `trace_call_chain` | **`routine_name`** (+ optional `object_name`) |
-| graph | `find_register_movement_docs` / `find_by_guid` / `resolve_qualified_name` | `register_name` / `guid` / `qualified_name` |
-| graph | `search_metadata` (JSON template as the value), `search_metadata_by_description`, `execute_metadata_cypher`, `search_code`, `business_search` | **`query`** — not `query_template`, `template`, `json_query`, `q`, `text`, `search_query`, `prompt` |
-| graph | `answer_metadata_question` | **`question`** |
-| code-metadata | `get_metadata_details`, `graph_dependencies`, `inspect_form_layout` (+ optional `form_name`) | **`object_name`** — same shape and bans as above |
-| code-metadata | `search_function` / `get_module_structure` / `get_method_call_hierarchy` / `bsl_scope_members` | `name` / `module_path` / `method_name` / `context` |
-| code-metadata | `get_xsd_schema`, `verify_xml` (+ `xml_content`) | **`object_type`** |
-| code-metadata | `metadatasearch`, `codesearch`, `search_forms`, `helpsearch` | **`query`** — not `q`, `text`, `prompt`, `search_query`; result count is **`limit`** (there is no `top_k` on this server) |
-| code-metadata | `get_metadata_details` projections | `sections="attributes,tabular_parts,properties,predefined"` (comma list), `tabular_part="<name>"`, `detail_level="outline"\|"full"`, `include_provenance=false` |
-| graph | `search_metadata_by_description`, `business_search`, JSON operations | `filter_type` / `category` = Russian plural category (`Документы`, `Справочники`); `entity_kind` = `MetadataObject`\|`Symbol`\|`Form`\|`SourceUnit`\|`Chunk` |
-| graph | `run_graph_cypher_template` | `template_id` from the template catalogue (`docs/1c-graph-metadata-mcp.md`); `arguments.object_name` is the bare name without category prefix, plus optional `category_name` |
-
-`object_name` on both servers is a dotted qualified name with the type prefix — `Справочник.Контрагенты`, `Документ.РеализацияТоваровУслуг`, `РегистрНакопления.ТоварыНаСкладах`, `ОбщийМодуль.РаботаСКонтрагентамиКлиентСервер` — never a separate "full name" parameter.
-
-### Parameter-rich tools — tune before calling
-
-Defaults are usually suboptimal; set the parameters to the task, and on a miss reformulate (mode, `detail_level`, `exact`, `top_k`, filters) before switching tools:
-
-- `1c-graph-metadata-mcp`: `search_code` (`search_type`, `detail_level`), `search_metadata` (JSON templates), `search_metadata_by_description` (`alpha`, `use_fuzzy`), `trace_impact` (`direction`, `depth`, `relationship_types`), `trace_call_chain` (`direction`, `depth`), `get_object_dossier` (`sections`), `business_search` (`include_structure`, `filter_type`).
-- `1c-code-metadata-mcp`: `metadatasearch` (`object_type`, `names_only`), `get_metadata_details` (`sections`, `tabular_part`, `detail_level`), `get_method_call_hierarchy` (`direction`, `depth`), `graph_dependencies` (`direction`), `bsl_scope_members` (`member_type`).
-
-If `docs/<server>.md` conflicts with the descriptor exposed by the current environment, the environment descriptor wins.
-
-**Metadata object structure — who answers what.** `get_object_dossier` (graph) is the passport: header attributes with types, tabular-part names, forms, dependencies. Tabular-part **columns** come from `get_metadata_details(object_name=..., sections="tabular_parts")` on the Code server; a graph answer that warns `tabular_part_columns_not_indexed` routes there in one step (`content/rules/mcp-first-search.md → Quick first-pick table`).
+| `1c-graph-metadata-mcp` | Neo4j graph: dossier, impact, call graph, usages, business search, extension layers | `docs/1c-graph-metadata-mcp.md` |
+| `1c-code-metadata-mcp` | Metadata and BSL search, navigation, forms, XSD, `verify_xml` | `docs/1c-code-metadata-mcp.md` |
+| `1c-syntax-checker-mcp` | BSL Language Server: `syntaxcheck_file` (default), `syntaxcheck` (text fallback) | `docs/1c-syntax-checker-mcp.md` |
+| `1c-code-check-mcp` | 1С:Напарник: `check_1c_code`, `review_1c_code`, AI drafts, ITS, version docs | `docs/1c-code-check-mcp.md` |
+| `1C-docs-mcp` | Platform reference (`docsearch`, `docinfo`), `standards`, `formatspec` | `docs/1C-docs-mcp.md` |
+| `1c-ssl-mcp` | БСП / SSL API search | `docs/1c-ssl-mcp.md` |
+| `1c-templates-mcp` | Code templates, memory fallback | `docs/1c-templates-mcp.md` |
+| `cognee`, `openviking` *(optional)* | Memory providers | `docs/memory-providers.md` |
+| `1c-data-mcp` | Live-IB execution over `hs/mcp` | `docs/1c-data-mcp.md` |
+| `edt-mcp` *(conditional)* | Live EDT workspace | `docs/edt-mcp.md` |
 
 ## Fallback chain
 
-**Project-source search** (code, metadata, usages, call chains, structure, forms, file locations): `1c-graph-metadata-mcp` → `1c-code-metadata-mcp` → `1c-code-metadata-mcp` with `grep=true` → only then native discovery tools (`Grep` / `Glob` / `Read`-scanning) with a one-line "what was tried" note. The discipline, its boundaries (bounded priority, not a ban; freshness evidence for a negative result; fragment-level retrieval before full-module `Read`), the quick first-pick table and the multi-extension scope rule are owned by `content/rules/mcp-first-search.md`.
+**Project source** (code, metadata, usages, forms, file locations): graph → code-metadata → code-metadata with `grep=true` → native `Grep` / `Glob` / `Read` with a one-line "what was tried" note. Owner: `content/rules/mcp-first-search.md`.
 
-**External knowledge** — no `Grep` equivalent; call only when the knowledge is needed:
+**External knowledge** has no native equivalent: templates and memory → БСП → platform docs and standards → Напарник / ITS → validators → live IB, each only when its knowledge is needed.
 
-1. `1c-templates-mcp` — templates (`templatesearch`: task text verbatim, reuse the hit — `docs/1c-templates-mcp.md`). Project memory is separate: search all connected Cognee, OpenViking and templates memory providers; write priority Cognee → OpenViking → templates (`content/rules/project-memory.md`, tool mappings in `docs/memory-providers.md`).
-2. `1c-ssl-mcp` — БСП / SSL reusable APIs and patterns.
-3. `1C-docs-mcp` — versioned platform documentation; the mandatory platform-capability check before hand-rolling a specialized mechanism (`docs/1C-docs-mcp.md → Platform capability discovery`); the routed project standards (`standards(name=…)`, `content/rules/help-corpus-retrieval.md`).
-4. `1c-code-check-mcp` — 1С:Напарник checks, ITS standards (`its_help` → `fetch_its` for every document used), AI drafts (non-deterministic — re-validate).
-5. `1c-syntax-checker-mcp` — BSL validation after edits; `syntaxcheck_file` by path is the default, `syntaxcheck` with text only when the file tool is not exposed or the code has no file yet.
-6. `1c-data-mcp` — the live infobase (run a fragment or a query, parse-check a query, last event-log error); read-only fragments by default, ask before any mutation (`docs/1c-data-mcp.md → Safety`).
-
-Per-task tool sequences (writing code, review, architecture, error fixing, performance, refactoring, metadata XML, forms, integrations, documentation, platform-version comparison) — `content/rules/tooling-playbooks.md`.
+Open `docs/<server>.md` once per server per session and only for a mode or response shape the operation skill does not cover; the environment descriptor wins over any document here.

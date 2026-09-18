@@ -59,7 +59,7 @@ Rules:
 
 `tools/_common/Invoke-1CEdit.ps1` wraps any tool of this skill and adds three things the vendored scripts do not have: a **logical address** instead of a physical path, a **unified diff** of what the run changed, and an optional **preview** that runs the real tool and then puts the tree back. Full reference: [edit-preview.md](docs/edit-preview.md).
 
-**Apply immediately by default.** `.dev.env` `METADATA_PREVIEW` (default `auto`, editor `/previewmode`) reserves the preview for four cases: DSL generation / compilation (`form-compile`, `meta-compile`, `role-compile`, `skd-edit` batches); an object of a typical configuration while `SUPPORT_GUARD` is `warn` / `off`; the lock list in repository mode, on a clean tree before `lock`; a tool or `-Operation` this project has not run before. Ordinary single-field edits apply straight away.
+**Apply immediately by default.** `.dev.env` `METADATA_PREVIEW` (default `auto`, editor `/previewmode`) reserves the preview for two cases: generation from a DSL (`form-compile`, `meta-compile`, `role-compile`, `skd-edit` batches) and a tool or `-Operation` this project has not run before. Ordinary edits apply straight away.
 
 ```powershell
 # default: write now (logical address + unified diff after the run)
@@ -74,10 +74,8 @@ powershell -NoProfile -File skills/1c-metadata-manage/tools/_common/Invoke-1CEdi
 ```
 
 - **`-Object <Kind>.<Name>[.Форма|Макет|Права|МодульОбъекта.<Member>]`** resolves to the path the tool expects and is passed as `-Path`. Russian and English kind names both work. This is the same address the MCP servers use for `object_name`, so one task no longer carries two addressing schemes. Unknown kind = a refusal listing the accepted ones, never a path that points at nothing.
-- **`-Preview`** (alias `-DryRun`) shows the diff and restores the tree. When the tool has its own `-DryRun` — `meta-remove`, `remove-form`, `remove-template`, `web-unpublish`, `db-load-git` — that native plan is used instead, because nothing gets written that would need undoing.
-- **Skips in every mode, `on` included:** a dirty watched tree (the git backend refuses), edits applied by the host's own file tools rather than a skill script (Cursor apply/reject, Claude Code rewrite — that UI is the review), and BSL `rewrite_1c_code` / `modify_1c_code` proposals, which never go through this wrapper. Do not ship a host-specific dry-run fork.
-- **Deletions keep their own gate.** Native `-DryRun` then `-Force` on `remove-form`, `meta-remove`, `remove-template`, `web-unpublish` is unchanged. `METADATA_PREVIEW` does not turn those into a silent delete, and a preview is never a substitute for `meta-validate` / `verify_xml`.
-- **Rollback backends.** A dump under git is watched whole, so a write outside the edited object is still caught and undone; the run **refuses to start** when the watched path already has uncommitted changes, because a rollback would take that work with it. Without git, the object folder, its parent and the root `Configuration.xml` are copied first, and the watched scope is printed — a write outside it is reported as unwatched rather than silently missed.
+- **`-Preview`** (alias `-DryRun`) shows the diff and restores the tree; a tool with its own `-DryRun` (`meta-remove`, `remove-form`, `remove-template`, `web-unpublish`, `db-load-git`) uses that native plan instead. The wrapper previews its own script writes only; a dirty git tree applies with a one-line note.
+- **Deletions keep their own gate:** native `-DryRun` then `-Force`, in every mode. A preview is never a substitute for `meta-validate` / `verify_xml`.
 - Applying without the wrapper stays valid. Cite a preview on the `Metadata tooling:` line only when one actually ran.
 
 ## Dispatch Strategy

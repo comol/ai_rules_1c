@@ -24,7 +24,7 @@ status ─→ lock(-Revised) ─→ [standard cycle: mutate → verify → updat
 | `/build-release` | Prefer `dump -Version <N>` from the repository (fixed, team-visible version) over the local working copy when the release must match what the team committed. |
 | `/deploy-and-test` | Deploy steps inherit the `/update1cbase` rule above; test steps are unaffected. |
 
-**Preview and the lock list.** When the plan does not make the object list obvious, one `Invoke-1CEdit -Preview` on a **clean tree, before `lock`**, names the files the operation touches — that is the list to lock. Do not hold locks across a write-then-rollback: after the first real apply the git backend refuses a dirty tree, so a two-step does not survive a multi-object repository task, and a pause with locks held blocks teammates while telling you nothing `diff` would not. Canon — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`.
+**The lock list comes from the plan, not from a preview.** Lock every object the plan names, including the owner object of a form, layout, rights or module being changed. A wrapper `-Preview` is not a repository step; never hold locks across a write-then-rollback pause (`content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`).
 
 ## Conflict and divergence handling
 

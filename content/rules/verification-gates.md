@@ -23,7 +23,7 @@ The parent closing gate MUST reuse that evidence when the current fingerprint an
 context match the recorded state. Checking a fingerprint or reading the edit target is allowed;
 it is not a repeated validator run.
 It runs only missing or stale gates and MUST NOT repeat a validator against unchanged content
-(`AGENTS.md → MCP Tool Calling → C.2`). Any later edit invalidates the affected validator
+(`AGENTS.md → MCP Tool Calling → C.1`). Any later edit invalidates the affected validator
 evidence; the final editor becomes the new owner. The same rule applies to `verify_xml` and
 impact-analysis evidence.
 

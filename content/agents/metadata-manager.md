@@ -43,7 +43,7 @@ Read the corresponding doc file(s) of the skill: step-by-step procedures, PowerS
 
 ### Step 4 — Execute the task
 
-Use the PowerShell scripts referenced in the domain docs; validate after each mutation step; fix validation errors before proceeding. Apply immediately unless the write falls into a `METADATA_PREVIEW=auto` case (`content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`) — DSL generation, an object on vendor support with the guard not denying, the repository lock list, or an operation new to this project. One logical metadata operation per step; do not modify BSL business logic unless it is part of the metadata task (e.g. module scaffolding).
+Use the PowerShell scripts referenced in the domain docs; validate after each mutation step; fix validation errors before proceeding. Apply immediately unless the write is a `METADATA_PREVIEW=auto` case (`content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`) — generation from a DSL or an operation new to this project. One logical metadata operation per step; do not modify BSL business logic unless it is part of the metadata task (e.g. module scaffolding).
 
 ### Step 5 — Report results
 
