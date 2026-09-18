@@ -1,11 +1,22 @@
 ---
 description: Load current repository files into the infobase defined in .dev.env and update the DB structure
-argumentHint: "[all]"
+argumentHint: "[full|partial|git|all]"
 ---
 
 # /update1cbase — load repository into an infobase
 
 Load the configuration (`/LoadConfigFromFiles`) from the current repository directory into the infobase defined in `.dev.env`, then update the database structure (`/UpdateDBCfg`). With the `all` argument (or an explicit "with extensions" request) the command loads the **full snapshot** — main configuration plus every extension from `EXTENSION_NAMES` — see "Full-snapshot mode" at the end.
+
+Read `content/rules/getconfigfiles.md → Configuration file synchronization contract`. A partial load is a first-class branch of this update procedure: **load → checks → database apply → requested directory refresh**. Do not stop after importing files or merely offer the database update when the user has already requested it.
+
+## Select load scope
+
+- `full` / `all`: load a verified complete snapshot. A selected-object dump or a delta directory is not a full-load source.
+- `partial`: load the task's exact file selection and required dependencies using `-files` or `-listFile`. Never pass the metadata-name list `repoobjects.txt` as the load list.
+- `git`: use `db-load-git -DryRun` from `content/skills/1c-metadata-manage/docs/db-manage.md` to inspect the selected diff (`All`, `Staged`, `Unstaged` or `Commit`). Resolve deletions / renames and confirm the plan covers the requested change before loading. An empty plan ends as a no-op; it does not become a full load.
+- No explicit mode: use the already established task scope. A known bounded set of changed files can use `partial`; a requested complete deployment uses `full`. If completeness or removal semantics are uncertain, resolve the scope before modifying the infobase.
+
+Partial loads target the main configuration or **one named extension per pass**. Do not combine partial selection with `all` / platform `-AllExtensions`. Keep repository locks, support rules, validation and retry handling at the same strength as a full load.
 
 This command does not run tests and does not publish the infobase. Use `/deploy-and-test` to run tests after loading.
 
@@ -25,7 +36,7 @@ Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; D
 
 When substituting `.dev.env` values into the templates below, resolve `{INFOBASE_FLAG}` once from the effective `INFOBASE_KIND` (`/F` for `file`, `/S` for `server`; reject any other value), and substitute resolved `{LOG_PATH}` / `{RESULT_PATH}` values that contain `$env:` double-quoted — single quotes do not expand it. Delete a stale `{RESULT_PATH}` file before every Designer launch.
 
-Before running, make sure `{EXPORT_PATH}` contains dumped configuration sources (for example, `Configuration.xml` at the root or in the extension subdirectory). If no sources exist, stop and tell the user.
+Before running, resolve the source directory for the selected main configuration / extension. Full mode requires a complete dump with `Configuration.xml`; partial mode requires a non-empty validated file list in the matching format and a suitable existing target configuration. Check source completeness and dependencies; never infer a full snapshot from the presence of `Configuration.xml` alone. Preserve the existing `ConfigDumpInfo.xml` before the load changes it; after a failed load / apply it is not evidence of a synchronized database.
 
 ## Step 1. Choose tool: `ibcmd` or Designer
 
@@ -35,6 +46,8 @@ Before running, make sure `{EXPORT_PATH}` contains dumped configuration sources 
 4. Otherwise use **Steps 2b and 3b (Designer)**.
 
 `ibcmd infobase config` does not apply to 1C cluster infobases; for server cluster infobases always use Designer.
+
+For partial / Git loads, use the bundled `db-load-xml -Mode Partial -Files ...` / `-ListFile ...` or `db-load-git` after its plan, or the Designer template below. The `ibcmd` full-import template is not a partial-import substitute: use its verified `config import files` path in the skill only when suitable. Keep one load owner; do not execute the wrapper and raw template for the same load. In this procedure omit wrapper `-UpdateDB`: apply is a separate stage so extension checks can run first.
 
 ## Step 2a. Load configuration through `ibcmd` (preferred)
 
@@ -85,12 +98,22 @@ Map `.dev.env` keys to Designer flags:
     /P '{IB_PASSWORD}' `
     /DisableStartupMessages `
     /LoadConfigFromFiles '{EXPORT_PATH}' `
+    -updateConfigDumpInfo `
     -Extension {EXTENSION_NAME} `
     /Out '{LOG_PATH}' `
     /DumpResult '{RESULT_PATH}'
 ```
 
 Remove empty optional keys (`/N`, `/P`, `-Extension`). For the main configuration, remove `-Extension {EXTENSION_NAME}` entirely.
+
+For **partial** mode, insert one of the following selector fragments after `/LoadConfigFromFiles '{EXPORT_PATH}'` in that same launch:
+
+```text
+-listFile '<validated UTF-8 file list>' -Format Hierarchical
+-files "CommonModules/РаботаСДанными/Ext/Module.bsl" -Format Hierarchical
+```
+
+Use only one fragment, resolve its real paths and use `Plain` for a flat dump. For loading only supplied pieces of an object's description, add `-partial` only after confirming support in the target platform help (the bundled partial-load tools already add it). Keep `-updateConfigDumpInfo` in full and partial Designer loads. It updates the version baseline, not the database configuration. After a clean partial load, continue to Step 2c when applicable and then Step 3b; never report the update complete at this point.
 
 Read the verdict (`{RESULT_PATH}`, exit code, `{LOG_PATH}` — see the retry loop below). On errors, show the relevant log fragment to the user and **do not continue** to Step 3b.
 
@@ -167,4 +190,6 @@ Loads the **effective snapshot**: main configuration + every extension from `EXT
 
 ## Step 4. Final report
 
-Briefly report which infobase was updated, which directory was loaded, which tool was used (`ibcmd` or Designer), how many attempts the retry loop took and what was fixed between them, and whether dynamic update was applied or restructuring was required (visible in the log). In full-snapshot mode, list the passes (main + each extension) with their outcomes. List errors separately.
+If the task also requests refreshing the source directory after the update, first complete all required apply stages, then follow `/loadfrom1cbase` with the same targets and appropriate scopes. Do not overwrite local changes or perform an unconditional full return dump. Without a requested refresh, no extra dump is required; report any baseline not maintained by the selected load tool before the next incremental export.
+
+Briefly report the infobase, main configuration / extension, source directory, load scope (full / selected files / Git diff), tool, checks, apply result and any directory refresh separately. Include retry attempts, fixes and dynamic update / restructuring from the log. In full-snapshot mode, list every pass. A successful load with failed apply, or successful apply with failed return export, remains a partially completed workflow; list errors explicitly.

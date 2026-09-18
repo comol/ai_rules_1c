@@ -1,13 +1,22 @@
 ---
 description: Dump the configuration from the infobase defined in .dev.env into the current repository files
-argumentHint: "[all]"
+argumentHint: "[full|changes|partial|all]"
 ---
 
 # /loadfrom1cbase — dump from infobase to repository
 
-Full configuration dump (`/DumpConfigToFiles`) from the infobase defined in `.dev.env` into the current repository directory. With the `all` argument (or an explicit "with extensions" request) the command dumps the **full snapshot** — main configuration plus every extension from `EXTENSION_NAMES` — see "Full-snapshot mode" at the end.
+Refresh configuration files from the infobase defined in `.dev.env`: full dump, incremental refresh or selected-object export. Read `content/rules/getconfigfiles.md → Configuration file synchronization contract` before choosing the scope. With `all` (or an explicit "with extensions" request), dump the **full snapshot** — main configuration plus every extension from `EXTENSION_NAMES`; see "Full-snapshot mode" below.
 
-For a partial object-by-object export, use `/getconfigfiles` (rule `getconfigfiles.md`, via `repoobjects.txt`).
+This is the directory-refresh stage of the workflow shared with `/update1cbase`. It does not load files into the infobase or apply the database configuration.
+
+## Select scope
+
+- `full` / `all`: deliberately dump a complete snapshot.
+- `changes`: update an existing dump from its `ConfigDumpInfo.xml`; Designer uses `-update`, `ibcmd` uses `--sync`. Without a usable baseline, stop this mode and prepare a full dump into a new directory or obtain authorization for overwriting the existing one. Do not add `-force` as an automatic retry.
+- `partial`: follow `/getconfigfiles` with the selected objects in `repoobjects.txt`; then return to this command's result report. This is a supported branch of directory refresh, not a full dump followed by file filtering.
+- No explicit mode: use the scope already established by the task; selected objects imply `partial`, a repeated refresh of a complete dump with a valid baseline implies `changes`, and a first complete export implies `full`. State the choice. An explicit partial request never falls back to full automatically.
+
+For a change report (`-getChanges`) or a delta directory (`-configDumpInfoForChanges`), use the Designer modes from the same contract. A report-only operation does not count as refreshing the directory.
 
 **EDT gate:** the dump this command writes is in **Designer XML format**. In a project developed in 1C:EDT (`.dev.env` `USE_EDT=true`) whose working tree is an EDT (`src/**/*.mdo`) workspace, dumping into that tree is wrong — pick a separate target directory and state that the result is a dump, not the workspace; bringing changes back into EDT is a separate, confirmed step (`content/rules/edt-workflow.md`).
 
@@ -21,7 +30,7 @@ Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; D
 
 When substituting `.dev.env` values into the templates below, resolve `{INFOBASE_FLAG}` once from the effective `INFOBASE_KIND` (`/F` for `file`, `/S` for `server`; reject any other value), and substitute a resolved `{LOG_PATH}` that contains `$env:` double-quoted — single quotes do not expand it.
 
-Before a full dump, inspect `git status --short` for `{EXPORT_PATH}`. The dump may overwrite generated source files. If that path contains uncommitted changes, stop and ask the user to commit, stash, or explicitly accept the overwrite; never discard the working tree silently.
+Before every dump mode, inspect `git status --short` for the resolved destination (and inspect existing files if it is not under Git). The dump may overwrite source files and the version baseline. If affected files contain local changes, preserve them in a separate destination or obtain explicit overwrite authorization; never discard them silently. In a single-extension run, use that extension's source directory consistently.
 
 ## Step 1. Choose tool: `ibcmd` or Designer
 
@@ -43,7 +52,7 @@ Before a full dump, inspect `git status --short` for `{EXPORT_PATH}`. The dump m
     '{EXPORT_PATH}' *>&1 | Tee-Object -FilePath '{LOG_PATH}'
 ```
 
-Remove empty optional keys (`--user`, `--password`, `--extension`). For repeated exports into the same directory with a valid `ConfigDumpInfo.xml`, add `--sync` to export only changed files.
+Remove empty optional keys (`--user`, `--password`, `--extension`). Add `--sync` for the selected `changes` mode only; omit it for `full` / `all`. Partial export follows `/getconfigfiles`. Use Designer for comparison / external-baseline delta modes rather than inventing `ibcmd` flags.
 
 `ibcmd` writes diagnostics to stdout/stderr; `Tee-Object` duplicates it into `{LOG_PATH}`. Continue to **Step 3**.
 
@@ -66,21 +75,22 @@ Map `.dev.env` keys to Designer flags:
     /P '{IB_PASSWORD}' `
     /DisableStartupMessages `
     /DumpConfigToFiles '{EXPORT_PATH}' `
+    -Format Hierarchical `
     -Extension {EXTENSION_NAME} `
-    /Out '{LOG_PATH}'
+    /Out '{LOG_PATH}' `
+    /DumpResult '{RESULT_PATH}'
 ```
 
-Remove empty optional keys (`/N`, `/P`, `-Extension`). When exporting the main configuration, remove `-Extension {EXTENSION_NAME}` entirely.
+Remove empty optional keys (`/N`, `/P`, `-Extension`). When exporting the main configuration, remove `-Extension {EXTENSION_NAME}` entirely. Use the existing dump format (`Plain` when applicable). For `changes`, add `-update`; for `full`, add neither `-update` nor `-listFile`. For `partial`, run the selected-object template in `/getconfigfiles` instead. Resolve `RESULT_PATH` from `.dev.env` / its documented default and remove a stale result before each launch.
 
-The export goes **strictly into the specified directory**; no extra subdirectories are created.
+The specified directory is the dump root; preserve the selected format's object subdirectories. Keep log, result and selection files outside that tree (especially an empty delta destination).
 
 ## Step 3. Check result
 
-1. Read `{LOG_PATH}`:
-   - For Designer, success means `Конфигурация успешно сохранена` / `Configuration successfully saved`.
-   - For `ibcmd`, success means no `error` / `ошибка` lines and no non-zero exit code reported.
+1. Read the complete log and process exit code; for Designer also require a fresh `{RESULT_PATH}` with `0`. Classify success phrases before error stems per `content/rules/designer-batch-checks.md`. Check the expected artifacts for the selected mode: source files for full / partial, a valid baseline for changes, or the report file for comparison (an empty report is valid).
 2. If errors exist, show the relevant log fragment to the user and stop.
 3. Briefly list which top-level object directories appeared or changed according to `git status`, without content diffs.
+4. Report the target, direction, scope, baseline and result. When called after `/update1cbase`, distinguish successful database apply from successful directory refresh; a failed export does not undo a completed apply.
 
 ## Full-snapshot mode (`/loadfrom1cbase all`) — optional
 
@@ -89,5 +99,6 @@ Dumps the **effective snapshot**: main configuration + every extension from `EXT
 - If `EXTENSION_NAMES` is empty, fall back to the regular single-target run above and note that in the report.
 - **Pass 1 — main configuration:** Steps 2–3 as written, into `{EXPORT_PATH}`, without `-Extension` / `--extension`.
 - **Pass per extension**, in `EXTENSION_NAMES` order: the same Step 2a/2b template with `-Extension <Name>` / `--extension=<Name>`, target directory `{EXTENSIONS_PATH}\<Name>\` (create missing directories). Run the Step 3 check after **every** pass.
+- `all` selects full exports for every pass. Selected-object and incremental runs use an explicit single-target scope; do not carry one object's list or one baseline across different extensions.
 - The Step 0 dirty-working-tree guard covers `{EXTENSIONS_PATH}` as well as `{EXPORT_PATH}`.
 - A failed pass stops the mode — do not continue to the next extension over a broken dump; report which passes completed.

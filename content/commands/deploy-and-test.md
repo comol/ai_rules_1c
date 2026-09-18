@@ -8,6 +8,8 @@ Deploy the current configuration to the test infobase defined in `.dev.env`, the
 
 When `EXTENSION_NAMES` is filled and the user asked to deploy the full snapshot ("all" / "with extensions"), Steps 2–3 run as multiple passes — main configuration, then each extension in order — per `/update1cbase → Full-snapshot mode` (`content/commands/update1cbase.md`); everything else in this command is unchanged.
 
+**Load scope is owned by `/update1cbase → Select load scope`.** For partial / Git deployment, follow that command's complete load → checks → apply sequence, including file-list validation and baseline handling, then continue here at Step 4. Do not execute the full-load examples below as well. A failed load or apply blocks UI tests. A requested return export follows `/loadfrom1cbase` after apply with the same target and scope guards (`content/rules/getconfigfiles.md → Configuration file synchronization contract`).
+
 ## Step 0. Check `.dev.env` parameters
 
 `.dev.env` is the single source of truth for all parameters (created by the 1c-rules installer at the project root). If it is missing, ask the user to run `install.ps1 init` or copy `.dev.env.example` to `.dev.env`.
@@ -72,6 +74,7 @@ Read `{LOG_PATH}`. On errors, show the relevant log fragment and **do not run** 
     /P '{IB_PASSWORD}' `
     /DisableStartupMessages `
     /LoadConfigFromFiles '{EXPORT_PATH}' `
+    -updateConfigDumpInfo `
     -Extension {EXTENSION_NAME} `
     /Out '{LOG_PATH}' `
     /DumpResult '{RESULT_PATH}'
