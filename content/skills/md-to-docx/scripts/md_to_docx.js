@@ -76,7 +76,7 @@ if (content.startsWith("---\n") || content.startsWith("---\r\n")) {
     content = content.slice(content.indexOf("\n", endIdx + 4) + 1);
   }
 }
-const lines = content.split("\n");
+const lines = content.split(/\r?\n/);
 
 // --- Parse markdown into blocks ---
 const blocks = [];
@@ -96,11 +96,83 @@ function flushTable() {
   }
 }
 
+function isBlank(line) { return line.trim() === ""; }
+function isCodeFence(line) { return line.startsWith("```"); }
+function isTableRow(line) {
+  const t = line.trim();
+  return t.startsWith("|") && t.endsWith("|");
+}
+function isAnchor(line) { return /^\s*<a\s+id="[^"]+"><\/a>\s*$/i.test(line); }
+function isHeading(line) { return /^#{1,6}\s+/.test(line); }
+function isHr(line) { return /^---+\s*$/.test(line.trim()); }
+function isBullet(line) { return /^\s*[-*]\s+/.test(line); }
+function isNumbered(line) { return /^\s*\d+\.\s+/.test(line); }
+function isImage(line) {
+  return /^!\[([^\]]*)\]\(((?:[^()]*|\([^)]*\))*)\)\s*$/.test(line);
+}
+function isQuote(line) { return /^\s{0,3}>\s?/.test(line); }
+function isBlockStart(line) {
+  return isBlank(line) || isCodeFence(line) || isTableRow(line) || isAnchor(line)
+    || isHeading(line) || isHr(line) || isBullet(line) || isNumbered(line)
+    || isImage(line) || isQuote(line);
+}
+function stripQuote(line) { return line.replace(/^\s{0,3}>\s?/, ""); }
+function joinWrapped(parts) {
+  return parts.map(s => s.trim()).filter(Boolean).join(" ");
+}
+function collectWrappedLines() {
+  const extra = [];
+  while (i + 1 < lines.length && !isBlockStart(lines[i + 1])) {
+    i++;
+    extra.push(lines[i]);
+  }
+  return extra;
+}
+
+function pushQuoteInner(innerLines) {
+  let j = 0;
+  while (j < innerLines.length) {
+    const raw = innerLines[j];
+    if (isBlank(raw)) { j++; continue; }
+    const bullet = raw.match(/^(\s*)[-*]\s+(.*)/);
+    if (bullet) {
+      const indent = Math.floor((bullet[1] || "").length / 2);
+      const parts = [bullet[2]];
+      j++;
+      while (j < innerLines.length && !isBlank(innerLines[j]) && !isBullet(innerLines[j]) && !isNumbered(innerLines[j])) {
+        parts.push(innerLines[j]);
+        j++;
+      }
+      blocks.push({ type: "quote-bullet", indent, text: joinWrapped(parts) });
+      continue;
+    }
+    const numbered = raw.match(/^(\s*)\d+\.\s+(.*)/);
+    if (numbered) {
+      const indent = Math.floor((numbered[1] || "").length / 2);
+      const parts = [numbered[2]];
+      j++;
+      while (j < innerLines.length && !isBlank(innerLines[j]) && !isBullet(innerLines[j]) && !isNumbered(innerLines[j])) {
+        parts.push(innerLines[j]);
+        j++;
+      }
+      blocks.push({ type: "quote-numbered", indent, text: joinWrapped(parts) });
+      continue;
+    }
+    const parts = [raw];
+    j++;
+    while (j < innerLines.length && !isBlank(innerLines[j]) && !isBullet(innerLines[j]) && !isNumbered(innerLines[j])) {
+      parts.push(innerLines[j]);
+      j++;
+    }
+    blocks.push({ type: "quote", text: joinWrapped(parts) });
+  }
+}
+
 while (i < lines.length) {
   const line = lines[i];
 
   // Code block fences
-  if (line.startsWith("```")) {
+  if (isCodeFence(line)) {
     if (inCodeBlock) {
       blocks.push({ type: "code", text: codeLines.join("\n"), lang: codeLang });
       codeLines = [];
@@ -121,7 +193,7 @@ while (i < lines.length) {
   }
 
   // Table row
-  if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+  if (isTableRow(line)) {
     if (!inTable) inTable = true;
     // Skip separator rows (|---|---|)
     if (/^\|[\s\-:|]+\|$/.test(line.trim())) { i++; continue; }
@@ -151,20 +223,32 @@ while (i < lines.length) {
   }
 
   // Horizontal rule
-  if (/^---+\s*$/.test(line.trim())) {
+  if (isHr(line)) {
     blocks.push({ type: "hr" });
     i++;
     continue;
   }
 
   // Empty line
-  if (line.trim() === "") { i++; continue; }
+  if (isBlank(line)) { i++; continue; }
+
+  // Block quote: strip ">", join wrapped lines, keep nested lists
+  if (isQuote(line)) {
+    const inner = [];
+    while (i < lines.length && isQuote(lines[i])) {
+      inner.push(stripQuote(lines[i]));
+      i++;
+    }
+    pushQuoteInner(inner);
+    continue;
+  }
 
   // List item (bullet)
   const bulletMatch = line.match(/^(\s*)[-*]\s+(.*)/);
   if (bulletMatch) {
     const indent = Math.floor((bulletMatch[1] || "").length / 2);
-    blocks.push({ type: "bullet", indent, text: bulletMatch[2] });
+    const parts = [bulletMatch[2], ...collectWrappedLines()];
+    blocks.push({ type: "bullet", indent, text: joinWrapped(parts) });
     i++;
     continue;
   }
@@ -173,7 +257,8 @@ while (i < lines.length) {
   const numMatch = line.match(/^(\s*)\d+\.\s+(.*)/);
   if (numMatch) {
     const indent = Math.floor((numMatch[1] || "").length / 2);
-    blocks.push({ type: "numbered", indent, text: numMatch[2] });
+    const parts = [numMatch[2], ...collectWrappedLines()];
+    blocks.push({ type: "numbered", indent, text: joinWrapped(parts) });
     i++;
     continue;
   }
@@ -186,8 +271,9 @@ while (i < lines.length) {
     continue;
   }
 
-  // Regular paragraph
-  blocks.push({ type: "paragraph", text: line });
+  // Regular paragraph: join hard-wrapped lines until a blank line or a new block
+  const paraParts = [line, ...collectWrappedLines()];
+  blocks.push({ type: "paragraph", text: joinWrapped(paraParts) });
   i++;
 }
 flushTable();
@@ -328,6 +414,8 @@ for (const block of blocks) {
       children.push(new Paragraph({
         heading: headingMap[block.level],
         children: headingChildren,
+        keepLines: true,
+        keepNext: true,
         spacing: { before: block.level <= 2 ? 360 : 240, after: 120 },
       }));
       break;
@@ -336,6 +424,7 @@ for (const block of blocks) {
     case "paragraph":
       children.push(new Paragraph({
         children: makeRuns(block.text),
+        keepLines: true,
         spacing: { before: 80, after: 80 },
       }));
       break;
@@ -344,6 +433,7 @@ for (const block of blocks) {
       children.push(new Paragraph({
         numbering: { reference: "bullets", level: Math.min(block.indent, 1) },
         children: makeRuns(block.text),
+        keepLines: true,
         spacing: { before: 40, after: 40 },
       }));
       break;
@@ -352,9 +442,30 @@ for (const block of blocks) {
       children.push(new Paragraph({
         numbering: { reference: "numbers", level: Math.min(block.indent, 1) },
         children: makeRuns(block.text),
+        keepLines: true,
         spacing: { before: 40, after: 40 },
       }));
       break;
+
+    case "quote":
+    case "quote-bullet":
+    case "quote-numbered": {
+      const quoteBorder = { style: BorderStyle.SINGLE, size: 24, color: "5B9BD5", space: 8 };
+      const numbering = block.type === "quote-bullet"
+        ? { reference: "bullets", level: Math.min(block.indent, 1) }
+        : block.type === "quote-numbered"
+          ? { reference: "numbers", level: Math.min(block.indent, 1) }
+          : undefined;
+      children.push(new Paragraph({
+        numbering,
+        children: makeRuns(block.text),
+        keepLines: true,
+        indent: { left: numbering ? 1080 : 360 },
+        border: { left: quoteBorder },
+        spacing: { before: 60, after: 60 },
+      }));
+      break;
+    }
 
     case "code": {
       const codeRuns = block.text.split("\n").flatMap((line, idx, arr) => {

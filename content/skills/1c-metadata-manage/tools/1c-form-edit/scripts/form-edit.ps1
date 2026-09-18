@@ -1,5 +1,9 @@
-﻿# form-edit v1.5 — Edit 1C managed form elements
+﻿# form-edit v1.6 — Edit 1C managed form elements
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: DynamicList attributes require settings.mainTable or settings.query
+# and emit <Settings xsi:type="DynamicList">. An attribute without a source
+# loads into the designer but the form fails to open
+# ("не задан ни текст запроса, ни основная таблица").
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -420,6 +424,44 @@ function Emit-SingleType {
 	}
 	if ($typeStr.Contains('.')) { X "$indent<v8:Type>cfg:$typeStr</v8:Type>" }
 	else { X "$indent<v8:Type>$typeStr</v8:Type>" }
+}
+
+function Test-IsDynamicListType {
+	param([string]$typeStr)
+	return ($typeStr -eq "DynamicList" -or $typeStr -eq "cfg:DynamicList")
+}
+
+function Test-DynamicListSource {
+	param($settings)
+	if (-not $settings) { return $false }
+	$main = "$($settings.mainTable)".Trim()
+	$query = "$($settings.query)".Trim()
+	return ($main -ne "" -or $query -ne "")
+}
+
+function Emit-DynamicListSettings {
+	param($settings, [string]$indent)
+	X "$indent<Settings xsi:type=`"DynamicList`">"
+	$si = "$indent`t"
+	$hasQuery = $settings.query -and "$($settings.query)".Trim()
+	$hasMQKey = $false
+	if ($settings -is [System.Collections.IDictionary]) {
+		$hasMQKey = $settings.Contains("manualQuery") -and ($null -ne $settings.manualQuery)
+	} elseif ($settings.PSObject -and $settings.PSObject.Properties["manualQuery"]) {
+		$hasMQKey = $null -ne $settings.manualQuery
+	}
+	$mq = if ($hasMQKey) { if ($settings.manualQuery) { "true" } else { "false" } } elseif ($hasQuery) { "true" } else { "false" }
+	X "$si<ManualQuery>$mq</ManualQuery>"
+	$ddr = if ($settings.dynamicDataRead -eq $false) { "false" } else { "true" }
+	X "$si<DynamicDataRead>$ddr</DynamicDataRead>"
+	if ($hasQuery) {
+		X "$si<QueryText>$(Esc-Xml "$($settings.query)")</QueryText>"
+	}
+	$main = "$($settings.mainTable)".Trim()
+	if ($main -ne "") {
+		X "$si<MainTable>$(Esc-Xml $main)</MainTable>"
+	}
+	X "$indent</Settings>"
 }
 
 # --- Event handler name generator ---
@@ -959,7 +1001,7 @@ function Insert-IntoContainer($container, $newNode, $afterName, $childIndent) {
 
 # === 9. Generate fragment, parse, import nodes ===
 
-$allNsDecl = 'xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema"'
+$allNsDecl = 'xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema"'
 
 function Parse-Fragment([string]$xmlText) {
 	$fragDoc = New-Object System.Xml.XmlDocument
@@ -1151,6 +1193,10 @@ if ($def.attributes -and $def.attributes.Count -gt 0) {
 			Write-Host "[ERROR] Attribute '$($attr.name)' already exists in form — attribute names must be unique"
 			exit 1
 		}
+		if ((Test-IsDynamicListType "$($attr.type)") -and -not (Test-DynamicListSource $attr.settings)) {
+			Write-Host "[ERROR] Attribute '$($attr.name)': DynamicList requires settings.mainTable or settings.query — otherwise the form fails to open"
+			exit 1
+		}
 	}
 
 	# Generate attribute fragments
@@ -1168,7 +1214,9 @@ if ($def.attributes -and $def.attributes.Count -gt 0) {
 		if ($attr.savedData -eq $true) { X "$inner<SavedData>true</SavedData>" }
 		if ($attr.fillChecking) { X "$inner<FillChecking>$($attr.fillChecking)</FillChecking>" }
 
-		if ($attr.columns -and $attr.columns.Count -gt 0) {
+		$typeStr = if ($attr.type) { "$($attr.type)" } else { "(no type)" }
+		$isDynamicList = Test-IsDynamicListType $typeStr
+		if ($attr.columns -and $attr.columns.Count -gt 0 -and -not $isDynamicList) {
 			X "$inner<Columns>"
 			$colId = 1
 			foreach ($col in $attr.columns) {
@@ -1181,8 +1229,11 @@ if ($def.attributes -and $def.attributes.Count -gt 0) {
 			X "$inner</Columns>"
 		}
 
+		if ($isDynamicList) {
+			Emit-DynamicListSettings -settings $attr.settings -indent $inner
+		}
+
 		X "$attrChildIndent</Attribute>"
-		$typeStr = if ($attr.type) { "$($attr.type)" } else { "(no type)" }
 		$addedAttrs += "  + ${attrName}: $typeStr (id=$attrId)"
 	}
 	X "</_F>"

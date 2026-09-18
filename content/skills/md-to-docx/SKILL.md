@@ -54,10 +54,12 @@ node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]"
 
 ## Supported Markdown features
 
-- Headings (H1–H6) with styles and colors
+- Headings (H1–H6) with styles and colors; a heading stays with the following paragraph (`keepNext`)
 - Tables with header row
 - Code blocks (monospace font, gray background)
-- Lists: bulleted and numbered (with nesting)
+- Lists: bulleted and numbered (with nesting); wrapped continuation lines join the same item
+- Block quotes (`>`): marker stripped, wrapped lines joined, nested lists kept; left bar + indent
+- Paragraphs: hard-wrapped lines join until a blank line or the next block (heading, list, table, quote, fence, hr, image)
 - Inline formatting: **bold**, *italic*, `code`, [links](url)
 - Internal anchor links: `<a id="name"></a>` before a heading becomes a bookmark; `[text](#name)` links resolve to it (external `http(s)` / `mailto:` links stay external)
 - Images (`![alt](path)`) — resolved relative to the source MD folder

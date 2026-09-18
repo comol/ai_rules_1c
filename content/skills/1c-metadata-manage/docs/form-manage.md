@@ -231,7 +231,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-edit/scr
     { "input": "Warehouse", "path": "Object.Warehouse", "on": ["OnChange"] }
   ],
   "attributes": [
-    { "name": "TotalAmount", "type": "decimal(15,2)" }
+    { "name": "TotalAmount", "type": "decimal(15,2)" },
+    { "name": "LowerList", "type": "DynamicList", "settings": { "mainTable": "Catalog.Products" } }
   ],
   "commands": [
     { "name": "Calculate", "action": "CalculateHandler" }
@@ -249,6 +250,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-edit/scr
 #### Element keys, events, types
 
 Same DSL as `1c-form-compile` — element keys, `command` / `stdCommand`, event names and attribute types are in [`form-compile-dsl.md`](form-compile-dsl.md); the companion elements each type receives (ContextMenu, ExtendedTooltip, AutoCommandBar, …) are listed in its *Auto-generation* section. Groups and tables support `children` / `columns` for nested elements.
+
+A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.query`. Without a source the designer accepts the XML, but the form fails to open (`Основная таблица динамического списка задана неверно`). `form-edit` refuses that JSON before writing; `form-validate` reports the same gap on an existing form. The `settings` keys are the ones in [`form-compile-dsl.md`](form-compile-dsl.md) (`mainTable`, `query`, `manualQuery`, `dynamicDataRead`). `form-edit` emits those four; filters / order / conditional appearance stay with `form-compile`.
 
 ### Output
 

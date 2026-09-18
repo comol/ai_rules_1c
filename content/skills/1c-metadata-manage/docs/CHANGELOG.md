@@ -130,6 +130,10 @@ The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refre
 
 Focused regressions exercise each reported writer on temporary fixtures. Command-add checks compare unrelated form text byte-for-byte for LF and CRLF; template checks cover absolute/relative XML paths and the existing name/EPF lookup. The remove-form quarantine and rollback remain intact.
 
+### Local fix `2026-09-10` — DynamicList settings in `form-edit`
+
+`form-edit` v1.5 wrote a `DynamicList` attribute as Type only. The platform then opened the form with «не задан ни текст запроса, ни основная таблица». `form-edit` v1.6 requires `settings.mainTable` or `settings.query` and emits `<Settings xsi:type="DynamicList">` (`ManualQuery`, `DynamicDataRead`, optional `QueryText`, `MainTable`). `form-validate` v1.9 reports the same gap on an existing form. Full DCS list settings remain `form-compile`.
+
 ### Python runtime for `form-remove` (`2026-09-04`)
 
 `remove-form.py` is vendored from the same upstream repository, pinned at commit `ecd289fe11733028d87b55284ea9fb5feff8f513` — the state the PowerShell family below was synced from, so both runtimes are the same tool generation. It exists so a Linux / macOS install is not left with a script it cannot run.

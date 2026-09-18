@@ -1,5 +1,7 @@
-﻿# form-validate v1.8 — Validate 1C managed form
+﻿# form-validate v1.9 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: DynamicList attributes without MainTable and QueryText are an error —
+# the form loads but fails to open.
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -270,6 +272,20 @@ foreach ($attr in $attrNodes) {
 			} else {
 				$colNames[$colName] = $colId
 			}
+		}
+	}
+
+	$typeVal = ""
+	foreach ($tn in $attr.SelectNodes("f:Type/v8:Type", $nsMgr)) {
+		if ($tn.InnerText) { $typeVal = $tn.InnerText; break }
+	}
+	if ($typeVal -eq "cfg:DynamicList") {
+		$mainTable = $attr.SelectSingleNode("f:Settings/f:MainTable", $nsMgr)
+		$queryText = $attr.SelectSingleNode("f:Settings/f:QueryText", $nsMgr)
+		$hasMain = $mainTable -and $mainTable.InnerText.Trim()
+		$hasQuery = $queryText -and $queryText.InnerText.Trim()
+		if (-not $hasMain -and -not $hasQuery) {
+			Report-Error "Attribute '$attrName': DynamicList has neither MainTable nor QueryText — the form will fail to open"
 		}
 	}
 }
