@@ -14,6 +14,8 @@ Section number 1 is a stable anchor for `§1` references.
 
 `.dev.env` is the **single source of truth** for project parameters across the whole rules set. There is no `infobasesettings.md`, no separate per-command settings file — all rules, on-demand instructions, slash commands and subagents read from `.dev.env`.
 
+An optional source-contour catalog (`content/rules/multi-contour-search.md`) owns only source identities, search roles and index mappings. It neither duplicates operation defaults nor restricts source analysis to `EXTENSION_NAME`. It does not override `EXTENSION_NAMES` load order or the dump/load path conventions below; resolve the target through the operation's dedicated procedure.
+
 Read `.dev.env` **only when the current task actually depends on a parameter** (prefix / naming, modification comments, platform-version choices, metadata placement, infobase commands, deploy, UI tests). Guessing values is PROHIBITED.
 
 ### Global principle — no field is globally mandatory

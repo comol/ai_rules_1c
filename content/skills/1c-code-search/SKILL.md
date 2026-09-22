@@ -7,7 +7,7 @@ allowed-tools: mcp__1c-graph-metadata-mcp__search_code, mcp__1c-code-metadata-mc
 
 # 1c-code-search — locate BSL code
 
-Project-source search is MCP-first: graph → code-metadata → `grep=true` retry → native `Grep` with a one-line "what was tried" note. The discipline, the freshness rule and the native-tool exceptions are owned by `content/rules/mcp-first-search.md`; this skill owns the calls.
+Project-source search is MCP-first within verified contour coverage: graph → mapped code-metadata → `grep=true` retry → scoped native `Grep` with a one-line fallback note. Skip uncovered lanes; never substitute a neighboring contour's index. `content/rules/multi-contour-search.md` selects scope and server mappings for multiple roots; `content/rules/mcp-first-search.md` owns retrieval, freshness and native exceptions. This skill owns the calls below; any shared-server scope arguments must match its live contract.
 
 ## Tools and exact arguments
 

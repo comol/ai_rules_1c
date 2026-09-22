@@ -13,11 +13,13 @@ For any 1C **project-source search** (code, metadata, usages, call chains, struc
 
 This file is the single owner of the search discipline and of the project-source fallback chain; `AGENTS.md → MCP Tool Calling → A.4`, the `mcp-1c-tools` router, the operation skills and every subagent prompt point here. It applies to the parent and to every subagent.
 
+**Scope before tools.** For multiple source contours, separate indexes or a declared contour catalog, load `content/rules/multi-contour-search.md`. It owns folder/name/server mappings, coverage, question-specific scope and routing acceptance. Apply the chain below only to exposed indexes with verified coverage of the selected contour; skip an uncovered lane without probing it. No eligible index means immediate native search in that contour, even if servers for other contours are exposed. A catalog is optional for single-contour work.
+
 ---
 
 ## Hard rule
 
-1. **Before any native discovery call on project source** (`Grep` / `rg`, `Glob` / file search, directory listing, semantic codebase search, `Read`-scanning, full-module `Read` for the sake of one routine — see *Full-file `Read` — fragment first* below), you MUST first exhaust the project-index path:
+1. **Before any native discovery call on project source** (`Grep` / `rg`, `Glob` / file search, directory listing, semantic codebase search, `Read`-scanning, full-module `Read` for the sake of one routine — see *Full-file `Read` — fragment first* below), you MUST first exhaust the eligible project-index path for that contour:
    1. `1c-graph-metadata-mcp` — `search_code`, `search_metadata`, `search_metadata_by_description`, `get_object_dossier`, `trace_impact`, `trace_call_chain`, `find_objects_using_object`, `find_usages_of_object`, `business_search` as applicable.
    2. `1c-code-metadata-mcp` — `codesearch`, `metadatasearch`, `search_function`, `search_forms`, `get_module_structure`, `get_metadata_details`, `get_method_call_hierarchy`, `graph_dependencies`, `bsl_scope_members`, `inspect_form_layout`.
    3. `1c-code-metadata-mcp` with `grep=true` — substring retry inside the MCP index, **only** after step 2 returned not enough, and only on tools that expose the parameter (`codesearch`, `metadatasearch`, `search_function`, `helpsearch`, `search_forms`). Typical triggers: exact identifier, fragment of a query, metadata path, event-handler name, error text, literal string.
@@ -51,6 +53,8 @@ Full-file `Read` is **normal work** — no MCP attempt, no justification note �
 
 ## Quick first-pick table
 
+Select the contour and verify route coverage first. The table names tool roles; use the mapped server/scope, skipping an uncovered graph for the contour's code index or scoped native fallback. A shared server's scope selectors come from its live contract (`content/rules/multi-contour-search.md`).
+
 | Need | First call (MCP) | If empty — next |
 |---|---|---|
 | Find BSL code by behaviour / description | `search_code` (`semantic`, `detail_level=L1`) | `search_code` (`hybrid`) → `codesearch` |
@@ -80,19 +84,26 @@ Native discovery tools (`Grep`, `Glob` / file search, directory listing, bulk `R
 
 ## Configurations with extensions
 
-An extension catalog is **one base graph project with ordered layers**. Start with
+When the graph has ingested the relevant base and extensions, they form **one base
+graph project with ordered layers**. Start with
 `list_graph_projects`, select the base project's returned `project_id`, and keep
 that scope for base and extension searches. Never register each extension as a
 separate graph project and never substitute an extension name for `project_id`:
 isolated scopes cannot represent which extension overrides the base entity.
 
-For the effective runtime view, use
+For the graph's effective implementation view, use
 `resolve_effective_entity(object_name, entity_kind, entity_name)` and inspect the
 returned layer order, `effective`, `superseded`, `wrapping`, `extending` and any
 order warnings. For a focused diff, use
 `compare_base_and_extension(object_name, extension_name)`. A regular search hit
 shows that a version exists; it does **not** by itself prove that this version is
 the one the platform executes.
+
+A graph may cover only the base or a subset of source roots. Route uncovered
+contours to their own verified code indexes or files using
+`content/rules/multi-contour-search.md`; do not invent missing layers. Claims about
+a running infobase additionally require evidence for that named target and its
+active extensions, rather than index readiness alone.
 
 Before saying an extension/object is absent, require a current ready generation
 and verify that the expected extension layer is present. A project that is only
@@ -111,7 +122,7 @@ In a project developed in 1C:EDT (`.dev.env` `USE_EDT=true`) the chain above is 
 
 This rule is a **bounded priority, not a prohibition** — the agent must always stay operational without MCP and must be free to search on its own after an MCP miss. Native tools are appropriate, with no need for an MCP attempt first, when:
 
-- the project-index MCP servers (`1c-graph-metadata-mcp`, `1c-code-metadata-mcp`) are **not exposed** in the current session — the whole chain collapses; work with native tools normally and state the unavailability once, in one line;
+- no project-index MCP server exposed in the current session has **verified coverage of the selected contour** — the chain for that contour collapses; search its own files and state the missing route once, in one line;
 - an MCP result **looks wrong or stale** (contradicts known facts, predates fresh local edits) — verifying or overriding it against the disk state via `Grep` / `Read` is legitimate; after local edits the disk is the authority, not the index;
 - the target is **outside the MCP index**: non-BSL / non-metadata files (`.md` documentation, `.json` / `.yaml` configs, slash-command sources, rule files, `openspec/` artifacts, deployment logs), text fixtures, sample payloads, generated reports under `handoffs/` / `dist/` / build output;
 - a file you have already read in this session and are scanning for a literal string locally;
@@ -135,8 +146,8 @@ One or two sentences. No bullet list of every parameter tried.
 
 ## Success criteria
 
-- ✅ MCP project-index path attempted before any native discovery call (`Grep` / `Glob` / file search / directory listing / `Read`-scanning) on 1C project source — when the servers are exposed.
-- ✅ No "getting oriented" sweeps (source-tree globbing, bulk module reading) while project-index MCP servers are exposed.
+- ✅ Eligible MCP project-index path attempted before any native discovery call (`Grep` / `Glob` / file search / directory listing / `Read`-scanning) on 1C project source — when exposed indexes cover the selected contour.
+- ✅ No "getting oriented" sweeps (source-tree globbing, bulk module reading) while an eligible project-index route covers that scope.
 - ✅ Fragment-level retrieval preferred over full-module `Read` when the need is one routine — outside the normal-work cases listed above.
 - ✅ Each failed MCP call closed a concrete context gap before the next call (no blind chaining, no "just to be safe").
 - ✅ After a missed MCP attempt — or with servers not exposed — fallback proceeded immediately; no ritual MCP calls made only to satisfy this rule.
@@ -144,4 +155,4 @@ One or two sentences. No bullet list of every parameter tried.
 - ✅ Native-tool usage on project source is justified inline.
 - ✅ No duplicated calls against unchanged state.
 - ✅ A definitive "not found" conclusion is backed by current generation / readiness evidence; otherwise the MCP miss is reported as inconclusive and the documented fallback is used.
-- ✅ In a configuration with extensions, the base `project_id` was used and effective-runtime claims came from layer-aware tools rather than an arbitrary search hit.
+- ✅ For a unified layered graph, the base `project_id` and relevant layers were used; uncovered contours took their own routes. Source/index conclusions were distinguished from evidence about a running infobase.

@@ -41,7 +41,7 @@ Load the skill for the operation, not this whole catalogue. Each skill lists the
 
 ## Fallback chain
 
-**Project source** (code, metadata, usages, forms, file locations): graph → code-metadata → code-metadata with `grep=true` → native `Grep` / `Glob` / `Read` with a one-line "what was tried" note. Owner: `content/rules/mcp-first-search.md`.
+**Project source** (code, metadata, usages, forms, file locations): within verified contour coverage, graph → mapped code-metadata → code-metadata with `grep=true` → scoped native `Grep` / `Glob` / `Read` with a one-line fallback note. Skip uncovered lanes; no eligible exposed index means native search in that contour immediately. Owner: `content/rules/mcp-first-search.md`; multiple roots, catalog/scope selectors and acceptance: `content/rules/multi-contour-search.md`.
 
 **External knowledge** has no native equivalent: templates and memory → БСП → platform docs and standards → Напарник / ITS → validators → live IB, each only when its knowledge is needed.
 

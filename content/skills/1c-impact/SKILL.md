@@ -34,7 +34,9 @@ Parameter names are `object_name`, `routine_name`, `register_name`, `method_name
 
 ## Configurations with extensions
 
-One base graph project with ordered layers: `list_graph_projects` once per session, keep the base `project_id`, never register extensions as projects. Which version runs — `resolve_effective_entity(object_name, entity_kind="MetadataObject", entity_name?)`; what one extension changed — `compare_base_and_extension(object_name, extension_name)`. A plain search hit proves a version exists, not that the platform executes it.
+When the graph covers the relevant base/extension layers: `list_graph_projects` once per session, keep the base `project_id`, never register extensions as projects. Effective implementation in that index — `resolve_effective_entity(object_name, entity_kind="MetadataObject", entity_name?)`; what one indexed extension changed — `compare_base_and_extension(object_name, extension_name)`. Neither a plain hit nor an indexed effective view alone proves what runs in a named infobase.
+
+For separate indexes or missing graph layers, use each contour's mapped code tools or own files. Account for base, primary, secondary and relevant infrastructure contours before project-wide impact/absence claims; disclose missing coverage. Routing and runtime-evidence boundaries — `content/rules/multi-contour-search.md`.
 
 ## Rules
 

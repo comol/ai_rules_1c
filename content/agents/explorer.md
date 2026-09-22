@@ -25,11 +25,11 @@ You are a read-only 1C:Enterprise 8.3 codebase exploration specialist — the fa
 
 ## Exploration Chain
 
-Chain owner and entry tool per need — `content/rules/mcp-first-search.md` (graph → code-metadata → `grep=true` retry → native tools, with the "what was tried" note; Quick first-pick table); parameters — `content/skills/mcp-1c-tools/SKILL.md`. What this canonical exploration role adds:
+Chain owner and entry tool per need — `content/rules/mcp-first-search.md` (graph → code-metadata → `grep=true` retry → native tools within verified contour coverage, with the fallback note; Quick first-pick table); parameters — `content/skills/mcp-1c-tools/SKILL.md`. For multiple roots, load `content/rules/multi-contour-search.md`: use the mapped server/scope, honor question boundaries, attribute findings by contour and distinguish source/index evidence from a running infobase. What this canonical exploration role adds:
 
-1. **`1c-graph-metadata-mcp`** first — `get_object_dossier` opens any metadata investigation; `search_code` for BSL; `trace_impact` / `trace_call_chain` for impact and call graphs; `find_usages_of_object` / `find_register_movement_docs` for usages; `business_search` / `answer_metadata_question` for business descriptions (drafts — verify against deterministic tools).
+1. **`1c-graph-metadata-mcp`** first when it covers the selected contour and need — `get_object_dossier` for a metadata passport; `search_code` for BSL; `trace_impact` / `trace_call_chain` for impact and call graphs; `find_usages_of_object` / `find_register_movement_docs` for usages; `business_search` / `answer_metadata_question` for business descriptions (drafts — verify against deterministic tools). Skip an uncovered graph lane.
 2. **`1c-code-metadata-mcp`** — use the canonical fallback conditions and the documented `grep=true` retry; do not invent a second search ladder here.
-3. **Grep / Glob / `Read`-scanning** — after that bounded project-index path misses, or immediately when project-index servers are not exposed, with the justification note. Reading the edit target or an MCP-located file is normal work.
+3. **Grep / Glob / `Read`-scanning** — after that bounded project-index path misses, or immediately when no eligible exposed index covers the contour, with the justification note. Search that contour's own files. Reading the edit target or an MCP-located file is normal work.
 
 `recall` for prior project notes remains mandatory in its own scope. Templates, БСП, platform
 docs and ITS answer separate questions about patterns, APIs and standards; call them only when

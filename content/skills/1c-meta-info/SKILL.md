@@ -41,7 +41,7 @@ Facts only; a verdict about an object needs the validators of `1c-validate`. Sea
 
 - Retrieve the smallest projection that answers: names for identification, one section for a field list; never expand a hit into a full dossier without need.
 - Page with `cursor` until complete before claiming an exhaustive list; an empty page section does not prove absence.
-- Configurations with extensions: one base `project_id` from `list_graph_projects` once per session; effective version via `resolve_effective_entity`, layer diff via `compare_base_and_extension(object_name, extension_name)` — `1c-impact`.
+- Configurations with extensions: when the graph covers the relevant layers, use one discovered base `project_id`; effective source version via `resolve_effective_entity`, layer diff via `compare_base_and_extension(object_name, extension_name)` — `1c-impact`. Uncovered contours use their mapped index or own files; scope and evidence boundaries — `content/rules/multi-contour-search.md`.
 - Typed answers map to actions by code — `content/rules/mcp-policy.md → C. Server answers → actions`.
 
 Paging contract, JSON operation catalogue, template list: `content/skills/mcp-1c-tools/docs/1c-graph-metadata-mcp.md`, `content/skills/mcp-1c-tools/docs/1c-code-metadata-mcp.md → Reading large metadata objects`.
