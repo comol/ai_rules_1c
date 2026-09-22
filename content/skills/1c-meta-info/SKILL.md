@@ -11,15 +11,15 @@ Facts only; a verdict about an object needs the validators of `1c-validate`. Sea
 
 ## Address
 
-`object_name` on both servers is the dotted qualified name with the Russian kind prefix: `Справочник.Контрагенты`, `Документ.РеализацияТоваровУслуг`, `РегистрНакопления.ТоварыНаСкладах`, `ОбщийМодуль.РаботаСКонтрагентами`. There is no `full_name`, `object_full_name`, `qualified_name` or `name` parameter on these tools. The same address drives `Invoke-1CEdit.ps1 -Object` in `1c-metadata-manage`.
+Graph object lookups accept qualified names such as `Справочник.Контрагенты`, `Документ.РеализацияТоваровУслуг`, `РегистрНакопления.ТоварыНаСкладах`, `ОбщийМодуль.РаботаСКонтрагентами`. For Code `get_metadata_details`, reuse the canonical `full_path` from `metadatasearch`, for example `Документы.НачислениеЗарплаты`; a Graph-style singular prefix may cause a slower live-XML fallback. Both calls name the argument `object_name`, never `full_name` or `object_full_name`. Identity tools have their own arguments (`resolve_qualified_name` takes `qualified_name`). `Invoke-1CEdit.ps1 -Object` uses the singular qualified form.
 
 ## Tools and exact arguments
 
 | Need | Call | Arguments |
 |---|---|---|
-| Passport of a known object | `get_object_dossier` (graph) | `object_name`, optional `sections` |
+| Passport of a known object | `get_object_dossier` (graph) | `object_name`, optional `sections` as a list of `structure`, `forms`, `subscriptions`, `roles`, `dependencies`, `code`, `business_info` |
 | Header attributes, properties, predefined | `get_metadata_details` (code) | `object_name`, `sections="attributes,tabular_parts,properties,predefined"`, `detail_level="outline" \| "full"`, `max_items`, `cursor`, `include_provenance=false` |
-| Tabular-part **columns** | `get_metadata_details` (code) | `sections="tabular_parts"` or `tabular_part="<name>"` — the graph indexes names only and warns `tabular_part_columns_not_indexed`; that warning routes here in one step |
+| Tabular-part **columns** | `get_metadata_details` (code) | `sections="tabular_parts"` or `tabular_part="<name>"` — current graph generations can include columns; `tabular_part_columns_not_indexed` on an older/incomplete generation routes here in one step |
 | Objects by category / structure | `search_metadata` (graph) | `query` = JSON operation, e.g. `{"operation":"list_objects_by_category","category_name":"Документы"}` |
 | Object by synonym / description | `search_metadata_by_description` (graph) | `query`, `top_k=10`, `filter_type` = Russian plural category (`Документы`, `Справочники`), `use_fuzzy`, `alpha` |
 | Business-meaning search | `business_search` (graph) | `query`, `top_k`, `filter_type`, `include_structure` — only when `list_graph_capabilities` shows the lane |
@@ -30,8 +30,8 @@ Facts only; a verdict about an object needs the validators of `1c-validate`. Sea
 ## Calls
 
 ```json
-{"tool": "get_object_dossier", "args": {"object_name": "Документ.НачислениеЗарплаты", "sections": "attributes,tabular_parts,forms"}}
-{"tool": "get_metadata_details", "args": {"object_name": "Документ.НачислениеЗарплаты", "sections": "tabular_parts", "detail_level": "outline", "max_items": 200}}
+{"tool": "get_object_dossier", "args": {"object_name": "Документ.НачислениеЗарплаты", "sections": ["structure", "forms"]}}
+{"tool": "get_metadata_details", "args": {"object_name": "Документы.НачислениеЗарплаты", "sections": "tabular_parts", "detail_level": "outline", "max_items": 200}}
 {"tool": "search_metadata_by_description", "args": {"query": "начисление премии сотрудникам", "filter_type": "Документы", "top_k": 5}}
 {"tool": "search_metadata", "args": {"query": "{\"operation\": \"list_attributes_with_type\", \"type_name\": \"СправочникСсылка.Контрагенты\"}"}}
 {"tool": "metadatasearch", "args": {"query": "Контрагенты", "names_only": true, "limit": 5}}

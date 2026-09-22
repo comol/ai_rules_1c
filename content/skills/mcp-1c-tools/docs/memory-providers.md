@@ -27,4 +27,4 @@ Installation: `content/commands/install-openviking.md`. Verified against the [of
 
 Search with `recall(query=...)` on every memory lookup while exposed, even when Cognee or OpenViking receives writes. Use `remember(content=...)` as the write fallback when neither primary provider is available for writing. `templatesearch` searches code templates and does not replace memory retrieval.
 
-Authentication, schemas and template retrieval: `content/skills/mcp-1c-tools/docs/1c-templates-mcp.md`. A `stored=true` / `index_pending=true` response is already durable; do not retry that write.
+The current server always registers `remember`; it needs neither `MCP_ENABLE_WRITE_TOOLS` nor an operator bearer token. Check that the tool is exposed, then inspect the actual write result. Older deployments may differ: an absent tool or an actual authorization rejection follows the memory fallback policy, without a token pre-flight or blind retry. Authentication for `add_template` / `plugin_reload`, schemas and template retrieval: `content/skills/mcp-1c-tools/docs/1c-templates-mcp.md`. A `stored=true` / `index_pending=true` response is already durable; do not retry that write.

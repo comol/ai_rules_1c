@@ -27,7 +27,7 @@ The source of truth for images, ports, and environment variables is [docs.onerpa
 
 > **Channel.** The `:latest` tags above are the **stable** channel. A project may deliberately run the **beta** channel — the same images with a `-beta` suffix (`comol/1c_help_mcp:latest-beta`, also `light-beta` / `arm64-beta`). `/checkmcp` never changes the channel; it only reports the tag each container actually runs. The contract (tag matrix, `IMAGE_TAG`, how to verify a tag) is `/installmcp` → `## Release channel — stable or beta (IMAGE_TAG)`; switching is `/updatemcp beta` / `/updatemcp stable`.
 
-> **Templates authentication.** `templatesearch`, `recall`, `list_templates`, `get_template`, and `plugin_state` are read-only. `remember`, `add_template`, and `plugin_reload` are conditional beta mutations: they appear only when write tools are enabled and require an authenticated `Authorization` header constructed from `MCP_OPERATOR_TOKEN`. Their absence alone is not `TOOLS_MISSING`; `mutation_auth_required` means repair the client header, never restart or regenerate data blindly.
+> **Templates authentication.** `templatesearch`, `recall`, `list_templates`, `get_template`, and `plugin_state` are read-only. Current `remember` is always registered and needs no operator token or write-tools opt-in. Only `add_template` and `plugin_reload` are conditional mutations: they require write tools enabled and an `Authorization` bearer header from `MCP_OPERATOR_TOKEN`. Their absence alone is not `TOOLS_MISSING`; `mutation_auth_required` on a gated call means repair that connection, never restart or regenerate data blindly. Older deployments may differ: report the observed surface and memory-write availability separately.
 
 > `edt-mcp` is **out of scope for this command**. It is not a container and not part of the bundle: the plugin runs inside 1C:EDT itself and exists only in projects with `.dev.env` `USE_EDT=true`. Do not add it to the catalog above, do not try to start it with docker, and do not report it missing here — its status belongs to `/installtools status`, its installation to `/install-edt-mcp`.
 
@@ -90,7 +90,7 @@ For each `id`, determine **TOOLS_OK** / **TOOLS_MISSING**:
 
 - **TOOLS_OK** — this server's tools are visible in the current session tool schema. Tool-name → server map (canon — `/doctor` Check 5 points here):
   - `syntaxcheck` (plus `syntaxcheck_file` when the sources mount is configured) — `1c-syntax-checker-mcp`;
-  - `templatesearch`, `recall` (plus `remember` when write tools are enabled) — `1c-templates-mcp`;
+  - `templatesearch`, `recall`, `remember` (memory write is ungated on current builds) — `1c-templates-mcp`;
   - `ssl_search` — `1c-ssl-mcp`;
   - `docinfo`, `docsearch`, `standards`, `formatspec` — `1C-docs-mcp`;
   - `metadatasearch`, `codesearch`, `search_function`, `get_module_structure` — `1c-code-metadata-mcp`;

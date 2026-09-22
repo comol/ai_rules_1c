@@ -100,7 +100,7 @@ When coverage is unknown, inspect existing mappings and the applicable bounded s
 - **Graph covering only some roots:** use it for those roots and their supported relationships. For an uncovered extension, go directly to its mapped code-metadata server and verified scope. Never infer that extension's behavior through the base-only graph or disable a working graph capability globally because one contour is uncovered.
 - **No usable index for the selected contour:** use native search in that contour's own folder immediately, explaining the gap once. Do not substitute a neighboring contour's index. A `null` code server does not exclude using a graph that demonstrably covers the contour; temporary unavailability does not erase an existing mapping.
 
-Use the first useful eligible tool from the operation skill, then the existing bounded reformulation/`grep=true` fallback. Reuse located paths and sufficient returned bodies. Coverage is checked when resolving the route; freshness is checked when absence, a source/index mismatch or the task depends on it. Do not add routine health calls or repeat discovery for every query.
+Use the first useful eligible tool from the operation skill, then the bounded reformulation/native fallback of `mcp-first-search.md`. Current Code tools select their file-scan fallback internally and accept no `grep` switch. Reuse located paths and sufficient returned bodies. Coverage is checked when resolving the route; freshness is checked when absence, a source/index mismatch or the task depends on it. Do not add routine health calls or repeat discovery for every query.
 
 ## Evidence and operation boundaries
 

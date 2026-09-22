@@ -12,17 +12,17 @@ Metadata and BSL code search, module navigation, forms, XSD schemas, XML validat
 
 > **Argument naming — do not invent.** Object-scoped tools `get_metadata_details`, `graph_dependencies`, and `inspect_form_layout` take **`object_name`** (`inspect_form_layout` also takes `form_name=""`). For `get_metadata_details`, reuse the canonical **`full_path` returned by this server**, e.g. `Документы.НачислениеЗарплаты`. Do not assume a Graph-style singular prefix (`Документ.`) resolves to the same indexed record: it can trigger a slower live-XML fallback. Forbidden hallucinations on these tools: `object_full_name`, `full_name`, `qualified_name`, `name`, `fullName`, `objectFullName`. Other tools use **different** parameter names — do not generalise `object_name` to all of them: `search_function` takes **`name`** (the routine name, not a qualified object), `get_module_structure` takes **`module_path`**, `get_method_call_hierarchy` takes **`method_name`**, `bsl_scope_members` takes **`context`**, `get_xsd_schema` and `verify_xml` take **`object_type`** (+ `xml_content` for `verify_xml`). Search inputs on `metadatasearch`, `codesearch`, `search_forms`, `helpsearch` go into **`query`** — not `q`, `text`, `prompt`, or `search_query`. If a Pydantic / schema validator rejects the call as `Missing required argument` or `Unexpected keyword argument`, re-read this file before retrying — do not paraphrase the parameter.
 
-## `grep=true` retry rule
+## Search fallback
 
-Use `grep=true` as a targeted substring retry **only after** indexed / semantic / exact search did not find enough and the query is likely to benefit from literal matching: exact identifier, query fragment, metadata path, event handler name, error text, or string literal.
+Current `codesearch`, `metadatasearch`, `search_function`, `helpsearch` and `search_forms` accept **no `grep` parameter**. The server chooses indexed retrieval or a file-scan fallback internally, for example while an index is unavailable or still building, and reports `search_layer: "grep"` when it uses that fallback. Do not send a guessed switch or treat every empty indexed result as an automatic full-source scan.
 
-Applies only to tools that expose a `grep` parameter: `codesearch`, `metadatasearch`, `search_function`, `helpsearch`, `search_forms`. If the query is conceptual or the first result is already sufficient, do not spend an extra call on `grep=true`.
+On a miss, reformulate once when that can help, then use scoped native literal search under `content/rules/mcp-first-search.md`. A different/older deployment may expose additional search controls; use them only if its live schema actually declares them. An internal scan's coverage and limits still bound absence claims.
 
 ## Metadata search
 
 | Tool | Parameters | Purpose | When to use |
 |---|---|---|---|
-| **metadatasearch** | `query`, `limit=5`, `object_type=""`, `names_only=false`, `grep=false` | Semantic / FTS search over metadata XML files. `object_type` filters by category (`Справочники`, `Документы`, etc.). `names_only=true` returns a compact list (`full_path`, `object_type`, `synonym`) instead of raw chunks. Prefer `names_only` to find objects, then use `get_metadata_details` for details | Metadata search, existence check, relationships. Use exact configuration names (`'Справочники.Контрагенты.Реквизиты'`) |
+| **metadatasearch** | `query`, `limit=5`, `object_type=""`, `names_only=false` | Semantic / FTS search over metadata XML files. `object_type` filters by category (`Справочники`, `Документы`, etc.). `names_only=true` returns a compact list (`full_path`, `object_type`, `synonym`) instead of raw chunks. Prefer `names_only` to find objects, then use `get_metadata_details` for details | Metadata search, existence check, relationships. Use exact configuration names (`'Справочники.Контрагенты.Реквизиты'`) |
 | **get_metadata_details** | `object_name`, `sections=""`, `tabular_part=""`, `detail_level`, `max_chars`, `max_items`, `cursor`, `include_provenance=false` | Paged structure: attributes with types, tabular parts, synonyms, properties. `sections` is a comma list of `attributes,tabular_parts,properties,predefined` (default all); `tabular_part="<name>"` returns the columns of one part; `include_provenance=true` adds `item_id` / `location` / `evidence_path` to every item (off by default — they were 75–83 % of the payload) | Known canonical `full_path`, e.g. `'Документы.НачислениеЗарплаты'`; choose the smallest sufficient projection: `sections="tabular_parts"` for «реквизиты табличных частей», `detail_level="outline"` (name + type only) for identification |
 
 ### Reading large metadata objects
@@ -33,14 +33,14 @@ Applies only to tools that expose a `grep` parameter: `codesearch`, `metadatasea
 4. The payload has `data.attributes` as a list and `data.tabular_parts` as a **map from tabular-part name to a list of column records**, not to an object with an `attributes` property. Column records contain `name`, `type` (`cfg:CatalogRef.Сотрудники`, `decimal`, `dateTime`; an empty `type` is a compound / defined type that the index could not flatten — say so, do not guess), and, in the full projection, `synonym`. The answer arrives once, as JSON text (no duplicated `structuredContent`). A projected page of one document fits the client's inline limit; if the client still dumps the answer to a file, that is a sign the projection or the bounds were too wide — narrow them instead of writing a parser: read the JSON once and extract the required fields in one bounded pass, with UTF-8 handling for Cyrillic.
 5. Preserve every requested field and its tabular-part association. Do not replace an exhaustive list with “same as X, except…” unless additions **and** removals were computed from complete lists. An empty/malformed type is unknown, not a type to infer from the name.
 6. Use only the projections the connected schema exposes (`sections`, `tabular_part`, `detail_level`, `include_provenance` on current builds; older builds have none of the first two and must be paged whole). Instructions cannot enable an unimplemented server feature; on a schema rejection drop the parameter rather than paraphrasing it.
-7. Tabular-part columns are this server's job. `1c-graph-metadata-mcp` supplies the tabular-part **names** (`get_object_dossier`) and warns `tabular_part_columns_not_indexed` when its generation has no columns; that warning routes here directly — one `get_metadata_details(..., sections="tabular_parts")` call, no further graph attempts.
+7. Current Graph generations can contain tabular-part columns. A generation built without them supplies only names and warns `tabular_part_columns_not_indexed`; that warning routes here directly — one `get_metadata_details(..., sections="tabular_parts")` call, no further graph attempts for the missing columns.
 
 ## Code search & navigation
 
 | Tool | Parameters | Purpose | When to use |
 |---|---|---|---|
-| **codesearch** | `query`, `limit=5`, `grep=false` | Hybrid search over BSL object modules and common modules | Find patterns, check usages, verify implementations. `query` — code, function name, or comment |
-| **search_function** | `name`, `exact=true`, `limit=10`, `grep=false` | Find BSL procedures/functions through a structural FTS index. `exact=true` — case-insensitive with auto-fallback to fuzzy | Find a specific procedure / function (`'ОбработкаПроведения'`, `'ПриСозданииНаСервере'`) |
+| **codesearch** | `query`, `limit=5` | Hybrid search over BSL object modules and common modules | Find patterns, check usages, verify implementations. `query` — code, function name, or comment |
+| **search_function** | `name`, `exact=true`, `limit=10` | Find BSL procedures/functions through a structural FTS index. `exact=true` — case-insensitive with auto-fallback to fuzzy | Find a specific procedure / function (`'ОбработкаПроведения'`, `'ПриСозданииНаСервере'`) |
 | **get_module_structure** | `module_path` | Full module structure: procedures, functions, regions, statistics | Understand a module before editing, overview of contents |
 | **get_method_call_hierarchy** | `method_name`, `direction="both"`, `depth=3` | Call graph: who calls (`callers`), what it calls (`callees`), or `both` | Call chains, impact analysis, hot paths |
 | **graph_dependencies** | `object_name`, `direction="both"`, `limit=50` | Dependency graph: `forward` (what it uses), `reverse` (who uses it), `both` | Impact analysis before refactoring, relationships between objects |
@@ -50,7 +50,7 @@ Applies only to tools that expose a `grep` parameter: `codesearch`, `metadatasea
 
 | Tool | Parameters | Purpose | When to use |
 |---|---|---|---|
-| **helpsearch** | `query`, `limit=5`, `grep=false` | Search over HTML help and user documentation | Help topics, purpose of metadata objects, functional descriptions |
+| **helpsearch** | `query`, `limit=5` | Search over HTML help and user documentation | Help topics, purpose of metadata objects, functional descriptions |
 
 ## Compact API
 
@@ -69,7 +69,7 @@ Use the compact tools for navigation under a strict response budget. They page w
 
 | Tool | Parameters | Purpose | When to use |
 |---|---|---|---|
-| **search_forms** | `query`, `limit=10`, `grep=false` | Search across all configuration forms (elements, attributes, commands) | Find existing forms as examples before generating new ones (`'Номенклатура'`, `'ФормаЭлемента'`) |
+| **search_forms** | `query`, `limit=10` | Search across all configuration forms (elements, attributes, commands) | Find existing forms as examples before generating new ones (`'Номенклатура'`, `'ФормаЭлемента'`) |
 | **inspect_form_layout** | `object_name`, `form_name=""` | Full element tree: hierarchy, attributes, commands, event handlers, bindings, visibility, accessibility | Study the layout before modification or as a reference for a new form |
 
 ## Ordinary forms — `Form.bin`

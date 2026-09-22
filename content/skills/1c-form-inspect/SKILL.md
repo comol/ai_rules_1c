@@ -13,18 +13,21 @@ Read-only. Creating or editing `Form.xml` is the `1c-metadata-manage` skill (`do
 
 | Need | Call | Arguments |
 |---|---|---|
-| Similar existing forms as examples | `search_forms` (code) | `query`, `limit=10`, `grep=false` |
+| Similar existing forms as examples | `search_forms` (code) | `query`, `limit=10` |
 | Element tree, bindings, commands, handlers | `inspect_form_layout` (code) | `object_name`, `form_name=""` (empty = default form) |
 | Form artifact with provenance | `get_form_artifact` (code) | `object_name`, `form_name` or `artifact_id`, `include_ranges=true` |
-| Graph view of a form | `get_form_structure` / `find_form_links` (graph) | `form_ref` from `resolve_graph_entity`, `include`, `max_depth`; `direction="both"`, `link_kinds` |
+| Graph view of a form | `get_form_structure` / `find_form_links` (graph) | Required `form_name`, optional `object_name`, `form_kind="any"` (`managed` / `ordinary` / `any`); explicit resolved `project_id` |
 | XML rules of the target | `get_xsd_schema` (code) | `object_type="Форма"` (also `Справочник`, `Документ`, `Роль`, `СКД`, `Макет`; English aliases accepted) |
 | On-disk format specification | `formatspec` (docs) | `name="1c-form-spec"` or `query="реквизиты формы"` |
+
+Graph form tools use names, not `form_ref`. Keep the returned base `project_id` bound to the current roots and verify the relevant layer (`content/rules/multi-contour-search.md`). `find_form_links` resolves event/command handlers in that form's own module; an identically named routine elsewhere is not the handler.
 
 ## Calls
 
 ```json
 {"tool": "search_forms", "args": {"query": "ФормаДокумента Реализация", "limit": 10}}
 {"tool": "inspect_form_layout", "args": {"object_name": "Документ.РеализацияТоваровУслуг", "form_name": "ФормаДокумента"}}
+{"tool": "get_form_structure", "args": {"project_id": "<resolved-project-id>", "object_name": "Документ.РеализацияТоваровУслуг", "form_name": "ФормаДокумента", "form_kind": "managed"}}
 {"tool": "get_xsd_schema", "args": {"object_type": "Форма"}}
 {"tool": "formatspec", "args": {"name": "1c-form-spec"}}
 ```

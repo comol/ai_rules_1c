@@ -1,6 +1,6 @@
 ---
 name: mcp-1c-tools
-description: "Router for the 1C MCP ecosystem — which server answers which need, which operation skill carries the exact calls, and the fallback chain. Load before selecting any 1c-*-mcp / 1C-*-mcp tool; the per-operation skills (1c-code-search, 1c-meta-info, 1c-impact, 1c-form-inspect, 1c-validate, 1c-platform-help, 1c-templates-memory, 1c-live-ib) hold parameter names and JSON call examples, docs/<server>.md hold rare modes and response formats."
+description: "Router for the 1C MCP ecosystem — which server answers which need, which operation skill carries the exact calls, and the fallback chain. Load before selecting any 1c-*-mcp / 1C-*-mcp tool; the per-operation skills (1c-code-search, 1c-meta-info, 1c-impact, 1c-form-inspect, 1c-validate, 1c-platform-help, 1c-templates-memory, 1c-live-ib) hold parameter names and JSON call examples; per-server references in docs/ hold rare modes and response formats."
 ---
 
 # MCP tools for 1C — router
@@ -39,9 +39,18 @@ Load the skill for the operation, not this whole catalogue. Each skill lists the
 | `1c-data-mcp` | Live-IB execution over `hs/mcp` | `docs/1c-data-mcp.md` |
 | `edt-mcp` *(conditional)* | Live EDT workspace | `docs/edt-mcp.md` |
 
+### Optional pre-alpha servers
+
+These are experimental projects, separate from the seven main servers above and not required by normal development gates. Client aliases vary; use the tools actually exposed in this session. Read their catalog only for a task that needs them; do not install, start a client, replay UI actions or write conversion files merely to check availability.
+
+| Project / runtime server name | Purpose | Details |
+|---|---|---|
+| `MCP_Test` / `1C Visual UI Test` | Testing knowledge base, scenario preparation, test-client processes and UI replay | `docs/mcp-test.md` |
+| `MCP_ConversionData20` / `1C Конвертация данных 2.0 — разработка правил обмена` | Metadata mapping and conversion-rule authoring/validation/export | `docs/mcp-conversion-data20.md` |
+
 ## Fallback chain
 
-**Project source** (code, metadata, usages, forms, file locations): within verified contour coverage, graph → mapped code-metadata → code-metadata with `grep=true` → scoped native `Grep` / `Glob` / `Read` with a one-line fallback note. Skip uncovered lanes; no eligible exposed index means native search in that contour immediately. Owner: `content/rules/mcp-first-search.md`; multiple roots, catalog/scope selectors and acceptance: `content/rules/multi-contour-search.md`.
+**Project source** (code, metadata, usages, forms, file locations): within verified contour coverage, graph → mapped code-metadata → scoped native `Grep` / `Glob` / `Read` after a bounded miss, with a one-line fallback note. Code chooses its file-scan fallback internally; current tools have no `grep` input. Skip uncovered lanes; no eligible exposed index means native search in that contour immediately. Owner: `content/rules/mcp-first-search.md`; multiple roots, catalog/scope selectors and acceptance: `content/rules/multi-contour-search.md`.
 
 **External knowledge** has no native equivalent: templates and memory → БСП → platform docs and standards → Напарник / ITS → validators → live IB, each only when its knowledge is needed.
 

@@ -39,6 +39,6 @@ A goal-matching hit is the base: paste its body, adapt names, filters, placement
 {"tool": "remember", "args": {"content": "Проект ЗУП: движения по регистру ТоварыНаСкладах формируются только в ОбщийМодуль.ПроведениеСервер, не в модуле документа (исправление пользователя 2026-09-18)"}}
 ```
 
-`remember` / `add_template` on the templates server exist only with write tools enabled and need the operator bearer header; `mutation_auth_required` means repair the client header, never retry blindly. A `stored=true` / `index_pending=true` answer is durable. No secrets or PII in notes. Report the `Memory:` evidence line.
+`remember` on the current templates server is always registered and needs no operator token or write-tools opt-in. `add_template` and `plugin_reload` remain conditional on enabled write tools and the operator bearer header. Use the live tool surface for older deployments; an absent `remember` or an actual authorization rejection follows the documented memory fallback, with no blind retry or token pre-flight. A `stored=true` / `index_pending=true` answer is durable. No secrets or PII in notes. Report the `Memory:` evidence line.
 
 Typed answers map to actions by code — `content/rules/mcp-policy.md → C. Server answers → actions`. Details: `content/skills/mcp-1c-tools/docs/1c-templates-mcp.md`, `content/skills/mcp-1c-tools/docs/memory-providers.md`.

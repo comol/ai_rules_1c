@@ -12,10 +12,10 @@ Code template library (`templatesearch`) and project vector memory (`remember` /
 | **recall** | `query` | Vector search over saved notes | At the start of any non-trivial task — recall earlier corrections, decisions, and project-specific quirks |
 | **plugin_state** | none | Plugin hooks/tables, errors and derived-index fingerprint | Diagnose extensions without mutating the server |
 | **add_template** | `description`, `code` (both ≥ 10 chars) | Persist and index a template | Conditional mutation; only on an explicit request |
-| **remember** | `content` (≥ 5 chars) | Save a free-form note to project memory (vector-indexed) | Conditional mutation; persist a durable project fact |
+| **remember** | `content` (≥ 5 chars) | Save a free-form note to project memory (vector-indexed) | Always registered; persist a durable project fact without an operator token |
 | **plugin_reload** | none | Atomically reload plugins | Conditional live mutation; only on an explicit operator request |
 
-`add_template`, `remember`, and `plugin_reload` are registered only when `MCP_ENABLE_WRITE_TOOLS=true` and `MCP_OPERATOR_TOKEN` is configured. Every mutation needs an `Authorization` bearer header constructed from that token in the MCP client configuration. A tool visible in `tools/list` but called without that header returns `mutation_auth_required`; do not retry blindly or expose the token in output. `plugin_reload` changes live behavior and can invalidate derived indexes, so routine searches must never invoke it.
+`remember` is always registered on the current server, independently of `MCP_ENABLE_WRITE_TOOLS` and `MCP_OPERATOR_TOKEN`, and needs no `Authorization` header. It still validates note content. Only `add_template` and `plugin_reload` are gated: they are registered when `MCP_ENABLE_WRITE_TOOLS=true` and a valid `MCP_OPERATOR_TOKEN` is configured, and their calls require the matching bearer header in the MCP client configuration. A gated call without that header returns `mutation_auth_required`; do not retry blindly or expose the token in output. `plugin_reload` changes live behavior and can invalidate derived indexes, so routine searches must never invoke it.
 
 ## Query formulation (`templatesearch` only)
 
@@ -105,8 +105,9 @@ The obligation is scoped to **goal-matching** templates only. Vector search alwa
 
 ## Notes on `remember`
 
-- Before calling `remember`, confirm that the tool is exposed and the current MCP connection carries the operator Authorization header. On `mutation_auth_required` or a missing tool, switch to the documented memory fallback instead of looping.
+- Before calling `remember`, confirm that the tool is exposed; do not require an operator token or Authorization pre-flight. The connected surface and actual answer govern compatibility with older deployments: if the tool is absent or the call returns `mutation_auth_required`, use the documented memory fallback instead of looping or assuming the current server requires authentication.
 - Write in English, one self-contained fact per note, preserving original 1C identifiers and affected object / module names as-is.
+- A `stored=true` / `index_pending=true` answer with an `id` is already durable even if `success=false`; indexing is pending, so do not repeat the write or create a fallback copy.
 - Do not save secrets or PII.
 - What to save, when to call `recall` / `remember`, the two hard gates (recall-first, correction-capture) and the `Memory:` line are owned by `content/rules/project-memory.md`; standing working conditions («I am benchmarking you», «objects from the task may not exist») are saved in the same turn like any correction.
 
@@ -114,4 +115,4 @@ The obligation is scoped to **goal-matching** templates only. Vector search alwa
 
 ## Availability check
 
-Check each capability separately. Template search is available when `templatesearch` is exposed. Memory read is available when `recall` is exposed. Memory write is available only when `remember` is exposed **and** an authenticated call succeeds; `mutation_auth_required` means the connection lacks the bearer header. The mere presence of `1c-templates-mcp` in `mcp-servers.json` proves none of these. If `recall` fails, or `remember` is unavailable/unauthorized, switch the affected operation to memory fallback mode (`content/rules/project-memory.md → Availability and fallback`).
+Check each capability separately. Template search is available when `templatesearch` is exposed. Memory read is available when `recall` is exposed. An exposed `remember` can be called without a token pre-flight; confirm persistence from its actual write result. The mere presence of `1c-templates-mcp` in `mcp-servers.json` proves none of these. For older deployments, follow the exposed schema and actual response. If `recall` fails, or `remember` is absent or definitively rejects the write, switch the affected operation to memory fallback mode (`content/rules/project-memory.md → Availability and fallback`). A timeout or ambiguous write is unconfirmed and must be reconciled before another write.

@@ -33,7 +33,7 @@ Routing of what gets saved: project **facts** → plain memory notes; **behaviou
 
 ## Availability and fallback
 
-When the selected provider has no write tool, is offline or definitively rejects the write (for example templates MCP returns `mutation_auth_required` without its bearer header), try the next connected writable provider in priority order and report the fallback. Continue searching any provider whose read tool still works. Do not loop on a failing call, expose credentials or silently bypass missing MCP tools with a new HTTP/CLI connection.
+Current templates MCP `remember` is always registered and requires no operator bearer token or write-tools opt-in; do not preflight it as an administrative mutation. On older deployments follow the exposed schema and an actual call result. When the selected provider has no write tool, is offline or definitively rejects the write (including an observed `mutation_auth_required` from an older deployment), try the next connected writable provider in priority order and report the fallback. Continue searching any provider whose read tool still works. Do not loop on a failing call, expose credentials or silently bypass missing MCP tools with a new HTTP/CLI connection.
 
 If no MCP provider can save the note, append even small particular-case corrections as **dated entries** directly to `memory.md` (eligibility is temporarily relaxed). Record the intended provider and migrate to the highest-priority available memory once it returns; remove the fallback entry only after durable storage is confirmed.
 

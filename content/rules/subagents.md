@@ -68,7 +68,7 @@ Subagent-specific: never resolve a material fork by silently picking one interpr
 
 ### MCP-first search
 
-Canon — `content/rules/mcp-first-search.md` (chain graph → code-metadata → `grep=true` retry → native tools; bounded priority, not a ban). Tool routing and parameter names — `content/skills/mcp-1c-tools/SKILL.md`.
+Canon — `content/rules/mcp-first-search.md` (chain graph → code-metadata → native tools after a bounded miss; bounded priority, not a ban). Tool routing and parameter names — `content/skills/mcp-1c-tools/SKILL.md`.
 
 Subagent-specific: the chain binds subagents exactly as it binds the parent; when you fall back to a native discovery tool, state in the report which MCP attempts were tried and why they missed. `1c-arch-reviewer` and `1c-code-reviewer` have no Shell by design — their `Grep` / `Glob` only read sources the parent already pointed at, and any wider search is requested via the parent or `1c-explorer`.
 
@@ -192,7 +192,7 @@ Reusable templates (fill in `<...>`; they slot into the matching subagent from t
 
 ```text
 Read-only impact analysis. Find all references to <object / procedure / attribute>.
-Follow the project MCP fallback chain (graph metadata → code metadata → grep=true retry → Grep).
+Follow the project MCP fallback chain (graph metadata → code metadata → scoped Grep after a bounded miss).
 Thoroughness: <quick | medium>. Do not edit files.
 Return: locations with file/line references and qualified 1C names, usage categories
 (call / query / RLS / form / subscription), risky dependencies, and gaps you could not verify.
