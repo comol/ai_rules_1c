@@ -1023,7 +1023,7 @@ if ($propsNode -and $objName -ne "(unknown)") {
 						}
 					}
 					if (-not $assigned) {
-						Report-Warn "6h. Default object form '$defaultForm' does not show '$($main.Name).Description', which is mandatory (DescriptionLength=$descLength, FillChecking=ShowError), and no module assigns it — the item cannot be written from this form"
+						Report-Warn "6h. Default object form '$defaultForm' does not show '$($main.Name).Description', which is mandatory (DescriptionLength=$descLength, FillChecking=ShowError), and no form, object or manager module assigns it — writing from this form fails unless the value is filled elsewhere"
 					}
 				}
 			}

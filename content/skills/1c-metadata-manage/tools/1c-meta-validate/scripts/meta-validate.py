@@ -1010,7 +1010,8 @@ if props_node is not None and obj_name != "(unknown)":
                 if not assigned:
                     report_warn(f"6h. Default object form '{default_form}' does not show '{main_name}.Description', "
                                 f"which is mandatory (DescriptionLength={desc_length}, FillChecking=ShowError), and no "
-                                f"module assigns it — the item cannot be written from this form")
+                                f"form, object or manager module assigns it — writing from this form fails unless the value "
+                                f"is filled elsewhere")
 
 if stopped:
     finalize()
