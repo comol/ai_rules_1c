@@ -1,6 +1,6 @@
 ---
 name: 1c-change-package
-description: "Deliver a 1C change as a package a human applies or reviews instead of writing it to the sources: a manual-implementation package for the Configurator («Найти» / «Заменить целиком на» pairs, attribute and form-element tables, post-apply checks, rollback) or a review diff (unified diff with context plus a «Сейчас / Предлагается» table for metadata and form properties). Use when the change cannot or must not be written by the agent — vendor-locked object, ordinary / binary form, object locked in the configuration repository by someone else, MCP-only access to the code — or when the user asks for it: «подготовь инструкцию для ручного внесения», «подготовь пакет ручного внесения», «что найти и на что заменить», «код для копирования в Конфигуратор», «покажи дифф», «покажи изменения», «сделай ревью изменения», «сравни текущий и новый код». Not a licence to change the configuration, the infobase or the repository."
+description: "Hand a 1C change to a human instead of editing sources: manual Configurator package («Найти» / «Заменить целиком на») or review diff. For vendor-locked, binary-form or MCP-only cases, or «инструкция для ручного внесения», «покажи дифф»."
 argument-hint: "[manual | review] [target path for the result file]"
 ---
 
