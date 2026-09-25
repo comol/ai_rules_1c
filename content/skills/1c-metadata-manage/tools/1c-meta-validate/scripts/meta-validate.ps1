@@ -4,7 +4,8 @@
 # Form.xml files carry the version of Configuration.xml (1e/6e); every
 # GeneratedType category is required and named exactly (2); Default* /
 # Auxiliary*Form references resolve and match the form role (6f); a form binds
-# Description / Code only when the length is positive (6g); names are unique
+# Description / Code only when the length is positive (6g), and the main object
+# form shows a mandatory Description nobody fills (6h, warning); names are unique
 # case-insensitively and across attributes, tabular sections, dimensions and
 # resources (8); InformationRegister forbids Periodicity and DefaultRecordSetForm
 # (12); a type spelled with an export folder name (cfg:Catalogs.X) is an error (16a).
@@ -987,6 +988,46 @@ if ($propsNode -and $declaredForms.Count -gt 0 -and $objName -ne "(unknown)") {
 			}
 		}
 		if ($check6gOk) { Report-OK "6g. Standard fields: no binding to a zero-length $(($zeroFields | ForEach-Object { $_[1] }) -join '/')" }
+	}
+}
+
+# 6h (warning): the main object form of an object with a mandatory Description
+# (DescriptionLength > 0, FillChecking ShowError — the platform default without a
+# StandardAttributes block) does not show <Main>.Description, and neither the form
+# module nor the object / manager module assigns it: the item cannot be written
+# from that form. A warning, not an error — the value may be filled elsewhere.
+if ($propsNode -and $objName -ne "(unknown)") {
+	$descLengthNode = $propsNode.SelectSingleNode("md:DescriptionLength", $ns)
+	$descLength = if ($descLengthNode) { $descLengthNode.InnerText.Trim() } else { "" }
+	$defaultObjectNode = $propsNode.SelectSingleNode("md:DefaultObjectForm", $ns)
+	$defaultObjectRef = if ($defaultObjectNode) { $defaultObjectNode.InnerText.Trim() } else { "" }
+	$ownPrefix = "$mdType.$objName.Form."
+	if ($descLength -match '^\d+$' -and [int]$descLength -gt 0 -and $defaultObjectRef.StartsWith($ownPrefix, [System.StringComparison]::Ordinal) -and ($declaredForms -ccontains $defaultObjectRef.Substring($ownPrefix.Length))) {
+		$stdBlock = $propsNode.SelectSingleNode("md:StandardAttributes", $ns)
+		$fillNode = $propsNode.SelectSingleNode("md:StandardAttributes/xr:StandardAttribute[@name='Description']/xr:FillChecking", $ns)
+		$fillChecking = if ($fillNode) { $fillNode.InnerText.Trim() } elseif ($stdBlock) { "" } else { "ShowError" }
+		$defaultForm = $defaultObjectRef.Substring($ownPrefix.Length)
+		$formRoot = Get-FormXmlRoot $defaultForm
+		if ($fillChecking -ceq "ShowError" -and $formRoot) {
+			$main = Get-FormMainAttribute $formRoot
+			if ($main -and $main.Name -and @($main.Types).Count -eq 1 -and @($main.Types)[0] -ceq "cfg:$($mdType)Object.$objName") {
+				$paths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+				foreach ($dp in $formRoot.GetElementsByTagName("DataPath", "http://v8.1c.ru/8.3/xcf/logform")) { [void]$paths.Add($dp.InnerText.Trim()) }
+				if (-not $paths.Contains("$($main.Name).Description")) {
+					$assigned = $false
+					foreach ($rel in @("Forms\$defaultForm\Ext\Form\Module.bsl", "Ext\ObjectModule.bsl", "Ext\ManagerModule.bsl")) {
+						$modulePath = Join-Path $objectDirPath $rel
+						if (Test-Path -LiteralPath $modulePath) {
+							$moduleText = [System.IO.File]::ReadAllText($modulePath, [System.Text.Encoding]::UTF8)
+							if ($moduleText -match '(?im)(?:\.\s*|^[ \t]*)(?:Наименование|Description)\s*=(?!=)') { $assigned = $true; break }
+						}
+					}
+					if (-not $assigned) {
+						Report-Warn "6h. Default object form '$defaultForm' does not show '$($main.Name).Description', which is mandatory (DescriptionLength=$descLength, FillChecking=ShowError), and no module assigns it — the item cannot be written from this form"
+					}
+				}
+			}
+		}
 	}
 }
 

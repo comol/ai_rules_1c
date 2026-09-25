@@ -15,7 +15,9 @@
 #        Form.xml files carry the version of Configuration.xml (1e/6e); every
 #        GeneratedType category is required and named exactly (2); Default* /
 #        Auxiliary*Form references resolve and match the form role (6f); a form
-#        binds Description / Code only when the length is positive (6g); names
+#        binds Description / Code only when the length is positive (6g), and
+#        the main object form shows a mandatory Description nobody fills (6h,
+#        warning); names
 #        are unique case-insensitively and across attributes, tabular sections,
 #        dimensions and resources (8); InformationRegister forbids Periodicity
 #        and DefaultRecordSetForm (12); a type spelled with an export folder name
@@ -356,6 +358,10 @@ export_folder_types = {
     "CalculationRegisters": "", "Constants": "", "DataProcessors": "", "Reports": "",
     "DocumentJournals": "",
 }
+
+# An assignment of the standard Description in BSL (6h): "<x>.Наименование =" or a
+# bare "Наименование =" at the start of a line in an object module.
+DESCRIPTION_ASSIGNMENT = re.compile(r"(?im)(?:\.\s*|^[ \t]*)(?:Наименование|Description)\s*=(?!=)")
 
 # Default*Form / Auxiliary*Form property -> role its form must have. Choice forms are
 # not role-checked: vendor configurations point DefaultChoiceForm at object forms.
@@ -969,6 +975,42 @@ if props_node is not None and declared_forms and obj_name != "(unknown)":
                     check6g_ok = False
         if check6g_ok:
             report_ok(f"6g. Standard fields: no binding to a zero-length {'/'.join(f for _, f in zero_fields)}")
+
+# 6h (warning): the main object form of an object with a mandatory Description
+# (DescriptionLength > 0, FillChecking ShowError — the platform default without a
+# StandardAttributes block) does not show <Main>.Description, and neither the form
+# module nor the object / manager module assigns it: the item cannot be written
+# from that form. A warning, not an error — the value may be filled elsewhere.
+if props_node is not None and obj_name != "(unknown)":
+    desc_length = text_of(find(props_node, "md:DescriptionLength"))
+    default_object_ref = text_of(find(props_node, "md:DefaultObjectForm"))
+    own_prefix = f"{md_type}.{obj_name}.Form."
+    if (re.match(r"^\d+$", desc_length) and int(desc_length) > 0
+            and default_object_ref.startswith(own_prefix)
+            and default_object_ref[len(own_prefix):] in declared_forms):
+        std_block = find(props_node, "md:StandardAttributes")
+        fill_node = find(props_node, "md:StandardAttributes/xr:StandardAttribute[@name='Description']/xr:FillChecking")
+        fill_checking = text_of(fill_node) if fill_node is not None else ("" if std_block is not None else "ShowError")
+        default_form = default_object_ref[len(own_prefix):]
+        form_root = form_xml_root(default_form)
+        if fill_checking == "ShowError" and form_root is not None:
+            main_name, main_types = form_main_attribute(form_root)
+            paths = {(dp.text or "").strip() for dp in form_root.iter(f"{{{LF_NS}}}DataPath")}
+            if main_name and main_types == [f"cfg:{md_type}Object.{obj_name}"] \
+                    and f"{main_name}.Description" not in paths:
+                assigned = False
+                for rel in (os.path.join("Forms", default_form, "Ext", "Form", "Module.bsl"),
+                            os.path.join("Ext", "ObjectModule.bsl"), os.path.join("Ext", "ManagerModule.bsl")):
+                    module_path = os.path.join(object_dir_path, rel)
+                    if os.path.isfile(module_path):
+                        with open(module_path, "r", encoding="utf-8-sig") as f:
+                            if DESCRIPTION_ASSIGNMENT.search(f.read()):
+                                assigned = True
+                                break
+                if not assigned:
+                    report_warn(f"6h. Default object form '{default_form}' does not show '{main_name}.Description', "
+                                f"which is mandatory (DescriptionLength={desc_length}, FillChecking=ShowError), and no "
+                                f"module assigns it — the item cannot be written from this form")
 
 if stopped:
     finalize()
