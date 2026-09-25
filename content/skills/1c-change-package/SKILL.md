@@ -1,6 +1,6 @@
 ---
 name: 1c-change-package
-description: "Hand a 1C change to a human instead of editing sources: manual Configurator package («Найти» / «Заменить целиком на») or review diff. For vendor-locked, binary-form or MCP-only cases, or «инструкция для ручного внесения», «покажи дифф»."
+description: "Hand a 1C change to a human instead of editing sources: manual Configurator package («Найти» / «Заменить целиком на») or review diff. For vendor-locked, binary-form or MCP-only cases, or «ручное внесение», «покажи дифф»."
 argument-hint: "[manual | review] [target path for the result file]"
 ---
 
