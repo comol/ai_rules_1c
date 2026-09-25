@@ -65,6 +65,8 @@ Do not include in the delivery summary:
 - thanks, apologies, introductions, conclusions;
 - markdown sections added "for structure" with no content.
 
+**Package instead of an edit.** When a person must apply the change (vendor lock kept, ordinary form, repository lock held by someone else, MCP-only sources) or the user asks for a diff / review, the deliverable is the package of `content/skills/1c-change-package/SKILL.md`.
+
 ## Anti-patterns
 
 - **Skipping Gate 1** "because the edit was tiny" — `syntaxcheck` is the cheapest gate; skipping it never saves time.
