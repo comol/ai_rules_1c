@@ -584,6 +584,69 @@ Register-Case 'form-compile: a standalone handlers map produces the event, confl
     }
 }
 
+Register-Case 'form-validate: version, owner type, folder type, handlers and conversion context' {
+    param($Work)
+    # form-validate v1.10 checks 1, 12, 12b, 13 and 14 on a form-add scaffold. BSL
+    # is written in English keywords so this file stays pure ASCII.
+    $FormValidate = Join-Path $ToolsDir '1c-form-validate\scripts\form-validate.ps1'
+    Copy-Fixture 'config-dump' $Work "`n"
+    $target = Join-Path $Work 'Catalogs\TestCatalog.xml'
+    $bom = New-Object System.Text.UTF8Encoding($true)
+    $formsDir = Join-Path $Work 'Catalogs\TestCatalog\Forms'
+    foreach ($name in @('Main', 'Other')) {
+        $run = Invoke-Tool $FormAdd @('-ObjectPath', $target, '-FormName', $name, '-Purpose', 'Object') $Work
+        Assert-Equal 0 $run.ExitCode "form-add $name (stderr: $($run.StdErr))"
+    }
+    $formXml = Join-Path $formsDir 'Main\Ext\Form.xml'
+    $modulePath = Join-Path $formsDir 'Main\Ext\Form\Module.bsl'
+    $pristineForm = (Get-FileFacts $formXml).Text
+    $validate = {
+        param([string]$FormText, [string]$ModuleText)
+        [System.IO.File]::WriteAllText($formXml, $FormText, $bom)
+        [System.IO.File]::WriteAllText($modulePath, $ModuleText, $bom)
+        $run = Invoke-Tool $FormValidate @('-FormPath', $formXml) $Work
+        return [pscustomobject]@{ ExitCode = $run.ExitCode; Text = "$($run.StdOut)$($run.StdErr)" }
+    }
+    $withEvent = $pristineForm -replace '<ChildItems/>', "<Events>`n`t`t<Event name=`"OnOpen`">OnOpenHandler</Event>`n`t</Events>`n`t<ChildItems/>"
+    $clientHandler = "&AtClient`nProcedure OnOpenHandler(Cancel)`nEndProcedure`n"
+
+    $ok = & $validate $withEvent $clientHandler
+    Assert-Equal 0 $ok.ExitCode "a matching handler was rejected: $($ok.Text)"
+    Assert-True ($ok.Text -notmatch '\[WARN\]') "a matching handler was warned about: $($ok.Text)"
+
+    $missing = & $validate $withEvent "&AtClient`nProcedure Unrelated()`nEndProcedure`n"
+    Assert-Equal 0 $missing.ExitCode "a missing handler must stay a warning: $($missing.Text)"
+    Assert-True ($missing.Text -match '\[WARN\]\s+13\..*not found') "no warning for a missing handler: $($missing.Text)"
+
+    $duplicate = & $validate $withEvent ($clientHandler + "`n" + $clientHandler)
+    Assert-True ($duplicate.ExitCode -ne 0) "a duplicate handler was accepted: $($duplicate.Text)"
+    Assert-True ($duplicate.Text -match '\[ERROR\] 13\..*declared 2 times') "no error for a duplicate handler: $($duplicate.Text)"
+
+    $conversion = & $validate $withEvent ($clientHandler + "`n&AtClient`nProcedure Convert()`n`tValue = FormAttributeToValue(`"Object`");`nEndProcedure`n")
+    Assert-True ($conversion.ExitCode -ne 0) "a client-side FormAttributeToValue was accepted: $($conversion.Text)"
+    Assert-True ($conversion.Text -match '\[ERROR\] 14\.') "no error for a client-side conversion: $($conversion.Text)"
+    $serverConversion = & $validate $withEvent ($clientHandler + "`n&AtServer`nProcedure Convert()`n`tValue = FormAttributeToValue(`"Object`");`nEndProcedure`n")
+    Assert-Equal 0 $serverConversion.ExitCode "a server-side FormAttributeToValue was rejected: $($serverConversion.Text)"
+
+    $version = & $validate ($pristineForm -replace 'version="2\.17"', 'version="2.20"') ''
+    Assert-True ($version.ExitCode -ne 0) "a Form.xml version different from Configuration.xml was accepted: $($version.Text)"
+    Assert-True ($version.Text -match 'differs from Configuration\.xml') "no version diagnostic: $($version.Text)"
+
+    $owner = & $validate ($pristineForm -replace 'cfg:CatalogObject\.TestCatalog', 'cfg:CatalogObject.OtherCatalog') ''
+    Assert-True ($owner.ExitCode -ne 0) "the default object form with a foreign main attribute was accepted: $($owner.Text)"
+    Assert-True ($owner.Text -match '\[ERROR\] 12b\.') "no 12b diagnostic: $($owner.Text)"
+
+    $folder = & $validate ($pristineForm -replace '</Attributes>', "`t<Attribute name=`"Extra`" id=`"2`">`n`t`t`t<Type>`n`t`t`t`t<v8:Type>cfg:Catalogs.TestCatalog</v8:Type>`n`t`t`t</Type>`n`t`t</Attribute>`n`t</Attributes>") ''
+    Assert-True ($folder.ExitCode -ne 0) "cfg:Catalogs.TestCatalog was accepted: $($folder.Text)"
+    Assert-True ($folder.Text -match 'export folder name') "no export-folder diagnostic: $($folder.Text)"
+
+    # The second form is not a default form: a foreign main attribute is legitimate there.
+    $otherXml = Join-Path $formsDir 'Other\Ext\Form.xml'
+    [System.IO.File]::WriteAllText($otherXml, ((Get-FileFacts $otherXml).Text -replace 'cfg:CatalogObject\.TestCatalog', 'cfg:CatalogObject.OtherCatalog'), $bom)
+    $nonDefault = Invoke-Tool $FormValidate @('-FormPath', $otherXml) $Work
+    Assert-Equal 0 $nonDefault.ExitCode "a non-default form with another main attribute was rejected: $($nonDefault.StdOut)"
+}
+
 # ---------------------------------------------------------------- B. meta-compile
 
 Register-Case 'meta-compile: default position appends after the last object of the type' {
