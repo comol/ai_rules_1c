@@ -53,6 +53,12 @@ All typical form modifications are performed **programmatically**, not visually.
 ### Form Commands
 
 - When creating commands that modify data — enable "Modifies stored data" flag.
+- Do not add custom «Записать» / «Провести» / «Провести и закрыть» commands to an object form. The form's `AutoCommandBar` supplies the standard write and post commands when the main attribute is `Объект` (object form) or `Запись` (register record form); a custom copy only duplicates them. Posting logic belongs to the object module: `ОбработкаПроведения` and `ПередПроведением` are object-module events, not form events — the form has `ПередЗаписью` / `ПередЗаписьюНаСервере` / `ПриЗаписиНаСервере` / `ПослеЗаписи`.
+
+### Main attribute and standard commands
+
+- Object fields are bound as `Объект.<Имя>` (`Запись.<Имя>` in an information-register record form). Never create a form attribute with the same name as an object field to «show» it: the value lives only in the form, never reaches the object, and is lost on write.
+- A register record form keeps its standard «Записать» / «Записать и закрыть» only while its main attribute is `Запись` of type `InformationRegisterRecordManager.<Имя>` with `SavedData=true`; flat form attributes in its place remove the object semantics together with those commands. `form-add` creates exactly that main attribute; `form-validate` check 12b rejects a default object / record form whose main attribute belongs to another object.
 
 ## Companion rules
 

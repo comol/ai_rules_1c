@@ -28,6 +28,12 @@ Router for query work: load it first, then only the companions the table selects
 5. **Temp-table / union checklist** for every multi-batch query: each temp table later used in a `СОЕДИНЕНИЕ` / `ОБЪЕДИНИТЬ` / `В (ВЫБРАТЬ …)` has `ИНДЕКСИРОВАТЬ ПО` on its join keys (the 2–3 most selective fields); no `РАЗЛИЧНЫЕ` inside `ОБЪЕДИНИТЬ` operands or on top of `СГРУППИРОВАТЬ ПО`; correlated subqueries replaced by an indexed temp table + join; virtual-table periodicity matches the join keys; a virtual table joined directly only when its parameters already narrow it (`content/skills/1c-metadata-manage/docs/query-optimization.md → Joins with Virtual Tables`).
 6. **Smoke-check the finished text** — `validatequery` (`1c-data-mcp`) on every query before it lands in a module or a DCS scheme, when the server is exposed and the connected IB is a dev / test base (`verification-gates.md → Gate 3a`); mandatory right after a non-deterministic `rewrite_1c_code` / `modify_1c_code` output.
 
+## Virtual-table parameters
+
+- **The condition is one argument.** `СрезПоследних(&Период, Организация = &Организация И Валюта = &Валюта)` — predicates are joined with `И`; a comma after the period starts the *next* parameter, it is not a shorthand for `И` (`Остатки(&Момент, Склад = &Склад, Номенклатура = &Номенклатура)` is wrong).
+- **`СрезПервых` / `СрезПоследних` exist only for periodic information registers** (`InformationRegisterPeriodicity` other than `Nonperiodical`); a non-periodic register is read as a plain table. Check the periodicity in the metadata card before writing the slice.
+- **Resource fields of a virtual table are derived names** — `КоличествоОстаток`, `СуммаОборот`, `КоличествоНачальныйОстаток`, `КоличествоПриход` / `КоличествоРасход` — not the resource name itself. Take them from the register's metadata card (`get_metadata_details` / `get_object_dossier`, the virtual tables and their fields when the card lists them); never guess the suffix.
+
 ## Load order
 
 `query-design.md` → `standards(name="dev-standards-architecture") §3 → "Queries"` (hard rules) → `content/skills/1c-metadata-manage/docs/query-writing.md` **or** `content/skills/1c-metadata-manage/docs/query-optimization.md` (how-to) → `standards(name="anti-patterns")` (only when reviewing / fixing).
