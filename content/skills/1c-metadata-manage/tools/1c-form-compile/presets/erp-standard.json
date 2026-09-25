@@ -24,7 +24,10 @@
       "bspGroup": true
     },
     "properties": {
-      "autoTitle": false
+      "autoTitle": false,
+      "autoTime": "CurrentOrLast",
+      "usePostingMode": "Auto",
+      "repostOnWrite": true
     }
   },
 

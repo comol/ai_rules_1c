@@ -1,5 +1,8 @@
-﻿# form-add v1.11 — Add managed form to 1C config object
+﻿# form-add v1.12 — Add managed form to 1C config object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: -FormName must be a 1C identifier (refused with exit 2 before any path
+# or XPath is built from it), and the object form of an information register
+# names its RecordManager main attribute "Запись", as the Configurator does.
 param(
 	[Parameter(Mandatory)]
 	[string]$ObjectPath,
@@ -192,6 +195,17 @@ function Detect-FormatVersion([string]$dir) {
 		$d = $parent
 	}
 	return "2.17"
+}
+
+# --- Фаза 0: имя формы — идентификатор 1С ---
+# The name becomes a file name, a directory name and an XPath literal below, so it
+# is checked before any of them is built: path separators, ".." or a quote would
+# otherwise escape the Forms directory or break the XPath. Same allowlist as
+# remove-form.ps1 (Latin / Cyrillic letters, digits, underscore, not starting
+# with a digit, up to 128 characters); \z so a trailing newline is not accepted.
+if ($FormName -cnotmatch '^[A-Za-z_А-яЁё][0-9A-Za-z_А-яЁё]{0,127}\z') {
+	[Console]::Error.WriteLine("Недопустимое имя формы (-FormName): '$FormName'. Ожидается идентификатор 1С (латиница или кириллица, цифры и подчёркивание, не начинается с цифры, до 128 символов).")
+	exit 2
 }
 
 # --- Фаза 1: Определение типа объекта ---
@@ -428,8 +442,9 @@ if ($Purpose -eq "List" -or $Purpose -eq "Choice") {
 </Form>
 "@
 } else {
-	# Object — форма объекта
-	$mainAttrName = "Объект"
+	# Object — форма объекта. У регистра сведений главный реквизит менеджера записи
+	# называется «Запись», как в формах записи Конфигуратора.
+	$mainAttrName = if ($objectType -eq "InformationRegister") { "Запись" } else { "Объект" }
 
 	# Маппинг типа объекта на тип реквизита
 	$attrTypeMap = @{
