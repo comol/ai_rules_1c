@@ -447,16 +447,26 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-validate
 | # | Check | Severity |
 |---|-------|----------|
 | 1 | XML well-formedness + root structure | ERROR |
-| 2 | InternalInfo / GeneratedType | ERROR / WARN |
+| 1e | Root `version` equals `Configuration.xml` (when one is found above the object) | ERROR |
+| 2 | InternalInfo / GeneratedType — every category of the kind present, name exactly `<Type><Category>.<Name>` | ERROR / WARN |
 | 3 | Properties — Name, Synonym | ERROR / WARN |
 | 4 | Properties — enum property values | ERROR |
 | 5 | StandardAttributes | ERROR / WARN |
 | 6 | ChildObjects — allowed element types | ERROR |
+| 6a–6d | Form registrations — scalar reference, descriptor on disk, parseable, same name | ERROR |
+| 6e | Form descriptors and `Ext/Form.xml` carry the `Configuration.xml` version | ERROR |
+| 6f | `Default*Form` / `Auxiliary*Form` — `<Kind>.<Name>.Form.<Form>` of a declared form (or an existing `CommonForm`); object, folder, record and list slots point at a form of that role | ERROR |
+| 6g | A form of the object binds `Description` / `Code` only when `DescriptionLength` / `CodeLength` > 0 | ERROR |
+| 6h | The default object form shows a mandatory `Description` (length > 0, `ShowError`) or some module assigns it | WARN |
 | 7 | Attributes/Dimensions/Resources — UUID, Name, Type | ERROR |
-| 8 | Name uniqueness | ERROR |
+| 8 | Name uniqueness — case-insensitive; attributes, tabular sections, dimensions and resources share one namespace | ERROR |
 | 9 | TabularSections — internal structure | ERROR / WARN |
 | 10 | Cross-property consistency | ERROR / WARN |
 | 11 | HTTPService/WebService — nested structure | ERROR |
+| 12 | Forbidden properties per kind (InformationRegister: `Periodicity`, `DefaultRecordSetForm`) | ERROR |
+| 16a | Type spelled with an export folder name (`cfg:Catalogs.X` instead of `cfg:CatalogRef.X`) | ERROR |
+
+Checks 13–19 are not listed individually: method references, journal columns, commands, reference-type existence, `MDObjectRef` shape, version-dependent properties, `LineNumberLength`. Both runtimes (`.ps1` / `.py`) print the same messages.
 
 Exit code: 0 = all checks passed, 1 = errors found.
 
