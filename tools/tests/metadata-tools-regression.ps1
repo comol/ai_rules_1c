@@ -1147,6 +1147,41 @@ Register-Case 'Invoke-1CEdit: a tool with its own -DryRun is previewed by that f
     Assert-DumpIdentical $before (Get-DumpFacts $src) 'the native dry-run wrote to the tree'
 }
 
+function Test-InsideGitRepo([string]$Dir) {
+    # git's own answer, so the case below knows it really runs outside a repo.
+    $ErrorActionPreference = 'Continue'
+    & git -C $Dir rev-parse --is-inside-work-tree 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+Register-Case 'Invoke-1CEdit: a clean preview outside git exits 0, a tool failure keeps its own code' {
+    # Ticket 09c04c3d: outside a repository Test-GitTracked leaves git's 128 in
+    # $LASTEXITCODE; role-info succeeds without an explicit exit, so the wrapper
+    # used to return that stale 128 for a run that printed its result.
+    param($work)
+    $ext = Join-Path $work 'Roles\ProbeRole\Ext'
+    New-Item -ItemType Directory -Path $ext -Force | Out-Null
+    Assert-True (-not (Test-InsideGitRepo $ext)) "precondition: $ext must not be inside a git repository"
+    $rights = Join-Path $ext 'Rights.xml'
+    [IO.File]::WriteAllText($rights, (
+        '<?xml version="1.0" encoding="UTF-8"?>' + "`n" +
+        '<Rights xmlns="http://v8.1c.ru/8.2/roles" version="2.17">' + "`n" +
+        "`t<object><name>Catalog.TestCatalog</name><right><name>Read</name><value>true</value></right></object>`n" +
+        '</Rights>' + "`n"), (New-Object Text.UTF8Encoding($true)))
+
+    $run = Invoke-Tool $InvokeEdit @('-Tool', 'role-info', '-Preview', '-NoDiff',
+        '-Scope', $rights, '-Path', $rights) $work
+    Assert-True ($run.StdOut -match 'copy backend') 'the preview did not take the copy backend'
+    Assert-True ($run.StdOut -match 'TestCatalog: Read') "the role rights were not printed (stderr: $($run.StdErr))"
+    Assert-Equal 0 $run.ExitCode 'a successful preview outside git'
+
+    $missing = Join-Path $ext 'Missing.xml'
+    $run = Invoke-Tool $InvokeEdit @('-Tool', 'role-info', '-Preview', '-NoDiff',
+        '-Scope', $missing, '-Path', $missing) $work
+    Assert-True ($run.StdOut -match 'File not found') "the failure probe did not reach the tool (stdout: $($run.StdOut))"
+    Assert-Equal 1 $run.ExitCode 'the tool own failure through the preview wrapper'
+}
+
 Register-Case 'support: meta-edit refuses add-template before any mutation' {
     param($work)
     Copy-Fixture 'config-dump' $work

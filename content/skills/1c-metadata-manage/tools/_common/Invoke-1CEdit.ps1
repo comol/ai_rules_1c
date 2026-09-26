@@ -367,6 +367,8 @@ $callArgs = ConvertTo-ParameterTable -Arguments @($ToolArgs) -Parameters $parame
 if ($Preview -and $nativeDryRun) {
     Write-Section "preview via the tool's own -DryRun ($Tool)"
     $callArgs['DryRun'] = [switch]$true
+    # Reset for the same reason as before the main run below.
+    $global:LASTEXITCODE = 0
     & $scriptPath @callArgs
     exit $LASTEXITCODE
 }
@@ -407,6 +409,11 @@ if ($Preview) {
 }
 
 Write-Section "run: $Tool"
+# A PowerShell tool that succeeds by falling off its end does not touch
+# $LASTEXITCODE, so it would still hold the last native code seen here - git's
+# 128 from Test-GitTracked outside a repository - and a clean run would exit
+# 128. Reset it so only the tool's own exit (or native call) can set it.
+$global:LASTEXITCODE = 0
 & $scriptPath @callArgs
 $toolExit = $LASTEXITCODE
 
