@@ -1,0 +1,199 @@
+{
+ "tools": [
+  {
+   "name": "templatesearch",
+   "description": "Searches the 1C code template or some additional context for a given query.\n\nArgs:\n    query: The search term or question in Russian, describing the desired functionality or some case\n\nReturns:\n    A formatted string with context or code. Each result is a bounded card\n    carrying the template's **ID**, its description and as much of its code\n    as the answer's byte budget allows; a card that could not carry the\n    whole template says how much it left out. Call get_template with that ID\n    for the whole source, which is never shortened.",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Generic wrapper for non-object return types.",
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "list_templates",
+   "description": "Returns one page of 1C code templates (id, description), ordered by id.\n\nThe template collection is larger than one tool result can carry, so this\nreturns a bounded page and says where the next one starts. Template source\ncode is not included — use get_template to retrieve the full code.\n\nArgs:\n    limit: How many templates to return, 1..200 (default 50)\n    offset: How many templates to skip, 0 or more (default 0)\n\nReturns:\n    JSON object {templates, total, returned, limit, offset, next_offset,\n    truncated}. `next_offset` is where the next page starts, or null when\n    this page reaches the end. `truncated` says the collection did not fit\n    in this response. When the collection is empty, {\"message\": ...}.",
+   "inputSchema": {
+    "properties": {
+     "limit": {
+      "default": 50,
+      "description": "Page size, 1 to 200 (default 50)",
+      "type": "integer"
+     },
+     "offset": {
+      "default": 0,
+      "description": "How many templates to skip, 0 or more (default 0)",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Generic wrapper for non-object return types.",
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_template",
+   "description": "Returns a 1C code template by its ID, including the source code.\n\nArgs:\n    template_id: Template identifier (numeric)\n\nReturns:\n    JSON object with fields: id, description, code",
+   "inputSchema": {
+    "properties": {
+     "template_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "template_id"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Generic wrapper for non-object return types.",
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "remember",
+   "description": "Saves a text note to the project memory for later retrieval.\n\nArgs:\n    content: Note text — a solution, observation, or important fact (minimum 5 characters)\n\nReturns:\n    JSON result: {success, message, id}. When the note was stored but the\n    search index has not caught up, `success` is false while `stored` and\n    `index_pending` are true and `id` names the note that exists — the write\n    is durable and must not be sent again.",
+   "inputSchema": {
+    "properties": {
+     "content": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "content"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Generic wrapper for non-object return types.",
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "recall",
+   "description": "Searches for relevant notes in the project memory by meaning (vector search).\n\nArgs:\n    query: Search query — what you need to recall (in Russian or English)\n\nReturns:\n    Formatted text with found notes or a message indicating no results",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Generic wrapper for non-object return types.",
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "plugin_state",
+   "description": "Reports the state of the plugin subsystem.\n\nReturns:\n    JSON with, per plugin file: the hooks and tables it declares, the\n    classification of each hook, whether each is enabled, the error that\n    disabled it, its failure count and the time accumulated in it — plus the\n    order the files run in, the current plugin epoch, the files that failed\n    to load, and whether the stored collections hold rows indexed under more\n    than one derived-state plugin set.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Generic wrapper for non-object return types.",
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  }
+ ]
+}

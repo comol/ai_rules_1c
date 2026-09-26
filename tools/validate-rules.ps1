@@ -662,6 +662,11 @@ if (Test-Path -LiteralPath $scenarioPath) {
         foreach ($prop in $corpus.servers.PSObject.Properties) { $servers[$prop.Name] = [string]$prop.Value }
         $gateIds = New-Object System.Collections.Generic.HashSet[string]
         $gateUse = @{}
+        if ($corpus.PSObject.Properties['opt_in_servers']) {
+            foreach ($alias in @($corpus.opt_in_servers)) {
+                if (-not $servers.ContainsKey([string]$alias)) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: opt_in_servers names unknown server key ' + $alias) }
+            }
+        }
         foreach ($gate in @($corpus.gates)) {
             $gateCount++
             $id = [string]$gate.id
@@ -701,6 +706,50 @@ if (Test-Path -LiteralPath $scenarioPath) {
                 $parts = ([string]$entry) -split ':', 2
                 if ($parts.Count -eq 2 -and $servers.ContainsKey($parts[0]) -and $skillsText -notmatch ('(?<![A-Za-z0-9_])' + [regex]::Escape($parts[1]) + '(?![A-Za-z0-9_])')) {
                     Add-Problem -Level warning -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' forbids ' + $entry + ', which no skill under content/skills documents')
+                }
+            }
+            # "mocks" exposes opt-in servers to the rendered eval case; every
+            # server needs a mock under tools/tests/eval-mocks and every tool it
+            # narrows to or turns into an error must be a tool of that mock.
+            if ($sc.PSObject.Properties['mocks'] -and $sc.mocks) {
+                foreach ($prop in @($sc.mocks.PSObject.Properties)) {
+                    if (-not $servers.ContainsKey($prop.Name)) {
+                        Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' mocks unknown server key ' + $prop.Name)
+                        continue
+                    }
+                    $serverMd = Join-Path $Root ('tools/tests/eval-mocks/' + $servers[$prop.Name] + '/_server.md')
+                    if (-not (Test-Path -LiteralPath $serverMd)) {
+                        Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' mocks ' + $prop.Name + ', which has no tools/tests/eval-mocks/' + $servers[$prop.Name] + '/_server.md')
+                        continue
+                    }
+                    $toolsLine = [regex]::Match([System.IO.File]::ReadAllText($serverMd, [System.Text.Encoding]::UTF8), '(?m)^tools: \[(.*)\]')
+                    $mockTools = @()
+                    if ($toolsLine.Success) { $mockTools = @($toolsLine.Groups[1].Value -split ',\s*') }
+                    $named = @()
+                    if ($prop.Value -and $prop.Value.PSObject.Properties['tools']) { $named += @($prop.Value.tools) }
+                    if ($prop.Value -and $prop.Value.PSObject.Properties['errors']) { $named += @($prop.Value.errors.PSObject.Properties | ForEach-Object { $_.Name }) }
+                    if ($prop.Value -and $prop.Value.PSObject.Properties['answers']) { $named += @($prop.Value.answers.PSObject.Properties | ForEach-Object { $_.Name }) }
+                    foreach ($mockTool in $named) {
+                        if ($mockTools -notcontains [string]$mockTool) {
+                            Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' mocks ' + $prop.Name + ':' + $mockTool + ', which its mock does not answer')
+                        }
+                    }
+                }
+            }
+            # "fixtures" names sets under tools/tests/eval-fixtures/sets; "env"
+            # holds the .dev.env values the task states, as plain strings.
+            if ($sc.PSObject.Properties['fixtures']) {
+                foreach ($set in @($sc.fixtures)) {
+                    if (-not (Test-Path -LiteralPath (Join-Path $Root ('tools/tests/eval-fixtures/sets/' + [string]$set)))) {
+                        Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' names fixture set ' + $set + ', which tools/tests/eval-fixtures/sets does not have')
+                    }
+                }
+            }
+            if ($sc.PSObject.Properties['env']) {
+                foreach ($prop in @($sc.env.PSObject.Properties)) {
+                    if ($prop.Name -notmatch '^[A-Z][A-Z0-9_]*$' -or $prop.Value -isnot [string]) {
+                        Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' env ' + $prop.Name + ' must be an upper-case .dev.env key with a string value')
+                    }
                 }
             }
         }

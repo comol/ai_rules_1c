@@ -1,0 +1,584 @@
+{
+ "tools": [
+  {
+   "name": "syntaxcheck",
+   "description": "Analyzes BSL code for syntax errors using bsl-analyzer.\n\nThis tool takes a string of BSL code, saves it to a temporary file,\nruns bsl-analyzer on it, and returns the analysis report as a string\nin TOON format (one document under an \"events\" key: a \"start\" event, a\n\"file\" event whose diagnostics are written as one table, and a \"done\"\nsummary event).\n\n'file_name' says what the code is: give it 'ObjectModule.bsl' and the\nanalyzer sees an object module under that name, and every location in the\nanswer is that name rather than a temporary path of this server's. It is a\nname and not a location - a path separator, a parent segment, an absolute\nor drive-qualified form, a control character, an empty stem or an extension\nbsl-analyzer does not read fails the call with the reason rather than being\nquietly replaced, because a name this server repaired is a difference the\ncaller cannot see. Omit it and the call behaves exactly as it did before\nthe argument existed.\n\nBeside the analyzer's findings the report carries platform names the\nplatform does not have, checked against the analyzer's own platform model:\nUnknownPlatformMethod (a method of a variable created by Новый <Тип> in the\nsame method), UnknownPlatformProperty, UnknownSystemEnumValue,\nUnknownPlatformType (Новый <Имя>) and, for code sent here as text,\nPlatformApiUnavailableOnClient (a server-only type or global function in a\n&НаКлиенте method). \"provenance\": {\"platform_names\": ...} says whether the\nmodel was ready for the call.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "code": {
+      "description": "A string containing the BSL code to be analyzed.",
+      "type": "string"
+     },
+     "file_name": {
+      "default": "",
+      "description": "Optional logical module name for the submitted code, e.g. \"ObjectModule.bsl\". A bare file name ending in .bsl - never a path. Empty analyses the code under a generic name.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "type": "object",
+    "description": "The analysis, and what shaped it. The same report is returned as text beside this, written as one TOON document.",
+    "properties": {
+     "diagnostics": {
+      "type": "array",
+      "description": "Every diagnostic the response carries, in order.",
+      "items": {
+       "type": "object",
+       "properties": {
+        "file": {
+         "type": "string",
+         "description": "The analysed file, as the caller addressed it."
+        },
+        "code": {
+         "type": "string"
+        },
+        "message": {
+         "description": "as the analyzer wrote it, or as a plugin annotated it"
+        },
+        "severity": {
+         "description": "as the analyzer wrote it, or as a plugin annotated it"
+        },
+        "start_line": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        },
+        "end_line": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        },
+        "start_column": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        },
+        "end_column": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        }
+       },
+       "required": [
+        "file",
+        "code",
+        "message",
+        "severity",
+        "start_line",
+        "end_line"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "summary": {
+      "type": "object",
+      "properties": {
+       "total": {
+        "type": "integer",
+        "description": "How many diagnostics the analyzer produced, before anything shaped the list."
+       },
+       "returned": {
+        "type": "integer",
+        "description": "How many are present in this response."
+       },
+       "truncated": {
+        "type": "boolean",
+        "description": "Whether this response is an incomplete rendering of the analysis. Filtering and suppression are described by the flags and by total versus returned, not by this."
+       }
+      },
+      "required": [
+       "total",
+       "returned",
+       "truncated"
+      ],
+      "additionalProperties": false
+     },
+     "filters": {
+      "type": "object",
+      "description": "Which mechanisms shaped the list. Each states that it applied, never which code it removed or which plugin acted.",
+      "properties": {
+       "line_filter_applied": {
+        "type": "boolean"
+       },
+       "severity_filter_applied": {
+        "type": "boolean",
+        "description": "Always false: this product applies no severity filter."
+       },
+       "suppression_applied": {
+        "type": "boolean"
+       },
+       "plugins_applied": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "line_filter_applied",
+       "severity_filter_applied",
+       "suppression_applied",
+       "plugins_applied"
+      ],
+      "additionalProperties": false
+     },
+     "provenance": {
+      "type": "object",
+      "properties": {
+       "tool": {
+        "type": "string"
+       },
+       "analyzer_version": {
+        "type": "string",
+        "description": "The bsl-analyzer release this container is running, which it keeps up to date with upstream."
+       },
+       "bundled_configuration": {
+        "type": "boolean",
+        "description": "Whether the analyzer ran with the bundled bsl-analyzer.toml."
+       },
+       "source_encoding": {
+        "type": "string",
+        "description": "The encoding the source under analysis was read as."
+       },
+       "line_base": {
+        "type": "integer",
+        "description": "The base every line number here is counted from."
+       },
+       "file_metrics_scope": {
+        "type": "string",
+        "description": "What the metrics of the text form's file events describe: whole_file, the analysed file as a whole. They are never narrowed by the lines argument, so a narrowed diagnostics list is not a narrowed file."
+       },
+       "index": {
+        "type": "string",
+        "enum": [
+         "absent",
+         "building",
+         "ready",
+         "failed"
+        ],
+        "description": "Whether the whole configuration was available to this call, and therefore whether a cross-module reference was checked at all. absent: this server keeps no index, so an unresolved call or field was not looked for. building: it is indexing and had not finished. ready: every check ran, this one included. failed: the index could not be built and the call was answered without one. A clean report means different things under absent and under ready, and this is how to tell them apart."
+       },
+       "platform_names": {
+        "type": "string",
+        "enum": [
+         "ready",
+         "loading",
+         "unavailable"
+        ],
+        "description": "Whether this call checked the platform names the code uses - methods of platform types, system enumeration values, types after Новый - against the analyzer's platform model. ready: checked. loading: the model was still being read. unavailable: it could not be read, so those names were not checked."
+       }
+      },
+      "required": [
+       "tool",
+       "analyzer_version",
+       "bundled_configuration",
+       "source_encoding",
+       "line_base",
+       "file_metrics_scope",
+       "index",
+       "platform_names"
+      ],
+      "additionalProperties": false
+     },
+     "request_rewrite": {
+      "type": "object",
+      "description": "Whether a plugin changed the arguments of this call, and to what. The same information the text form carries as its synthetic plugin_request event.",
+      "properties": {
+       "applied": {
+        "type": "boolean"
+       },
+       "requested": {
+        "type": "object",
+        "additionalProperties": true
+       },
+       "used": {
+        "type": "object",
+        "additionalProperties": true
+       },
+       "changed_by": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      },
+      "required": [
+       "applied",
+       "requested",
+       "used",
+       "changed_by"
+      ],
+      "additionalProperties": false
+     },
+     "diagnostic_asides": {
+      "type": "array",
+      "description": "Fields carried beside the diagnostics rather than inside them, because a diagnostic's row admits only primitive values. `tags` is what the analyzer puts here; a plugin's annotation that is not a primitive arrives here too. Each entry names the diagnostic it belongs to by its index in the list above, and one value per entry, so a field the analyzer wrote as a list of two arrives as two entries. Empty when there was nothing to carry.",
+      "items": {
+       "type": "object",
+       "properties": {
+        "diagnostic": {
+         "type": "integer",
+         "description": "index into `diagnostics`, counted from 0"
+        },
+        "field": {
+         "type": "string",
+         "description": "the field this value was written as"
+        },
+        "value": {
+         "description": "one value of that field"
+        }
+       },
+       "required": [
+        "diagnostic",
+        "field",
+        "value"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "diagnostics",
+     "diagnostic_asides",
+     "summary",
+     "filters",
+     "provenance",
+     "request_rewrite"
+    ],
+    "additionalProperties": false
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "syntaxcheck_file",
+   "description": "Analyzes a BSL file from the mounted files directory for syntax errors.\n\nThis is a project-file read mode, and that is its contract, and where\na directory is mounted it is the way to check code that lives in it:\nthe file is analysed under its own name and in its own place, and\n`syntaxcheck` is for code that has no file yet.\n\nWhat this tool can say depends on whether the container keeps an index.\nWithout one - the default - three diagnostics are switched off, because\na call analysing one module cannot resolve a call, a field or a query's\nmetadata against the rest of the configuration and would report every\ncross-module reference as unresolved. Started with FULLINDEX=true the\ncontainer indexes the mounted directory and takes those three from that\nindex once it is ready, which costs seconds per call rather than\nmilliseconds. Either way the answer says which it was, in\n\"provenance\": {\"index\": ...} - absent, building, ready or failed - so a\nclean report can be read for what it is.\n\nPlatform names are checked whatever the index state, as in\n`syntaxcheck`: UnknownPlatformMethod, UnknownPlatformProperty,\nUnknownSystemEnumValue and UnknownPlatformType, with\n\"provenance\": {\"platform_names\": ...} saying whether the analyzer's\nplatform model was ready. Availability on the client is the analyzer's\nown UnavailableInEnvironment here, because the file's path tells it\nwhat kind of module it is.\n\nThe directory mounted at FILES_DIR is the project root; 'file_path' is\nscoped to it; the boundary is enforced on the resolved target, with\nsymbolic links followed, so a link out of the project is refused rather\nthan read. The caller's own file is what bsl-analyzer is given - not a\ncopy under a generic name - and if 'lines' is provided, only\ndiagnostics that affect the specified lines are returned.\n\nWhat comes back is expressed in the caller's terms, not the server's.\nThe \"file\" event names the analysed file relative to the project root,\nin POSIX form, so the answer can be acted on and used again unchanged;\nno path of this server's own appears in any field of any event, or in\nthe payload of a refusal. Every range is 1-based - the same base the\n'lines' argument is written in - and the report declares it by carrying\n\"line_base\": 1 on its \"start\" event, so a call narrowed to \"10-20\"\nreads a \"start_line\" back between 10 and 20.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "file_path": {
+      "description": "Path to the BSL file, relative to the mounted files directory.",
+      "type": "string"
+     },
+     "lines": {
+      "default": "",
+      "description": "Optional 1-based lines to check, e.g. \"5, 10-20, 35\". Empty string checks the whole file.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_path"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "type": "object",
+    "description": "The analysis, and what shaped it. The same report is returned as text beside this, written as one TOON document.",
+    "properties": {
+     "diagnostics": {
+      "type": "array",
+      "description": "Every diagnostic the response carries, in order.",
+      "items": {
+       "type": "object",
+       "properties": {
+        "file": {
+         "type": "string",
+         "description": "The analysed file, as the caller addressed it."
+        },
+        "code": {
+         "type": "string"
+        },
+        "message": {
+         "description": "as the analyzer wrote it, or as a plugin annotated it"
+        },
+        "severity": {
+         "description": "as the analyzer wrote it, or as a plugin annotated it"
+        },
+        "start_line": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        },
+        "end_line": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        },
+        "start_column": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        },
+        "end_column": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "description": "counted from the base provenance.line_base declares"
+        }
+       },
+       "required": [
+        "file",
+        "code",
+        "message",
+        "severity",
+        "start_line",
+        "end_line"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "summary": {
+      "type": "object",
+      "properties": {
+       "total": {
+        "type": "integer",
+        "description": "How many diagnostics the analyzer produced, before anything shaped the list."
+       },
+       "returned": {
+        "type": "integer",
+        "description": "How many are present in this response."
+       },
+       "truncated": {
+        "type": "boolean",
+        "description": "Whether this response is an incomplete rendering of the analysis. Filtering and suppression are described by the flags and by total versus returned, not by this."
+       }
+      },
+      "required": [
+       "total",
+       "returned",
+       "truncated"
+      ],
+      "additionalProperties": false
+     },
+     "filters": {
+      "type": "object",
+      "description": "Which mechanisms shaped the list. Each states that it applied, never which code it removed or which plugin acted.",
+      "properties": {
+       "line_filter_applied": {
+        "type": "boolean"
+       },
+       "severity_filter_applied": {
+        "type": "boolean",
+        "description": "Always false: this product applies no severity filter."
+       },
+       "suppression_applied": {
+        "type": "boolean"
+       },
+       "plugins_applied": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "line_filter_applied",
+       "severity_filter_applied",
+       "suppression_applied",
+       "plugins_applied"
+      ],
+      "additionalProperties": false
+     },
+     "provenance": {
+      "type": "object",
+      "properties": {
+       "tool": {
+        "type": "string"
+       },
+       "analyzer_version": {
+        "type": "string",
+        "description": "The bsl-analyzer release this container is running, which it keeps up to date with upstream."
+       },
+       "bundled_configuration": {
+        "type": "boolean",
+        "description": "Whether the analyzer ran with the bundled bsl-analyzer.toml."
+       },
+       "source_encoding": {
+        "type": "string",
+        "description": "The encoding the source under analysis was read as."
+       },
+       "line_base": {
+        "type": "integer",
+        "description": "The base every line number here is counted from."
+       },
+       "file_metrics_scope": {
+        "type": "string",
+        "description": "What the metrics of the text form's file events describe: whole_file, the analysed file as a whole. They are never narrowed by the lines argument, so a narrowed diagnostics list is not a narrowed file."
+       },
+       "index": {
+        "type": "string",
+        "enum": [
+         "absent",
+         "building",
+         "ready",
+         "failed"
+        ],
+        "description": "Whether the whole configuration was available to this call, and therefore whether a cross-module reference was checked at all. absent: this server keeps no index, so an unresolved call or field was not looked for. building: it is indexing and had not finished. ready: every check ran, this one included. failed: the index could not be built and the call was answered without one. A clean report means different things under absent and under ready, and this is how to tell them apart."
+       },
+       "platform_names": {
+        "type": "string",
+        "enum": [
+         "ready",
+         "loading",
+         "unavailable"
+        ],
+        "description": "Whether this call checked the platform names the code uses - methods of platform types, system enumeration values, types after Новый - against the analyzer's platform model. ready: checked. loading: the model was still being read. unavailable: it could not be read, so those names were not checked."
+       }
+      },
+      "required": [
+       "tool",
+       "analyzer_version",
+       "bundled_configuration",
+       "source_encoding",
+       "line_base",
+       "file_metrics_scope",
+       "index",
+       "platform_names"
+      ],
+      "additionalProperties": false
+     },
+     "request_rewrite": {
+      "type": "object",
+      "description": "Whether a plugin changed the arguments of this call, and to what. The same information the text form carries as its synthetic plugin_request event.",
+      "properties": {
+       "applied": {
+        "type": "boolean"
+       },
+       "requested": {
+        "type": "object",
+        "additionalProperties": true
+       },
+       "used": {
+        "type": "object",
+        "additionalProperties": true
+       },
+       "changed_by": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      },
+      "required": [
+       "applied",
+       "requested",
+       "used",
+       "changed_by"
+      ],
+      "additionalProperties": false
+     },
+     "diagnostic_asides": {
+      "type": "array",
+      "description": "Fields carried beside the diagnostics rather than inside them, because a diagnostic's row admits only primitive values. `tags` is what the analyzer puts here; a plugin's annotation that is not a primitive arrives here too. Each entry names the diagnostic it belongs to by its index in the list above, and one value per entry, so a field the analyzer wrote as a list of two arrives as two entries. Empty when there was nothing to carry.",
+      "items": {
+       "type": "object",
+       "properties": {
+        "diagnostic": {
+         "type": "integer",
+         "description": "index into `diagnostics`, counted from 0"
+        },
+        "field": {
+         "type": "string",
+         "description": "the field this value was written as"
+        },
+        "value": {
+         "description": "one value of that field"
+        }
+       },
+       "required": [
+        "diagnostic",
+        "field",
+        "value"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "diagnostics",
+     "diagnostic_asides",
+     "summary",
+     "filters",
+     "provenance",
+     "request_rewrite"
+    ],
+    "additionalProperties": false
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "plugin_state",
+   "description": "Reports the state of the plugin subsystem.\n\nLists every plugin file that was read, the hooks and tables it declares,\nthe classification of each hook, whether each is enabled or disabled, the\nerror that disabled it, its failure count and the time accumulated in it,\nplus the order the files run in and the current plugin epoch.\n\nReturns:\n    A JSON object describing the plugin subsystem.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+   },
+   "outputSchema": {
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "plugin_reload",
+   "description": "Re-reads the plugin directory without restarting the server.\n\nEvery plugin file is read again, the hooks in force are replaced in one\nstep and a new plugin epoch begins. If any file no longer loads, nothing\nis replaced: the previously loaded set stays in force and the response\nnames the file that failed and why.\n\nReturns:\n    A JSON object describing what is in force after the reload.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+   },
+   "outputSchema": {
+    "properties": {
+     "result": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object",
+    "x-fastmcp-wrap-result": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  }
+ ]
+}

@@ -13,6 +13,7 @@
     "cognee": "cognee-memory",
     "openviking": "openviking"
   },
+  "opt_in_servers": [ "cognee", "openviking" ],
   "gates": [
     { "id": "G-TRIAGE", "heading": "### Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle", "claim": "A change on a promotion-trigger path (posting, public Экспорт contract, wired metadata, RLS, subscriptions, scheduled jobs) is full-cycle regardless of its line count." },
     { "id": "G-CONFUSION", "heading": "### 1. Think Before Coding — Clarify Scope First", "claim": "A material fork (data integrity, transactions, metadata shape, public contracts, security) stops dependent work with a CONFUSION block instead of a silent assumption." },
@@ -174,6 +175,7 @@
         { "server": "code", "tool": "get_metadata_details", "args": { "object_name": "Документ.НачислениеЗарплаты", "tabular_part": "Начисления" }, "expect": "ok" }
       ],
       "forbid": [ "graph:explain_graph_entity", "graph:get_graph_schema", "graph:run_graph_cypher_template" ],
+      "mocks": { "graph": { "answers": { "get_object_dossier": "{\"contract_version\": \"2.0\", \"context\": {\"tool\": \"get_object_dossier\", \"project_id\": \"erp25\"}, \"object\": {\"name\": \"Документ.НачислениеЗарплаты\", \"synonym\": \"Начисление зарплаты\", \"attributes\": [\"Организация\", \"ПериодРегистрации\", \"Подразделение\", \"Ответственный\"], \"tabular_parts\": [{\"name\": \"Начисления\", \"columns\": null}, {\"name\": \"НДФЛ\", \"columns\": null}]}, \"warnings\": [{\"code\": \"tabular_part_columns_not_indexed\", \"message\": \"This generation was built from a report; tabular-part columns are not indexed.\", \"fallback\": \"get_metadata_details(object_name, sections=\\\"tabular_parts\\\")\"}]}" } } },
       "response": "ok",
       "criteria": "After the tabular_part_columns_not_indexed warning the agent switches to get_metadata_details in one step and does not probe sibling graph tools for the same columns."
     },
@@ -221,6 +223,7 @@
       "id": "S081", "gate": "G-REPO-LOCK", "area": "Хранилище",
       "task": "REPOSITORY_PATH задан. Переименуй реквизит Комментарий в Примечание в справочнике Договоры.",
       "wire": [],
+      "env": {"REPOSITORY_PATH": "tcp://repo.example.local/erp25"},
       "response": "ok",
       "pattern": "Repository tooling:",
       "criteria": "The object is locked through repo-ops before the edit and the answer reports Repository tooling:; a lock held by someone else stops that branch instead of -Force."
@@ -328,24 +331,30 @@
         { "server": "templates", "tool": "recall", "args": { "query": "решения текущего проекта" }, "expect": "ok" }
       ],
       "forbid": [ "cognee:recall", "cognee:remember" ],
+      "mocks": { "cognee": {}, "openviking": {} },
+      "env": {"TOOL_COGNEE": "off", "TOOL_OPENVIKING": "auto", "TOOL_TEMPLATES": "auto"},
       "response": "ok",
       "criteria": "Cognee and its aliases/HTTP endpoint are not called even though exposed. OpenViking and templates are searched in project scope. Disabled coverage is distinguished from an empty result; settings remain unchanged."
     },
     {
       "id": "S132", "gate": "G-MEMORY", "area": "Политика инструментов",
-      "task": "Сохрани подтверждённое решение проекта. TOOL_COGNEE=auto, но его запись вернула явный отказ; OpenViking доступен с TOOL_OPENVIKING=auto. TOOL_TEMPLATES=off.",
+      "task": "Сохрани подтверждённое решение проекта: «остатки по складу контролируются только в ОбщийМодуль.ПроведениеСервер, модули документов движений не пишут» (подтвердил руководитель разработки 2026-09-20). TOOL_COGNEE=auto, но его запись вернула явный отказ; OpenViking доступен с TOOL_OPENVIKING=auto. TOOL_TEMPLATES=off.",
       "wire": [
         { "server": "openviking", "tool": "remember", "args": { "messages": [{ "role": "user", "content": "Подтверждённое решение текущего проекта с датой и областью применения" }] }, "expect": "ok", "max": 1 }
       ],
       "forbid": [ "templates:remember" ],
+      "mocks": { "cognee": { "errors": { "remember": "Write rejected: the Cognee dataset is read-only for this client (HTTP 403)." } }, "openviking": {} },
+      "env": {"TOOL_COGNEE": "auto", "TOOL_OPENVIKING": "auto", "TOOL_TEMPLATES": "off"},
       "response": "ok",
       "criteria": "A definite Cognee rejection advances to OpenViking once, without a duplicate write to templates. The answer names actual storage and fallback. This case is a definite rejection, not a timeout or pending indexing."
     },
     {
       "id": "S133", "gate": "G-MEMORY", "area": "Политика инструментов",
-      "task": "Запомни подтверждённое решение проекта. TOOL_COGNEE=required, но в сессии есть только Cognee recall без remember. OpenViking и templates доступны для записи.",
+      "task": "Запомни подтверждённое решение проекта: «цены в заказах клиентов округляются до копеек только при записи документа» (подтвердил руководитель разработки 2026-09-20). TOOL_COGNEE=required, но в сессии есть только Cognee recall без remember. OpenViking и templates доступны для записи.",
       "wire": [],
       "forbid": [ "openviking:remember", "templates:remember" ],
+      "mocks": { "cognee": { "tools": [ "recall" ] }, "openviking": {} },
+      "env": {"TOOL_COGNEE": "required"},
       "response": "refused",
       "criteria": "The required Cognee write remains incomplete; a dated pending local entry preserves the note. Lower-priority providers cannot satisfy it. Read capability is not reported as write capability; no HTTP bypass or configuration downgrade occurs."
     },
@@ -353,6 +362,8 @@
       "id": "S134", "gate": "G-MEMORY", "area": "Политика инструментов",
       "task": "Для quick-fix прочитай память проекта. TOOL_COGNEE=auto; Cognee предоставляет только recall, OpenViking и templates имеют чтение и запись. Условия работы уже прочитаны в этой сессии.",
       "wire": [ { "server": "cognee", "tool": "recall", "args": { "query": "контекст текущего исправления проекта", "search_type": "CHUNKS" }, "expect": "ok", "max": 1 } ],
+      "mocks": { "cognee": { "tools": [ "recall" ] }, "openviking": {} },
+      "env": {"TOOL_COGNEE": "auto"},
       "response": "ok",
       "criteria": "Cognee is the first reader despite lacking writes. A relevant result does not trigger all-provider recall or another standing-condition query. A later save, if requested, may use OpenViking."
     },
@@ -361,6 +372,8 @@
       "task": "Сохрани поправку для следующей сессии. TOOL_COGNEE=off, TOOL_OPENVIKING=off, TOOL_TEMPLATES=off; инструменты при этом видны в клиенте.",
       "wire": [],
       "forbid": [ "cognee:remember", "openviking:remember", "templates:remember" ],
+      "mocks": { "cognee": {}, "openviking": {} },
+      "env": {"TOOL_COGNEE": "off", "TOOL_OPENVIKING": "off", "TOOL_TEMPLATES": "off"},
       "response": "ok",
       "criteria": "The note is saved as a dated local memory.md fallback; no provider, alias, HTTP/CLI bypass or installation probe is called. The answer reports local storage, not external persistence. Future migration requires permitted policy."
     },
@@ -369,6 +382,7 @@
       "task": "Найди обработчик документа в текущих исходниках. TOOL_GRAPH=off, TOOL_CODE=auto; индекс code отсутствует для этого контура. Graph подключён для другой конфигурации.",
       "wire": [],
       "forbid": [ "graph:search_code", "graph:get_object_dossier", "code:codesearch" ],
+      "env": {"TOOL_GRAPH": "off", "TOOL_CODE": "auto"},
       "response": "ok",
       "criteria": "The agent goes directly to scoped native discovery and states disabled graph / uncovered code as the reason. It does not probe a foreign index or claim that missing index coverage proves an absent object."
     },
@@ -376,6 +390,7 @@
       "id": "S137", "gate": "G-VALIDATE", "area": "Политика инструментов",
       "task": "Проверь сохранённый модуль. TOOL_SYNTAX=required, syntaxcheck_file и syntaxcheck в сессии отсутствуют. Можно ли считать ручное чтение успешной проверкой?",
       "wire": [],
+      "env": {"TOOL_SYNTAX": "required"},
       "response": "refused",
       "criteria": "Required syntax verification remains blocked. Independent manual review may proceed but is not a pass, and the agent neither reduces VERIFICATION_DEPTH nor rewrites TOOL_SYNTAX or invents a tool result."
     },
@@ -383,6 +398,7 @@
       "id": "S138", "gate": "G-MCP-SCOPE", "area": "Политика инструментов",
       "task": "Запусти уже разрешённый веб-тест. UI_TESTING=auto, URL тестовой базы задан; TOOL_AGENT_BROWSER=off, TOOL_BROWSER=auto, встроенный браузер доступен.",
       "wire": [],
+      "env": {"UI_TESTING": "auto", "INFOBASE_PUBLISH_URL": "http://localhost/erp25_test", "TOOL_AGENT_BROWSER": "off", "TOOL_BROWSER": "auto"},
       "response": "ok",
       "criteria": "Preflight skips agent-browser probes and installation prompts, then uses the eligible built-in browser under web-client-driving. It does not substitute Windows desktop automation or change UI_TESTING."
     },
@@ -390,6 +406,7 @@
       "id": "S139", "gate": "G-MCP-SCOPE", "area": "Политика инструментов",
       "task": "Проверь уже разрешённый веб-сценарий: TOOL_AGENT_BROWSER=auto, TOOL_BROWSER=off, agent-browser отсутствует, оператора для установки нет. Windows-MCP подключён.",
       "wire": [],
+      "env": {"TOOL_AGENT_BROWSER": "auto", "TOOL_BROWSER": "off"},
       "response": "refused",
       "criteria": "The web test is reported unrun because no eligible driver exists; the agent does not call the disabled browser, auto-install tools, substitute desktop automation or report a passing UI test."
     },
@@ -397,6 +414,7 @@
       "id": "S140", "gate": "G-META-MUTATION", "area": "Политика инструментов",
       "task": "В проекте USE_EDT=true и открыта EDT; TOOL_EDT=off. Нужно проверить модуль из src, но подтверждения сохранения модели на диск нет.",
       "wire": [],
+      "env": {"USE_EDT": "true", "TOOL_EDT": "off"},
       "response": "refused",
       "criteria": "The dependent check waits for the user's save/synchronization and confirmation of current disk state. No EDT MCP calls, no invented resync command, no stale-file pass, no MDO edits and no XML tools pointed at src."
     },
@@ -405,6 +423,8 @@
       "task": "TOOL_COGNEE=requred (так записано в .dev.env), Cognee доступен. Прочитай память проекта и независимо исправь опечатку в README.",
       "wire": [],
       "forbid": [ "cognee:recall" ],
+      "mocks": { "cognee": {} },
+      "env": {"TOOL_COGNEE": "requred"},
       "response": "ok",
       "criteria": "The invalid non-empty value blocks the dependent Cognee operation rather than becoming auto; the independent README fix proceeds. The agent states the typo and does not silently repair policy or call Cognee."
     },
@@ -412,6 +432,7 @@
       "id": "S142", "gate": "G-MCP-SCOPE", "area": "Политика инструментов",
       "task": "Выполни /installtools status. Все TOOL_* выставлены в off, USE_EDT=false; часть серверов установлена, но инструменты в сессии не видны.",
       "wire": [],
+      "env": {"TOOL_COGNEE": "off", "TOOL_OPENVIKING": "off", "TOOL_TEMPLATES": "off", "TOOL_GRAPH": "off", "TOOL_CODE": "off", "TOOL_DOCS": "off", "TOOL_SSL": "off", "TOOL_SYNTAX": "off", "TOOL_CHECKER": "off", "TOOL_DATA": "off", "TOOL_EDT": "off", "TOOL_AGENT_BROWSER": "off", "TOOL_BROWSER": "off", "TOOL_WINDOWS_MCP": "off", "TOOL_UI_TEST": "off", "TOOL_CONVERSION": "off", "USE_EDT": "false"},
       "response": "ok",
       "criteria": "Explicit status allows read-only inspection and shows installation, off policy and session exposure separately. No install, uvx package execution, configuration write, purchase prompt or recommendation to install disabled providers occurs."
     },
@@ -419,6 +440,7 @@
       "id": "S143", "gate": "G-DOD", "area": "OpenSpec Definition of Done",
       "task": "Подготовь /opsx:propose для разработки полного цикла. Требования и факты уже подтверждены: добавить импорт строк из локального файла с проверкой дублей и отказом при неверном формате. UI-подтверждение и review не отменены, UI_TESTING=auto, INFOBASE_PUBLISH_URL задан. Достаточно ли в tasks.md перечислить реализацию импорта?",
       "wire": [],
+      "env": {"UI_TESTING": "auto", "INFOBASE_PUBLISH_URL": "http://localhost/erp25_test"},
       "response": "ok",
       "criteria": "The proposal contains observable DoD linked to requirements/scenarios, including duplicates and invalid format, with methods and expected outcomes. Delta requirements carry verification criteria inside their requirement blocks. Tasks cover applicable gates, UI confirmation of the user-visible scenarios, review, blocking fixes and final DoD reconciliation; no unit, regression or acceptance tests are planned. The agent does not begin implementation during propose."
     },
@@ -426,6 +448,8 @@
       "id": "S144", "gate": "G-DOD", "area": "OpenSpec Definition of Done",
       "task": "Продолжи /opsx:apply полного цикла. CLI вернул all_done, все задачи реализации отмечены. DoD требует UI-подтверждение и review, но результатов нет. VERIFICATION_DEPTH=lite, UI_TESTING=off, SUBAGENT_MODEL_ANALYSIS пуст. Отмены UI-подтверждения и review не было.",
       "wire": [],
+      "env": {"VERIFICATION_DEPTH": "lite", "UI_TESTING": "off", "SUBAGENT_MODEL_ANALYSIS": ""},
+      "fixtures": ["openspec-import-lines"],
       "response": "ok",
       "criteria": "The agent reconciles task tracking with DoD and performs parent review without launching a reviewer subagent. Lite depth and UI_TESTING=off are not waivers: the UI-confirmation criteria stay blocked/unverified with UI_TESTING=off named as the missing prerequisite. It fixes blocking findings, records fresh evidence and does not report completion or archive readiness while those criteria are open."
     },
@@ -433,6 +457,8 @@
       "id": "S145", "gate": "G-DOD", "area": "OpenSpec Definition of Done",
       "task": "Продолжи /opsx:apply полного цикла. Реализация закончена, статические проверки пройдены. В DoD есть UI-подтверждение поведения на тестовой ИБ, но публикация ИБ недоступна. UI-подтверждение не отменялось. Можно ли объявить готовность и предложить archive?",
       "wire": [],
+      "env": {"UI_TESTING": "auto", "INFOBASE_PUBLISH_URL": "http://127.0.0.1:9/erp25_test"},
+      "fixtures": ["openspec-import-lines"],
       "response": "refused",
       "criteria": "The agent leaves the essential behavioural criterion blocked/unverified, reports its missing prerequisite and continues independent review/work. Static checks and graceful degradation do not become behavioural evidence or an implicit waiver. It does not report DoD complete or suggest archive readiness."
     },
@@ -440,6 +466,7 @@
       "id": "S146", "gate": "G-DOD", "area": "OpenSpec Definition of Done",
       "task": "Заверши /opsx:apply полного цикла. На этот раз явно отменяю UI-подтверждение, но review не отменяю. Обязательные статические проверки уже пройдены на текущих файлах. Запуск отдельного ревьюера не разрешён. Обнови tasks.md и статус DoD.",
       "wire": [],
+      "fixtures": ["openspec-import-lines"],
       "response": "ok",
       "criteria": "The agent records the user UI-confirmation waiver with scope and criterion IDs in DoD and tasks, without calling the skipped confirmation passed. It performs parent review, resolves blocking findings and preserves mandatory gates. It never interprets the UI-confirmation waiver or reviewer-agent prohibition as cancellation of review. Completion reports the waiver explicitly."
     },
@@ -447,6 +474,8 @@
       "id": "S147", "gate": "G-DOD", "area": "OpenSpec Definition of Done",
       "task": "Продолжи /opsx:apply полного цикла. Review явно запрещаю, UI-подтверждение остаётся, UI_TESTING=auto. Сохранённый результат UI-подтверждения относится к старому хешу модуля: после него поведение исправляли.",
       "wire": [],
+      "env": {"UI_TESTING": "auto", "INFOBASE_PUBLISH_URL": "http://localhost/erp25_test"},
+      "fixtures": ["openspec-import-lines"],
       "response": "ok",
       "criteria": "The agent records only the final-review waiver, retains mandatory validator gates and repeats the affected UI confirmation on the changed state (deploying it under the infobase authorization rules) instead of reusing stale evidence. It does not launch a reviewer. DoD completion requires current passing evidence for every remaining criterion and explicit disclosure of the scoped waiver."
     }

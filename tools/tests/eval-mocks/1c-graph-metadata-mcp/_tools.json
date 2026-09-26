@@ -1,0 +1,4468 @@
+{
+ "tools": [
+  {
+   "name": "search_metadata",
+   "description": "    Structural search for 1C metadata objects by their exact or partial names, categories,\n    relationships, and properties.\n\n    Supports two query formats:\n    1. **JSON template** (PREFERRED — instant, deterministic, no LLM cost):\n       Pass a JSON string with \"operation\" and parameters, e.g.:\n         {\"operation\": \"list_attributes\", \"object_name\": \"Контрагенты\"}\n       Available operations: list_attributes, list_tabular_parts, object_structure,\n       list_objects_by_category, list_objects_by_name, list_forms, list_enum_values,\n       list_resources, list_dimensions, get_attribute_type, list_attributes_with_type.\n       ALWAYS prefer JSON templates when the query maps to a known operation.\n    2. **Free-text structural query** — answered from the fulltext and (when\n       available) semantic retrieval channels. No Cypher statement is generated\n       for it: arbitrary Cypher is not offered by this or any other tool. When\n       you need Cypher, use `run_graph_cypher_template`, which runs one of the\n       server's allowlisted read-only templates with your arguments as bound\n       query parameters and the project scope bound by the server;\n       `get_metadata_prompt` lists every template and every JSON operation.\n\n    IMPORTANT: This tool is for STRUCTURAL queries — when you know specific object names,\n    categories, or relationship patterns.\n\n    CRITICAL INSTRUCTION FOR LLM:\n    - Use object names in Russian WITHOUT category prefix: \"Контрагенты\", not \"Справочник.Контрагенты\".\n    - When the user asks for attributes/forms/structure of a known object, use JSON template format.\n    - For natural language queries, be specific: \"реквизиты справочника Контрагенты\", not \"покажи поля\".\n\n    Good queries:\n    - {\"operation\": \"list_attributes\", \"object_name\": \"Контрагенты\"}\n    - {\"operation\": \"list_objects_by_category\", \"category_name\": \"Документы\"}\n    - {\"operation\": \"list_objects_by_name\", \"object_name\": \"Выпуск\", \"category\": \"Документы\"}\n    - \"Где используется справочник Номенклатура\"\n    - \"Формы документа РеализацияТоваровУслуг\"\n\n    Parameter naming: handlers tolerate common aliases (e.g. name_pattern → object_name,\n    category → category_name, type_pattern → type_name) — но canonical имена надёжнее.\n    A parameter naming a concept the operation is not keyed by is REFUSED with an\n    error rather than guessed at: `{\"operation\": \"list_attributes_with_type\",\n    \"object\": \"Документ.Премия\"}` asks for attributes whose TYPE is that document.\n    For the attributes OF an object use list_attributes with object_name.\n\n    DO NOT use this tool for vague, conceptual, or semantic queries like:\n    - \"Найди объекты связанные с AI/LLM/нейросетями\"\n    - \"Какие объекты отвечают за продажи\"\n    For such queries use 'business_search' (semantic search by business descriptions)\n    or 'search_metadata_by_description' (search by synonyms, comments, descriptions).\n\n    Args:\n        query: JSON template string (preferred) OR structural natural language query\n               with specific Russian object names/categories/relationships.\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n\n    Returns:\n        A formatted string with the search results.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_metadata_prompt",
+   "description": "    Get the database description prompt used for generating Cypher queries.\n    Returns the system prompt that describes the Neo4j database schema and query examples.\n    When template mode is enabled, also includes the list of available template operations,\n    and always the allowlisted read-only Cypher templates run by run_graph_cypher_template.\n\n    Returns:\n        A string containing the database schema description and Cypher query examples.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "run_graph_cypher_template",
+   "description": "    Run one of the server's allowlisted read-only Cypher templates.\n\n    Arbitrary Cypher is not available: pass a template id and its arguments\n    instead. Call get_metadata_prompt to see the catalogue — every template,\n    its description, and the arguments it accepts.\n\n    Args:\n        template_id: id of an allowlisted template, e.g. 'object_attributes'.\n        arguments: template arguments by name, e.g. {\"object_name\": \"Контрагенты\"}.\n            Values are passed to Neo4j as query parameters and are never spliced\n            into the statement. Arguments named like the project scope are\n            refused: the scope of this call is bound by the server.\n\n    Returns:\n        The shared response envelope with one item per returned row.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "template_id": {
+      "type": "string"
+     },
+     "arguments": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "template_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "explain_graph_evidence",
+   "description": "    Show what one node or edge of the graph is grounded in.\n\n    Every answer names the source unit the claim was read from, the coordinates\n    inside it (file and line range, or XML property path), the exact hash of\n    that source, the extractor version that read it, the assertion type\n    (`declared`, `parsed`, `inferred`, `llm`) and a confidence. A relationship\n    may hold several independent proofs — declared in XML and exercised by a\n    call in BSL — and all of them are returned; none is ever discarded because\n    another disagrees with it.\n\n    Args:\n        ref: the subject reference of a node or edge, as returned in the\n            `subject.ref` field of any evidence answer. Use this to follow an\n            edge back to its proof.\n        label: node label, e.g. 'MetadataObject' or 'Routine'. Give this with\n            `key` instead of `ref` to ask about a node by its identity.\n        key: JSON object of the node's identity properties, e.g.\n            {\"name\": \"Контрагенты\", \"category_name\": \"Справочники\",\n             \"filename\": \"report.txt\"}.\n        include_inferred: pass false to exclude heuristic (`inferred`) and\n            model-proposed (`llm`) evidence, leaving only what a source states.\n        min_confidence: drop evidence below this confidence, 0 to 1.\n        include_closed: also return evidence that has been superseded or whose\n            source is gone. Off by default: a closed proof explains a past\n            answer, not the current graph.\n\n    Returns:\n        The shared response envelope; `items` holds one evidence record per\n        proof, strongest assertion first, and `data` reports whether the\n        subject is grounded at all and whether its proofs conflict.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "label": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "include_inferred": {
+      "default": true,
+      "type": "boolean"
+     },
+     "min_confidence": {
+      "default": 0.0,
+      "type": "number"
+     },
+     "include_closed": {
+      "default": false,
+      "type": "boolean"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "explain_path",
+   "description": "    Attach evidence to every step of a path through the graph.\n\n    A path presented as explained while one of its links rests on nothing is\n    exactly what this refuses to produce: a step with no proof is returned as\n    `grounded: false` and listed in `ungrounded`, so a caller can see which\n    link of the chain is unsupported rather than reading the whole path as\n    equally reliable.\n\n    Args:\n        path: JSON array of subject references, in order — the nodes and edges\n            the path traverses. Every evidence answer carries the reference of\n            its subject, and a path-finding tool returns them for each step.\n        include_inferred: pass false to exclude heuristic (`inferred`) and\n            model-proposed (`llm`) evidence from every step.\n        min_confidence: drop evidence below this confidence, 0 to 1.\n        include_closed: also consider evidence that has been superseded.\n\n    Returns:\n        The shared response envelope; `items` holds one entry per step with its\n        evidence, and `data.complete` says whether every step is grounded.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "path": {
+      "type": "string"
+     },
+     "include_inferred": {
+      "default": true,
+      "type": "boolean"
+     },
+     "min_confidence": {
+      "default": 0.0,
+      "type": "number"
+     },
+     "include_closed": {
+      "default": false,
+      "type": "boolean"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_objects_using_object",
+   "description": "    Find all metadata objects where the given object is used as a type reference\n    in their attributes, dimensions or resources (via USED_IN relationship).\n\n    Use this to answer questions like \"Где используется справочник Контрагенты?\".\n\n    Args:\n        object_name: Name of the metadata object: 'Контрагенты', or with its\n                     category prefix to keep only that category —\n                     'Справочник.Контрагенты' (also 'Справочники.', 'Catalog.').\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n\n    Returns:\n        Formatted list of objects that reference the given object.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_usages_of_object",
+   "description": "    Find specific attributes, dimensions and resources that reference the given metadata object,\n    including their owner object and full type information.\n\n    More detailed than find_objects_using_object: shows each individual attribute/dimension/resource\n    that has the object as its type, not just the owner objects.\n\n    Use this to answer questions like \"В каких реквизитах используется Контрагенты?\".\n\n    Args:\n        object_name: Name of the metadata object: 'Валюты', or with its\n                     category prefix to keep only that category —\n                     'Справочник.Валюты' (also 'Справочники.', 'Catalog.').\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n        limit: Deprecated and ignored. Page with `max_items` and `cursor`, as\n               for every tool; accepted only so an older call does not fail.\n        offset: Deprecated and ignored, see `limit`.\n\n    Returns:\n        Detailed list of attributes/dimensions/resources referencing the object, with owner and type info.\n        A long list is paged by the shared contract: a truncated response\n        carries a `cursor` for the next page.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "limit": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "offset": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_register_movement_docs",
+   "description": "    Find all documents that make movements (проводки / движения) into the given register.\n\n    Use this to answer: \"Какие документы делают движения по регистру Продажи?\"\n\n    Args:\n        register_name: Name of the register: 'Продажи', or with its category\n                       prefix to keep only that category —\n                       'РегистрНакопления.Продажи'.\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n\n    Returns:\n        List of documents that make movements into the register.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "register_name": {
+      "type": "string"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "register_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "trace_impact",
+   "description": "    Recursive impact analysis of a metadata object across the dependency graph.\n\n    Traverses USED_IN, DO_MOVEMENTS_IN and CALLS relationships to answer:\n    \"If I change this object, what else is affected?\" (downstream) or\n    \"What does this object depend on?\" (upstream).\n\n    Args:\n        object_name: Exact name of the metadata object (e.g. 'Контрагенты')\n        depth: Maximum traversal depth (1-5 for metadata relationships,\n            1-10 for CALLS; default 3)\n        direction: 'downstream' (who depends on me), 'upstream' (what I\n            depend on), or 'both'\n        relationship_types: Optional filter — list of relationship types\n            to traverse: 'USED_IN', 'DO_MOVEMENTS_IN', 'CALLS'.\n            Default: all three.\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n        form_kind: which 1C form model to include among the affected forms —\n            'ordinary', 'managed', or 'any' (default, both). A form is affected\n            when it belongs to the object or when one of its attributes points\n            at it, and each is listed with the model it is.\n        response_format: 'text' (default) for the depth-grouped listing, or\n            'compact_graph' for the subgraph in compact form — each node\n            described once with a stable `id`, each edge a tuple of two\n            positions in that node section plus its type. The compact form is\n            what the response budget is spent on: it reports `nodes_total`,\n            `edges_total` and a `cursor` that continues by periphery, and its\n            `id`s can be resolved in full with `fetch_graph_nodes`. It covers\n            relations between metadata objects (USED_IN, DO_MOVEMENTS_IN);\n            CALLS is a graph of routines and is available in the text form.\n\n    Returns:\n        Dependency tree grouped by depth with object names, categories,\n        relationship types and traversal paths — or, for 'compact_graph', the\n        node and edge sections of the subgraph.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "depth": {
+      "default": 3,
+      "type": "integer"
+     },
+     "direction": {
+      "default": "downstream",
+      "enum": [
+       "downstream",
+       "upstream",
+       "both"
+      ],
+      "type": "string"
+     },
+     "relationship_types": {
+      "default": null,
+      "items": {},
+      "type": "array"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "response_format": {
+      "default": "text",
+      "type": "string"
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "fetch_graph_nodes",
+   "description": "    Resolve the stable identifiers of a compact graph back into full nodes.\n\n    A compact graph answer (`trace_impact` with response_format='compact_graph')\n    describes each node once and carries an `id` for it. This is how that `id`\n    becomes everything the graph holds about the node, so nothing the compact\n    form left out is lost — it is one call away.\n\n    Identifiers are scoped: one issued for another project is refused. A\n    reference is not an authorisation.\n\n    Args:\n        node_ids: JSON array of node identifiers, e.g.\n            [\"<id from the nodes section>\", \"<another>\"].\n\n    Returns:\n        The shared response envelope; `items` holds one record per node that\n        still exists, with its label and all its properties, and `data.missing`\n        lists the identifiers that matched nothing — an identifier whose node\n        is gone is reported, not returned empty.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "node_ids": {
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "node_ids"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "resolve_graph_entity",
+   "description": "    Resolve a reference to one stable node id of this project.\n\n    Takes whatever an agent is actually holding — a UUID out of an export, an\n    FQN such as `Справочник.Контрагенты`, a qualified name reaching a routine or\n    an attribute, a 1C alias (`Синоним`), or a position in a source file — and\n    returns the identifier the rest of the graph tools take.\n\n    When the reference matches more than one node of this project, the answer is\n    a typed ambiguity: every candidate, plus the attributes whose values differ\n    between them, so the choice can be made without a second call. No \"best\"\n    candidate is picked. A node of another project is never a candidate, not\n    even when it is the only match — the same FQN legitimately exists in every\n    project of a database, and answering from the wrong one is silent.\n\n    Args:\n        reference: the string to resolve. Omit only when source_path and line\n            are given instead.\n        reference_kind: force one reading — 'uuid', 'fqn', 'qualified_name',\n            'alias', 'source_location', 'node_id'. Default 'auto' tries the\n            readings the string admits, most precise first, and the first\n            reading that matches anything decides the answer.\n        entity_kind: restrict to one kind: 'MetadataObject', 'Symbol' (a BSL\n            routine), 'Form', 'SourceUnit' (a source file) or 'Chunk'. The\n            fastest way to settle an ambiguity that spans kinds.\n        source_path: a source file, when resolving a position. 'path:120' in\n            `reference` means the same thing.\n        line: the 1-based line in that file.\n        form_kind: when the reference may name a form, restrict it to one 1C\n            model — 'ordinary', 'managed', or 'any' (default). It narrows\n            nothing but forms, and every form candidate states its own model.\n\n    Returns:\n        The shared response envelope. `items` holds the candidates — exactly one\n        when the reference resolved — and `data.status` is `resolved`,\n        `ambiguous` or `not_found`. `data.resolved.node_id` is the identifier to\n        pass on; `data.distinguishing` names the attributes that separate an\n        ambiguity's candidates. A candidate that is a form also carries\n        `form_kind`.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "reference": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "reference_kind": {
+      "default": "auto",
+      "type": "string"
+     },
+     "entity_kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "source_path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "line": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "explain_graph_entity",
+   "description": "    Explain one node of the graph: what it is, and what it is connected to.\n\n    Works for every kind of node a search or a traversal hands back —\n    `MetadataObject`, a BSL routine (`Symbol`), a `Form`, a source file\n    (`SourceUnit`) and an embedded `Chunk` — which is what makes a vector hit or\n    a step of an impact path explainable at all.\n\n    Relationships come back grouped by kind and direction, in a fixed order, and\n    each group is bounded: a node with thousands of edges of one kind cannot\n    crowd the rest of the card out. A group that did not fit reports its full\n    `total` and how much is `omitted`, and names the arguments that return it\n    whole (`relation_kind`, `direction`, `group_limit`) — so the remainder is\n    unrequested, never unreachable.\n\n    Every relationship carries what it rests on: the assertion type, the\n    confidence, the evidence id, and the coordinates — a line range in a BSL\n    module or a property path in an XML description. An edge nothing grounds is\n    returned with `grounded: false` rather than quietly presented as a fact.\n\n    Args:\n        reference: what to explain — a node id from `resolve_graph_entity`, or\n            any reference that tool accepts. An ambiguous reference returns the\n            same typed ambiguity instead of a card for a guessed node.\n        reference_kind: force one reading of the reference; see\n            `resolve_graph_entity`.\n        entity_kind: restrict resolution to one kind of node.\n        source_path: a source file, when explaining what is at a position.\n        line: the 1-based line in that file.\n        relation_kind: return only this relationship type, e.g. 'CALLS',\n            'USED_IN', 'HAS_FORM'. This is how an omitted group is read in full.\n        direction: 'both' (default), 'outgoing' or 'incoming'.\n        group_limit: how many relationships one group may return, up to the\n            server's edge limit.\n        include_inferred: pass false to drop heuristic (`inferred`) and\n            model-proposed (`llm`) proofs, leaving only what a source states.\n        min_confidence: drop evidence below this confidence, 0 to 1.\n\n    Returns:\n        The shared response envelope. `items` holds the relationships in card\n        order; `data.card` holds the node, its community and hotspot\n        attributes, and the per-group totals with what each group omitted.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "reference": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "reference_kind": {
+      "default": "auto",
+      "type": "string"
+     },
+     "entity_kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "source_path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "line": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "relation_kind": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "both",
+      "type": "string"
+     },
+     "group_limit": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "include_inferred": {
+      "default": true,
+      "type": "boolean"
+     },
+     "min_confidence": {
+      "default": 0.0,
+      "type": "number"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_graph_path",
+   "description": "    Explain how two exact entities are connected: the K shortest paths between them.\n\n    Answers \"how is A related to B\" over the mixed graph — BSL calls, data\n    references and metadata structure in one walk — which is a different\n    question from the one impact analysis answers. `trace_impact` and\n    `trace_call_chain` walk outward from one root; neither takes a second\n    entity, and filtering an outward walk down to the paths that happen to\n    reach B gives the wrong answer under a budget, because the link joining A\n    to B may be one the outward walk dropped when it ran out of room.\n\n    Both endpoints are resolved the way `resolve_graph_entity` resolves them,\n    so `from_ref` and `to_ref` take a node id, a UUID, an FQN, a qualified name\n    or an alias. An endpoint issued for another project is refused before\n    anything is read.\n\n    When there is no path, the answer is an empty result that says how far it\n    looked — the depth reached, the nodes examined, and why it stopped — not an\n    error. `data.exhaustive` is the field that matters: true means the\n    reachable graph was walked to its end and these entities really are not\n    connected under these filters; false means the walk stopped at a limit and\n    the question is still open.\n\n    Every edge of every returned path carries what it rests on, and each path\n    also comes with a `steps` list ready to pass to `explain_path` unchanged.\n\n    Args:\n        from_ref: the entity the path starts at.\n        to_ref: the entity it must reach.\n        direction: 'undirected' (default) walks edges both ways, which is what\n            \"how are these related\" usually means — the edge recording where a\n            value came from points the other way. 'directed' follows the arrows.\n        edge_types: only walk these relationship types, e.g. ['CALLS',\n            'USED_IN']. Omit to walk every type. An allowlist is how a path\n            through unrelated link kinds — formally valid, meaningless — is\n            avoided.\n        max_depth: the longest path to look for, in edges. Capped by the\n            server's limit; ask for fewer hops, never more.\n        max_paths: how many paths to return, shortest first. Capped the same way.\n        include_inferred: pass false to refuse steps that rest only on\n            heuristic (`inferred`) or model-proposed (`llm`) proof.\n        min_confidence: refuse steps whose strongest proof is below this, 0 to\n            1. Narrowing either of these also makes an *unproven* edge\n            untraversable: \"only what is proven this far\" is not met by a link\n            resting on nothing.\n        form_kind: when an endpoint names a form, which 1C model it is —\n            'ordinary', 'managed', or 'any' (default). It settles the ambiguity\n            of a name two models share; the walk itself crosses both.\n\n    Returns:\n        The shared response envelope. `items` holds the paths, shortest first,\n        each with its nodes, its edges and their evidence, and a `steps` list\n        for `explain_path`. `data.explored` reports the depth reached, the\n        nodes examined and the stop reason; `data.exhaustive` says whether an\n        empty answer is a conclusion or a budget.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "from_ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "to_ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "undirected",
+      "type": "string"
+     },
+     "edge_types": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_depth": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_paths": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "include_inferred": {
+      "default": true,
+      "type": "boolean"
+     },
+     "min_confidence": {
+      "default": 0.0,
+      "type": "number"
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "affected_subgraph",
+   "description": "    What a change reaches transitively, and the shortest proof of why each thing is in the answer.\n\n    The impact question with its evidence attached. Every affected node comes\n    back with a minimal path from the root that reaches it — the whole chain,\n    each edge typed and carrying what it rests on — so the claim \"this breaks\"\n    can be checked rather than trusted. `trace_impact` answers the same\n    question more cheaply and by level, with one intermediate object in a `via`\n    field; use that one when the list is all you need.\n\n    The walk is a true transitive closure, bounded on purpose. When something\n    bounds it, `data.exhaustive` goes false and `data.explored.stop_reason`\n    names the limit — so an answer that looks small is never quietly a partial\n    one.\n\n    Tests are reported separately under `data.related_tests`, each with its own\n    root→test path. When the project has no indexed test artifact the status is\n    `not_indexed` rather than an empty list: \"no tests are indexed\" and \"this\n    change breaks no tests\" are different facts. Nothing here runs a test; see\n    `get_graph_capabilities` for where execution lives.\n\n    Args:\n        roots: the entities that changed, as references `resolve_graph_entity`\n            resolves — a node id, a UUID, an FQN, a qualified name or an alias.\n            At least one; a root from another project is refused before\n            anything is read. If any root fails to resolve the walk does not\n            run: an impact answer computed from some of the roots understates\n            impact, which is the dangerous direction to be wrong in.\n        direction: 'downstream' (default) walks the arrows forwards — what\n            depends on the roots, the question \"what breaks if I change this\".\n            'upstream' walks them backwards — what the roots depend on, and the\n            direction that finds the tests exercising a routine. 'both' does\n            each, costs more, and says less about causality.\n        max_depth: how many edges from a root to travel. Capped by the server's\n            limit; ask for fewer hops, never more.\n        edge_types: only walk these relationship types, e.g. ['CALLS',\n            'USED_IN']. Omit to walk every type. An allowlist is how a walk\n            through unrelated link kinds — formally valid, meaningless — is\n            avoided.\n        node_kinds: only report nodes of these kinds or labels, e.g. ['Symbol']\n            or ['MetadataObject']. The walk still travels *through* every other\n            kind, so the shortest explanation of a reported node may run through\n            nodes the filter hides. `related_tests` is unaffected: a test the\n            change reaches is reported whatever kinds you asked to read about.\n        stop_kinds: stop the walk at nodes of these kinds. Such a node is\n            reported, marked `boundary`, and what lies beyond it is not read.\n            This is how a change in a common module is analysed without walking\n            half the configuration.\n        include_inferred: false by default here, unlike elsewhere: impact\n            analysis that mixes declared facts with heuristics reports damage\n            that is not there. Pass true to include heuristic (`inferred`) and\n            model-proposed (`llm`) links.\n        min_confidence: refuse steps whose strongest proof is below this, 0 to\n            1. On an installation that records evidence, narrowing either filter\n            also makes an *unproven* edge untraversable — \"only what is proven\n            this far\" is not met by a link resting on nothing.\n        max_nodes: how many distinct nodes the walk may expand. Capped by the\n            server's limit.\n        max_paths: how many explaining records to return. Records past it were\n            still found: `data.total` counts them and `data.omitted` says how\n            many are missing.\n        form_kind: when a root names a form, which 1C model it is — 'ordinary',\n            'managed', or 'any' (default).\n\n    Returns:\n        The shared response envelope. `items` holds one record per (root,\n        affected node) pair, ordered by depth, root, path and node id, each\n        with the node, the explaining path and its evidence. `data.records`\n        reports how many records the closure holds, how many this call can page\n        through and how many `max_paths` dropped; the envelope's own `returned`\n        and `cursor` describe this page of them. `data` also names the roots,\n        what bounded the walk, and `related_tests`.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "roots": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "downstream",
+      "type": "string"
+     },
+     "max_depth": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "edge_types": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "node_kinds": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "stop_kinds": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "include_inferred": {
+      "default": false,
+      "type": "boolean"
+     },
+     "min_confidence": {
+      "default": 0.0,
+      "type": "number"
+     },
+     "max_nodes": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_paths": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "trace_call_chain",
+   "description": "    Trace the call chain of a BSL (1C:Enterprise) procedure/function recursively.\n\n    Traverses CALLS relationships in the BSL code graph to build a complete\n    call chain from or to a given routine across all metadata objects.\n\n    Use direction=\"callees\" to see what a procedure calls (downstream).\n    Use direction=\"callers\" to see what calls a procedure (upstream).\n\n    Four call forms are resolved: a bare call inside one module, a bare call\n    to an exported routine of a global common module (`Глобальный = Истина`;\n    the edge carries `resolution: global_module`, and `ambiguous: true` when\n    several global modules export the name), a common module call\n    (`ОбщегоНазначения.Метод()`), and a call through a global metadata\n    collection to another object manager module\n    (`Документы.РеестрДокументов.ЗаписатьДокумент()`). Resolution is static and\n    by name: a call made through a variable, a computed collection name, or any\n    other indirection is not resolved and produces no edge, so an empty answer\n    here means \"no statically resolvable call was recorded\", not \"this routine\n    calls nothing\". A routine that runs code named as a string —\n    `Выполнить(...)`, `Вычислить(...)` or a library wrapper of them — is marked\n    in the tree with its count, and the envelope carries a\n    `dynamic_calls_on_chain` warning: the chain past it may be incomplete.\n    Read upwards, the answer also lists the scheduled jobs that run the root\n    routine (`EXECUTES`) as entry points.\n\n    Examples:\n        trace_call_chain(routine_name=\"ОбработкаПроведения\",\n                         object_name=\"РеализацияТоваров\",\n                         direction=\"callees\", depth=3)\n        trace_call_chain(routine_name=\"ПроверитьКонтрагента\",\n                         direction=\"callers\")\n\n    Args:\n        routine_name: Name of the procedure/function to trace from.\n        object_name: Optional owner object name for disambiguation when multiple\n            routines share the same name (e.g. 'Контрагенты').\n        direction: 'callees' (who does this routine call, downstream) or\n            'callers' (who calls this routine, upstream). Default: 'callees'.\n        depth: Maximum traversal depth (1-10). Default: 3.\n        project_name: Optional configuration name filter for the root routine.\n            Only needed when multiple configurations are indexed in one\n            database and routines with the same name exist in several of them.\n\n    Returns:\n        A call tree grouped by depth with routine names, owner objects,\n        module types, directives, signatures and export flags.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "routine_name": {
+      "type": "string"
+     },
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "callees",
+      "enum": [
+       "callees",
+       "callers"
+      ],
+      "type": "string"
+     },
+     "depth": {
+      "default": 3,
+      "type": "integer"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "routine_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_object_dossier",
+   "description": "    Get a comprehensive structural dossier (passport) of a metadata object\n    in a single call — deterministic, no LLM.\n\n    Collects all factual information about the object from the graph:\n    structure (standard attributes the object really has, attributes,\n    tabular parts, dimensions, resources, commands, layouts and — for a\n    register — its query virtual tables with parameters), forms, event\n    subscriptions, access roles (declared rights of roles), dependencies\n    (USED_IN upstream/downstream, register movements), code modules with\n    procedure/function signatures, and business description.\n\n    Use this tool as the first step when you need to understand a metadata\n    object before deeper analysis. Before writing a query to a register, ask\n    sections=['virtual_tables']: field names of `.Остатки`, `.Обороты`,\n    `.СрезПоследних` etc. differ from the resource names\n    (`Количество` → `КоличествоОстаток`), and tables the register does not\n    have are listed as absent.\n\n    Args:\n        object_name: Name of the metadata object (e.g. 'Контрагенты',\n            'ТоварыНаСкладах', 'РаботаСоСкидками').\n        sections: Optional list of sections to include.\n            Allowed values: 'structure', 'forms', 'subscriptions', 'roles',\n            'dependencies', 'code', 'business_info', 'virtual_tables'.\n            Default: all sections except 'virtual_tables' (the structure\n            names the virtual tables and their parameters; 'virtual_tables'\n            adds their fields).\n        project_name: Optional configuration name filter. Only needed when\n            multiple configurations are indexed in one database (e.g. the same\n            object 'Номенклатура' exists in several configurations).\n\n    Returns:\n        Structured text with named sections containing all factual data\n        about the object.\n\n    Examples:\n        get_object_dossier(object_name=\"Контрагенты\")\n        get_object_dossier(object_name=\"ТоварыНаСкладах\",\n                           sections=[\"structure\", \"dependencies\"])\n        get_object_dossier(object_name=\"Номенклатура\",\n                           project_name=\"УправлениеТорговлей\")\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "sections": {
+      "default": null,
+      "items": {},
+      "type": "array"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "answer_metadata_question",
+   "description": "    Answer complex analytical questions about 1C metadata using RAG (Retrieval-Augmented Generation).\n    Gathers context from the Neo4j graph and code, then generates an LLM-powered answer.\n\n    Use this tool when the question requires REASONING or ANALYSIS across multiple objects,\n    not just lookup. For example:\n    - \"Как реализован механизм скидок?\" (requires reading code + structure)\n    - \"Какие объекты участвуют в процессе закупки и как они связаны?\"\n    - \"Объясни архитектуру подсистемы управления складом\"\n\n    DO NOT use this tool for simple lookups — prefer specialized tools instead:\n    - Object structure → get_object_dossier\n    - Find by name → search_metadata\n    - Find by meaning → business_search\n    - Find code → search_code\n    - Dependencies → trace_impact\n\n    CRITICAL INSTRUCTION FOR LLM:\n    Formulate the `question` as a clear, specific Russian-language question.\n    Include concrete object names when known (e.g. \"Как документ РеализацияТоваровУслуг\n    делает движения по регистру Продажи?\" instead of \"Как работают продажи?\").\n    The more specific the question, the better the retrieved context and the answer.\n\n    Args:\n        question: Analytical question about metadata in Russian. Be specific, include object names when known.\n        max_tokens: Maximum tokens for LLM response (default: 4000)\n        include_code: Whether to include code snippets in context (default: true)\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n\n    Returns:\n        Structured answer with sources, tokens used, and confidence score.\n        When no LLM is reachable — graph-only mode, or no key configured — a\n        typed degraded capability naming the structural tools that answer\n        without one, rather than an execution error.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "question": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_tokens": {
+      "default": 4000,
+      "type": "integer"
+     },
+     "include_code": {
+      "default": true,
+      "type": "boolean"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "search_code",
+   "description": "    Search BSL (1C:Enterprise) code across all metadata objects using fulltext and/or semantic search.\n\n    When BSL code graph is loaded (LOAD_BSL_SIGNATURES=true), searches individual\n    procedures/functions (Routine nodes) for precise results with file/line context.\n    Otherwise falls back to searching MetadataObject.program_code.\n\n    CRITICAL INSTRUCTION FOR LLM — choosing search_type and formulating query:\n    - **fulltext**: Use when you know the exact procedure/function name or a keyword\n      present in the code text. Supports Lucene syntax: AND, OR, wildcards (*), phrases (\"...\").\n      Pass the name or keyword as-is in Russian: \"ПроверитьЗаполнение\", \"Процедура AND Скидк*\".\n    - **semantic**: Use when searching by PURPOSE or BEHAVIOR, not by name. Rewrite the\n      user's question into a description of what the code DOES, in the style of a code comment.\n      Example: user asks \"где считаются скидки\" → pass query=\"расчет суммы скидки для строк документа продажи\"\n      because semantic search matches against code descriptions and signatures, not raw text.\n    - **hybrid** (default): Combines both. Best for most cases.\n\n    Args:\n        query: For fulltext — exact name, keyword, or Lucene expression in Russian.\n               For semantic — descriptive phrase about what the code does (rewrite questions into descriptions!).\n               For hybrid — can be either; both channels will be tried.\n        search_type: \"fulltext\" (exact matching), \"semantic\" (by meaning), or \"hybrid\" (both, default)\n        top_k: Maximum number of results per search type (default: 3, so hybrid returns up to 6 total).\n               Results are deduplicated by project and module, so `top_k` buys `top_k` distinct\n               modules: a common module with many matching procedures contributes one of them\n               (CODE_SEARCH_MAX_PER_MODULE) instead of filling the answer. To read more of a\n               single module, use the template operations (`list_exported_routines`,\n               `get_routine_body`) rather than a larger `top_k`.\n        filter_type: Optional metadata category filter (e.g., 'Справочники', 'Документы', 'ОбщиеМодули')\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n        detail_level: Context compression level controlling how much detail is returned per result.\n            L0 — full procedure/function code without truncation.\n            L1 — signature + description + first 5 callees (default, balanced).\n            L2 — brief card: name, owner, module type, export flag, directive.\n            L3 — name and score only (minimal tokens, best for large overview lists).\n\n    Returns:\n        Search results with code snippets and relevance scores.\n        On an installation that builds no embeddings, `search_type=\"semantic\"`\n        returns a typed degraded capability naming the structural alternatives,\n        and `\"hybrid\"` is answered through the fulltext channel with a warning\n        saying which half is missing.\n\n    Examples:\n        search_code(\"ПроверитьЗаполнение\")  # Find function by name (fulltext)\n        search_code(\"расчет суммы скидки для строк документа\", search_type=\"semantic\")  # Find by purpose\n        search_code(\"Процедура AND Скидк*\", search_type=\"fulltext\")  # Lucene syntax\n        search_code(\"расчет\", detail_level=\"L3\", top_k=20)  # Overview list\n        search_code(\"РассчитатьСкидку\", detail_level=\"L0\")  # Full code\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "search_type": {
+      "default": "hybrid",
+      "enum": [
+       "fulltext",
+       "semantic",
+       "hybrid"
+      ],
+      "type": "string"
+     },
+     "top_k": {
+      "default": 3,
+      "type": "integer"
+     },
+     "filter_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "detail_level": {
+      "default": "L1",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "search_metadata_by_description",
+   "description": "    Search metadata objects by their descriptive fields: name, Синоним (synonym),\n    Комментарий (comment), Описание (description), and help_text (Справка).\n    Uses Lucene fulltext search across all five fields. When description embeddings\n    are available, performs hybrid search (fulltext + vector) with RRF merging.\n\n    Use this tool when the user's question can be answered by matching against\n    object names, Russian synonyms, or developer comments — as opposed to\n    business_search which matches against generated business descriptions.\n\n    CRITICAL INSTRUCTION FOR LLM:\n    1. **Expand the query** with 3-5 synonyms or related 1C terms.\n       User asks \"зарплата\" → pass query=\"зарплата ЗУП оклад начисления расчет\".\n    2. **Use Russian terms** — the indexed fields (Синоним, Комментарий, Описание)\n       are in Russian. Translate English terms before passing.\n    3. **Use filter_type** when the user specifies a category (\"справочники про клиентов\"\n       → filter_type=\"Справочники\", query=\"клиент контрагент покупатель\").\n    4. **Use use_fuzzy=true** when the user might have typos or you are unsure\n       about the exact spelling.\n\n    Args:\n        query: Search keywords in Russian. Expand with synonyms and related 1C terms!\n               Lucene syntax supported: AND, OR, \"exact phrase\", wildcard*.\n        top_k: Maximum number of results to return (default: 10)\n        filter_type: Optional metadata category filter (e.g., 'Справочники', 'Документы',\n                     'РегистрыСведений', 'ОбщиеМодули', 'Перечисления')\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n        use_fuzzy: If true, appends '~' to query terms for fuzzy matching to handle typos (default: False).\n        alpha: Weight for fulltext vs vector scores in RRF. 1.0 = fulltext only, 0.0 = vector only, 0.5 = balanced (default: 0.5).\n\n    Returns:\n        Ranked search results with relevance scores and description excerpts\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "top_k": {
+      "default": 10,
+      "type": "integer"
+     },
+     "filter_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "use_fuzzy": {
+      "default": false,
+      "type": "boolean"
+     },
+     "alpha": {
+      "default": 0.5,
+      "type": "number"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_by_guid",
+   "description": "    Find any metadata node by its GUID identifier.\n    Returns the node type, name, and properties.\n\n    Args:\n        guid: The GUID string to search for (e.g. '8f1c2d34-5678-4abc-9def-0123456789ab')\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n\n    Returns:\n        Information about the found node or an error message.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "guid": {
+      "type": "string"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "resolve_qualified_name",
+   "description": "    Resolve a fully qualified 1C metadata name to the corresponding graph node.\n    Supports patterns like:\n      Справочник.Контрагенты\n      Справочник.Контрагенты.Реквизит.ОсновнойМенеджер\n      Документ.РеализацияТоваровУслуг.ТабличнаяЧасть.Товары\n\n    Args:\n        qualified_name: Dot-separated qualified name (e.g. 'Справочник.Контрагенты.Реквизит.ИНН')\n        project_name: Optional configuration name filter. Only needed when multiple configurations are indexed in one database.\n\n    Returns:\n        Resolved node path information or an error message.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "qualified_name": {
+      "type": "string"
+     },
+     "project_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "qualified_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_indexing_status",
+   "description": "    Report the current state of background indexing tasks.\n\n    The server is available from the first second after process start, while\n    primary (``structural_indexes``, ``metadata_ingest``,\n    ``fulltext_indexes``, ``bsl_code_graph``, ``xml_data_sources``,\n    ``form_xml``, ``extension_relationships``) and post-indexing\n    (``generate_business_info``, ``vector_indexing``,\n    ``routine_embedding_indexing``) tasks run progressively in the\n    background. Use this tool to see which data is already available and\n    which is still being built — it is the authoritative observability\n    surface, because MCP tools themselves do not emit \"data is being\n    prepared\" messages and return empty results while data is unavailable.\n\n    ``source_refresh`` says whether the export has changed since the graph\n    was built and what the periodic refresh did about it: the interval, the\n    last check, the pending change (counts by kind and a sample of paths),\n    why the last tick was skipped (``writer_busy``, ``apply_disabled``), the\n    last refresh launched and the last error. A task reported ``completed``\n    while ``source_refresh.drift`` is set is a graph that is behind its\n    sources.\n\n    Returns:\n        A JSON string with one entry per known task: name, status\n        (``pending`` / ``running`` / ``completed`` / ``failed`` / ``skipped``),\n        optional error, optional start and completion timestamps; plus\n        ``source_refresh``.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "metadata_report",
+   "description": "    Report that the monolithic metadata report is not available, and what is.\n\n    Metadata is delivered through addressable project-scoped tools instead:\n    each takes a `project_id`, answers one question, cites the generation it\n    came from, and is bounded by the shared response budget with a cursor for\n    the rest. One report over the whole configuration offers none of that — it\n    restates the graph, goes stale as ingestion continues, and cannot be scoped\n    to the question being asked.\n\n    Returns:\n        A `deprecated` envelope whose items name the replacement tools for each\n        scenario the report used to cover: metadata, forms, roles, reports and\n        data composition schemas, references, and impact.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_graph_capabilities",
+   "description": "    List what Graph MCP analyses and what it delegates to another service.\n\n    Every entry is either `analysis` — served here, by the tools it names — or\n    `delegated`, naming the service that serves it and why it is not this one.\n    Graph MCP reads exported 1C sources: it does not launch the 1C client, does\n    not update a database configuration and does not run YAxUnit. Those are\n    delegated operations; name one here and the answer is the route to it.\n\n    To ask for an execution, name it here: this accepts an operation\n    ('run_yaxunit', 'update_db', 'launch_client') as well as a capability slug,\n    and answers with the row that says the operation is delegated plus a typed\n    delegation naming the service that serves it and the analysis tools this\n    server offers on the same subject.\n\n    Args:\n        capability: a capability slug ('run_tests', 'bsl_analysis') or an\n            operation name ('run_yaxunit', 'update_db'). An unknown value\n            returns the whole matrix, which is the answer to \"what can you do\".\n\n    Returns:\n        The shared response envelope; `items` holds the matrix rows and `data`\n        summarises which capabilities are analysed here and which are\n        delegated, with `data.delegation` present when an execution was asked\n        for.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "capability": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_test_artifacts",
+   "description": "    Locate the project's test artifacts — where they are, never running them.\n\n    Test modules and test configurations are indexed like any other source:\n    this returns their canonical names and the paths they live at, so a caller\n    can open them, search them, or hand them to the test service. Execution is\n    delegated (see `get_graph_capabilities`), and `data.delegation` names where.\n\n    Args:\n        object_name: keep only artifacts whose canonical name or path mentions\n            this object, e.g. 'Контрагенты'.\n\n    Returns:\n        The shared response envelope; `items` holds one entry per test\n        artifact with its canonical name, entity kind, path and the naming\n        convention it matched.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "search_forms",
+   "description": "    Find forms of this project — ordinary, managed, or both.\n\n    A managed form and an ordinary form are different node kinds in this graph\n    because they are different documents: an ordinary form binds a control to a\n    form attribute by name and owns a main menu and toolbars, a managed one\n    binds through `DataPath` and has neither. Every result says which model it\n    is in `form_kind`, so nothing has to be inferred from a missing field.\n\n    Args:\n        name: the form's name or the beginning of it, e.g. 'ФормаЭлемента' or\n            'ФормаЭл'. Matched through the native fulltext index — exactly, or\n            as a prefix when there is enough of it to be one — so a fragment\n            from the middle of a name is not a search this answers.\n        form_kind: 'ordinary', 'managed', or 'any' (default — both models).\n        object_name: keep only forms of this metadata object, e.g. 'Контрагенты'.\n\n    Returns:\n        The shared response envelope; `items` holds one entry per form with its\n        name, its owning object and category, its explicit `form_kind`, and the\n        `lane` that found it (`exact`, `fulltext` or `prefix`).\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_form_structure",
+   "description": "    The full structure of one form: controls, attributes, commands, menu, events.\n\n    For an ordinary form this is the whole document — the control tree, the form\n    attributes each control is bound to by name, the form commands, the main\n    menu and toolbar entries, and every event binding with the procedure it\n    runs. For a managed form it is the same shape minus what that model does not\n    have: no menu entries, and a control's binding is a `DataPath` expression.\n\n    With `form_kind='any'` an ordinary form is answered as an ordinary form even\n    though the configuration report also lists it as a plain form — answering\n    from the report's node would describe it as a managed form with no controls.\n\n    Args:\n        form_name: the form's name, e.g. 'ФормаЭлемента'.\n        object_name: the owning object, when two objects have a form of that\n            name. A type prefix names its category\n            ('Документ.РеестрДокументов'); a bare name that objects of two\n            categories share is answered `ambiguous`, with the candidates.\n        form_kind: 'ordinary', 'managed', or 'any' (default).\n\n    Returns:\n        The shared response envelope; `data` holds the structure and states its\n        `form_kind`, and `items` lists the controls. Every element carries the\n        XML property path it was read at, so it can be opened in the document.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "form_name": {
+      "type": "string"
+     },
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "form_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_form_links",
+   "description": "    What one form is connected to: handlers, bindings, metadata and its module.\n\n    Four questions one form answers — which element runs which procedure, which\n    control shows which attribute, which metadata objects it points at, and\n    which BSL module its handlers are declared in. Each handler comes with the\n    file and the line range of the procedure, so \"where does this button go\" is\n    answered with a place, not a name.\n\n    Args:\n        form_name: the form's name.\n        object_name: the owning object, when the name is ambiguous. A type\n            prefix names its category ('Справочник.РеестрДокументов'); a bare\n            name that objects of two categories share is answered `ambiguous`,\n            with the candidates.\n        form_kind: 'ordinary', 'managed', or 'any' (default).\n\n    Returns:\n        The shared response envelope. `data.form_kind` says which model was\n        answered for, `data.links` groups the links by kind, and `items` is the\n        flat list of them, each naming its `link_kind`.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "form_name": {
+      "type": "string"
+     },
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "form_kind": {
+      "default": "any",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "form_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_access_rights",
+   "description": "    Declared rights of roles, on an object or on one of its fields.\n\n    What the roles' rights documents declare — not the effective access of a\n    user, who may hold several roles. Two kinds of edge, kept apart because the\n    configuration keeps them apart: role → object and role → field, each with\n    the rights on the edge and the block of the rights document it was read\n    from as its proof. On every edge `rights` are the granted rights,\n    `denied_rights` the rights set to false explicitly, and a right named in\n    neither is not declared by that role. A granted right under a row-level\n    restriction (RLS) is listed in `conditional_rights`, and the edge carries\n    `conditional: true` and a `restriction_ref`.\n\n    Args:\n        role: the role whose rights to return, e.g. 'Бухгалтер'.\n        object_name: the object the rights are on. For a field this is the\n            object the field belongs to, so \"everything this role declares\n            on Контрагенты\" is one call.\n        rights: keep only edges granting at least one of these rights, e.g.\n            ['Read', 'Update']. The names are the document's own. An explicit\n            denial does not match.\n        field_name: keep only edges naming this field. Answers only field\n            edges, since an object edge names no field.\n        direction: which end you are naming — 'outgoing' asks what a role\n            reaches and needs `role`; 'incoming' asks which roles reach an\n            object and needs `object_name`; 'both' (default) applies whichever\n            filters were given.\n        restrictions: 'none' (default) returns the edges. 'conditions'\n            returns the RLS condition texts of the matching conditional edges\n            instead, one record per restriction headed by its\n            `restriction_ref`. 'templates' returns the restriction templates\n            of `role` (required) with their texts. Both are paged by\n            `max_items` and `cursor`; a text longer than the response budget\n            is continued by `cursor`.\n\n    Returns:\n        The shared response envelope. `items` holds one typed edge per\n        declared block, each with its two endpoints, `rights`,\n        `denied_rights`, `conditional_rights` when there are any, and the\n        evidence it rests on. `data.counts` says how many of each kind came\n        back. With restrictions='conditions' or 'templates' the answer is\n        `text`.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "rights": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "field_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "both",
+      "type": "string"
+     },
+     "restrictions": {
+      "default": "none",
+      "enum": [
+       "none",
+       "conditions",
+       "templates"
+      ],
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_event_subscriptions",
+   "description": "    Source object → event subscription → handler, as the chain it is.\n\n    A subscription named without the procedure it runs does not say what happens\n    when the event fires, and a handler named without its sources does not say\n    when it runs. Both hops come back as typed edges, each with the element of\n    the subscription document it was read from.\n\n    Args:\n        subscription: one subscription by name.\n        source_object: keep only subscriptions bound to this metadata object.\n        event: keep only subscriptions of this event, e.g. 'ПриЗаписи'.\n        handler: keep only subscriptions whose handler contains this text. The\n            document writes it as 'Модуль.Процедура', so either half works.\n        depth: 1 stops at source → subscription; 2 (default) also returns the\n            handler each subscription runs.\n\n    Returns:\n        The shared response envelope. `items` holds the typed edges of the\n        chain, `data.counts` how many of each hop, and every edge carries its\n        evidence.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "subscription": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "source_object": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "event": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "handler": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "depth": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_predefined_values",
+   "description": "    The predefined items an object declares, with the hierarchy between them.\n\n    Predefined values are declared data: `Справочники.Валюты` ships with `Рубль`\n    already in it, and code refers to it by name. Each item comes back as a\n    typed node on a typed edge — owner → item, and item → child for a folder —\n    with the element of the predefined document it was read from.\n\n    Args:\n        object_name: the object whose predefined items to return.\n        name: keep only the item of this name.\n        is_folder: keep only folders (true) or only items (false).\n        depth: how far down the hierarchy to walk. 1 returns the items an\n            object declares directly; the default walks the whole tree.\n\n    Returns:\n        The shared response envelope; `items` holds the typed edges, each with\n        its evidence, and `data.counts` how many of each kind.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "is_folder": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "depth": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_register_writers",
+   "description": "    Which documents write movements into a register — and which registers a\n    document writes to.\n\n    One relation asked from two ends. The edge is the graph's own\n    `DO_MOVEMENTS_IN`, returned typed and with its proof, rather than as the\n    sentence `find_register_movement_docs` renders.\n\n    Args:\n        register: the register whose writers to return, e.g. 'Продажи' — the\n            short name, without the 'РегистрНакопления.' prefix.\n        document: the document whose registers to return.\n        direction: 'incoming' (default) reads the register's writers and needs\n            `register`; 'outgoing' reads a document's registers and needs\n            `document`; 'both' applies whichever filters were given.\n\n    Returns:\n        The shared response envelope; `items` holds one typed edge per\n        movement relation, each carrying its evidence.\n\n    Scope: declared recorder movements only — the `DO_MOVEMENTS_IN` edge a\n    document's `Движения` property states. Writing a register from code, with\n    `РегистрыСведений.X.СоздатьНаборЗаписей()`, is a different relation and is\n    not reported here; an independent information register has no recorder at\n    all, so this tool answers empty for it by construction even when several\n    objects write it. `find_object_referrers(object_name=...)` is the tool for\n    those, and it returns the file and line of each.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "register": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "document": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "incoming",
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "find_object_referrers",
+   "description": "    Which objects reach a given object directly from code — the reverse index.\n\n    The question `get_register_writers` cannot answer. That tool reports\n    declared recorder movements, so an independent information register — one\n    with no recorder at all — has no writers by construction, even while two\n    documents write it through `РегистрыСведений.X.СоздатьНаборЗаписей()` and a\n    report queries it. Objects joined only by such a shared register form a\n    functional block that no other tool makes visible.\n\n    Every returned edge carries the file and the line it was read from, so a\n    finding taken from here can be cited rather than asserted.\n\n    Args:\n        object_name: the object whose referrers to return, e.g.\n            'ПлановыеЕжегодныеОтпуска' or 'Справочник.Номенклатура'. Omit to\n            sweep every object that anything reaches — which, with\n            `min_referrers`, is the batch form of the question.\n        access: 'write' for code that writes a register — a record-set factory\n            call or a document posting through `Движения.X` — 'read' for a\n            table named as a source in query text. Omit for both.\n        min_referrers: return only objects reached by at least this many\n            distinct objects. 2 is the useful value: it answers \"which typical\n            objects do several of mine converge on\".\n\n    Returns:\n        The shared response envelope. `items` holds one typed edge per access\n        — `ACCESSES_REGISTER` when the target is a register, `READS_TABLE`\n        when a query reads any other table (catalogue, document, enumeration,\n        chart, tabular section) — `data.targets` says how many distinct\n        referrers each target has, and every edge carries its evidence. A\n        write edge says how it was obtained (`via`: `record_set` or\n        `movements`); a read through a virtual table or a tabular section\n        names it; an edge whose target the code could not pin to one register\n        kind carries `ambiguous: true`.\n\n    Scope: this reports direct access read out of BSL source. A write is\n    recognised from the record-set factory call or the movement collection,\n    not from a later `.Записать()` on a variable, which no static reader can\n    honestly follow; a read is recognised from the table named in query text\n    by its fully qualified name.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "access": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "min_referrers": {
+      "default": 1,
+      "type": "integer"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_data_links",
+   "description": "    The reference-typed data paths into and out of one object.\n\n    An attribute of type `СправочникСсылка.Контрагенты` is a link between two\n    metadata objects, and the graph records it as `USED_IN` — pointing from the\n    object being referenced to the one whose attribute has that type. Both\n    directions are returned, each edge naming the attribute it runs through and\n    carrying the proof it rests on.\n\n    Args:\n        object_name: the object to start from.\n        direction: 'incoming' returns what this object's own attributes point\n            at, 'outgoing' returns where this object is used, 'both' (default)\n            returns each. Every item also states its `relation`: 'references'\n            or 'referenced_by', read from the object you named.\n        usage_type: keep only links through an 'attribute', a 'dimension' or a\n            'resource'.\n        attribute_name: keep only links through an attribute of this name.\n        depth: how many hops of the data path to walk. 1 (default) is the\n            object's own links; more follows the chain outward.\n\n    Returns:\n        The shared response envelope; `items` holds the typed `USED_IN` edges\n        with their evidence, and `data.reached` names the objects each hop\n        arrived at.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "direction": {
+      "default": "both",
+      "type": "string"
+     },
+     "usage_type": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "attribute_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "depth": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_report_dcs_lineage",
+   "description": "    Report → data composition schema → data sets and their queries → fields.\n\n    The whole chain a report's data travels, as typed edges: the schema the\n    report owns, the data sets it declares and the query each runs, the fields\n    every set supplies, and the parameters, calculated fields, groupings,\n    filters and templates the schema exposes. Every link carries the XML path\n    of the element it was read at, so any step can be opened in the document.\n\n    Creating, editing or validating a composition schema is not served here and\n    never will be: this server reads sources and changes nothing. Ask\n    `get_graph_capabilities` for 'create_dcs', 'edit_dcs' or 'validate_dcs' and\n    it answers with the typed delegation to EDT MCP.\n\n    Args:\n        report: the report whose lineage to return.\n        layout: one composition schema of it, when the report has several.\n        data_set: keep only this data set and the fields it supplies.\n        depth: 1 stops at report → schema; 2 adds the data sets and their\n            queries; 3 (default) adds fields, parameters, groupings, filters\n            and templates.\n        stages: read only these stages — any of 'schema', 'data_set', 'field',\n            'parameter', 'grouping', 'filter', 'template'. A stage below the\n            requested depth is not read even when named.\n\n    Returns:\n        The shared response envelope; `items` holds the typed edges of the\n        chain, each with its XML-path evidence, and `data.counts` how many\n        links of each stage came back.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "report": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "layout": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "data_set": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "depth": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "stages": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "compare_base_and_extension",
+   "description": "    Compare a base metadata object with its extension counterpart.\n    Shows structural differences: which attributes, forms, and routines\n    were added by the extension, which were overridden, and which remain unchanged.\n\n    Requires the base configuration and the extension to be loaded into the same Neo4j database\n    (with different PROJECT_NAME values) and extension relationships to be built.\n\n    Args:\n        object_name: Name of the metadata object (e.g. \"Контрагенты\"). A type\n            prefix names its category (\"Документ.РеестрДокументов\"). A bare\n            name that objects of two categories of the extension share compares\n            the alphabetically first category, names it in the heading and\n            lists the other qualified names.\n        extension_name: Name of the extension (value of EXTENSION_NAME used during loading)\n\n    Returns:\n        Detailed comparison report or an error message if the object is not found.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "extension_name": {
+      "type": "string"
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "object_name",
+     "extension_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "resolve_effective_entity",
+   "description": "    Resolve an entity across the extension layers: which version runs, and which\n    no longer does.\n\n    In a configuration with several extensions the same routine can exist in\n    the base configuration and in every extension over it. Which one the\n    platform runs is decided by the order the extensions apply in\n    (EXTENSION_APPLY_ORDER, declared per extension at ingestion) and by what the\n    extension declares it does — `&Вместо` and `&ИзменениеИКонтроль` put the\n    base version out of use, `&Перед` and `&После` leave it running alongside.\n\n    The anchor may be named in any layer: asking about the base routine and\n    asking about the extension routine that overrides it return the same\n    answer.\n\n    Args:\n        object_name: the metadata object the entity belongs to (its own name\n            when entity_kind is 'MetadataObject'), e.g. \"Контрагенты\".\n        entity_kind: 'MetadataObject' (default), 'Routine', 'Form' or 'Module'.\n        entity_name: name of the routine, form or module; required for those\n            kinds and ignored for 'MetadataObject'.\n\n    Returns:\n        The shared response envelope. Each item holds `effective` (the version\n        that runs, with its layer), `superseded` (versions replaced by a later\n        layer, each naming the layer that supersedes it), `wrapping` (versions\n        that run in addition to the effective one) and `extending` (extension\n        objects that add to a base object rather than replace it). `data.layers`\n        lists the layers of this project in application order.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "entity_kind": {
+      "default": "MetadataObject",
+      "type": "string"
+     },
+     "entity_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "compare_graph_scope",
+   "description": "    What changed between two states of the graph: two generations, two projects,\n    or an extension and the base configuration it borrows from.\n\n    One comparison per call, chosen by which argument names the other side.\n    Naming two of them is refused rather than resolved by precedence.\n\n    * `base_generation` — what a re-index did to this project. The state\n      compared *to* is the active generation unless `target_generation` names\n      another. A generation still in the graph (the active one, or one built and\n      not yet promoted) is compared with its properties; an older one exists\n      only in the evidence, which keeps closed proofs for the retention window,\n      so the comparison is by source hash and every difference still carries its\n      proof.\n    * `compare_project_id` — another project of this installation, named\n      explicitly. The response returns both sides with their namespace and\n      project; nothing is ever compared across projects implicitly.\n    * `extension_ref` — one extension's entities against the base entities they\n      borrow or replace, paired by the graph's own EXTENDS/OVERRIDES edges, so an\n      override named differently from what it overrides is still recognised as\n      its version. Each difference names the layer it comes from and, where the\n      source states one, what the override does to the base version.\n\n    Only differences are returned. Unchanged entities are counted, never listed.\n    Every difference carries stable IDs and, when evidence records them, the\n    before and after source hashes — which is what tells a real change from a\n    re-index that happened to rewrite the same facts (`evidence_only`).\n\n    Args:\n        base_generation: the generation to compare from.\n        target_generation: the generation to compare to; defaults to the active\n            one.\n        compare_project_id: another project to compare this one against.\n        extension_ref: the extension layer to compare against the base\n            configuration.\n        node_kinds: restrict the comparison to these node kinds, by entity kind\n            ('MetadataObject', 'Symbol', …) or by graph label ('Routine',\n            'Form', …). Omit to compare every kind — and narrow it when a kind\n            is too large to be read whole.\n        edge_types: restrict relationship differences to these types, e.g.\n            ['CALLS', 'USED_IN']. Omit for every type.\n\n    Returns:\n        The shared response envelope. `items` holds the differences, grouped by\n        entity kind and operation in that order; `data.summary` counts them for\n        nodes, properties, relationships and evidence; `data.base` and\n        `data.target` say exactly which two states were compared. When the two\n        states were built by different extractor versions,\n        `data.incompatibility` says so and no differences are computed.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "base_generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "target_generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "compare_project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "extension_ref": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "node_kinds": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "edge_types": {
+      "anyOf": [
+       {
+        "items": {},
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "list_graph_projects",
+   "description": "    List the graph projects registered in this MCP installation.\n\n    Only projects of this installation's ``MCP_NAMESPACE`` are returned: one\n    Neo4j database may serve several MCP installations, and each one sees its\n    own projects only.\n\n    Returns:\n        A JSON string with ``mcp_namespace`` and one entry per project:\n        identifier, configuration root, mode, lifecycle status, whether it\n        currently serves project-data tools, its active and staging\n        generations, ingestion state, and last error.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_graph_project_status",
+   "description": "    Report the lifecycle and ingestion status of one registered project.\n\n    Answers three questions separately, because a single \"healthy\" flag hides\n    the state that matters during a rebuild: whether this process is alive,\n    whether Neo4j and each retrieval lane (exact / fulltext / vector / hybrid /\n    traversal) are ready, and how far the current ingestion has got.\n\n    Progress is computed from processed bytes of the project's file manifest,\n    not from the number of files: on a 1C export file sizes differ by orders of\n    magnitude, and a file-count percentage stalls on large modules. Values are\n    monotonic and never exceed 100%; when sizes are unknown, progress is\n    reported as unknown rather than as a number that looks meaningful.\n\n    Args:\n        project_id: identifier of a project registered in this namespace.\n        operation_id: optional identifier of an administrative operation\n            (``register`` / ``refresh`` / ``delete``). When given, its recorded\n            result is included, so a client that lost the original response can\n            find out what happened without re-issuing the operation. An\n            unrecorded id is reported as ``known: false``, not as an error.\n        generation: optional generation to pin the report to. Must be the\n            project's active or staging generation.\n\n    Returns:\n        A JSON string with the project's registry status, active and staging\n        generations, ingestion state (``never_run`` / ``running`` / ``idle`` /\n        ``failed``) with per-phase records, byte-based progress with a smoothed\n        ETA, checkpoint counters, liveness, per-lane readiness, and the last\n        error as a correlation ID plus error type — the full error text is\n        written to the server log under the same correlation ID.\n        When staging validation is switched on, a ``validation`` report of the\n        most recent generation is included: counts per entity and edge type,\n        and the invariants a refused generation violated with their expected\n        and observed values. That is the answer to \"the refresh finished and\n        the graph did not change\".\n        Only this project is described; no other project's ingestion is\n        disclosed.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "type": "string"
+     },
+     "operation_id": {
+      "default": null,
+      "type": "string"
+     },
+     "generation": {
+      "default": null,
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "project_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "register_graph_project",
+   "description": "    Register a graph project in this namespace (admin profile only).\n\n    A newly registered project holds no data and does not yet serve\n    project-data tools: call ``refresh_graph_project`` to build and promote its\n    first generation.\n\n    Args:\n        project_id: identifier callers will pass to project-data tools.\n        configuration_root: root of the 1C configuration export feeding it.\n        operation_id: caller-chosen identifier making the call idempotent —\n            repeating it returns the first result instead of registering twice.\n        mode: ingestion/serving mode of the project.\n\n    Returns:\n        A JSON string with the resulting project status, or an ``error``\n        object with a typed ``code``.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "type": "string"
+     },
+     "configuration_root": {
+      "type": "string"
+     },
+     "operation_id": {
+      "type": "string"
+     },
+     "mode": {
+      "default": "full",
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "project_id",
+     "configuration_root",
+     "operation_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "refresh_graph_project",
+   "description": "    Rebuild a project into a new generation and promote it (admin profile only).\n\n    A generation is published only on success, so a failed refresh promotes\n    nothing and records nothing as done — repeating it re-derives and finishes\n    the same plan. It is not a rollback: the lanes apply the plan to the live\n    project graph unit by unit, so a refresh that fails partway leaves what it\n    already wrote in place, and says which lanes those were in\n    ``error.live_mutation`` (or ``applied_lanes`` when the failure is typed).\n\n    ``incremental`` goes through one contract: the project's source unit\n    manifest is built, an add/change/delete plan is derived from it, the graph,\n    fulltext and vector lanes are driven from that same plan, and a new\n    generation is published only after all of them have been verified. A\n    per-file refresh is the same pipeline with fewer entries, never a separate\n    fast path.\n\n    Those lanes update the live graph one source unit at a time, and only BSL\n    modules have a per-unit update. A plan naming other kinds — metadata\n    descriptors, forms, roles, subscriptions — is therefore refused **before\n    anything is written**, with ``refresh_capability_unavailable`` naming the\n    kinds and pointing at ``mode=full``. The same refusal covers the embedding\n    contour: an installation that builds embeddings must be able to rebuild the\n    ones a refresh invalidates, so it is refused before the first vector is\n    cleared when it cannot.\n\n    ``full`` is the other pipeline, and it is the one that makes a newly\n    registered project accessible: the project-scoped ingestion pipeline reads\n    the registered ``configuration_root`` into a disposable staging generation,\n    the staging assertions run against it, and promotion swaps it onto the\n    project in one transaction. Nothing of the live project changes until that\n    swap. Reading a whole configuration takes minutes to hours, so the call\n    answers ``accepted`` with the ``staging_generation`` as soon as the\n    rebuild is set up, and the rebuild runs on in the server: poll\n    ``get_graph_project_status(project_id, operation_id=...)``, whose\n    ``operation.status`` reads ``accepted`` while it runs and ``completed``\n    once the generation is promoted. A rebuild that fails leaves the project\n    in ``ingestion_state=failed`` with ``last_error`` and frees the\n    ``operation_id`` for a retry.\n\n    That staging generation is a second ``project_id``, which exists only under\n    ``GRAPH_SCOPE_ENFORCED``. Without it there is nothing to build into and\n    nothing to promote, so the rebuild is refused with\n    ``data_store_unavailable`` before its first statement rather than writing\n    into the live project on the way to a promotion that cannot run.\n\n    A full rebuild also builds only what the ingestion pipeline builds: the\n    structural graph, the BSL code graph, the XML data sources and the forms.\n    The business descriptions and every embedding contour are made afterwards,\n    by lanes a rebuild does not run — and promotion *deletes* the active\n    generation's data. So a project that already holds them is refused with\n    ``refresh_capability_unavailable`` before anything is written, and told to\n    refresh through the source unit manifest instead. When it holds none, the\n    answer names the contours the new generation does not carry in\n    ``lanes_not_built``.\n\n    An installation without the source unit manifest has no incremental\n    pipeline at all, and does not pretend to one: ``mode=incremental`` there\n    rebuilds the whole project, and the answer says so — ``mode`` is ``full``\n    and ``requested_mode`` carries what was asked. ``changed_paths`` is refused\n    on that installation rather than accepted and ignored.\n\n    Args:\n        project_id: identifier of a project registered in this namespace.\n        operation_id: caller-chosen identifier making the call idempotent —\n            repeating it returns the first call's handle and creates no second\n            generation, whether that call has finished or is still running.\n        mode: ``incremental`` (default) applies only what changed since the\n            last promoted generation, and only for the kinds the per-unit lanes\n            can apply; ``full`` rebuilds the whole project from its registered\n            root and promotes the result.\n        changed_paths: optional list of source unit paths to narrow an\n            incremental refresh to. Units left out keep their previous manifest\n            record, so a change that was not applied stays pending rather than\n            being recorded as done.\n        expected_generation: optional generation the caller believes is active.\n            When it is not, the refresh is refused with ``stale_generation``\n            instead of being applied to a generation the caller did not mean.\n\n    Returns:\n        A JSON string with the operation handle (``operation_id`` and\n        ``status``: ``accepted`` while the work runs, ``completed`` once it\n        has), the promoted generation when one was published, the plan's\n        counts and reason codes, per-lane results and the run's metrics — or an\n        ``error`` object with a typed ``code``.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "type": "string"
+     },
+     "operation_id": {
+      "type": "string"
+     },
+     "mode": {
+      "default": "incremental",
+      "type": "string"
+     },
+     "changed_paths": {
+      "default": null,
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "expected_generation": {
+      "default": null,
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "project_id",
+     "operation_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "refresh_extension_layers",
+   "description": "    Re-read the extension layers of this installation (admin profile only).\n\n    What the startup catalog phase cannot do. That phase brings the graph in\n    line with the *catalog* — it adds layers whose export appeared and removes\n    layers whose export is gone — but a layer that is already in the graph comes\n    back ``untouched``, because nothing tells it which exports changed. And a\n    list of changed layers would not be enough on its own: the metadata, BSL and\n    form lanes each resume over what the graph already holds, so a re-exported\n    patch under an unchanged path stays as it was.\n\n    This call forces the re-read. Each named layer's metadata objects, BSL\n    modules and form structures are read from its export again and merged over\n    what is there; nothing is cleared, so a layer that has not really changed\n    converges to the state it already had, and a layer whose export moved on\n    replaces its own entities and no one else's.\n\n    Confined to the layers of this installation's base project, one layer\n    identity at a time. The base configuration is not a layer of the catalog and\n    is never re-read by this call; neither is any other project's layer.\n\n    This is a pass over the catalog, so it also keeps that pass's ordinary\n    reconciliation: a layer in the graph whose export is gone from the catalog is\n    removed, as the startup phase would remove it, and `EXTENSION_CATALOG_SYNC=false`\n    still turns that off. Naming layers narrows what is re-read, not what is\n    reconciled.\n\n    Single-writer, like every rebuild here: the call is refused with\n    ``ingestion_busy`` while this process's own indexing is still writing, and\n    with ``refresh_in_progress`` while another pass over the same project runs.\n    Both are decided before the first write, so a refusal costs nothing.\n\n    A pass reads exports and takes as long as that takes — expect a long call.\n    One layer that fails does not stop the rest: it is named in ``failed`` and is\n    not counted in ``refreshed``. Every attempted layer failing is a\n    misconfiguration rather than a bad export, and answers ``operation_failed``.\n\n    Args:\n        operation_id: caller-chosen identifier making the call idempotent —\n            repeating it returns the first result instead of re-reading the\n            layers twice. A failed pass is not recorded, so the same identifier\n            may be retried.\n        layers: extension layer names to re-read. Omit it to re-read every layer\n            the catalog holds. A name the catalog does not hold is reported in\n            ``warnings`` and refreshes nothing — it never widens the pass.\n\n    Returns:\n        A JSON string naming the base project and catalog, the layers actually\n        re-read, the ones that failed, the pass's per-action counts and its\n        warnings — or an ``error`` object with a typed ``code``.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "operation_id": {
+      "type": "string"
+     },
+     "layers": {
+      "default": null,
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "operation_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "delete_graph_project",
+   "description": "    Delete a project's graph data and its registration (admin profile only).\n\n    Deletion is confined to this ``mcp_namespace + project_id``: counts,\n    checksums, and generations of the other projects in the database are\n    unaffected.\n\n    Args:\n        project_id: identifier of a project registered in this namespace.\n        operation_id: caller-chosen identifier making the call idempotent —\n            repeating it returns the first result instead of deleting twice.\n\n    Returns:\n        A JSON string with how many entities were deleted, or an ``error``\n        object with a typed ``code``.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "type": "string"
+     },
+     "operation_id": {
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "project_id",
+     "operation_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "list_graph_capabilities",
+   "description": "    List every published tool with its version and hash, the feature gates this\n    installation runs under, and the hard limits every response is bounded by.\n\n    The answer to \"what can I call here, and under what rules\" in one call.\n    Each item names a tool, the version of its own contract, a hash of the shape\n    it currently publishes, whether it takes the project scope, and its\n    read-only / idempotent / destructive annotations. `data` carries the shared\n    contract version, the feature gates and the limits.\n\n    A feature gate is not a capability: the tool exists either way. What a gate\n    decides is how its answer should be *read* — whether it is isolated by\n    project, grounded in evidence, checked before promotion. `data.limits` is\n    the rest of what the envelope does not already state: walk depth, fan-out,\n    call timeout.\n\n    Distinct from `get_graph_capabilities`, which answers a different question:\n    that one draws the boundary between what this server analyses and which\n    executions it delegates to another service. This one describes the surface.\n\n    Returns:\n        The shared response envelope; `items` holds one entry per published\n        tool in name order, `data` the contract version, profile, feature gates\n        and limits.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_graph_tool_schema",
+   "description": "    Return the JSON Schema, annotations, version, hash and a compact example of\n    one published tool — or of all of them.\n\n    The example is not decoration. A JSON Schema says what is *accepted*; only a\n    worked call says what a real one looks like, and an agent that has to infer\n    it from types infers it wrongly for exactly the arguments that matter — the\n    qualified names of this domain.\n\n    The schema returned is the one the server publishes in `tools/list`, derived\n    from the same function. A parity test fails the build when a published tool\n    has no documented entry here, and when an entry names a tool that is not\n    declared, so this cannot drift into describing a surface that no longer\n    exists.\n\n    Args:\n        tool: a published tool name. Omit it for every tool.\n\n    Returns:\n        The shared response envelope; `items` holds one entry per described\n        tool with `input_schema`, `annotations`, `version`, `hash`, `summary`\n        and `example`.\n\n    Raises:\n        invalid_argument: for a name this server does not publish. An empty\n            answer would be indistinguishable from a tool that has no schema.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "tool": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "list_plugins",
+   "description": "    Report every plugin file this server loaded, and what each of them declares.\n\n    The answer to \"what is this server actually running\", which a client cannot\n    get from `tools/list`: a plugin changes what published tools do without\n    changing their names. Each item is one file, with the hooks and tables it\n    declares, the classification of each hook (`call-scoped` affects one call;\n    `derived-state` shapes the graph, fulltext and vector state and its source\n    is part of the fingerprint those are rebuilt against), whether each hook is\n    enabled, the error that disabled it, how many times it failed, the time\n    accumulated in it, and a digest of the file's source.\n\n    `data` carries the order the files run in — sorted by file name, and each\n    hook is a pipeline in that order — the current plugin epoch, the files that\n    refused to load with the reason each gave, the declared aliases and tool\n    presets, the build counters of the last ingestion, and the two settings that\n    govern failures.\n\n    Args:\n        project_id: a project registered in this namespace. Only used to check\n            whether the aliases plugins declared resolve to anything: without\n            it, every alias is reported with `resolved: null`, which means \"not\n            checked here\" rather than \"resolves to nothing\".\n\n    Returns:\n        The shared response envelope; `items` holds one entry per loaded plugin\n        file in the order they run, `data` the epoch and the rest of the state.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "default": null,
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "reload_plugins",
+   "description": "    Re-read the plugin directory and put the whole set in force (admin profile only).\n\n    Every file is read again and the set is replaced atomically at a new plugin\n    epoch. A directory in which one file no longer loads changes nothing at all:\n    the previously loaded set stays in force and the answer names the file and\n    the reason it refused. Half a new set is a state nobody asked for.\n\n    Call-scoped hooks take effect on the next call. Derived-state hooks take\n    effect at the *next build*, never retroactively — the graph, the fulltext\n    index and the vectors already stored were shaped by the hooks that were\n    loaded when they were built, and rewriting that claim without rebuilding\n    would make the state describe rules it was not produced under.\n\n    A new epoch invalidates outstanding continuation cursors: a client paging\n    through an answer is refused with `stale_plugin_epoch` and repeats the call\n    rather than paging into a differently shaped answer.\n\n    Args:\n        operation_id: caller-chosen identifier making the call idempotent —\n            repeating it returns the first call's result instead of starting a\n            second epoch. A reload that changed nothing because a file refused\n            to load is not recorded, so the same id may be retried once the file\n            is fixed.\n\n    Returns:\n        The shared response envelope; `data` carries whether the set was\n        replaced, the new epoch, the order the files run in, and the files that\n        failed with their reasons.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "operation_id": {
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "operation_id"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_graph_schema",
+   "description": "    Report the node kinds and edge kinds this project's graph holds.\n\n    Two halves with two different authorities. The node kinds are declared by\n    this server — every label it writes, with the properties its identity is\n    keyed by — and each is marked `present` or not for this project, so an empty\n    kind is visibly empty rather than missing. The edge kinds can only come from\n    the graph: a relationship type is written between whatever the extractors\n    found, and which pairs of labels it actually connects is a fact about the\n    data, not a declaration.\n\n    Only this project's kinds are reported. Which kinds a neighbouring project\n    holds is not disclosed, and neither is its existence.\n\n    Returns:\n        The shared response envelope; `items` holds the node kinds followed by\n        the edge kinds, each tagged with `kind` ('node' or 'edge') — one list,\n        so a truncated answer pages both halves together. `data` counts them\n        rather than repeating them.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_graph_stats",
+   "description": "    Count this project's graph by node type, edge type, evidence type and\n    confidence.\n\n    Four breakdowns rather than one total, because a total cannot show a\n    lopsided extraction: a configuration whose forms loaded and whose modules\n    did not has a healthy object count and no routines, and only the per-type\n    numbers say so. Evidence is counted by assertion type and by confidence\n    bucket for the same reason — a graph resting mostly on inference is a\n    different graph from one resting on what the sources declare.\n\n    An empty graph is a valid state. It returns zeros with `data.empty` set,\n    never an error: a project that has been registered and not yet built is\n    exactly the case an operator asks about.\n\n    With GRAPH_SCOPE_ENFORCED on, the counts are confined to this project and\n    to the generation currently serving it, which the response context names;\n    no other project's counts are included. With it off they count the whole\n    database, and `data.scope_confined` is false. Evidence and confidence\n    counts are zero by design while the installation records no evidence\n    (`data.evidence_recorded` false, REFERENCE_EVIDENCE_ENABLED off); whether\n    the graph holds data is `data.empty`.\n\n    Returns:\n        The shared response envelope; `items` holds the per-node-type counts,\n        and `data` the other three breakdowns — `edges`, `evidence`,\n        `confidence` — with the totals, `empty`, `scope_confined` and\n        `evidence_recorded`. The node counts are not\n        repeated in `data`: `items` is what the shared cursor pages, and a whole\n        copy beside a paged one would eventually disagree with it.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "list_graph_indexes",
+   "description": "    List the indexes this database holds, with their state, population and the\n    share of this project's nodes each one covers.\n\n    Population and coverage answer different questions and both are needed.\n    Population is what the *server* has built — an index that exists and is 40%\n    populated answers 40% of the queries it is for. Coverage is what share of\n    this project's nodes of that label actually carry the indexed property: a\n    fully built index over a property nine tenths of the project does not have\n    is a healthy index with a tenth of the reach, and only the second number\n    says so.\n\n    Indexes are one schema of the whole database and their keys carry the\n    composite project scope rather than their names, so the list itself\n    discloses no project. The coverage is counted inside this project only.\n\n    Returns:\n        The shared response envelope; `items` holds one entry per index with\n        `type`, `entity_type`, `state`, `population_percent`, `coverage`, the\n        labels and the properties. `data` counts how many are online.\n\nContract parameters (project_id, generation, cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "generation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "health_graph",
+   "description": "    Report server liveness, Neo4j availability, provider availability and\n    per-lane readiness — each of them separately.\n\n    A single \"healthy\" flag makes a cold start undiagnosable, because four\n    independent things are being asked about at once:\n\n    * `liveness.process` — this process answers. Deliberately not conditioned on\n      anything else: a live server with a dead database is a different situation\n      from a dead server, and one flag cannot say which.\n    * `neo4j.available` — whether the database answered a trivial statement.\n    * `providers.embedding` / `providers.chat` — each with its own state.\n      \"No API key\" and \"switched off by graph-only mode\" call for different\n      action and are never merged.\n    * `readiness.lanes` — exact, fulltext, vector, hybrid and traversal, each\n      reported on its own. A ready structural graph with an unbuilt vector lane\n      is a working truncated service, which `readiness.state` names\n      `ready_structural` rather than calling it a failed start.\n\n    A lane may be `null`: that means its readiness cannot be told from here, not\n    that it is broken. Acting on \"unknown\" is possible; acting on a guess is not.\n\n    Args:\n        project_id: a project registered in this namespace. Lane readiness\n            belongs to a project's ingestion, so without one the lanes are\n            reported as unknown and everything else is still answered — which\n            is the point, because this call is made when nothing works yet and\n            possibly before any project exists.\n\n    Returns:\n        The shared response envelope; `data` carries `liveness`, `neo4j`,\n        `providers` and `readiness`. Only the named project is described.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "project_id": {
+      "default": null,
+      "type": "string"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "unpack_ordinary_form",
+   "description": "    Read one standalone ordinary-form `Form.bin` into an editable workspace.\n\n    An ordinary form (обычная форма) is exported as a binary container, unlike\n    a managed form's `Ext/Form.xml`. Do not edit `Form.bin` directly and do not\n    read it as XML: unpack it here, edit the payload, and build it back with\n    `build_ordinary_form`.\n\n    The workspace holds `payload/` — the container's entries verbatim, and the\n    only thing a rebuild reads — plus `decoded/`, derived views for reading\n    (`form.json`, the layout as JSON-compatible data; `module.bsl`, the form\n    module). Editing a derived view is refused by the build rather than\n    silently dropped.\n\n    What the layout can say: the brace tree is positional. It is structurally\n    parseable and it names no elements. Named element trees (`*.elem.json`)\n    come only from high-level extraction of a whole CF/CFE/EPF, where the\n    surrounding metadata supplies the names. Nothing here is invented.\n\n    Args:\n        form_path: the `Form.bin` to read. Absolute path; Cyrillic is normal.\n        workspace_path: where to materialise the workspace. Must be new, empty,\n            or a workspace this tool wrote (then `overwrite` is required).\n            A non-empty directory this tool did not write is always refused.\n        overwrite: replace an existing workspace of this contract.\n        include: `summary` (default, paths only), `structure`, `module` or\n            `all` — which bounded preview to embed in the answer.\n        max_chars: bound on each embedded preview. Clamped to the server's cap.\n\n    Returns:\n        The shared response envelope; `data` carries the `ordinary-form/1`\n        payload: `status`, `entries` (name, kind, size, sha256, encoding, and\n        the paths of payload and decoded view), `source`, `manifest_path`, and\n        the previews asked for. A refusal arrives as `status=\"error\"` with\n        `error_code` and an actionable `hint`.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "form_path": {
+      "type": "string"
+     },
+     "workspace_path": {
+      "type": "string"
+     },
+     "overwrite": {
+      "default": false,
+      "type": "boolean"
+     },
+     "include": {
+      "default": "summary",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 4000,
+      "type": "integer"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "form_path",
+     "workspace_path"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "build_ordinary_form",
+   "description": "    Write an ordinary-form workspace back to a `Form.bin`, and verify it.\n\n    Verification re-reads what was just written, with the same code that reads\n    the original, and compares the *logical payload* — entry names, sizes and\n    SHA-256 of the payload bytes. It deliberately does not compare the final\n    binaries: the container records carry write timestamps, so a rebuilt\n    `Form.bin` differs byte for byte from its source even when nothing changed.\n    `binary_identical` reports that fact; `verification.status` is what says\n    whether the form survived.\n\n    Args:\n        workspace_path: a workspace written by `unpack_ordinary_form`.\n        output_path: the `Form.bin` to write. Never replaced silently.\n        overwrite: replace an existing output file.\n        verify: re-read the result and compare the payload. Leave it on.\n\n    Returns:\n        The shared response envelope; `data` carries `output` (path, size,\n        sha256), `source` (the original recorded at unpack time),\n        `binary_identical`, `verified`, `verification` (`match` / `mismatch` /\n        `skipped`, with per-entry hashes) and `changed_entries` — the payload\n        entries edited since the unpack.\n\nContract parameters (cursor, max_items) and the response envelope: see the server instructions or get_graph_tool_schema.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "workspace_path": {
+      "type": "string"
+     },
+     "output_path": {
+      "type": "string"
+     },
+     "overwrite": {
+      "default": false,
+      "type": "boolean"
+     },
+     "verify": {
+      "default": true,
+      "type": "boolean"
+     },
+     "cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     },
+     "max_items": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null
+     }
+    },
+    "required": [
+     "workspace_path",
+     "output_path"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  }
+ ]
+}

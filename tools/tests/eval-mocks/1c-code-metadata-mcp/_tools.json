@@ -1,0 +1,1152 @@
+{
+ "tools": [
+  {
+   "name": "metadatasearch",
+   "description": "Search in XML metadata files of 1C configuration.\n\nThe result count is ``limit`` (there is no ``top_k``); a call with a\nparameter this tool does not have is refused before it runs, naming\nthe accepted parameters.\n\nWhen ``object_type`` is provided, retrieval is constrained to matching\ntop-level metadata categories such as ``Справочники`` or ``Документы``.\n\nWhen ``names_only`` is ``True``, returns only a compact list of matching\nmetadata object names (with full_path, object_type, and synonym) instead\nof raw text chunks.  **Prefer names_only=True when you need to identify\nwhich configuration objects are relevant** — their detailed attributes\nand tabular parts can then be fetched via ``get_metadata_details``.\n\nWhile background indexing is still populating the metadata collection,\nthe tool transparently falls back to grep-level scanning of the source\n``.txt`` files and marks the response with ``search_layer: \"grep\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``origin`` scopes the result to where an artifact came from\n(CODE-SAVED-1126930): ``base`` for the configuration itself,\n``extension`` for any configuration extension, a named extension\nidentity for one of them, and ``all`` - the default - for everything.\nThe applied filter is reported under ``origin_filter``, and every\nresult carries an ``origin`` block naming the configuration it came\nfrom and, for an extending definition, its mode and base reference.\nAn applied filter constrains retrieval, not the finished page, and the\nindexed lane reports what it covered under ``origin_scan`` - including\nwhether a short answer was exhaustive or bounded (MCP-R-01).",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "limit": {
+      "default": 5,
+      "type": "integer"
+     },
+     "object_type": {
+      "default": "",
+      "type": "string"
+     },
+     "names_only": {
+      "default": false,
+      "type": "boolean"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "codesearch",
+   "description": "Search in object modules and common modules of 1C.\n\nFalls back to file-level grep over ``.bsl`` when the code collection\nis still empty (background indexing in progress); response then has\n``search_layer: \"grep\"`` on success.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``origin`` scopes the result to where the code came from\n(CODE-SAVED-1126930): ``base``, ``extension``, a named extension\nidentity, or ``all`` - the default. The applied filter is reported\nunder ``origin_filter``, and every result carries an ``origin`` block;\na result from an extension module additionally carries the\nmodifications that module declares, with their modes and base\nreferences. An applied filter constrains retrieval, not the finished\npage, and the indexed lane reports what it covered under\n``origin_scan`` - including whether a short answer was exhaustive or\nbounded (MCP-R-01).",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "limit": {
+      "default": 5,
+      "type": "integer"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "helpsearch",
+   "description": "Search in HTML help files of 1C configuration.\n\nUses the same hybrid RAG pipeline as metadatasearch/codesearch:\nvector overfetch → BM25 reranking → optional cross-encoder.\nFalls back to grep over ``.html`` when the help index is empty.",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "limit": {
+      "default": 5,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "search_function",
+   "description": "Search for BSL procedures and functions by name.\n\nExact mode: full name match (case-insensitive).\nFuzzy mode: FTS5 prefix matching over the normalized identifier, so\n``ОбработкаПров`` and ``Проведения`` both reach ``ОбработкаПроведения``.\nAutomatically falls back from exact to fuzzy on empty result.\nIf both searches are empty, up to five ``suggestions`` offer similar\ncanonical names, modules and ``next_call`` arguments. These are advisory\nspelling suggestions, not search results; module/origin scope still applies.\nWhen the structural index is still being populated, falls back to\na regex scan over ``.bsl`` files and returns ``search_layer=\"grep\"``.\n\nOutput controls (all optional, defaults reproduce the previous payload):\n\n* ``include_body`` (default ``True``) - when ``False``, each result omits\n  ``body`` and carries ``signature`` instead: the first non-empty line of\n  the body, at most 500 characters.\n* ``max_body_chars`` (default ``0`` = unlimited) - when greater than zero,\n  ``body`` is truncated to that many characters and the result carries\n  ``body_truncated=true``.\n* ``module_path`` (default empty) - case-insensitive substring filter on\n  the module path, applied before the limit.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.\n\nExtension provenance (CODE-SAVED-1126930):\n\n* ``origin`` scopes the search to ``base``, ``extension``, one named\n  extension identity, or ``all`` (the default). The applied filter is\n  reported under ``origin_filter`` and every result carries an\n  ``origin`` block.\n* ``explain_effective`` (default ``True``) adds ``effective_definition``:\n  which definition of *name* is in effect, the competing definitions\n  with their origins and modes, and the **rule** that decided -\n  ``Вместо`` supersedes the base, ``Перед``/``После`` leave it in\n  effect and are reported as intercepting, and\n  ``ИзменениеИКонтроль`` adopts without superseding. When two or more\n  extensions modify the same member the response reports a\n  ``collision`` naming every participant and does **not** pick one:\n  the platform resolves that by extension load order, which is a\n  property of the information base and is absent from a file export.",
+   "inputSchema": {
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "exact": {
+      "default": true,
+      "type": "boolean"
+     },
+     "limit": {
+      "default": 10,
+      "type": "integer"
+     },
+     "include_body": {
+      "default": true,
+      "type": "boolean"
+     },
+     "max_body_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "module_path": {
+      "default": "",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "item_id": {
+      "default": "",
+      "type": "string"
+     },
+     "index_identity": {
+      "default": "",
+      "type": "string"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
+     },
+     "explain_effective": {
+      "default": true,
+      "type": "boolean"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_module_structure",
+   "description": "Get full structure of a BSL module: procedures, functions, regions, exports.\n\nReturns all procedures/functions with line numbers, export flag, compilation\ndirective, region tree with nesting, and summary statistics.\nWhile the structural index is still being populated, returns an\nempty-safe payload with ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "inputSchema": {
+    "properties": {
+     "module_path": {
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "module_path"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_method_call_hierarchy",
+   "description": "Get the call hierarchy of a BSL method, under an explicit budget.\n\ndirection: ``callers`` (who calls this), ``callees`` (what this calls), ``both``.\ndepth: recursion depth for hierarchy traversal (default 3).\n\nThe traversal is bounded so a hot method name at ``depth>=2`` on a large\ncall graph answers instead of running until the caller gives up:\n\n* ``max_nodes`` (default 2000) - maximum unique nodes expanded.\n* ``max_edges`` (default 20000) - maximum call edges traversed.\n* ``timeout_ms`` (default 5000) - wall-clock budget; ``0`` disables it.\n* ``module_path`` / ``object_name`` - scope the seed lookup and every\n  expansion to one module path substring, or to one object written as\n  the Russian plural reference (``Документы.ЗаявкаНаРемонт``).\n\nThe result always carries ``partial``; when it is ``true`` it also\ncarries ``reason`` (``max_nodes`` / ``max_edges`` / ``timeout_ms``),\n``nodes_seen`` and ``edges_seen``.\nWhile the structural index is still being populated, returns an\nempty-safe payload with ``indexing_status=\"in_progress\"``.\n\nAn empty, completed incoming-call lookup also reports ``declarative_usage``:\nconfirmed form event bindings, or why they could not be resolved. Platform\nbindings stay separate from BSL ``callers``; no callers does not mean unused.\nA handler passed by name is an edge too, marked ``via``:\n``notify_description`` (``Новый ОписаниеОповещения(\"Имя\", ЭтотОбъект)`` or\na common module) or ``idle_handler`` (``ПодключитьОбработчикОжидания``).\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "inputSchema": {
+    "properties": {
+     "method_name": {
+      "type": "string"
+     },
+     "direction": {
+      "default": "both",
+      "enum": [
+       "callers",
+       "callees",
+       "both"
+      ],
+      "type": "string"
+     },
+     "depth": {
+      "default": 3,
+      "type": "integer"
+     },
+     "max_nodes": {
+      "default": 2000,
+      "type": "integer"
+     },
+     "max_edges": {
+      "default": 20000,
+      "type": "integer"
+     },
+     "timeout_ms": {
+      "default": 5000,
+      "type": "integer"
+     },
+     "module_path": {
+      "default": "",
+      "type": "string"
+     },
+     "object_name": {
+      "default": "",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "method_name"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "graph_dependencies",
+   "description": "Get dependency graph for a 1C configuration object.\n\nShows which objects reference and are referenced by the given object.\ndirection: ``forward`` (uses), ``reverse`` (used by), ``both``.\nWhen the dependency graph is still building or has no edges for the\nrequested object, a live XML reverse/forward scan is attempted\n(``search_layer=\"live_xml\"``, ``partial=true`` when the walk was\ncapped); if that also yields nothing, returns an empty-safe payload\nwith ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "inputSchema": {
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "direction": {
+      "default": "both",
+      "enum": [
+       "forward",
+       "reverse",
+       "both"
+      ],
+      "type": "string"
+     },
+     "limit": {
+      "default": 50,
+      "type": "integer"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_metadata_details",
+   "description": "Get detailed metadata for a 1C configuration object.\n\nReturns attributes with types, tabular parts, dimensions, resources,\npredefined items.  Falls back to fuzzy search if exact name not found.\nWhen the metadata detail store is still building or has no record for\nthe requested object, a live XML parse is attempted\n(``search_layer=\"live_xml\"``); if that also yields nothing, the\nresponse carries ``indexing_status=\"in_progress\"``.\n\nA catalog, document or register card also carries\n``standard_attributes`` - the standard fields the object really has,\nderived from its properties (``Код`` only with a code length,\n``Владелец`` only with owners, ``Период`` only for a periodic\ninformation register, ...) as ``{name, name_en, type}`` - and a register\ncard ``virtual_tables``: its query tables (``Остатки``, ``Обороты``,\n``СрезПоследних``, ``ОборотыДтКт``, ``База<Регистр>``, ...) with their\nparameters in positional order and, unless ``detail_level=outline``, the\nfield names a query uses (``КоличествоОстаток``, ``СуммаОборотДт``,\n``Субконто1``). Tables the register does not have are not listed;\n``virtual_tables_notes`` says what was left out and why.\n\n``sections`` projects the answer: a comma-separated subset of\n``attributes``, ``tabular_parts``, ``properties``, ``predefined``,\n``virtual_tables``, ``standard_attributes`` (default: all of them).\n``tabular_part`` names one tabular part and\nreturns only its columns - the way to read one section of a document\nwith 24 of them without paging through 441 attributes. The cursor is\nbound to the projection. ``attributes_total`` still counts the\nobject's own attributes, so a projected answer is not mistaken for an\nobject that has none. Empty ``properties`` / ``predefined`` /\n``based_on`` / ``print_forms`` are omitted rather than sent as ``{}``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.\n\nEvery successful response additionally carries ``attributes_total``\nand ``attributes_returned`` - always, not only when something was\nleft out (CODE-ERR-TILDA-20260709-METADATA-TAIL, design D5).  They\nare scoped to the object's own attribute list, which ``items_total``\ncannot answer because it spans the tabular-part columns too; they\nnever replace or vary the shared envelope, which stays the single\nsource of ``truncated`` and ``next_cursor``.\n\n``origin`` scopes the lookup to ``base``, ``extension``, one named\nextension identity, or ``all`` - the default. The response reports the\napplied filter under ``origin_filter`` and carries the resolved\nobject's ``origin`` (CODE-SAVED-1126930).",
+   "inputSchema": {
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "item_id": {
+      "default": "",
+      "type": "string"
+     },
+     "index_identity": {
+      "default": "",
+      "type": "string"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     },
+     "sections": {
+      "default": "",
+      "type": "string"
+     },
+     "tabular_part": {
+      "default": "",
+      "type": "string"
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "search_forms",
+   "description": "Search across all 1C configuration forms (elements, attributes, commands).\n\nUses hybrid search (vector + full-text candidates fused by RRF, then\nreranked) over the ``forms`` collection of the zvec vector index,\nwhere each document is the structured text summary of\none form (object/form name, title, indented element tree with type\nlabels and DataPath, attributes with types, commands, handlers).\nThis is the path that lets queries describing form *content*\n(e.g. element types like ``Гиперссылка``, DataPath fragments like\n``URL``, structural concepts like ``табличная часть``) resolve to\nthe matching forms.\n\nFalls back to a filesystem glob over ``**/Forms/*/Form.xml`` with\n``search_layer=\"grep\"`` while code indexing is running or while the\nSQLite ``FormIndex`` or the ``forms`` collection is still empty. When the\nhybrid path returns zero results against a populated collection,\nfalls back once to ``FormIndex.search_metadata_forms`` so\nidentifier-only queries that the vector path under-ranks still\nresolve.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "limit": {
+      "default": 10,
+      "type": "integer"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "inspect_form_layout",
+   "description": "Get full element tree, attributes, commands, and handlers for a form.\n\nReturns hierarchical form element tree with types, data bindings,\nvisibility, accessibility, commands, and event handlers.\n\n``object_name`` accepts the canonical Russian *singular* qualified\nreference (``Документ.ЗаявкаНаРемонт``); it is rewritten to the plural\nidentifier the form index stores (``Документы.ЗаявкаНаРемонт``) before\nthe lookup, and the response then reports ``match=\"normalized\"`` while\n``requested`` keeps the spelling that was asked for.\nWhile the form index is still being populated, returns an empty-safe\npayload with ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.",
+   "inputSchema": {
+    "properties": {
+     "object_name": {
+      "type": "string"
+     },
+     "form_name": {
+      "default": "",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "item_id": {
+      "default": "",
+      "type": "string"
+     },
+     "index_identity": {
+      "default": "",
+      "type": "string"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "object_name"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_form_artifact",
+   "description": "Read one form artifact of the configuration, or one of its elements.\n\nReturns the form's stable identifier, its owning object in canonical\nform, the form name, the declared form kind, the element tree with\nnames, types and nesting, the declared attributes and commands, the\nlifecycle state, and one provenance record naming where the answer came\nfrom and by which route.\n\n``artifact_id`` accepts an identifier from any artifact tool without\ntransformation, including an element's member identifier\n(``<project>:form:<object>.<form>:Элементы.<element>``), in which case\nthat one element is returned.\n\n``object_name`` accepts either spelling - ``Документ.ЗаявкаНаРемонт`` or\n``Документы.ЗаявкаНаРемонт`` - and the identifier returned always uses\nthe canonical plural form.\n\nThis tool reads. It does not open, render or execute a form, and it\nnever writes to the configuration export. ``operation`` is reserved and\nonly ``read`` is accepted.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page\nof elements, attributes and commands, ``detail_level=\"outline\"`` drops\ndata paths and source ranges, and ``cursor`` continues a truncated\nresponse (``items_total``, ``items_returned``, ``truncated``,\n``next_cursor``). One element read by its member identifier is\nreturned whole.",
+   "inputSchema": {
+    "properties": {
+     "object_name": {
+      "default": "",
+      "type": "string"
+     },
+     "form_name": {
+      "default": "",
+      "type": "string"
+     },
+     "artifact_id": {
+      "default": "",
+      "type": "string"
+     },
+     "include_ranges": {
+      "default": true,
+      "type": "boolean"
+     },
+     "operation": {
+      "default": "read",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_role_artifact",
+   "description": "Read one role's declared rights, or the roles granting rights on an object.\n\nWith ``role_name`` or ``artifact_id``: the role's stable identifier,\nname, synonym and the rights it declares - each naming the metadata\nobject in canonical form, the right, and whether it is granted - with\nprovenance naming the ``Roles/<Name>/Ext/Rights.xml`` it was read from.\nA right on a member keeps the member's path\n(``Справочники.X.Реквизиты.Y``, ``Документы.X.ТабличныеЧасти.T.Реквизиты.Z``)\nand names the object in ``owner_path``. ``granted=false`` is an explicit\ndenial; a right that is not listed is not declared. A granted right\nrestricted by condition (RLS) has ``conditional=true`` and a\n``restriction_ref``. ``rights_total`` counts every declared right.\n\n``restrictions`` - ``conditions``, ``templates`` or ``all`` - returns the\nrole's restriction texts instead of its rights: the RLS condition of each\nconditional right (narrowed to one by ``restriction_ref``) and the\nrole's restriction templates. The texts are paged: ``max_chars`` caps a\npage, ``cursor`` continues it, and a long text continues on the next\npage (``text_offset`` / ``text_length``).\n\nWith ``object_name`` alone: the reverse direction, listing the roles\nthat declare rights on that object or its members.\n\nThese are **declared configuration rights**. They are not the effective\npermissions of any user, session or profile: deciding those requires a\nrunning information base, which this server neither has nor starts.\n``operation`` is reserved and only ``read`` is accepted.\n\nThe rights list and the reverse list of roles are budgeted too. Without\n``max_chars`` the server default applies: 32768 characters, or\n``RESPONSE_MAX_CHARS`` (``0`` = no cap). ``max_items`` caps one page,\n``cursor`` continues it (``items_total``, ``items_returned``,\n``truncated``, ``next_cursor``); ``rights_total`` still counts every\ndeclared right. A cursor continues the kind of answer that issued it.",
+   "inputSchema": {
+    "properties": {
+     "role_name": {
+      "default": "",
+      "type": "string"
+     },
+     "artifact_id": {
+      "default": "",
+      "type": "string"
+     },
+     "object_name": {
+      "default": "",
+      "type": "string"
+     },
+     "operation": {
+      "default": "read",
+      "type": "string"
+     },
+     "restrictions": {
+      "default": "",
+      "enum": [
+       "",
+       "conditions",
+       "templates",
+       "all"
+      ],
+      "type": "string"
+     },
+     "restriction_ref": {
+      "default": "",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_report_artifact",
+   "description": "Read one report's structure: its forms, templates and composition schema.\n\nReturns the report's stable identifier and canonical path, its name and\nsynonym, its forms and templates as references, its declared attributes\nand tabular parts, and - when the export declares a data composition\nschema - that schema's location together with its dataset and field\nnames.\n\nNothing is executed and no result is composed. When a schema is present\nin the export but not parsed by this build, the answer says so\nexplicitly rather than omitting the field, because an omitted field\nreads as \"this report has no schema\" - a different and wrong fact.\n``operation`` is reserved and only ``read`` is accepted.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page\nof forms, templates, attributes, tabular parts and schema datasets and\nfields, ``detail_level=\"outline\"`` drops synonyms and paths, and\n``cursor`` continues a truncated response (``items_total``,\n``items_returned``, ``truncated``, ``next_cursor``).",
+   "inputSchema": {
+    "properties": {
+     "report_name": {
+      "default": "",
+      "type": "string"
+     },
+     "artifact_id": {
+      "default": "",
+      "type": "string"
+     },
+     "operation": {
+      "default": "read",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "detail_level": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "list_artifact_links",
+   "description": "Resolve an artifact's links to external run and test results.\n\nTraversable in both directions: give ``artifact_id`` for the results\nlinked to one artifact, or ``result_uri`` for the artifacts linked to\none result. Both directions are served from the same stored row, so\nthey always agree.\n\nEach link is returned with a typed status computed now - ``resolved``,\n``dangling`` (an endpoint artifact no longer exists), ``stale``\n(``expected_digest`` differs from the recorded one) or ``out_of_scope``\n(an endpoint belongs to another project). A link that no longer\nresolves is returned *with its status* rather than omitted, so \"no\nlink\" stays distinguishable from \"a link that no longer resolves\".\n\nResolution is built entirely from stored reference metadata. The\nreferenced URI is never fetched, followed or executed.\n``operation`` is reserved and only ``read`` is accepted.",
+   "inputSchema": {
+    "properties": {
+     "artifact_id": {
+      "default": "",
+      "type": "string"
+     },
+     "result_uri": {
+      "default": "",
+      "type": "string"
+     },
+     "expected_digest": {
+      "default": "",
+      "type": "string"
+     },
+     "operation": {
+      "default": "read",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "register_external_result_link",
+   "description": "Record a reference to an immutable, externally produced result.\n\nThe result is produced elsewhere - by a sibling MCP that runs tests, a\nCI job, whatever your pipeline uses. This server stores a *reference* to\nit: the stable URI, the content digest that makes it verifiable later,\nthe producing system, and the time it was recorded. It never produces,\nruns, re-runs, fetches, mutates or deletes a result.\n\nA reference without a content digest is refused with ``link_invalid``:\nwithout one there is no way to tell the result you linked from whatever\nis at that URL now, so ``stale`` could never be detected and the link\nwould be a false promise of immutability. A reference to an artifact of\nanother project is refused with ``out_of_scope``.\n\nThis is the one write on the artifact surface, and it writes one row\ninto this server's own metadata store - never into the configuration\nexport, and never into the referenced result. ``operation`` is reserved\nand only ``read`` is accepted.",
+   "inputSchema": {
+    "properties": {
+     "artifact_id": {
+      "type": "string"
+     },
+     "result_uri": {
+      "type": "string"
+     },
+     "result_digest": {
+      "type": "string"
+     },
+     "producer": {
+      "type": "string"
+     },
+     "operation": {
+      "default": "read",
+      "type": "string"
+     }
+    },
+    "required": [
+     "artifact_id",
+     "result_uri",
+     "result_digest",
+     "producer"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "bsl_scope_members",
+   "description": "Get available methods, properties, and events for a BSL context.\n\ncontext: object identifier such as ``Справочник.Номенклатура``,\n         ``ОбщийМодуль.ОбщегоНазначения``, or ``Глобальный``.\nmember_type: ``all``, ``methods``, ``properties``, or ``events``.\n\nFor ``context=\"Глобальный\"`` the result is a **curated reference\nsubset** of the platform global context - the methods and properties\nthat appear in nearly every configuration - not an exhaustive listing.\nComplete platform documentation lives in the indexed help collection:\nquery it with the ``helpsearch`` tool.\n\nRequires the structural index and metadata detail store to be\npopulated; while either is still being built, returns an empty-safe\npayload with ``indexing_status=\"in_progress\"``.",
+   "inputSchema": {
+    "properties": {
+     "context": {
+      "type": "string"
+     },
+     "member_type": {
+      "default": "all",
+      "type": "string"
+     }
+    },
+    "required": [
+     "context"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "get_xsd_schema",
+   "description": "Get the XSD schema for a 1C metadata object type.\n\nSupported types: Справочник, Документ, РегистрСведений, Форма, СКД, etc.\nWhile the help phase (which runs XSD generation) is still pending,\nreturns an empty-safe payload with ``indexing_status=\"in_progress\"``.",
+   "inputSchema": {
+    "properties": {
+     "object_type": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "object_type"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "verify_xml",
+   "description": "Validate XML content against the XSD schema for the given object type.\n\nReturns validation result with status ``valid``, ``invalid``, or ``error``.",
+   "inputSchema": {
+    "properties": {
+     "xml_content": {
+      "type": "string"
+     },
+     "object_type": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "xml_content",
+     "object_type"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "compact_search",
+   "description": "Bounded, cursor-paged text search over the indexed lanes.\n\nEvery item carries a stable ``id``, an exact locator where it has one, a\nbounded excerpt and a score. The response carries the shared envelope:\n``items``, ``items_total``, ``items_returned``, ``truncated``,\n``next_cursor`` and ``provenance`` naming the index identity, lanes,\nroutes and producers. ``include_provenance=true`` additionally shows,\non every item, its own provenance and a null locator with its typed\nreason - what the response-level provenance already states is folded\naway by default.\n\n* ``kinds`` - ``\"symbol\"``, ``\"metadata\"``, or both (default).\n* ``cursor`` - a ``next_cursor`` this endpoint issued earlier. It is\n  opaque: do not parse or construct one. A cursor presented after the\n  served index changed fails with ``cursor_stale`` naming both\n  identities; a malformed one fails with ``cursor_invalid``.\n* ``max_items`` / ``max_bytes`` - the response budget (0 = default). The\n  effective budget, including any server-side clamp, is reported back.\n* ``items_total`` is ``null`` with a typed reason when the candidate cap\n  was reached, rather than reporting a count that is not a total.\n\nAn ``id`` from here resolves at ``compact_symbol`` or ``compact_metadata``\nwithout transformation.",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "type": "string"
+     },
+     "kinds": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_bytes": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_candidates": {
+      "default": 0,
+      "type": "integer"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "compact_symbol",
+   "description": "Look up or page BSL symbols, bodies excluded unless asked for.\n\nItems carry the symbol name, kind, export flag, execution context, owning\nmodule and an exact line range that slices back to exactly that symbol.\n``include_body`` is off by default because a body is unbounded and is what\nblows a context budget; ``search_function`` keeps its own defaults.\n\n``item_id`` resolves an identifier issued by any compact endpoint.\n``module_path`` is a case-insensitive substring filter on the canonical\nmodule path, applied during candidate generation.",
+   "inputSchema": {
+    "properties": {
+     "name": {
+      "default": "",
+      "type": "string"
+     },
+     "module_path": {
+      "default": "",
+      "type": "string"
+     },
+     "item_id": {
+      "default": "",
+      "type": "string"
+     },
+     "include_body": {
+      "default": false,
+      "type": "boolean"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_bytes": {
+      "default": 0,
+      "type": "integer"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "compact_call",
+   "description": "Call edges for a symbol, in one direction, under an explicit budget.\n\nEach item is one edge: caller and callee identifiers, the callee's\nresolution state (``resolved`` / ``unresolved`` / ``ambiguous`` - a\nplatform method is not in the index and says so), and the call-site\nlocator. A handler passed by name carries ``via`` (``notify_description`` /\n``idle_handler``). ``direction`` is ``callees``, ``callers`` or ``both``; ``depth``\nis bounded by a documented server maximum.\n\nThe response carries a ``traversal`` marker naming which bound stopped it\n(``max_nodes`` / ``max_edges`` / ``timeout_ms``) or ``null``, and issues a\n``next_cursor`` whenever edges remain.",
+   "inputSchema": {
+    "properties": {
+     "symbol": {
+      "default": "",
+      "type": "string"
+     },
+     "item_id": {
+      "default": "",
+      "type": "string"
+     },
+     "direction": {
+      "default": "callees",
+      "enum": [
+       "callers",
+       "callees",
+       "both"
+      ],
+      "type": "string"
+     },
+     "depth": {
+      "default": 1,
+      "type": "integer"
+     },
+     "module_path": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_bytes": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_nodes": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_edges": {
+      "default": 0,
+      "type": "integer"
+     },
+     "timeout_ms": {
+      "default": 0,
+      "type": "integer"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "compact_metadata",
+   "description": "Page metadata objects with bounded member lists.\n\nThis is how a configuration-wide question is answered here: page it. Items\ncarry the canonical path, type, name, synonym and a bounded member list\nwith ``members_total`` beside it, so a caller can always tell whether the\nlist was bounded. ``object_type`` filters during candidate generation\nrather than after retrieval. A member list that alone crosses\n``max_bytes`` (the default is 32 KB; ``max_members`` up to 200) is cut\nto the prefix that fits and named in ``elided_fields`` - raise\n``max_bytes`` or page the members through ``get_metadata_details``.\n``include_provenance=true`` shows each item's own provenance and null\nlocator; by default the response-level provenance carries them once.",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "default": "",
+      "type": "string"
+     },
+     "object_type": {
+      "default": "",
+      "type": "string"
+     },
+     "item_id": {
+      "default": "",
+      "type": "string"
+     },
+     "cursor": {
+      "default": "",
+      "type": "string"
+     },
+     "max_items": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_bytes": {
+      "default": 0,
+      "type": "integer"
+     },
+     "max_members": {
+      "default": 0,
+      "type": "integer"
+     },
+     "include_provenance": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "reindex",
+   "description": "Trigger re-indexing of the 1C configuration (runs in background).\n\nUses the same phased orchestrator as startup: ``metadata`` is always\nindexed first, followed by ``code`` and ``help``. Returns immediately;\nmonitor progress via ``stats()`` under the ``indexing`` key.\n\n* ``force=False`` — **incremental**: every phase invokes\n  ``_index_file_list`` with the full on-disk list and the tracker\n  classifies each file by SHA-256 content hash into\n  ``new`` / ``modified`` / ``unchanged`` / ``deleted``. Unchanged\n  files are skipped; modified files have their old chunks deleted\n  before the new ones are embedded; deleted files have their chunks\n  removed from the vector store — which removes their full-text rows\n  with them — and their tracker rows cleared. Requires\n  ``INCREMENTAL_INDEXING=true`` (default). When\n  ``INCREMENTAL_INDEXING=false`` the legacy ``count() == 0`` skip is\n  preserved and no tracker reconciliation happens.\n* ``force=True`` — every lane re-runs unconditionally inside a **fresh\n  generation** in which every source file is classified ``new``. Nothing\n  is carried over, and the published generation keeps serving, intact,\n  until the forced generation seals and publishes: a forced rebuild no\n  longer wipes what the tools are reading from (CODE-COMP-005 AC7).\n\nWhen another process already owns the project's writer lease the call\nreturns the typed result ``writer_busy``, naming the owner and the\nin-flight ``generation_id``; no second build starts and no run is queued.\n\nPer-phase counts in ``stats().data.indexing.per_phase[*].counts``\ninclude ``new``, ``modified``, ``unchanged``, ``deleted``, and the\nlegacy ``vector_indexed`` (files for which at least one chunk was\nsuccessfully written during this run).",
+   "inputSchema": {
+    "properties": {
+     "force": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "stats",
+   "description": "Get server statistics: document counts, embedding provider, index status.\n\nThe ``indexing`` key exposes the orchestrator snapshot with the\ncurrent phase, per-phase status (``pending``/``running``/``completed``/\n``failed``/``disabled``), start/completion timestamps, and any\nphase-local error. Phases switched off via ``INDEX_METADATA`` /\n``INDEX_CODE`` / ``INDEX_HELP`` are reported as ``disabled`` and are\nnever scheduled.\n\nEach entry under ``indexing.per_phase[<phase>].counts`` carries\ninteger fields ``new``, ``modified``, ``unchanged``, ``deleted`` (from\nthe tracker-driven incremental pass) and the legacy ``vector_indexed``\n(files with at least one chunk successfully embedded this run), plus\nany phase-specific extras such as ``details_indexed`` / ``xsd_generated``.\n\n``indexing.last_incremental_at`` is an ISO-8601 timestamp of the most\nrecent **successful** incremental run (force=False). It is ``null``\nuntil the first such run completes. ``force=true`` rebuilds do not\nupdate this timestamp.\n\n``indexing.last_outcome`` is how the most recent finished run ended --\n``completed``, ``failed``, ``cancelled`` (a shutdown was requested) or\n``degraded`` (the run published or skipped while a vector lane still\ncannot be written; ``indexing.error`` names the lane(s) and the\nremediation is ``reindex(force=true)``) -- and is ``null`` until the\nfirst run of this process finishes. A run that ends before its first\nphase, while it is still taking the inventory or resolving its builder,\nreports ``failed`` there and names the failure in ``indexing.error``\nrather than leaving the snapshot describing a build that is no longer\nhappening.\n\n``indexing.sources`` lists every configuration source the run\nencountered (CODE-SAVED-1187299): the configuration being indexed, and\nany configuration nested inside it such as a supplier configuration\nunder ``Ext/ParentConfigurations``. Each entry carries the\n``source_id``, its ``root`` relative to the configuration being indexed,\nits ``kind``, whether it was ``processed`` or ``skipped``, the\n``reason`` for a skip -- ``policy_excluded`` for a policy decision and\n``source_unreadable:<error>`` for one that could not be read, so the two\nare never confused -- and per-source ``counts``.\n``indexing.source_policy`` is the effective include/exclude decision per\nkind, and ``indexing.current_source`` names the source being processed\nright now, so progress is observable mid-run and is ``null`` once the\nphase is terminal.\n\n``index_lanes`` carries, per derived-state lane (``forms``,\n``symbols``), the content-table row count, the full-text row count and a\n``complete`` / ``incomplete`` / ``disabled`` / ``unavailable`` verdict.\nIt is derived from stored counts, so a populated content table beside an\nempty search index is visible without issuing a search, and a phase is\nnever reported ``completed`` while one of its lanes is incomplete\n(CODE-ERR-TILDA-05).\n\n``sub_index_gates`` carries, per SQLite sub-index, the outcome of the\nintegrity and coverage gates that run before a phase is marked\n``completed``: ``passed``, ``failed`` (with the failing checks named\nunder ``reasons``), or ``not_run``. A store that was never gated stays\n``not_run`` so it is never mistaken for a clean one.\n\n``embedding_provider`` carries the typed embedding-provider state\n(CODE-ERR-TILDA-04): the resolved ``provider`` (``remote``/``local``), the\n``status`` (``ok`` / ``unreachable`` / ``unauthorized`` /\n``model_not_found`` / ``budget_exceeded`` / ``not_configured``, and\n``unknown`` before the first provider call), the ``selection_reason`` the\nprovider was reached by, the ``model``, the ``endpoint_host`` for a remote\nprovider, and -- for a local one -- ``memory_budget_mb``,\n``estimated_model_mb`` and the sampled ``process_rss_mb``. It never\ncontains the API key in any form.\n\n``generation`` carries the immutable-generation lifecycle\n(CODE-COMP-005): the ``published`` generation id with its publish\ntimestamp, per-lane typed state and ``new``/``changed``/``deleted``/\n``unchanged`` counts; the ``in_flight`` generation and its typed state\nwhile a build is running; ``last_failed`` with the typed ``reason`` of the\nmost recent non-published generation; the ``retained`` ids available for\nrollback; the ``pinned`` generations a reader still holds; the writer\n``lease``; and the ``manifest`` status, which reports a typed\n``manifest_unreadable`` / ``manifest_schema_unsupported`` /\n``manifest_inconsistent`` rather than raising. The section is read without\nthe writer lease, so it never blocks a build.\n\n``release`` carries the release identity (CODE-ERR-TILDA-20260804-HTTP-OPS):\nthe ``version`` and ``build_digest`` of the running build, the\n``index_layout`` range of on-disk layouts it can open, the ``source`` the\nidentity was resolved from (``manifest_file`` / ``environment`` /\n``source``) and, when ``MCP_IMAGE_REF`` is set, whether that deployment\nreference is immutable and matches this build.\n\n``sessions`` carries the transport session bounds and their counters:\n``current`` / ``peak`` sessions, ``reclaimed_idle`` /\n``reclaimed_lifetime`` / ``rejected_cap``, and the effective ``limits``\n(idle TTL, maximum lifetime, concurrent cap, cleanup interval) with the\n``mode`` they run in (``enforce`` or ``report``).\n\n``vector_store_health`` carries the vector-store optimize and integrity\nstate. ``terminal`` is ``null`` on a healthy process, or the\n``{collection, reason, detail}`` of the first store that reached a\nterminal state (``store_corruption`` / ``write_failures_exceeded``).\n``collections[<name>]`` reports, per lane: whether optimize is\n``enabled``, the ``last_outcome`` and ``last_elapsed_sec`` of its merge,\nthe documents still ``pending_docs`` for the next merge, the current\n``write_health`` and ``terminal_reason``, the\n``consecutive_write_failures`` against the configured\n``write_failure_threshold``, the effective ``write_mode``\n(``insert``/``upsert``) with its ``insert_fallbacks`` count, and whether\nthe lane is ``quarantined``.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "plugin_state",
+   "description": "Report the plugin subsystem: what is loaded, what it costs, which epoch.\n\nEvery file, the hooks and tables it declares, the classification of each\nhook, whether it is enabled, the error that disabled it, the failure count,\nthe time accumulated in it, the order the files run in, the current epoch,\nand the digest the derived-state hooks contribute to the generation\nfingerprint.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "unpack_ordinary_form",
+   "description": "Read one standalone ordinary-form ``Form.bin`` into an editable workspace.\n\nAn ordinary form is exported as a binary container, unlike a managed\nform's ``Ext/Form.xml``. Do not edit ``Form.bin`` directly and do not read\nit as XML: unpack it here, edit the payload, build it back with\n``build_ordinary_form``.\n\nThe workspace holds ``payload/`` - the container's entries verbatim, and\nthe only thing a rebuild reads - plus ``decoded/``, derived views for\nreading (``form.json``, the layout as JSON-compatible data; ``module.bsl``,\nthe form module). Editing a derived view is refused by the build rather\nthan silently dropped.\n\nWhat the layout can say: the brace tree is positional. It is structurally\nparseable and it names no elements. Named element trees (``*.elem.json``)\ncome only from high-level extraction of a whole CF / CFE / EPF, where the\nsurrounding metadata supplies the names. Nothing here is invented.\n\n``include`` selects a bounded preview - ``summary`` (default, paths only),\n``structure``, ``module`` or ``all`` - and ``max_chars`` bounds each one.\nThe full decoded views are always on disk, whatever the answer carries.",
+   "inputSchema": {
+    "properties": {
+     "form_path": {
+      "type": "string"
+     },
+     "workspace_path": {
+      "type": "string"
+     },
+     "overwrite": {
+      "default": false,
+      "type": "boolean"
+     },
+     "include": {
+      "default": "summary",
+      "type": "string"
+     },
+     "max_chars": {
+      "default": 4000,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "form_path",
+     "workspace_path"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "build_ordinary_form",
+   "description": "Write an ordinary-form workspace back to a ``Form.bin``, and verify it.\n\nVerification re-reads what was just written, with the same code that reads\nthe original, and compares the *logical payload* - entry names, sizes and\nSHA-256 of the payload bytes. It deliberately does not compare the final\nbinaries: the container records carry write timestamps, so a rebuilt\n``Form.bin`` differs byte for byte from its source even when nothing\nchanged. ``binary_identical`` reports that fact; ``verification.status`` is\nwhat says whether the form survived.\n\nNothing is replaced silently: an existing ``output_path`` is refused unless\n``overwrite`` is set, and a failed build leaves the previous file in place.",
+   "inputSchema": {
+    "properties": {
+     "workspace_path": {
+      "type": "string"
+     },
+     "output_path": {
+      "type": "string"
+     },
+     "overwrite": {
+      "default": false,
+      "type": "boolean"
+     },
+     "verify": {
+      "default": true,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "workspace_path",
+     "output_path"
+    ],
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "plugin_reload",
+   "description": "Re-read the plugin directory without restarting, and start a new epoch.\n\nEvery file is read again and the set in force is replaced in one step; if\nany file no longer loads, nothing is replaced, the previous set stays in\nforce and the response names the file and the reason. A call-scoped hook\ntakes effect on the next call. A derived-state hook does not apply\nretroactively - it shapes the next build, and the generation that is\npublished keeps serving until then. Outstanding continuation tokens are\nrefused after a reload that changed the set, because the index identity they\nare bound to carries the plugin epoch.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object"
+   },
+   "_meta": {
+    "_fastmcp": {
+     "tags": []
+    }
+   }
+  }
+ ]
+}

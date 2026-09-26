@@ -1,0 +1,2100 @@
+{
+ "tools": [
+  {
+   "name": "ask_1c_ai",
+   "title": "Ask the 1C:Naparnik assistant",
+   "description": "Ask a free-form question to the 1C:Naparnik AI assistant.\nUse this tool for any 1C-related question that does not fit the specialised tools:\ngeneral 1C development advice, architecture questions, explanations of concepts,\nsyntax clarification, or anything else about the 1C:Enterprise ecosystem.\n\nIMPORTANT: Unlike all other tools (which always start a fresh discussion), this tool\nreuses the caller's own most recent discussion by default. Reuse is scoped to the\ncaller: a discussion is never shared with another user, project or task. Set\ncreate_new_session=True to start from scratch when switching topics.\n\nFor code checking use check_1c_code, for style review use review_1c_code,\nfor documentation search use search_1c_documentation / its_help.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "question": {
+      "type": "string",
+      "description": "Any question about 1C:Enterprise development"
+     },
+     "create_new_session": {
+      "default": false,
+      "type": "boolean",
+      "description": "If True, starts a fresh discussion discarding previous context. If False (default), reuses this caller's own latest discussion."
+     },
+     "files": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Paths to source files to attach to the question as context. Give a path\nrelative to the repository root the server has mounted (e.g.\nCommonModules/Модуль/Ext/Module.bsl) or an absolute path inside a directory\nnamed by ONEC_AI_WORKSPACE_ROOTS (in the container: /workspace/...). The\nserver runs in its own container, so a path on your own machine (a\ndrive-letter path, /home/...) is not visible to it unless the operator\ndeclared that prefix in ONEC_AI_WORKSPACE_PATH_MAP. Read only; a path outside\nthe declared directories is refused, and a deployment that set nothing\nrefuses every path."
+     }
+    },
+    "required": [
+     "question"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат инструмента, возвращающего только текст.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Ask the 1C:Naparnik assistant",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "check_1c_code",
+   "title": "Check 1C code for errors",
+   "description": "Basic check of 1C:Enterprise code — syntax errors, logical issues, and performance problems.\nUse this tool for a technical correctness check: will the code compile, are there bugs,\nare there N+1 queries or other performance anti-patterns.\n\nIn direct mode the upstream syntax capability produces both the syntax result and the\nlogic-and-performance analysis within a single discussion. When that capability is not\navailable, or the call does not succeed, the answer comes from the prompt path and the\nresult carries a machine-readable `fallback_reason` saying which capability was\nconcerned and what state it resolved to.\n\nFor style/standards compliance, use review_1c_code instead.\nFor an AI-proposed rewrite of the code, use rewrite_1c_code instead.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "code": {
+      "default": "",
+      "type": "string",
+      "description": "1C code to check"
+     },
+     "files": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Paths to read the code from instead of passing it inline. Prefer this for\nanything large: the server reads the file, so nothing is lost assembling the\nargument. Give a path relative to the repository root the server has mounted\n(e.g. CommonModules/Модуль/Ext/Module.bsl) or an absolute path inside a\ndirectory named by ONEC_AI_WORKSPACE_ROOTS (in the container: /workspace/...).\nThe server runs in its own container, so a path on your own machine (a\ndrive-letter path, /home/...) is not visible to it unless the operator\ndeclared that prefix in ONEC_AI_WORKSPACE_PATH_MAP. Read only; a path outside\nthe declared directories is refused, and a deployment that set nothing\nrefuses every path. Give either code or files, not both."
+     }
+    },
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат инструмента, возвращающего только текст.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Check 1C code for errors",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "review_1c_code",
+   "title": "Review 1C code style and standards",
+   "description": "Review 1C:Enterprise code for style, standards compliance, and best practices.\nUse this tool for a quality/style review: naming conventions, code structure,\ncompliance with 1C development standards (ITS), readability, and recommendations.\n\nThis tool does NOT check for syntax errors or bugs — use check_1c_code for that.\nFor an AI-proposed rewrite of the code, use rewrite_1c_code instead.\n\nIf the response indicates a network or API error, retry or suggest the user check\nONEC_AI_TOKEN validity. This tool always uses the prompt path.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "code": {
+      "default": "",
+      "type": "string",
+      "description": "1C code to review"
+     },
+     "files": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Paths to read the code from instead of passing it inline. Give a path\nrelative to the repository root the server has mounted (e.g.\nCommonModules/Модуль/Ext/Module.bsl) or an absolute path inside a directory\nnamed by ONEC_AI_WORKSPACE_ROOTS (in the container: /workspace/...). A path\non your own machine (a drive-letter path, /home/...) is not visible to the\nserver unless the operator declared that prefix in\nONEC_AI_WORKSPACE_PATH_MAP. Read only. Give either code or files, not both."
+     }
+    },
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат инструмента, возвращающего только текст.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Review 1C code style and standards",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "rewrite_1c_code",
+   "title": "Propose an AI rewrite of 1C code",
+   "description": "Get an AI-proposed rewrite of 1C:Enterprise code, returned as a reviewable proposal.\n\nThe result is data, not an instruction: it carries a hash of the exact source you\nsupplied, a byte-faithful diff from that source to the proposal, and a validation\nstatus drawn from the closed set `passed`, `failed`, `not_performed`, `unavailable`.\nA status other than `passed` is reported honestly — the prompt asks the model to\nvalidate, and a request is not a guarantee.\n\nThis server applies nothing. Application is the caller's responsibility, and only\nagainst a source whose hash equals `original_hash`, and only when `safe_to_apply`.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "code": {
+      "default": "",
+      "type": "string",
+      "description": "1C code to rewrite"
+     },
+     "goal": {
+      "default": "",
+      "type": "string",
+      "description": "Optional goal for the rewrite (e.g. 'optimize', 'readability', 'error handling')"
+     },
+     "files": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Paths to read the code from instead of passing it inline. Give a path\nrelative to the repository root the server has mounted (e.g.\nCommonModules/Модуль/Ext/Module.bsl) or an absolute path inside a directory\nnamed by ONEC_AI_WORKSPACE_ROOTS (in the container: /workspace/...). A path\non your own machine (a drive-letter path, /home/...) is not visible to the\nserver unless the operator declared that prefix in\nONEC_AI_WORKSPACE_PATH_MAP. Read only. Give either code or files, not both.\nNaming exactly one file passes it through verbatim, so that file's\n`text_sha256` in `sources` equals `original_hash` and the diff applies to it\nunchanged."
+     }
+    },
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Предложение по изменению кода как рецензируемый артефакт.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "has_original": {
+      "description": "False — вызов был генерацией, исходника не было",
+      "type": "boolean"
+     },
+     "original_hash": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Хеш точного исходника вызывающей стороны, до обрезки"
+     },
+     "hash_algorithm": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Алгоритм хеширования"
+     },
+     "hash_encoding": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Кодировка, в которой получены хешируемые байты"
+     },
+     "extraction": {
+      "description": "Исход извлечения кода: extracted или no_code_found",
+      "type": "string"
+     },
+     "proposed_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Извлечённый предлагаемый код"
+     },
+     "diff": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Unified diff от исходника к предложению"
+     },
+     "validation_status": {
+      "description": "passed, failed, not_performed или unavailable",
+      "type": "string"
+     },
+     "validation_diagnostics": {
+      "description": "Наблюдаемая диагностика при статусе failed",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "safe_to_apply": {
+      "description": "False — применять предложение нельзя",
+      "type": "boolean"
+     },
+     "apply_precondition": {
+      "description": "Предусловие применения, изложенное в самом результате",
+      "type": "string"
+     }
+    },
+    "required": [
+     "has_original",
+     "extraction",
+     "validation_status",
+     "safe_to_apply",
+     "apply_precondition"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Propose an AI rewrite of 1C code",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "modify_1c_code",
+   "title": "Modify 1C code by instruction",
+   "description": "Modify 1C:Enterprise code according to an explicit user instruction, returned as a\nreviewable proposal.\n\nUnlike rewrite_1c_code (where the AI decides what to improve), this tool does exactly\nwhat you tell it to. If no code is supplied the call is a generation, and the result\nsays so rather than reporting a hash of an empty string.\n\nThe prompt asks for syntax validation, but the result reports what was actually\nobserved: `passed` and `failed` only from an observed validation result,\n`not_performed` when validation was possible but nothing was observed, and\n`unavailable` when the syntax capability is not available.\n\nThis server applies nothing.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "instruction": {
+      "type": "string",
+      "description": "Clear description of what changes are needed"
+     },
+     "code": {
+      "default": "",
+      "type": "string",
+      "description": "Source 1C code to modify (optional — if empty, generates new code)"
+     },
+     "files": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Paths to read the source from instead of passing it inline. Give a path\nrelative to the repository root the server has mounted (e.g.\nCommonModules/Модуль/Ext/Module.bsl) or an absolute path inside a directory\nnamed by ONEC_AI_WORKSPACE_ROOTS (in the container: /workspace/...). A path\non your own machine (a drive-letter path, /home/...) is not visible to the\nserver unless the operator declared that prefix in\nONEC_AI_WORKSPACE_PATH_MAP. Read only. Give either code or files, not both.\nNaming exactly one file passes it through verbatim, so that file's\n`text_sha256` in `sources` equals `original_hash`."
+     }
+    },
+    "required": [
+     "instruction"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Предложение по изменению кода как рецензируемый артефакт.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "has_original": {
+      "description": "False — вызов был генерацией, исходника не было",
+      "type": "boolean"
+     },
+     "original_hash": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Хеш точного исходника вызывающей стороны, до обрезки"
+     },
+     "hash_algorithm": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Алгоритм хеширования"
+     },
+     "hash_encoding": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Кодировка, в которой получены хешируемые байты"
+     },
+     "extraction": {
+      "description": "Исход извлечения кода: extracted или no_code_found",
+      "type": "string"
+     },
+     "proposed_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Извлечённый предлагаемый код"
+     },
+     "diff": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Unified diff от исходника к предложению"
+     },
+     "validation_status": {
+      "description": "passed, failed, not_performed или unavailable",
+      "type": "string"
+     },
+     "validation_diagnostics": {
+      "description": "Наблюдаемая диагностика при статусе failed",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "safe_to_apply": {
+      "description": "False — применять предложение нельзя",
+      "type": "boolean"
+     },
+     "apply_precondition": {
+      "description": "Предусловие применения, изложенное в самом результате",
+      "type": "string"
+     }
+    },
+    "required": [
+     "has_original",
+     "extraction",
+     "validation_status",
+     "safe_to_apply",
+     "apply_precondition"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Modify 1C code by instruction",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "search_1c_documentation",
+   "title": "Search 1C platform documentation",
+   "description": "Search 1C:Enterprise platform documentation.\nUse this to find information about built-in language methods, platform objects,\ntypes, events, properties, and general platform capabilities.\nFor general queries use phrases like 'Общая информация о ...', 'Список всех ...'.\n\nA configured default documentation version is used when none is given, supplied by\nthe ONEC_AI_DOC_VERSION setting, and it can be overridden per call. The version that\nactually answered is reported in `version_used`; the server does not track \"latest\"\nand does not claim to.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Search query about 1C:Enterprise platform"
+     },
+     "version": {
+      "default": "",
+      "type": "string",
+      "description": "Platform documentation version in format v8.x.x. If empty, the configured default from ONEC_AI_DOC_VERSION is used."
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат поиска по документации платформы.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "version_used": {
+      "description": "Версия документации, фактически отправленная upstream",
+      "type": "string"
+     }
+    },
+    "required": [
+     "version_used"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Search 1C platform documentation",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "onec_help",
+   "title": "Search 1C platform documentation (deprecated alias)",
+   "description": "DEPRECATED: use search_1c_documentation instead. This name is kept so existing\nconfigurations keep working; it forwards to the same implementation and sends\nidentical arguments upstream for the same query.\n\nSearches 1C:Enterprise platform documentation at the configured default version,\nsupplied by the ONEC_AI_DOC_VERSION setting. It does not track the latest platform\nrelease and never did; the version that answered is reported in `version_used`.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Search query about 1C:Enterprise platform"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат поиска по документации платформы.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "version_used": {
+      "description": "Версия документации, фактически отправленная upstream",
+      "type": "string"
+     }
+    },
+    "required": [
+     "version_used"
+    ],
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Search 1C platform documentation (deprecated alias)",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "its_help",
+   "title": "Search the ITS knowledge base",
+   "description": "Search the 1C ITS (Information Technology Support) knowledge base.\nUse this tool to find methodological recommendations, technical articles,\nconfiguration documentation, standards, and best practices published on ITS.\n\nResults are returned as structured records. Each record carries `id`, `title` and\n`snippet`, and the `id` is directly acceptable to fetch_its — there is nothing to\nparse out of prose. A record is built from the upstream tool result: from its\nmachine-readable details, or from the ITS document addresses that result itself\ncarries, an identifier being derived from an address by one fixed rule. `title`\nand `snippet` are filled only where upstream supplied them.\n\nAn empty `records` with `structured_records_available` true means upstream searched\nand found nothing. Where only a prose answer was available, `records` is empty and\n`structured_records_available` is false. Identifiers are never read out of the\nanswer text, so an identifier mentioned there never becomes a record.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Search query for ITS knowledge base"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат поиска по базе знаний ИТС.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "records": {
+      "description": "Записи в порядке, сообщённом upstream",
+      "items": {
+       "description": "Одна запись результата поиска по ИТС.",
+       "properties": {
+        "id": {
+         "description": "Идентификатор документа для fetch_its",
+         "type": "string"
+        },
+        "title": {
+         "default": "",
+         "description": "Заголовок документа; пусто, если upstream его не дал",
+         "type": "string"
+        },
+        "snippet": {
+         "default": "",
+         "description": "Фрагмент содержимого документа; пусто, когда upstream прислал только ссылку на документ — описание вместо фрагмента здесь не придумывается",
+         "type": "string"
+        }
+       },
+       "required": [
+        "id"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "structured_records_available": {
+      "default": false,
+      "description": "True — upstream ответил структурированным результатом инструмента; пустой records при True означает, что поиск ничего не нашёл. False — структуры не было, есть только текст ответа",
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Search the ITS knowledge base",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "fetch_its",
+   "title": "Fetch an ITS document",
+   "description": "Fetch the content of a specific ITS document, catalogue or database by its identifier.\nTypically used after its_help, passing the `id` field of a returned record.\n\nThe identifier is validated for shape before any upstream request. An identifier\nmatching none of the recognised forms — `root`, `superior`, `v8std`, `its-...-hdoc`,\n`its-...-hdir`, `its-...-buh30` — fails as a malformed-identifier error and no request\nis issued. A well-formed identifier upstream cannot resolve is reported as a not-found\ncondition, which is a different problem with a different remedy.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "default": "root",
+      "type": "string",
+      "description": "ITS document/catalogue identifier (default: 'root')"
+     }
+    },
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат инструмента, возвращающего только текст.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Fetch an ITS document",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "diff_1c_documentation_versions",
+   "title": "Compare 1C documentation versions",
+   "description": "Compare 1C:Enterprise platform documentation between two versions.\nUse when asked about changes between platform versions.\nversion_a should be the earlier version, version_b the later one.\n\nWhen the direct path is not available the answer comes from the prompt path and the\nresult carries a machine-readable `fallback_reason`.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "version_a": {
+      "type": "string",
+      "description": "Earlier version in format v8.3.27 or v8.3.27.189"
+     },
+     "version_b": {
+      "type": "string",
+      "description": "Later version in format v8.3.27 or v8.3.27.189"
+     },
+     "query": {
+      "default": "",
+      "type": "string",
+      "description": "Optional subject area to narrow the comparison (e.g. 'HTTP соединение')"
+     }
+    },
+    "required": [
+     "version_a",
+     "version_b"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат инструмента, возвращающего только текст.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Compare 1C documentation versions",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  },
+  {
+   "name": "config_help",
+   "title": "Search 1C application documentation",
+   "description": "Search documentation for a specific 1C:Enterprise application (configuration).\nUse this to find information about objects, modules, registers, documents, catalogs,\nand business logic of a specific 1C application — such as \"Бухгалтерия предприятия\",\n\"ERP\", \"Управление торговлей\", \"ЗУП\", etc.\n\nThis searches application-level documentation. Use search_1c_documentation for\nplatform-level documentation (language, objects, types).\n\nIf config_name is empty, the server uses the default from the ONEC_CONFIG_NAME setting.",
+   "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Search query about the 1C application/configuration"
+     },
+     "config_name": {
+      "default": "",
+      "type": "string",
+      "description": "Name of the 1C application. If empty, uses the default from ONEC_CONFIG_NAME."
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "outputSchema": {
+    "description": "Результат инструмента, возвращающего только текст.",
+    "properties": {
+     "answer": {
+      "default": "",
+      "description": "Текстовый ответ",
+      "type": "string"
+     },
+     "truncation": {
+      "description": "Доказательство обрезки по каждому ограниченному полю",
+      "items": {
+       "description": "Доказательство обрезки одного входного поля.",
+       "properties": {
+        "field": {
+         "description": "Имя ограниченного поля",
+         "type": "string"
+        },
+        "truncated": {
+         "description": "Была ли выполнена обрезка",
+         "type": "boolean"
+        },
+        "original_length": {
+         "description": "Длина, переданная вызывающей стороной, в символах",
+         "type": "integer"
+        },
+        "transmitted_length": {
+         "description": "Длина, отправленная upstream, в символах",
+         "type": "integer"
+        }
+       },
+       "required": [
+        "field",
+        "truncated",
+        "original_length",
+        "transmitted_length"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "sources": {
+      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
+      "items": {
+       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
+       "properties": {
+        "path": {
+         "description": "Путь, который передала вызывающая сторона",
+         "type": "string"
+        },
+        "resolved_path": {
+         "description": "Путь, который был фактически прочитан",
+         "type": "string"
+        },
+        "encoding": {
+         "description": "Кодировка, которой файл прочитался",
+         "type": "string"
+        },
+        "byte_length": {
+         "description": "Размер файла на диске, в байтах",
+         "type": "integer"
+        },
+        "char_length": {
+         "description": "Длина декодированного текста, в символах",
+         "type": "integer"
+        },
+        "bytes_sha256": {
+         "description": "Хеш байтов файла",
+         "type": "string"
+        },
+        "text_sha256": {
+         "description": "Хеш декодированного текста, сопоставимый с original_hash",
+         "type": "string"
+        }
+       },
+       "required": [
+        "path",
+        "resolved_path",
+        "encoding",
+        "byte_length",
+        "char_length",
+        "bytes_sha256",
+        "text_sha256"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     }
+    },
+    "type": "object"
+   },
+   "annotations": {
+    "title": "Search 1C application documentation",
+    "readOnlyHint": true,
+    "openWorldHint": true
+   },
+   "_meta": {
+    "fastmcp": {
+     "tags": []
+    }
+   }
+  }
+ ]
+}
