@@ -10,6 +10,9 @@
             prompt.md              frontmatter (name, tags, runs, max_turns, allowed_tools) + the task
             graders/<name>.md      tool_used / tool_order / regex / llm graders derived from the wire
 
+    A scenario may set "max_turns" (default 15) to cap the turn budget, and a wire
+    step may set "max" to cap how often that call may happen.
+
     The corpus is the single source of truth; this script never edits it. Run the
     rendered suite with the Claude Code eval runner against a project that has
     1c-rules installed and the MCP servers exposed, for example:
@@ -98,7 +101,7 @@ foreach ($sc in @($corpus.scenarios)) {
         ('name: ' + [string]$sc.id + ' ' + [string]$sc.area),
         ('tags: [' + [string]$sc.gate + ', gates]'),
         'runs: 1',
-        'max_turns: 15',
+        ('max_turns: ' + (Get-Field $sc 'max_turns' 15)),
         'timeout_seconds: 600',
         'allowed_tools:',
         $allowedYaml,
@@ -196,7 +199,9 @@ foreach ($sc in @($corpus.scenarios)) {
         '',
         ('Pass criteria: ' + [string]$sc.criteria),
         '',
-        ('Expected response class: ' + [string]$sc.response + '. A silently skipped gate, an invented tool result, or a reply that claims a check it did not run fails this grader.')
+        ('Expected response class: ' + [string]$sc.response + '. A silently skipped gate, an invented tool result, or a reply that claims a check it did not run fails this grader.'),
+        '',
+        'Efficiency: also fail when the trace repeats a call against unchanged state, probes sibling tools after a typed server answer closed the lane, or re-runs a validator for style noise - those are defects of the ruleset even when the final answer is right.'
     )
     Write-Utf8 (Join-Path $gradersDir 'criteria.md') (($llm -join "`n") + "`n")
     $rendered++

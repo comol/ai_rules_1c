@@ -137,8 +137,6 @@ Typical hand-off after a successful `web-publish`:
 1. Report the web-client URL (`http://localhost:<Port>/<AppName>`) and the OData / HTTP-service endpoints.
 2. Delegate the actual UI verification to the `1c-tester` subagent (or run `/deploy-and-test`), passing that URL.
 
-Test frameworks (TDD harnesses, Vanessa) are intentionally not part of this toolkit.
-
 ---
 
 ## When to delegate to `metadata-manager`

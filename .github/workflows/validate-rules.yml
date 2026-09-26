@@ -2,7 +2,8 @@ name: validate-rules
 
 # Structural validation of the ruleset: frontmatter against the adapter schemas,
 # cross-reference and Markdown-link resolution, section anchors, MCP-only router
-# targets, and the 16 KiB always-on byte budget of AGENTS.md. The bodies of the
+# targets, the 16 KiB always-on byte budget of AGENTS.md and the load-set budgets
+# (per rule, full-cycle set, subagent start set). The bodies of the
 # routed standards live in the 1C-docs-mcp repository, so the router/body heading
 # sync runs only locally (tools/validate-rules.ps1 -StandardsDir <path>); in CI it
 # is skipped with a notice. See tools/validate-rules.ps1.
@@ -45,6 +46,25 @@ jobs:
         shell: powershell
         run: .\tools\validate-rules.ps1
 
+      - name: Tool policy settings migration
+        shell: powershell
+        run: .\tools\tests\tool-policy-settings.ps1
+
+      - name: Optional initial source dump
+        shell: powershell
+        run: .\tools\tests\initial-source-dump.ps1
+
+      - name: Scheduled MCP source refresh
+        shell: powershell
+        run: .\tools\tests\files-update-task.ps1
+
+      # The acceptance corpus must still render into eval cases. Running them needs a
+      # model and live MCP servers, so CI only proves the corpus and the renderer
+      # agree; the rendered cases are run with `claude plugin eval` before a release.
+      - name: Render gate evals
+        shell: powershell
+        run: .\tools\render-gate-evals.ps1 -OutDir "$env:RUNNER_TEMP\gate-evals"
+
       # Behaviour regressions for the meta-edit / meta-compile tool scripts of the
       # 1c-metadata-manage skill. Same interpreter, no 1C platform needed: the cases
       # materialize their own fixtures and assert on the resulting bytes.
@@ -56,6 +76,10 @@ jobs:
       - name: Marketplace bootstrap
         shell: powershell
         run: .\tools\tests\marketplace-bootstrap.ps1
+
+      - name: Agent adapter install lifecycle
+        shell: powershell
+        run: .\tools\tests\agent-adapters.ps1
 
       # Full Python suite: the port safety contract plus the two gates that need a
       # PowerShell host — remove-form PS/Python parity and installer packaging.

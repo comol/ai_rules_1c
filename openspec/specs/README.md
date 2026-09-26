@@ -9,6 +9,11 @@ system currently behaves. It is owned jointly by humans and AI assistants.
 - Each capability folder contains exactly one `spec.md`.
 - Requirements use the `### Requirement:` heading and Gherkin-style
   scenarios under `#### Scenario:`.
+- For full-cycle changes, each affected requirement includes a **Definition
+  of Done** criterion: verification method and expected outcome, with relevant
+  negative/boundary scenarios. Keep it inside the requirement block so it
+  travels with that requirement during sync/archive. Execution results and
+  user waivers belong to the change's `tasks.md`, not the current-behaviour spec.
 
 ## Minimal spec template
 
@@ -22,6 +27,8 @@ system currently behaves. It is owned jointly by humans and AI assistants.
 
 ### Requirement: <name>
 <normative statement with MUST / SHALL / MAY>
+
+**Definition of Done:** <verification method and expected result for the scenarios below>
 
 #### Scenario: <name>
 - GIVEN <precondition>

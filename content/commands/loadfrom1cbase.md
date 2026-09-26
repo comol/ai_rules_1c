@@ -9,6 +9,8 @@ Refresh configuration files from the infobase defined in `.dev.env`: full dump, 
 
 This is the directory-refresh stage of the workflow shared with `/update1cbase`. It does not load files into the infobase or apply the database configuration.
 
+**Target before mode:** follow `content/rules/extension-workspace.md`. Select the current project and main or one exact extension before choosing `full` / `changes` / `partial`; these modes do not select a target. Use that pass's source directory and extension option in every template below. Explicit task/file ownership overrides the single-target `EXTENSION_NAME` default without changing settings; `all` uses main plus `EXTENSION_NAMES`. Keep each target's baseline and lists separate.
+
 ## Select scope
 
 - `full` / `all`: deliberately dump a complete snapshot.
@@ -96,9 +98,10 @@ The specified directory is the dump root; preserve the selected format's object 
 
 Dumps the **effective snapshot**: main configuration + every extension from `EXTENSION_NAMES` (`.dev.env`, comma-separated, order preserved). Used by `/initproject` and whenever the user asks for a dump "with extensions".
 
-- If `EXTENSION_NAMES` is empty, fall back to the regular single-target run above and note that in the report.
+- If `EXTENSION_NAMES` is empty, resolve the requested inventory via `content/rules/extension-workspace.md`. Confirmed no extensions means a full main dump with no extension option; unresolved inventory blocks this full-snapshot mode, not ordinary single-target work. Never fall back to `EXTENSION_NAME` for `all`.
 - **Pass 1 — main configuration:** Steps 2–3 as written, into `{EXPORT_PATH}`, without `-Extension` / `--extension`.
 - **Pass per extension**, in `EXTENSION_NAMES` order: the same Step 2a/2b template with `-Extension <Name>` / `--extension=<Name>`, target directory `{EXTENSIONS_PATH}\<Name>\` (create missing directories). Run the Step 3 check after **every** pass.
 - `all` selects full exports for every pass. Selected-object and incremental runs use an explicit single-target scope; do not carry one object's list or one baseline across different extensions.
 - The Step 0 dirty-working-tree guard covers `{EXTENSIONS_PATH}` as well as `{EXPORT_PATH}`.
+- Before the first pass, resolve every destination and expected target identity, check overlap and local edits for all of them, and distinguish an absent destination from an existing partial dump. After every successful pass, verify the descriptor matches main or the named extension. Preserve per-pass log/result evidence before the next pass reuses their paths.
 - A failed pass stops the mode — do not continue to the next extension over a broken dump; report which passes completed.

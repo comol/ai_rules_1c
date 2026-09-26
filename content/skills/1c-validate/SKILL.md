@@ -1,6 +1,6 @@
 ---
 name: 1c-validate
-description: "Validate changed 1C artifacts — BSL modules by path through BSL Language Server, logic and performance through 1С:Напарник check, style and ITS compliance through review, metadata XML against its XSD — with the retry budget of the verification policy. Use after every BSL or metadata edit; the gates and budgets are owned by verification-gates.md / verification-policy.md."
+description: "Validate changed 1C artifacts — BSL by path (BSL Language Server), logic and performance (1С:Напарник check), style and ITS review, metadata XML against XSD — within the verification-policy budget. Use after every BSL or metadata edit."
 argument-hint: "<module path | xml> [lines]"
 allowed-tools: mcp__1c-syntax-checker-mcp__syntaxcheck_file, mcp__1c-syntax-checker-mcp__syntaxcheck, mcp__1c-code-check-mcp__check_1c_code, mcp__1c-code-check-mcp__review_1c_code, mcp__1c-code-metadata-mcp__verify_xml
 ---

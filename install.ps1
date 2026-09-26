@@ -129,7 +129,7 @@ $script:DevEnvFileName = '.dev.env'
 $script:DevEnvExampleName = '.dev.env.example'
 $script:UseEdtKey = 'USE_EDT'
 $script:SupportKeys = @('SUPPORT_KEY', 'SUPPORT_EMAIL', 'SUPPORT_API_URL')
-$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'pi', 'other')
+$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'pi', 'other')
 $script:ManagedBlocks = @('core', 'user-defined', 'openspec')
 $script:LastChannel = 'powershell'
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -1000,6 +1000,29 @@ function New-McpConfig-ClaudeCode {
     return (ConvertTo-Json $root -Depth 10)
 }
 
+function New-McpConfig-Zcode {
+    # Native workspace config: .zcode/config.json -> mcp.servers.
+    # Its strict schema accepts type/http/url or type/stdio/command.
+    param([array]$Servers)
+    $dict = [ordered]@{}
+    foreach ($s in $Servers) {
+        $entry = [ordered]@{}
+        if ($s.url) {
+            $entry['type'] = 'http'
+            $entry['url'] = $s.url
+            if ($s.headers) { $entry['headers'] = $s.headers }
+        }
+        elseif ($s.command) {
+            $entry['type'] = 'stdio'
+            $entry['command'] = $s.command
+            if ($s.args) { $entry['args'] = $s.args }
+            if ($s.env) { $entry['env'] = $s.env }
+        }
+        $dict[$s.id] = $entry
+    }
+    return (ConvertTo-Json ([ordered]@{ mcp = [ordered]@{ servers = $dict } }) -Depth 10)
+}
+
 function New-McpConfig-Kilocode {
     # Current Kilo CLI / Kilo Code extension MCP schema (v7.x+, see
     # https://kilo.ai/docs/automate/mcp/using-in-cli):
@@ -1173,6 +1196,8 @@ function New-McpConfig {
         'cursor' { return (New-McpConfig-Cursor $Servers) }
         'claude-code' { return (New-McpConfig-ClaudeCode $Servers) }
         'command-code' { return (New-McpConfig-ClaudeCode $Servers) }
+        'zcode' { return (New-McpConfig-Zcode $Servers) }
+        'mimocode' { return (New-McpConfig-Kilocode $Servers) }
         'codex' { return (New-McpConfig-Codex $Servers) }
         'opencode' { return (New-McpConfig-OpenCode $Servers) }
         'kilocode' { return (New-McpConfig-Kilocode $Servers) }
@@ -1271,6 +1296,8 @@ function Get-ToolDetectionSignals {
         'qwen'         = @((Test-Path (Join-Path $Root '.qwen')), (Test-Path (Join-Path $Root 'QWEN.md')))
         'command-code' = @((Test-Path (Join-Path $Root '.commandcode')))
         'cline'        = @((Test-Path (Join-Path $Root '.cline')), (Test-Path (Join-Path $Root '.clinerules')))
+        'zcode'        = @((Test-Path (Join-Path $Root '.zcode')))
+        'mimocode'     = @((Test-Path (Join-Path $Root '.mimocode')), (Test-Path (Join-Path $Root 'mimocode.json')), (Test-Path (Join-Path $Root 'mimocode.jsonc')))
         'pi'           = @((Test-Path (Join-Path $Root '.pi')))
         # 'other' is a manual-only fallback — never auto-detected.
         'other'        = @()
@@ -1475,13 +1502,24 @@ function Invoke-OpenSpecScaffold {
 # Code with two project folders (`.kilo` + `.kilocode`). Remap the Kilo Code
 # artefacts onto the same `.kilo/` root — commands into `.kilo/commands/`
 # (Kilo's current location for what upstream calls "workflows") and skills into
-# `.kilo/skills/`. All other tools already match their adapter, so their paths
-# pass through unchanged.
+# `.kilo/skills/`. Since OpenSpec 1.13 two more tools diverge from their
+# adapter: Codex skills come as the vendor-neutral `.agents/skills/` (the Codex
+# adapter installs skills into `.codex/skills/`), and OpenCode commands come as
+# `.opencode/commands/` (the OpenCode adapter uses `.opencode/command/`). Both
+# are remapped so every tool keeps a single skills / commands folder and the
+# install destinations of earlier bundles stay unchanged. All other paths pass
+# through unchanged.
 function Get-OpenSpecBundleDestRel {
     param(
         [string]$Tool,
         [string]$Rel
     )
+    if ($Tool -eq 'codex' -and $Rel -like '.agents/skills/*') {
+        return '.codex/skills/' + $Rel.Substring('.agents/skills/'.Length)
+    }
+    if ($Tool -eq 'opencode' -and $Rel -like '.opencode/commands/*') {
+        return '.opencode/command/' + $Rel.Substring('.opencode/commands/'.Length)
+    }
     if ($Tool -eq 'kilocode') {
         if ($Rel -like '.kilocode/workflows/*') {
             return '.kilo/commands/' + $Rel.Substring('.kilocode/workflows/'.Length)
@@ -2572,7 +2610,7 @@ function Invoke-PlacePhase {
 # `other` is intentionally last: when combined with any "real" tool the real
 # tool's rules dir wins; `.ai-agent/rules/` becomes canonical only when
 # `other` is the only active tool.
-$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'opencode', 'codex', 'pi', 'other')
+$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'opencode', 'codex', 'pi', 'other')
 
 function Resolve-CanonicalRulesLayout {
     # Returns @{ Dir = <path>; Ext = <ext-without-dot> } for the highest-priority
@@ -2694,6 +2732,28 @@ function Convert-AgentsMdPaths {
 # ============================================================================
 # SECTION 11: MCP PHASE
 # ============================================================================
+
+function Get-McpConfigMap {
+    # Resolve a dictionary path, including ZCode's nested mcp.servers.
+    # Reject malformed config instead of replacing user data with an object.
+    param(
+        [System.Collections.IDictionary]$Config,
+        [string]$Key,
+        [switch]$Create
+    )
+    $node = $Config
+    foreach ($part in ($Key -split '\.')) {
+        if (-not $node.Contains($part)) {
+            if (-not $Create) { return $null }
+            $node[$part] = [ordered]@{}
+        }
+        if ($node[$part] -isnot [System.Collections.IDictionary]) {
+            throw "MCP config path '$Key' must contain JSON objects."
+        }
+        $node = $node[$part]
+    }
+    return $node
+}
 
 function Invoke-McpPhase {
     param(
@@ -2844,7 +2904,39 @@ function Invoke-McpPhase {
         }
 
         $finalContent = $content
-        if ($mergeRequested -and (Test-Path $absTarget)) {
+        $mergeServers = $adapter.mcp -is [System.Collections.IDictionary] -and $adapter.mcp['mergeServers']
+        $managedServers = @()
+        if ($mergeRequested -and $mergeServers) {
+            # New adapters merge individual servers. A pre-existing server
+            # with the same id belongs to the user unless our manifest owns
+            # it; keep it on init/add. Invalid JSON must never be overwritten.
+            $merged = [ordered]@{}
+            if (Test-Path -LiteralPath $absTarget) {
+                $merged = ConvertTo-OrderedHashtable (Get-Content -LiteralPath $absTarget -Raw | ConvertFrom-Json -ErrorAction Stop)
+            }
+            $currentServers = Get-McpConfigMap -Config $merged -Key $mergeKey -Create
+            $renderedObj = ConvertTo-OrderedHashtable ($content | ConvertFrom-Json)
+            $newServers = Get-McpConfigMap -Config $renderedObj -Key $mergeKey
+            $previousServers = @()
+            if ($Manifest.files.Contains($target) -and $Manifest.files[$target].Contains('managedServers')) {
+                $previousServers = @($Manifest.files[$target]['managedServers'])
+            }
+            foreach ($id in $previousServers) {
+                if (-not $newServers.Contains($id) -and $currentServers.Contains($id)) {
+                    [void]$currentServers.Remove($id)
+                }
+            }
+            foreach ($id in $newServers.Keys) {
+                if ($currentServers.Contains($id) -and $id -notin $previousServers) {
+                    Write-Info "  [$tool] MCP server kept (user-owned): $id"
+                    continue
+                }
+                $currentServers[$id] = $newServers[$id]
+                $managedServers += $id
+            }
+            $finalContent = ConvertTo-Json $merged -Depth 20
+        }
+        elseif ($mergeRequested -and (Test-Path $absTarget)) {
             try {
                 $existingRaw = Get-Content -Path $absTarget -Raw -ErrorAction Stop
                 $existingObj = $existingRaw | ConvertFrom-Json -ErrorAction Stop
@@ -2886,6 +2978,7 @@ function Invoke-McpPhase {
         if ($mergeRequested) {
             $mcpEntry['merged'] = $true
             $mcpEntry['mergeKey'] = $mergeKey
+            if ($mergeServers) { $mcpEntry['managedServers'] = @($managedServers) }
         }
         # Track joint ownership when several tools share one MCP target
         # (currently Claude Code + Command Code both write `.mcp.json`).
@@ -3791,7 +3884,7 @@ function Place-RootTemplates {
 #
 # Behaviour:
 #   - If the file already exists in the project root — preserve every user
-#     value. A narrowly scoped migration may append the missing USE_EDT key.
+#     value. Migrations may append missing USE_EDT and TOOL_* keys.
 #   - If missing — render from the source `.dev.env.example` template,
 #     auto-fill what we can detect (PLATFORM_VERSION from Configuration.xml,
 #     PLATFORM_PATH from C:\Program Files\1cv8\, PREFIX from extension's
@@ -3816,7 +3909,7 @@ function Place-RootTemplates {
 #   QUICKFIX_MAX_LINES (empty = 40; quick-fix line budget),
 #   DEBUG_FAST_PATH (empty = standard; debugging fast-path mode),
 #   VERIFICATION_DEPTH (empty = standard; code-verification depth, toggled by
-#   the /litemode command),
+#   the /sdlc command; /litemode is a compatibility alias),
 #   CAVEMAN (empty = auto; caveman communication-style auto-activation, toggled
 #   by the /caveman command),
 #   METADATA_PREVIEW (empty = auto; when the wrapper -Preview runs before a
@@ -3884,6 +3977,159 @@ function Read-DevEnvKeys {
     return $result
 }
 
+function Test-InitialDumpSources {
+    # Ignore installed rules and dependencies, but include partial dumps and EDT.
+    param([string]$Root)
+
+    $skipDirs = @('.git', '.cursor', '.claude', '.kilo', '.kilocode', '.codex', '.agents',
+        '.opencode', '.kimi-code', '.qwen', '.commandcode', '.cline', '.zcode',
+        '.mimocode', '.pi', '.ai-agent', 'node_modules', '.venv')
+    $pending = New-Object 'System.Collections.Generic.Queue[string]'
+    $pending.Enqueue($Root)
+    while ($pending.Count -gt 0) {
+        foreach ($item in (Get-ChildItem -LiteralPath $pending.Dequeue() -Force -ErrorAction Stop)) {
+            if ($item.PSIsContainer) {
+                if ($skipDirs -contains $item.Name) { continue }
+                # Unknown linked source trees are not an empty project.
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $true }
+                $pending.Enqueue($item.FullName)
+            }
+            elseif ($item.Name -in @('Configuration.xml', 'ConfigurationExtension.xml', 'ConfigDumpInfo.xml') -or
+                $item.Extension -in @('.bsl', '.mdo')) { return $true }
+        }
+    }
+    return $false
+}
+
+function Invoke-InitialSourceDump {
+    # Optional first-install step. Installation is already complete; a declined
+    # or failed export must not undo it. Never infer consent from installer flags.
+    param([string]$Root, [string]$SourceRoot, [System.Collections.IDictionary]$Manifest)
+
+    $envPath = Join-Path $Root $script:DevEnvFileName
+    $settings = Read-DevEnvKeys -Path $envPath
+    foreach ($key in @($settings.Keys)) {
+        $value = ([string]$settings[$key]).Trim()
+        if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'")))) { $value = $value.Substring(1, $value.Length - 2) }
+        $settings[$key] = $value
+    }
+    if ([string]::IsNullOrWhiteSpace($settings['INFOBASE_PATH'])) { return }
+    try {
+        if (Test-InitialDumpSources -Root $Root) { return }
+        foreach ($key in @('EXPORT_PATH', 'EXTENSIONS_PATH')) {
+            if (-not $settings[$key]) { continue }
+            $sourcePath = if ([IO.Path]::IsPathRooted($settings[$key])) { $settings[$key] } else { Join-Path $Root $settings[$key] }
+            if ((Test-Path -LiteralPath $sourcePath -PathType Container) -and (Test-InitialDumpSources -Root $sourcePath)) { return }
+        }
+        Write-Info 'В проекте нет исходников 1С, но в .dev.env указана информационная база.'
+        if ($NonInteractive -or $AssumeYes) {
+            Write-Info 'Выгрузка необязательна и пропущена без диалога. Для выгрузки позже запустите /loadfrom1cbase full.'
+            return
+        }
+        $extension = ([string]$settings['EXTENSION_NAME']).Trim()
+        $relativeDestination = ([string]$settings['EXPORT_PATH']).Trim()
+        $newPaths = [ordered]@{}
+        if ($extension) {
+            if ($extension -in @('.', '..') -or $extension -match '[\\/:*?"<>|]') {
+                throw 'EXTENSION_NAME не подходит для имени каталога; выберите цель через /loadfrom1cbase full.'
+            }
+            $extensionsRoot = ([string]$settings['EXTENSIONS_PATH']).Trim()
+            if (-not $extensionsRoot) { $extensionsRoot = 'src/cfe'; $newPaths['EXTENSIONS_PATH'] = $extensionsRoot }
+            $relativeDestination = Join-Path $extensionsRoot $extension
+        }
+        elseif (-not $relativeDestination) {
+            $relativeDestination = 'src/cf'
+            $newPaths['EXPORT_PATH'] = $relativeDestination
+        }
+        $destination = if ([IO.Path]::IsPathRooted($relativeDestination)) {
+            [IO.Path]::GetFullPath($relativeDestination)
+        } else { [IO.Path]::GetFullPath((Join-Path $Root $relativeDestination)) }
+        $targetLabel = if ($extension) { "расширение $extension" } else { 'основная конфигурация' }
+        Write-Info "Цель: $targetLabel. Каталог XML-выгрузки: $destination"
+        if (-not (Read-YesNo 'Выгрузить исходники из указанной ИБ сейчас? Отказ не отменяет установку правил.' $false)) {
+            Write-Info 'Выгрузка пропущена. Позже можно запустить /loadfrom1cbase full.'
+            return
+        }
+        # Complex target selection and EDT conversion belong to the agent command.
+        if ($settings['USE_EDT'] -eq 'true') {
+            Write-Info 'Для EDT выполните /loadfrom1cbase full через агента: он выберет отдельный каталог XML-выгрузки.'
+            return
+        }
+        if (Test-Path -LiteralPath $destination) {
+            if (-not (Test-Path -LiteralPath $destination -PathType Container) -or
+                (Get-ChildItem -LiteralPath $destination -Force -ErrorAction Stop | Select-Object -First 1)) {
+                throw 'Каталог выгрузки уже содержит файлы. Для выбора безопасного назначения выполните /loadfrom1cbase full.'
+            }
+        }
+        $kind = ([string]$settings['INFOBASE_KIND']).Trim()
+        if (-not $kind) { $kind = 'file' }
+        $dumpArgs = @{ ConfigDir = $destination; Mode = 'Full' }
+        if ($kind -eq 'server') {
+            $connection = ([string]$settings['INFOBASE_PATH']).Trim() -split '[/\\]', 2
+            if ($connection.Count -ne 2 -or -not $connection[0] -or -not $connection[1]) {
+                throw 'Для серверной ИБ INFOBASE_PATH должен иметь вид server/base.'
+            }
+            $dumpArgs.InfoBaseServer = $connection[0]
+            $dumpArgs.InfoBaseRef = $connection[1]
+        }
+        elseif ($kind -eq 'file') {
+            $dumpArgs.InfoBasePath = $settings['INFOBASE_PATH']
+        }
+        else { throw 'INFOBASE_KIND должен быть file или server.' }
+        if ($settings['PLATFORM_PATH']) { $dumpArgs.V8Path = $settings['PLATFORM_PATH'] }
+        if ($settings['IB_USER']) { $dumpArgs.UserName = $settings['IB_USER'] }
+        if ($settings['IB_PASSWORD']) { $dumpArgs.Password = $settings['IB_PASSWORD'] }
+        if ($extension) { $dumpArgs.Extension = $extension }
+        $dumpScript = Join-Path $SourceRoot 'content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1'
+        if (-not (Test-Path -LiteralPath $dumpScript -PathType Leaf)) { throw 'Скрипт db-dump-xml.ps1 не найден в комплекте правил.' }
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+            throw 'В этой ОС выгрузку выполняет агент через /loadfrom1cbase full.'
+        }
+
+        # Persist only newly chosen source roots; preserve all other user settings.
+        if ($newPaths.Count -gt 0) {
+            $envText = Read-TextFile $envPath
+            $newline = if ($envText.Contains("`r`n")) { "`r`n" } else { "`n" }
+            foreach ($key in $newPaths.Keys) {
+                $pattern = '(?m)^' + $key + '\s*=[^\r\n]*'
+                $entry = $key + '=' + $newPaths[$key]
+                if ([regex]::IsMatch($envText, $pattern)) {
+                    $envText = [regex]::Replace($envText, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $entry })
+                }
+                else {
+                    if ($envText -and -not $envText.EndsWith("`n")) { $envText += $newline }
+                    $envText += $entry + $newline
+                }
+            }
+            Write-TextFile -Path $envPath -Content $envText
+            if ($Manifest -and $Manifest.files.Contains($script:DevEnvFileName)) {
+                $Manifest.files[$script:DevEnvFileName].installedHash = Get-FileSha256 $envPath
+                Write-Manifest -Root $Root -Manifest $Manifest
+            }
+        }
+        Write-Info "Выгрузка исходников в $destination"
+        Push-Location -LiteralPath $Root
+        try {
+            # Call operator contains the child script's exit; no command-string
+            # interpolation and no credentials in installer output.
+            $global:LASTEXITCODE = 0
+            & $dumpScript @dumpArgs
+            $dumpExitCode = $LASTEXITCODE
+        }
+        finally { Pop-Location }
+        if ($dumpExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $destination 'Configuration.xml') -PathType Leaf)) {
+            throw 'Выгрузка не подтверждена. Проверьте сообщения скрипта и повторите /loadfrom1cbase full через агента.'
+        }
+        Write-Info 'Исходники выгружены. Правила установлены; файлы выгрузки принадлежат проекту.'
+    }
+    catch {
+        Write-Warn $_.Exception.Message
+        Write-Info 'Правила установлены. Необязательная выгрузка не завершена; продолжите через /loadfrom1cbase full.'
+    }
+    finally { $global:LASTEXITCODE = 0 }
+}
+
 function Set-DevEnvValue {
     # In-place rewrite of a single KEY= line in the rendered template text.
     # Idempotent: only the first occurrence of `<Key>=...` at line start is
@@ -3935,6 +4181,7 @@ function Place-DevEnv {
                 installedHash = (Get-FileSha256 $target)
             }
         }
+        Ensure-ToolPolicySettings -Root $Root -SourceRoot $SourceRoot -Manifest $Manifest
         Write-Info "  .dev.env: already exists, leaving user values untouched"
         return
     }
@@ -4022,6 +4269,37 @@ function Place-DevEnv {
         Write-Info ("  .dev.env: operation-scoped fields left empty: " + ($operationScopedEmpty -join ', '))
         Write-Info '  This is valid; the relevant command will ask or apply its documented fallback when invoked.'
     }
+}
+
+function Ensure-ToolPolicySettings {
+    # Append only missing policy keys from the canonical template. Never infer
+    # availability from installation, rewrite choices, or prompt during update.
+    param(
+        [string]$Root,
+        [string]$SourceRoot,
+        [System.Collections.IDictionary]$Manifest
+    )
+
+    $target = Join-Path $Root $script:DevEnvFileName
+    $source = Join-Path $SourceRoot $script:DevEnvExampleName
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $source -PathType Leaf)) { return }
+
+    $values = Read-DevEnvKeys -Path $target
+    $template = Read-DevEnvKeys -Path $source
+    $missing = @($template.Keys | Where-Object { $_ -match '^TOOL_[A-Z_]+$' -and -not $values.Contains($_) })
+    if ($missing.Count -eq 0) { return }
+
+    $text = Read-TextFile $target
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $text += $newline }
+    $text += $newline + '# Tool policy: auto (default), off, required; availability is checked separately.' + $newline
+    foreach ($key in $missing) { $text += $key + '=auto' + $newline }
+    Write-TextFile -Path $target -Content $text
+    if ($Manifest.files.Contains($script:DevEnvFileName)) {
+        $Manifest.files[$script:DevEnvFileName]['installedHash'] = Get-FileSha256 $target
+    }
+    Write-Info ('  .dev.env: added tool policy keys with auto defaults (' + ($missing -join ', ') + ')')
 }
 
 function Ensure-EdtUsageSetting {
@@ -4463,6 +4741,10 @@ function Invoke-Init {
     Write-RestartRecommendation -ActiveTools $activeTools -McpCount $manifest.mcpServers.Count
     Write-McpEffectivenessReminder -Root $Root -ExternalMcp $extMcp
     Write-InstallToolsAnnouncement
+
+    if (-not $existing -and $verify.Ok) {
+        Invoke-InitialSourceDump -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
+    }
 }
 
 # Feature announcement for the active-model adaptation layer. Shown on every
@@ -4554,7 +4836,7 @@ function Write-InstallToolsAnnouncement {
     if (@($NewInstallers).Count -gt 0) {
         Write-Info "Добавлены новые установщики инструментов: $(@($NewInstallers) -join ', ')."
     }
-    Write-Info "После перезапуска AI-клиента запустите /installtools — команда сначала предложит установить приобретённый комплект 1С MCP, затем покажет Cognee, OpenViking, EDT-MCP и инструменты UI-автоматизации."
+    Write-Info "После перезапуска AI-клиента запустите /installtools — команда сначала предложит установить приобретённый комплект 1С MCP, затем покажет Cognee, OpenViking, EDT-MCP, инструменты UI-автоматизации, rtk и Atlassian MCP (Jira/Confluence)."
     Write-Info "Каждый пункт устанавливается только после подтверждения; отдельные команды установки также доступны."
 }
 
@@ -4681,7 +4963,7 @@ function Test-AgentToolVocabulary {
     param([string]$Root)
 
     $dirs = @()
-    foreach ($rel in @('.claude/agents', '.kimi-code/agents', '.qwen/agents', '.cursor/agents')) {
+    foreach ($rel in @('.claude/agents', '.kimi-code/agents', '.qwen/agents', '.cursor/agents', '.commandcode/agents', '.zcode/agents', '.mimocode/agents')) {
         $abs = Join-Path $Root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         if (Test-Path $abs) { $dirs += @{ Abs = $abs; Rel = $rel } }
     }
@@ -4741,7 +5023,7 @@ function Assert-AgentToolVocabulary {
     $result = Test-AgentToolVocabulary -Root $Root
     if ($result.Skipped) { return $result }
     if ($result.Ok) {
-        Write-Info "Agent tool vocabulary OK: $($result.Checked) file(s) under .claude/.kimi-code/.qwen/.cursor agents/"
+        Write-Info "Agent tool vocabulary OK: $($result.Checked) installed agent file(s)"
         return $result
     }
 
@@ -4936,7 +5218,10 @@ function Invoke-Update {
     # userModified on every update.
     $newFiles = [ordered]@{}
     foreach ($k in $manifest.files.Keys) {
-        if ($manifest.files[$k].userModified -or $k -eq $script:AgentsMdFileName) { $newFiles[$k] = $manifest.files[$k] }
+        # Per-server MCP ownership must survive pruning so update can replace
+        # our servers while preserving pre-existing user servers with any id.
+        if ($manifest.files[$k].userModified -or $k -eq $script:AgentsMdFileName -or
+            $manifest.files[$k].Contains('managedServers')) { $newFiles[$k] = $manifest.files[$k] }
     }
     $manifest.files = $newFiles
 
@@ -5117,7 +5402,8 @@ function Invoke-Add {
 function Remove-McpKeyFromConfig {
     param(
         [string]$Path,
-        [string]$Key = 'mcp'
+        [string]$Key = 'mcp',
+        [System.Collections.IDictionary]$Entry
     )
     if (-not (Test-Path $Path)) { return }
     if (-not $Key) { $Key = 'mcp' }
@@ -5127,6 +5413,27 @@ function Remove-McpKeyFromConfig {
     }
     catch {
         # Not valid JSON — do not touch a file we cannot safely parse.
+        return
+    }
+    if ($Entry -and $Entry.Contains('managedServers')) {
+        $kept = ConvertTo-OrderedHashtable $obj
+        $servers = Get-McpConfigMap -Config $kept -Key $Key
+        if ($null -eq $servers) { return }
+        foreach ($id in @($Entry['managedServers'])) {
+            if ($servers.Contains($id)) { [void]$servers.Remove($id) }
+        }
+        # Prune empty containers, but preserve sibling settings at every level.
+        $parts = @($Key -split '\.')
+        for ($i = $parts.Count - 1; $i -ge 0; $i--) {
+            $parent = $kept
+            for ($j = 0; $j -lt $i; $j++) { $parent = $parent[$parts[$j]] }
+            if ($parent[$parts[$i]].Count -gt 0) { break }
+            [void]$parent.Remove($parts[$i])
+        }
+        if (@($kept.Keys | Where-Object { $_ -ne '$schema' }).Count -eq 0) {
+            Remove-Item -LiteralPath $Path -Force
+        }
+        else { Write-TextFile -Path $Path -Content ((ConvertTo-Json $kept -Depth 20) + "`n") }
         return
     }
     $kept = [ordered]@{}
@@ -5179,6 +5486,8 @@ function Invoke-Remove {
             'kimi'          { $toolPrefixes = @('.kimi-code/', '.kimi/') }
             'qwen'          { $toolPrefixes = @('.qwen/', 'QWEN.md') }
             'cline'         { $toolPrefixes = @('.cline/', '.clinerules/') }
+            'zcode'         { $toolPrefixes = @('.zcode/') }
+            'mimocode'      { $toolPrefixes = @('.mimocode/', 'mimocode.json') }
             'pi'            { $toolPrefixes = @('.pi/') }
             'cursor'        { $toolPrefixes = @('.cursor/') }
             'other'         { $toolPrefixes = @('.ai-agent/') }
@@ -5220,7 +5529,7 @@ function Invoke-Remove {
                 # Shared config (opencode.json / .kilo/kilo.json /
                 # `.qwen/settings.json`): strip the merge key only, never
                 # delete the user's whole config.
-                Remove-McpKeyFromConfig -Path $abs -Key (Get-MergedMcpKey $entry)
+                Remove-McpKeyFromConfig -Path $abs -Key (Get-MergedMcpKey $entry) -Entry $entry
             }
             elseif (Test-Path $abs) {
                 Remove-Item -Force $abs -ErrorAction SilentlyContinue
@@ -5261,7 +5570,7 @@ function Invoke-Remove {
                 # Shared config (opencode.json / .kilo/kilo.json /
                 # `.qwen/settings.json`): strip the merge key only, never
                 # delete the user's whole config.
-                Remove-McpKeyFromConfig -Path $abs -Key (Get-MergedMcpKey $entry)
+                Remove-McpKeyFromConfig -Path $abs -Key (Get-MergedMcpKey $entry) -Entry $entry
             }
             elseif (Test-Path $abs) {
                 Remove-Item -Force $abs -ErrorAction SilentlyContinue

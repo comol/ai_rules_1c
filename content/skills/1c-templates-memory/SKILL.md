@@ -1,6 +1,6 @@
 ---
 name: 1c-templates-memory
-description: "Reuse before reinventing — search the code-template library with the user's task description, adapt a fitting template as the base, and recall / save project memory across the connected providers (Cognee, OpenViking, templates MCP). Use at the start of every non-trivial 1C task and in the same turn as any user correction."
+description: "Reuse before reinventing — search code templates with the user's task text, adapt a fitting template as the base, recall / save project memory (Cognee, OpenViking, templates MCP). Use at the start of every non-trivial 1C task and in the same turn as a user correction."
 argument-hint: "<task description | memory query>"
 allowed-tools: mcp__1c-templates-mcp__templatesearch, mcp__1c-templates-mcp__get_template, mcp__1c-templates-mcp__list_templates, mcp__1c-templates-mcp__recall, mcp__1c-templates-mcp__remember
 ---
@@ -31,7 +31,7 @@ A goal-matching hit is the base: paste its body, adapt names, filters, placement
 
 | Need | Call | Arguments |
 |---|---|---|
-| Recall (every provider, every non-trivial task) | `recall` | `query` = key terms of the task; Cognee: `search_type="CHUNKS"`; OpenViking: `search(query)` |
+| Recall (non-trivial tasks; provider scope per `project-memory.md → Gates (hard)`) | `recall` | `query` = key terms of the task; Cognee: `search_type="CHUNKS"`; OpenViking: `search(query)` |
 | Save a durable fact / correction | `remember` | Cognee `data`, `dataset_name`; OpenViking `messages=[{"role":"user","content":…}]`; templates `content` (≥ 5 chars) |
 
 ```json

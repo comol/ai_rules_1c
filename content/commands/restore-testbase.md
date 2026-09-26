@@ -7,11 +7,15 @@ argumentHint: "[<path-to-snapshot.dt>|nodata]"
 
 Bring the test infobase defined in `.dev.env` to the **effective snapshot**: a data baseline from a `.dt` (optional) plus the current configuration sources from git — main configuration and every extension from `EXTENSION_NAMES`. Use it when the test base drifted (broken by experiments, stale data, wrong config state) and you want a reproducible state before the next develop-deploy cycle.
 
+First resolve the project and full-snapshot inventory via `content/rules/extension-workspace.md`, including when `EXTENSION_NAMES` is empty. Preflight their source identities/completeness before a destructive data restore. A `.dt` may bring its own extension state: verify relevant installed/active extensions after restore and before claiming the requested runtime snapshot. Do not silently remove extras. Preserve `EXTENSION_NAME` as the ordinary single-target default; it cannot narrow this full restore.
+
+Apply that rule's **Preserve extension identity** contract against the selected known revision/backup: restoring an existing extension does not authorize reinitializing it or regenerating metadata identifiers/borrowed links. Resolve unexpected identity differences before the affected load/apply. After restore, recheck source-root/target and graph-layer mappings and affected evidence; old load/apply/index results are not automatically evidence of the restored state.
+
 ## Step 0. Check `.dev.env` parameters
 
 Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for. Blocking keys: `PLATFORM_PATH`, `INFOBASE_PATH`. Also read: `INFOBASE_KIND`, `IB_USER` / `IB_PASSWORD`, `DT_SNAPSHOT_PATH`, `EXTENSION_NAMES`, `EXTENSIONS_PATH`, `EXPORT_PATH`, `LOG_PATH`, `IBCMD_CONFIG`.
 
-**Dev/test only — hard requirement.** This command overwrites data and forcibly terminates sessions. The target must be an explicitly identified dev/test infobase; if the current context does not establish that, stop and ask the user to confirm the target. Never run it against production.
+**Dev/test only — hard requirement.** This command overwrites data and forcibly terminates sessions. The target must be an explicitly identified dev/test infobase: `.dev.env` `INFOBASE_ROLE=dev|test` identifies it (canon `content/rules/dev-standards-env.md → INFOBASE_ROLE`); if the role is empty and the current context does not establish it, stop and ask the user to confirm the target. Never run it against production — `INFOBASE_ROLE=prod` is a refusal.
 
 ## Step 1. Data baseline (optional)
 
@@ -31,8 +35,8 @@ Report in one line which git state is being deployed (`git rev-parse --short HEA
 
 Then run the `/update1cbase` procedure (`content/commands/update1cbase.md` — single source of truth for the load / UpdateDBCfg command lines, tool selection, and the **Update retry loop**):
 
-- with `EXTENSION_NAMES` filled — in **full-snapshot mode** (`/update1cbase all`): main configuration from `{EXPORT_PATH}`, then each extension in list order from `{EXTENSIONS_PATH}\<Name>\`;
-- with `EXTENSION_NAMES` empty — the regular single-target run.
+- in **full-snapshot mode** (`/update1cbase all`), using the resolved inventory: main configuration from `{EXPORT_PATH}`, then each selected extension in list order from its verified source root;
+- when that inventory confirms no extensions — an explicit main pass with no extension option, regardless of the stored `EXTENSION_NAME`. Unresolved inventory is resolved before Step 1; do not substitute a single-extension restore.
 
 The retry loop (log-first, PID-scoped Configurator termination, fix-before-retry, 3 attempts) applies as written there. A `.dt` loaded in Step 1 already has its DB configuration in sync — the load in this step still runs, because the point of the command is to bring the base to the **git** state, which may be newer than the snapshot.
 
@@ -45,3 +49,5 @@ Optional, only when already available in the session: one read-only `vcexecuteco
 ## Step 4. Final report
 
 Report: the data baseline used (`.dt` path, or "config-only refresh"), whether a rollback `.dt` was taken, the git state deployed, extensions loaded in order, retry-loop attempts and fixes, smoke result. On failure — the standard retry-loop failure report; never present a failed restore as done.
+
+If work continues elsewhere, use `content/rules/extension-workspace.md → Handoff and resume` to preserve the per-target source/export, loaded, applied and MCP states with evidence or explicit unknowns. A completed restore does not claim that the index was refreshed or every business scenario tested.

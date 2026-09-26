@@ -6,6 +6,8 @@ Comprehensive extension (CFE) management: create scaffold, borrow objects from c
 
 ## 1. Init — Create Extension Scaffold
 
+Use `init` only for an explicitly requested **new** extension. Existing-extension edits, folder moves, renames, updates and restores retain identifiers and borrowed links; they do not start from a new scaffold. Follow `content/rules/extension-workspace.md → Preserve extension identity`, including investigation of unexpected UUID changes before load/apply.
+
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-init.ps1 -Name "МоёРасширение"
 ```
@@ -52,6 +54,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/sc
 Format: `Catalog.X`, `CommonModule.Y`, `Document.Z`. All 44 object types supported. Batch: `"Catalog.X ;; CommonModule.Y ;; Enum.Z"`.
 
 Creates XML files with `ObjectBelonging=Adopted` and `ExtendedConfigurationObject`, adds to ChildObjects.
+
+For an already borrowed object, preserve its existing identifier and base-object link; do not recreate it to move/rename the source tree or to hide a mapping mismatch. Resolve the intended base and target before any change to the borrowing relationship.
 
 ---
 
@@ -172,6 +176,13 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/sc
 
 Exit code: 0 = OK, 1 = errors.
 
+For a complete hierarchical extension dump, additionally run
+`tools/1c-cf-manage/scripts/dump-validate.ps1 -ConfigPath "<extension-directory>"`.
+It checks the extension's own file inventory, nested subsystems, versions,
+selected references and optional `ConfigDumpInfo.xml`. JSON output and exact
+coverage: [Complete dump integrity](cf-manage.md#complete-dump-integrity).
+This check does not compare the extension with its base configuration.
+
 ### What `cfe-validate` cannot see — the platform check is a separate step
 
 All nine checks read **source**: XML shape, ClassIds, ChildObjects ordering, adopted-object markers. They are silent about the one failure mode that actually breaks a base — an interceptor whose target method no longer exists in the main configuration. `&Вместо ПриЗаписи` against a method the vendor renamed is perfectly valid XML and perfectly valid BSL; the platform rejects it only at apply time, and an `&После` in the same position may just stop firing with no error at all.
@@ -188,6 +199,8 @@ Read the verdict from three signals (process exit code, `/DumpResult`, `/Out` di
 
 For a `&ИзменениеИКонтроль`-heavy extension, `-Check` (section 4) and the applicability check answer related questions from opposite ends: drift detection names the *method* whose original moved, the platform names the *error*. Run `-Check` first — it is cheaper and its output is more actionable.
 
+Record the exact checked combination and evidence in the existing extension README or delivery description (`content/rules/extension-workspace.md → Checked compatibility`). Source/drift validation is not evidence of an applied or tested infobase. Reuse the authorized `/update1cbase` load → checks → apply sequence and any executed scenarios; record missing checks without widening the workflow.
+
 ### Backup and rollback before replacing an existing extension
 
 Loading over an existing extension is a replacement with no platform-side undo. Dump both forms first — `/DumpCfg -Extension <Name>` (editable) and `/DumpDBCfg -Extension <Name>` (database, what running sessions execute) — and recover with `/RollbackCfg -Extension <Name>` before the DB update, or by reloading the saved `.cfe` after it. **Never delete a pre-existing extension as a rollback**: deletion drops its own objects and every mapping along with your change. Details — `content/rules/designer-batch-checks.md → Extension apply and rollback`.
@@ -195,6 +208,8 @@ Loading over an existing extension is a replacement with no platform-side undo. 
 ---
 
 ## Typical Extension Workflow
+
+The `init` step below is for a new extension only; an existing target starts from its current sources/backup and preserves its identity. Recheck root/graph mappings and evidence after a move, rename or restore.
 
 ```
 1c-cf-manage info <config>          — get base config version/compatibility

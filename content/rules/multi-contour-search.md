@@ -6,7 +6,7 @@ category: tooling
 
 # Multi-contour source search
 
-**When to load:** a source question spans a base configuration and extensions, uses separate source indexes, or the project declares a contour catalog. Read once per task and reuse until mappings or sources change. This rule selects scope and eligible servers; `content/rules/mcp-first-search.md` owns the bounded retrieval chain, retries and native fallback.
+**When to load:** a source question spans a base configuration and extensions, uses separate source indexes, the graph serves multiple projects, or the project declares a contour catalog. Read once per task and reuse until mappings or sources change. This rule selects scope and eligible servers; `content/rules/mcp-first-search.md` owns the bounded retrieval chain, retries and native fallback. Source/build layout and write targets — `content/rules/extension-workspace.md`.
 
 ## Catalog and ownership
 
@@ -92,6 +92,18 @@ A supplied file is an entry point; an explicit restriction is a boundary. Absenc
 
 ## Eligible routes
 
+### Resolve the project before retrieval
+
+1. Identify the current project root and selected source contour. Reuse a verified mapping only while the workspace, MCP server/namespace and source roots are unchanged. Call `list_graph_projects` once for discovery and again only when that context changes or evidence invalidates the mapping; a session may legitimately contain several projects.
+2. Match the returned project to the current roots using its source descriptor/status or existing verified project mapping. A sole returned project is not automatically the current project. Names alone and list order are insufficient. If two projects cannot be tied to the current roots, resolve that ambiguity before dependent graph calls; continue local source work where scope is known.
+3. Carry the returned base `project_id` as an explicit top-level scope argument on every supported graph project-data call. It is not `project_name`, a server ID, a folder basename or an extension name. For code/EDT servers, use their own live contract and verified mapping; do not add graph-only arguments. Shared-server routing with no usable selector or fixed scope is unavailable for a contour-specific claim.
+4. Verify the expected extension layer and attribute returned paths/entities to it. Only pass layer selectors the particular tool supports; otherwise use layer-aware comparison/effective-entity tools or the mapped contour index/files. A broad project search can locate candidates, but cannot certify a restricted layer result by itself.
+5. Preserve project, generation and query when paging; keep entity references within their returned scope. A mismatched response is unusable evidence for the task, not a negative result. `compare_base_and_extension` compares a layer with the base of the same project; a cross-project comparison is a separate explicit operation.
+
+An empty `graph.scope` map in the example is a placeholder for session discovery, not permission to omit `project_id`. Record only live supported arguments when persisting mappings; validate a stored project ID against current discovery before reuse. Discovery and source queries do not authorize server lifecycle changes.
+
+### Select the route
+
 Apply the `mcp-first-search` chain **inside verified coverage**. Server IDs are resolved against tools actually exposed in this session; a client registration or suggestive tool name does not establish coverage.
 
 When coverage is unknown, inspect existing mappings and the applicable bounded scope-discovery response before choosing a route; reuse an attributed search result if it already resolves the gap. No catalog does not mean no coverage. If the available evidence still cannot establish a usable scope, report it as unresolved and use the scoped native fallback; do not claim the index lacks the sources.
@@ -112,7 +124,7 @@ Attribute decisive evidence to its contour and file/line, with server/scope when
 
 For ordinary source answers, give the behavior, decisive references, checked contours and material gaps concisely. Use “not found in the checked contours” for partial coverage; “only here” and project-wide absence require the wider scope and relevant implementation paths above. Do not produce a call log or separate report by default.
 
-`.dev.env` remains the source of operation defaults; `content/rules/dev-standards-env.md` owns them. A search role grants no write permission, and the contour catalog neither overrides `EXTENSION_NAMES` load order nor changes dump/load paths. For an authorized export/import, use the dedicated procedure, resolve `EXPORT_PATH` and `EXTENSION_NAME` together, and verify the target identity. Never remove a populated extension argument to recover from a missing-extension error. A search-only task leaves sources, deployment settings and infobases unchanged.
+`.dev.env` remains the source of operation defaults; `content/rules/dev-standards-env.md` owns them. A search role grants no write permission, and the contour catalog neither overrides `EXTENSION_NAMES` load order nor changes dump/load paths. For an authorized export/import, use the dedicated procedure and `content/rules/extension-workspace.md`, resolve the source root and extension together for that pass, and verify the target identity. Never remove a populated extension argument to recover from a missing-extension error. A search-only task leaves sources, deployment settings and infobases unchanged.
 
 ## Setup acceptance
 

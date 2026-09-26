@@ -1,5 +1,5 @@
 ---
-description: Platform-level batch verification of a configuration or extension — `/CheckModules`, `/CheckConfig`, `/CheckCanApplyConfigurationExtensions`, the three-signal Designer verdict (`/DumpResult`), extension backup / rollback, and the never-run switch list. Load before applying a configuration or extension to an infobase, or when the MCP validators are not exposed.
+description: Designer batch checks of a configuration or extension — `/CheckModules`, `/CheckConfig`, extension applicability, `/DumpResult` verdict, backup / rollback. Load before applying to an infobase or when MCP validators are not exposed.
 alwaysApply: false
 category: quality
 ---
@@ -110,7 +110,7 @@ Notes on the switches:
 - Step 4 uses **`-Dynamic-`** deliberately: a dynamic update leaves running sessions on the old configuration, so "it applied" tells you nothing about whether it applies cleanly. This is the *verification* form. The deployment commands (`/deploy-and-test`, `/update1cbase`) use `-Dynamic+ -SessionTerminate force` against a confirmed dev/test base for speed — a different intent, and both are correct in their place.
 - Steps 1–3 are read-only. Step 4 mutates the infobase and is subject to the same dev/test confirmation as every deployment command.
 
-**Budget.** One run per check per artifact state. A failing check is fixed at the source and re-run once against the changed state — re-running an unchanged artifact is forbidden, same as for the MCP validators (`AGENTS.md → MCP Tool Calling → C.2`).
+**Budget.** One run per check per artifact state. A failing check is fixed at the source and re-run once against the changed state — re-running an unchanged artifact is forbidden, same as for the MCP validators (`AGENTS.md → MCP Tool Calling → C.1`).
 
 ## Extension apply and rollback
 

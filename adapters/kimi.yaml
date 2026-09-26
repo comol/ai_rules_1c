@@ -6,6 +6,10 @@
 # Schema: closed adapter schema described in AGENT-INSTALL.md (Lean placement)
 # and implemented by install.ps1.
 # Notes:
+#   - Verified against the NEW Kimi Code runtime (not the legacy Python
+#     kimi-cli): https://moonshotai.github.io/kimi-code/en/customization/agents
+#     and https://moonshotai.github.io/kimi-code/en/customization/mcp.html
+#     (2026-09-24). Custom agent model/mode fields are ignored by this runtime.
 #   - Kimi Code reads project instructions from root AGENTS.md and also from
 #     `.kimi-code/AGENTS.md`; this toolkit keeps the shared root AGENTS.md as
 #     the always-on entry point and puts on-demand material under `.kimi-code/`.
@@ -50,10 +54,8 @@ agents:
         Write: [Write]
         Edit: [Edit]
         Shell: [Bash]
-    keep: [name, description, disallowedTools, modelHint, isSubagent]
-    rename:
-      modelHint: model
-    drop: [tools, allowParallel, reasoningEffort]
+    keep: [name, description, disallowedTools]
+    drop: [tools, modelHint, isSubagent, allowParallel, reasoningEffort]
 
 skills:
   copyTo: ".kimi-code/skills/{name}/"

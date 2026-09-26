@@ -1,5 +1,6 @@
 ---
 description: Re-download the 1C MCP server distribution from vibecoding1c.ru, pull new images, refresh keys, restart installed servers, and switch the image channel between stable and beta
+userOnly: true
 argumentHint: "[stable|beta]"
 ---
 

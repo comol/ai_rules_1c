@@ -61,7 +61,7 @@ available.
 ## Activating slash commands
 
 OpenSpec slash commands (`/opsx:propose`, `/opsx:apply`, `/opsx:archive`,
-`/opsx:explore`) and the matching SKILLs are placed automatically by the
+`/opsx:explore`, `/opsx:sync`, `/opsx:update`) and the matching SKILLs are placed automatically by the
 `1c-rules` installer for every active tool — **no `npm` and no OpenSpec CLI
 required at install time**. The installer ships a snapshot of `openspec init`
 output under `content/openspec-bundle/<tool>/` and copies the per-tool files
@@ -71,13 +71,13 @@ The OpenSpec CLI version of the bundled snapshot is recorded in
 
 After installation you should already see, depending on which tools are active:
 
-- Cursor — `.cursor/commands/opsx-{apply,archive,explore,propose}.md`
-- Claude Code — `.claude/commands/opsx/{apply,archive,explore,propose}.md`
-- Codex — only SKILLs under `.codex/skills/openspec-*/SKILL.md` (Codex has no project slash commands)
-- OpenCode — `.opencode/command/opsx-{apply,archive,explore,propose}.md`
-- Kilo Code — `.kilocode/workflows/opsx-{apply,archive,explore,propose}.md` (legacy path shipped by the upstream OpenSpec bundle; current Kilo Code auto-migrates `.kilocode/workflows/` to `.kilo/commands/` on startup — see `adapters/kilocode.yaml`)
+- Cursor — `.cursor/commands/opsx-{apply,archive,explore,propose,sync,update}.md`
+- Claude Code — `.claude/commands/opsx/{apply,archive,explore,propose,sync,update}.md`
+- Codex — only SKILLs under `.codex/skills/openspec-*/SKILL.md` (Codex has no project slash commands; the upstream `.agents/skills/` output is remapped there)
+- OpenCode — `.opencode/command/opsx-{apply,archive,explore,propose,sync,update}.md` (upstream `.opencode/commands/`, remapped to the adapter's folder)
+- Kilo Code — `.kilo/commands/opsx-{apply,archive,explore,propose,sync,update}.md` (the upstream `.kilocode/workflows/` layout is remapped by the installer — see `adapters/kilocode.yaml`)
 
-…plus matching `openspec-{propose,apply-change,archive-change,explore}/SKILL.md`
+…plus matching `openspec-{propose,apply-change,archive-change,explore,sync-specs,update-change}/SKILL.md`
 folders under each tool's `skills/` directory. Restart your IDE for the
 slash commands to take effect.
 
@@ -103,11 +103,21 @@ as user-modified, in which case `1c-rules` preserves your edits).
 /opsx:propose <idea>   →  /opsx:apply   →  /opsx:archive
 ```
 
-1. **propose** — AI creates a new folder in `changes/<change-name>/` with
-   `proposal.md`, delta `specs/`, `design.md`, and `tasks.md`.
-2. **apply** — AI implements the tasks listed in `tasks.md`.
-3. **archive** — completed changes merge into `specs/` and the change folder
+1. **propose** — AI creates `proposal.md`, delta `specs/`, `design.md`, and
+   `tasks.md`. Full-cycle artifacts define an observable Definition of Done
+   (DoD), with acceptance criteria and tasks for testing and review.
+2. **apply** — AI implements, runs tests, reviews the final change, fixes
+   blocking findings and reconciles DoD with evidence. Testing and review
+   are required for full-cycle unless explicitly waived by the user; waivers
+   are recorded separately from passes. CLI `all_done` / checked tasks alone
+   do not establish completion. Missing verification keeps DoD incomplete.
+3. **archive** — after checking DoD evidence, completed changes merge into `specs/` and the change folder
    is moved to `changes/archive/<date>-<change-name>/`.
+
+Browser testing retains its `UI_TESTING` policy; disabling it does not cancel
+all testing. Separate reviewer agents retain their launch conditions; the
+parent performs full-cycle review by default. The completion contract lives
+in [`sdd-integrations.md`](../content/rules/sdd-integrations.md).
 
 For deeper guidance see:
 

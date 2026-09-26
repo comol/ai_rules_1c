@@ -1,5 +1,5 @@
 ---
-description: Canonical region templates for common modules, object / manager modules, and form modules. Single source of truth for `#Область` names, preprocessor directives, and mandatory regions. Load before creating a new module or restructuring an existing one.
+description: Canonical region templates for common, object / manager and form modules — `#Область` names, preprocessor directives, mandatory regions. Load before creating a new module or restructuring an existing one.
 alwaysApply: false
 category: development
 ---

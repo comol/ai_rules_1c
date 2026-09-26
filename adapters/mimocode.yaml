@@ -1,0 +1,65 @@
+# Adapter: MiMo Code (Xiaomi).
+# Sources checked 2026-09-24:
+# https://mimo.mi.com/docs/en-US/tokenplan/integration/mimo-code
+# https://mimo.xiaomi.com/mimocode/agents
+# https://mimo.xiaomi.com/mimocode/commands
+# https://mimo.xiaomi.com/mimocode/skills
+# https://mimo.xiaomi.com/mimocode/mcp-servers
+# https://mimo.xiaomi.com/mimocode/config-overrides
+# Root AGENTS.md is the entry point. Agent permissions use an object, not
+# the source tools array. Only managed MCP servers are merged/removed;
+# user settings and unrelated servers in mimocode.json are preserved.
+
+tool: mimocode
+schemaVersion: 1
+
+detection:
+  - exists: ".mimocode/"
+  - exists: "mimocode.json"
+  - exists: "mimocode.jsonc"
+
+rules:
+  copyTo: ".mimocode/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+agents:
+  copyTo: ".mimocode/agents/{name}.md"
+  frontmatter:
+    toolsToPermission:
+      source: tools
+      grant: allow
+      deny: deny
+      map:
+        Read: read
+        Write: edit
+        Edit: edit
+        Grep: grep
+        Glob: glob
+        Shell: bash
+    keep: [name, description, modelHint, permission]
+    rename:
+      modelHint: model
+    addIf:
+      isSubagent: { mode: subagent }
+      "!isSubagent": { mode: primary }
+
+commands:
+  copyTo: ".mimocode/commands/{name}.md"
+  frontmatter:
+    keep: [description]
+    drop: [argumentHint, allowedTools]
+
+skills:
+  copyTo: ".mimocode/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: "mimocode.json"
+  schema: "mcp[id]={ type: 'remote', url, enabled: true } | { type: 'local', command: [...], enabled: true }"
+  format: json
+  merge: true
+  mergeKey: mcp
+  mergeServers: true

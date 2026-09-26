@@ -1,5 +1,5 @@
 ---
-description: How to retrieve the detailed 1C development standards from the `1c-standards` collection of the Help MCP server (`1C-docs-mcp`) — the `standards` tool, the `standards(name="…") §N → "Title"` reference form, name resolution, paging, and what to do when the server is not exposed. Load when following a `standards(name=…)` reference for the first time in a session.
+description: Retrieving routed 1C standards from `1C-docs-mcp` — the `standards` tool, the `standards(name="…") §N` reference form, paging, unavailable server. Load when following a `standards(name=…)` reference for the first time in a session.
 alwaysApply: false
 category: tooling
 ---
@@ -20,7 +20,7 @@ standards(query="именование ролей")  → search inside the standa
 
 Optional on all three forms: `max_chars`, `max_items`, `detail_level` (`detailed` | `compact`), `cursor`.
 
-**`docsearch` and `docinfo` cannot reach the standards.** They serve the platform syntax reference and the platform prose; their `scope` parameter (`syntax` | `docs` | `all`) does not select this collection, and there is **no `corpus` parameter on any tool of this server**. A call like `docsearch(query=..., corpus="...")` is an unknown-argument error, and it is exactly the guessed-parameter defect `AGENTS.md → MCP Tool Calling → C.5` forbids.
+**`docsearch` and `docinfo` cannot reach the standards.** They serve the platform syntax reference and the platform prose; their `scope` parameter (`syntax` | `docs` | `all`) does not select this collection, and there is **no `corpus` parameter on any tool of this server**. A call like `docsearch(query=..., corpus="...")` is an unknown-argument error, and it is exactly the guessed-parameter defect `AGENTS.md → MCP Tool Calling → C.4` forbids.
 
 The sibling collection `formatspec` works identically over the 1C file-format specifications (form / role / DCS / MXL / extension on-disk XML) — useful next to `metadata-xml-workarounds.md` and the `1c-metadata-manage` skill.
 
@@ -39,7 +39,7 @@ A name the collection does not hold answers `not_found` **and lists every standa
 - **Know which rule governs → `standards(name=…)`.** These rules are written to be loaded before the work starts; one call gets the whole rule. Do **not** issue one `standards(query=…)` per section — that is more calls for less text, and it returns matched passages rather than the rule.
 - **Do not know which rule → `standards(query=…)` once**, then fetch the rule it points at by name.
 - **A document larger than `max_chars` is paged, not cut.** The response carries `collection.parts` and `next_cursor`; continue until you have the parts you need. A first page is not the rule — treat a truncated retrieval the same way you would treat half a file.
-- **Retrieved text stays in context.** Re-requesting the same standard against unchanged state is forbidden by `AGENTS.md → MCP Tool Calling → C.2` like any other repeat.
+- **Retrieved text stays in context.** Re-requesting the same standard against unchanged state is forbidden by `AGENTS.md → MCP Tool Calling → C.1` like any other repeat.
 
 ## Retrieve before you apply
 

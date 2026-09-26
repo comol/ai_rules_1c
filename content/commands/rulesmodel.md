@@ -1,5 +1,6 @@
 ---
 description: Adapt the ruleset to the model that is actually running — normalize a free-form model name to a profile slug and write AGENT_MODEL (opus5|sonnet5|fable5|gpt56|gpt6) into .dev.env
+userOnly: true
 argumentHint: "[opus5|sonnet5|fable5|gpt56|gpt6|<any model name>|auto|status|off]"
 ---
 
@@ -20,13 +21,23 @@ The command edits **only** the `AGENT_MODEL` line in `.dev.env` — never other 
 The user may write the model name any way they like. Resolve free-form input to a canonical slug **yourself** — no script has to be fed an exact string:
 
 1. **Empty or `auto`** — identify the model you are actually running from your own self-knowledge and map it to a slug. If you are not one of the supported models, treat it as `off` (see below) and say which model you identified.
-2. **A model name in any spelling** — normalize by family + major version: lowercase; strip spaces, dashes, dots, underscores; strip vendor prefixes (`anthropic/`, `openai/`, `claude-`, `gpt-`) and client-side suffixes (`-thinking`, `-high`, `#xhigh`, `-max`, `-fast`, date stamps); accept Russian spellings (`клод опус 5`, `сонет 5`, `фейбл 5`, `гпт 5.6`, `гпт 6`, `астра`). The alias table lives in `model-adaptation.md §3`; use it, and use judgement for spellings it does not list.
+2. **A model name in any spelling** — normalize by family + major version: lowercase; strip spaces, dashes, dots, underscores; strip vendor prefixes (`anthropic/`, `openai/`, `claude-`, `gpt-`) and client-side suffixes (`-thinking`, `-high`, `#xhigh`, `-max`, `-fast`, date stamps); accept Russian spellings (`клод опус 5`, `сонет 5`, `фейбл 5`, `гпт 5.6`, `гпт 6`, `астра`). Use the alias table below, and judgement for spellings it does not list. The value written is always the dot-free slug (`gpt56`, not `gpt5.6`; `gpt6`, not `gpt-6`) — rule file names and the `AGENTS.md` path rewriting require it.
 3. **`status`** — report without editing anything.
 4. **`off` / `none` / `generic` / `сброс`** — clear the value (base ruleset).
 
 **Unsupported or ambiguous input is never silently coerced.** `gpt-5.5`, `opus 4.8`, `sonnet 4.6`, `haiku`, a bare `claude`, `gemini`, `glm`, `qwen`, a bare version number: report the supported slugs, explain that the base ruleset applies unchanged for other models, and ask which the user wants. Offer the nearest same-family profile only as an explicit choice they confirm — never map one family onto another. `gpt-5.6` is `gpt56`; `gpt-6` / `gpt-6-astra` is `gpt6` — do not coerce one into the other.
 
 **Requested slug ≠ the model you are running** is allowed (the user may be configuring the project for a teammate or for another client): write the requested value, and state in one line that the active session is a different model, so the profile you apply right now is the one matching your own identity per `model-adaptation.md §2`.
+
+### Accepted spellings
+
+| Slug | Recognised as |
+|---|---|
+| `opus5` | `opus5`, `opus 5`, `opus-5`, `claude-opus-5`, `claude opus 5`, `Claude Opus 5.0`, `клод опус 5`, `опус 5` |
+| `sonnet5` | `sonnet5`, `sonnet 5`, `claude-sonnet-5`, `Claude Sonnet 5`, `сонет 5`, `соннет 5` |
+| `fable5` | `fable5`, `fable 5`, `claude-fable-5`, `Claude Fable 5`, `mythos5`, `claude-mythos-5`, `фейбл 5`, `фабл 5`, `мифос 5` |
+| `gpt56` | `gpt56`, `gpt5.6`, `gpt-5.6`, `GPT 5.6`, `openai gpt-5.6`, `гпт 5.6`, `гпт-5.6` |
+| `gpt6` | `gpt6`, `gpt-6`, `GPT 6`, `gpt-6-astra`, `gpt6astra`, `astra`, `astra6`, `astra 6`, `openai gpt-6`, `гпт 6`, `гпт-6`, `астра`, `астра6`, `астра 6` |
 
 ## Setting the profile (`auto`, a slug, or a free-form name)
 

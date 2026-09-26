@@ -1,5 +1,6 @@
 ---
 description: Toggle orchestrator economy mode via ORCHESTRATION in .dev.env; on enable, offers to configure per-tier subagent models and to set up the rtk output-compression proxy
+userOnly: true
 argumentHint: "[on|off|status|models|rtk]"
 ---
 

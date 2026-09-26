@@ -1,5 +1,6 @@
 ---
 description: Install agent-browser (token-efficient headless browser CLI + MCP) for 1C web UI testing
+userOnly: true
 ---
 
 # /install-agent-browser — install token-efficient browser automation

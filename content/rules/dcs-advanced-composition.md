@@ -1,5 +1,5 @@
 ---
-description: Advanced programmatic composition in СКД — two-pass preprocessing of detail records before roll-up (hiding zero-total crosstab rows / columns), and executing the composition query directly instead of the DCS output processor for memory-heavy reports. Load only when the standard `ПриКомпоновкеРезультата` override of `standards(name="dcs-design") §5` is not enough.
+description: Advanced СКД composition — two-pass preprocessing of detail records before roll-up, direct query execution for memory-heavy reports. Load only when the standard `ПриКомпоновкеРезультата` override is not enough.
 alwaysApply: false
 category: development
 ---

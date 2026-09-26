@@ -45,7 +45,7 @@ The mode changes **who executes**, never **which gates apply**. On any conflict,
 
 - **`subagent-pipeline.md` stays intact** — same stages, same hard gates. The mode only makes stage 2/3 delegation the default for full-cycle tasks and pushes bulk reads of stage 2 scouting to `1c-explorer`. Stages 4a (spec-compliance review) and 5 (verification gate) remain the parent's own work.
 - **Triage from `AGENTS.md` is unchanged** — quick-fix and docs-fix tasks are still executed directly by the parent: launching a subagent for a trivial edit costs more than it saves (`subagents.md → Delegation principle`). The mode never forces delegation of trivial work.
-- **`1c-code-reviewer` still runs only on an explicit user request** — the mode must not auto-trigger reviews.
+- **Reviewers still require an explicitly selected model** (`subagents.md → Reviewer model gate`), and `1c-code-reviewer` still requires an explicit user review request — economy mode neither enables inherited-model reviewers nor auto-triggers reviews.
 - **UI testing is still gated** by `UI_TESTING` and `INFOBASE_PUBLISH_URL` — the mode does not enable `1c-tester` runs.
 - **Model-tier routing from `subagents.md` still applies** — light-tier output remains working material, never the final authority for architecture, transactions, registers, security, or data integrity.
 - **Validator obligations are unchanged** — whoever edits BSL / metadata runs the applicable chain (`syntaxcheck` → `check_1c_code` → `review_1c_code` / `verify_xml`); the parent still owns the closing gate from `verification-gates.md`.

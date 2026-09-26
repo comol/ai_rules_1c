@@ -1,5 +1,6 @@
 ---
 description: Show the status of your support tickets about MCP servers and the 1c-rules ruleset, and close a ticket you no longer need
+userOnly: true
 argumentHint: "[новый|закрыт|<id тикета>|close <id тикета>]"
 ---
 

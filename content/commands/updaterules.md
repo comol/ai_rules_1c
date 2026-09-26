@@ -1,5 +1,6 @@
 ---
 description: Update the 1c-rules ruleset from GitHub (https://github.com/comol/ai_rules_1c)
+userOnly: true
 ---
 
 # /updaterules — update 1c-rules
@@ -64,10 +65,10 @@ Get-ChildItem .opencode\agent, .opencode\agents -Filter *.md -File -ErrorAction 
    - Optional live check when `opencode` is on PATH: `opencode agent list` must not print `Configuration is invalid` / `Expected object | undefined, got [...] tools`.
    - If neither OpenCode agent directory exists → skip this gate.
 
-   Then, if `.claude/agents/`, `.kimi-code/agents/`, `.qwen/agents/` or `.cursor/agents/` exists, verify that no agent markdown there still names an abstract tool:
+   Then, if `.claude/agents/`, `.kimi-code/agents/`, `.qwen/agents/`, `.cursor/agents/`, `.commandcode/agents/`, `.zcode/agents/` or `.mimocode/agents/` exists, verify that no agent markdown there still names an abstract tool:
 
 ```powershell
-Get-ChildItem .claude\agents, .kimi-code\agents, .qwen\agents, .cursor\agents -Filter *.md -File -ErrorAction SilentlyContinue |
+Get-ChildItem .claude\agents, .kimi-code\agents, .qwen\agents, .cursor\agents, .commandcode\agents, .zcode\agents, .mimocode\agents -Filter *.md -File -ErrorAction SilentlyContinue |
   ForEach-Object {
     if ((Get-Content $_.FullName -Raw) -match '(?m)^(tools|disallowedTools):.*\b(Shell|MCP)\b') {
       "FAIL: $($_.FullName)"

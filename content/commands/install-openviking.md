@@ -1,12 +1,13 @@
 ---
 description: Install OpenViking persistent memory with its native HTTP MCP endpoint and register it in the active AI client
+userOnly: true
 ---
 
 # /install-openviking — install OpenViking persistent memory
 
 Install the official OpenViking package and connect its built-in HTTP MCP endpoint. Use the server id `openviking`. A separate MCP proxy is unnecessary.
 
-Memory routing follows `content/rules/project-memory.md`: Cognee is the primary write destination whenever connected; otherwise use OpenViking, otherwise `1c-templates-mcp` memory. Search all connected memory providers. Connecting OpenViking keeps Cognee and templates memory enabled; a client configuration entry alone does not prove its tools are available.
+Memory routing and triage scope follow `content/rules/project-memory.md` after `.dev.env` `TOOL_*` policy. Installation preserves every provider choice; `TOOL_OPENVIKING=off` allows explicitly requested setup checks but still excludes ordinary memory use. A client config entry alone does not prove callable tools. Connecting this provider does not enable or disable another.
 
 Official references (recheck the selected release before installation):
 

@@ -1,5 +1,5 @@
 ---
-description: 1C:EDT branch of the ruleset — activation via USE_EDT, EDT project format vs Designer XML dump, what the metadata / infobase hard gates mean inside an EDT workspace, EDT-MCP routing, model-vs-disk synchronization, validation, DB update, tests, forms and git. Load when the project uses EDT, when the sources are in EDT format, or when EDT-MCP tools are exposed.
+description: 1C:EDT branch of the ruleset — EDT project format, metadata / infobase gates, EDT-MCP routing, validation and DB update in an EDT workspace. Load when USE_EDT=true, the sources are in EDT format, or EDT-MCP tools are exposed.
 alwaysApply: false
 category: tooling
 ---
@@ -16,9 +16,9 @@ This file is the **EDT branch** of the ruleset. Everything else in `content/rule
 - **`USE_EDT=false` or missing** → this file does **not** apply. Do not propose EDT, do not offer EDT-MCP, do not reshape a task around EDT. An EDT installation found on the workstation, or an `edt-mcp` entry left in some client config, is **not** a project preference — only `USE_EDT` is.
 - **User says the project moved to EDT** (or explicitly asks for EDT work) → ask once, set `USE_EDT=true` without touching other keys, then continue under this file.
 
-`USE_EDT=true` **without** EDT-MCP installed is a normal state: every existing rule, skill and slash command keeps working, and the parts of this file that need EDT-MCP simply do not apply. Recommend `/install-edt-mcp` **once** per session when a task would genuinely benefit (live workspace state, EDT validation markers, native refactoring, EDT-driven DB update, form snapshots) — then drop the topic.
+`USE_EDT=true` without EDT-MCP is valid. Generic work continues; dependent steps use the alternatives below or remain unverified. Recommend `/install-edt-mcp` at most once per session when relevant and policy permits; never recommend it for `TOOL_EDT=off`.
 
-EDT-MCP counts as available only when its tools are exposed in the current tool schema. An entry in a client config, or a reachable `http://127.0.0.1:8765/health`, proves the plugin — not the session. Tool catalog and routing details — `content/skills/mcp-1c-tools/docs/edt-mcp.md`.
+Apply `TOOL_EDT` (`content/rules/mcp-policy.md → Tool availability`): `off` suppresses calls and installation recommendations; `required` blocks an EDT-MCP-dependent step if its capability is missing. Neither activates `USE_EDT`. Tools must be callable in this session; config/health alone is insufficient. Catalog: `content/skills/mcp-1c-tools/docs/edt-mcp.md`.
 
 ## The one thing that really changes: source format
 
@@ -51,7 +51,7 @@ The **vendor-support** rules (`content/skills/1c-metadata-manage/docs/support-ma
 EDT's authority is its **in-memory model**, not the files in `src/`. `resync_to_disk` flushes model → disk and reports desync; there is no symmetrical "disk wins" operation you may assume.
 
 - **While an EDT workspace is open on this project, EDT-MCP writes are the default** for anything EDT owns (metadata, module source). A file written behind EDT's back is at best invisible to EDT until it refreshes, at worst overwritten by the model.
-- **Before** reading `src/` with native tools, feeding files to the 1C MCP index, or running the BSL validators on them — run `resync_to_disk` and act on the reported desync. A validator verdict on a stale file is not evidence.
+- **Before** reading `src/` with native tools, indexing or validating it — use `resync_to_disk` when eligible. With EDT-MCP absent/disabled in `auto`/`off`, obtain the user's save/synchronization in EDT and confirmation of the current disk state; until then dependent reads/checks remain unverified. `required` cannot be satisfied by this substitute. Never invent a disk-to-model sync or trust stale files.
 - **After** an external change to the tree (git checkout, a script, a slash command), EDT-MCP results are stale until the workspace is refreshed; re-establish state before trusting `get_project_errors` or a module read.
 - **One owner per artifact per session.** Do not alternate between EDT-MCP writes and direct file writes on the same module — pick the path, state it in the report.
 
@@ -77,7 +77,7 @@ BSL validation is **format-agnostic**: Gates 1–3 (`syntaxcheck` → `check_1c_
 
 What changes:
 
-- **Gate 5 (`verify_xml`) does not apply to MDO.** In an EDT-format tree the equivalent evidence is EDT's own validation: `revalidate_objects` on the changed objects → `get_project_errors` (filter by project / severity / check) or `get_problem_summary` for counts. Record it in the report exactly as `verify_xml` evidence is recorded.
+- **Gate 5 (`verify_xml`) does not apply to MDO.** Use EDT's validation: `revalidate_objects` → `get_project_errors` / `get_problem_summary`. In `auto`/`off` without MCP, request the corresponding validation in EDT by the user, bound to the current saved state; until results arrive it is unverified. `required` remains blocked without its tool evidence. Report the actual source of validation.
 - **`apply_quick_fix`** applies EDT's official auto-fix to **one** marker. Apply deliberately, one at a time, and re-validate — it is a code change like any other, not a formatting nicety. `get_check_description` explains what a check code actually means before you "fix" it.
 - **Budget discipline is unchanged** (`AGENTS.md → MCP Tool Calling → B.1`): re-validating unchanged state is forbidden, and EDT markers do not open a new retry loop of their own.
 - `validate_query` (EDT-MCP) checks query text against the **project's metadata** — syntax and semantic errors with line numbers, without touching an infobase. It satisfies Gate 3a's query branch when `1c-data-mcp` is not exposed, and complements it when it is: EDT resolves tables and fields, `1c-data-mcp` answers what the live base returns. State which one produced the evidence.

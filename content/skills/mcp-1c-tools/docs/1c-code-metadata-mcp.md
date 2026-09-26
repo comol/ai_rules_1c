@@ -42,7 +42,7 @@ On a miss, reformulate once when that can help, then use scoped native literal s
 | **codesearch** | `query`, `limit=5` | Hybrid search over BSL object modules and common modules | Find patterns, check usages, verify implementations. `query` — code, function name, or comment |
 | **search_function** | `name`, `exact=true`, `limit=10` | Find BSL procedures/functions through a structural FTS index. `exact=true` — case-insensitive with auto-fallback to fuzzy | Find a specific procedure / function (`'ОбработкаПроведения'`, `'ПриСозданииНаСервере'`) |
 | **get_module_structure** | `module_path` | Full module structure: procedures, functions, regions, statistics | Understand a module before editing, overview of contents |
-| **get_method_call_hierarchy** | `method_name`, `direction="both"`, `depth=3` | Call graph: who calls (`callers`), what it calls (`callees`), or `both` | Call chains, impact analysis, hot paths |
+| **get_method_call_hierarchy** | `method_name`, `direction="both"`, `depth=3` | Call graph: who calls (`callers`), what it calls (`callees`), or `both`. A handler passed by name (`ОписаниеОповещения`, `ПодключитьОбработчикОжидания`) is an edge marked `via`; empty `callers` still does not prove the routine unused | Call chains, impact analysis, hot paths |
 | **graph_dependencies** | `object_name`, `direction="both"`, `limit=50` | Dependency graph: `forward` (what it uses), `reverse` (who uses it), `both` | Impact analysis before refactoring, relationships between objects |
 | **bsl_scope_members** | `context`, `member_type="all"` | Available methods / properties / events for a BSL context. `member_type`: `all`, `methods`, `properties`, `events` | Discover an object's API (`'Справочник.Номенклатура'`, `'Глобальный'`) |
 

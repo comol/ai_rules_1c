@@ -58,79 +58,7 @@ This ban is Cursor-shaped (built-in Explore is the common failure) but applies t
 
 ## Common obligations
 
-Every subagent inherits `AGENTS.md` in full — its hard gates are not repeated in agent prompts. This section adds only what is **subagent-specific**; every agent prompt opens with a one-line preamble pointing here. Parent agents and subagent authors must not weaken any item.
-
-### CONFUSION on material forks
-
-Canon — `AGENTS.md → Development Procedure → 1. Think Before Coding` (triggers, format, low-risk assumption rule). Material fork = data integrity, transactions / posting, metadata shape, public contracts, security / RLS, anything hard to reverse, a conflict with existing code / БСП / `РежимСовместимости`, or an under-specified material edge case.
-
-Subagent-specific: never resolve a material fork by silently picking one interpretation, returning a partial result, or paraphrasing the question into prose — raise the block and stop. Low-risk ambiguity: state the assumption in one line and proceed.
-
-### MCP-first search
-
-Canon — `content/rules/mcp-first-search.md` (chain graph → code-metadata → native tools after a bounded miss; bounded priority, not a ban). Tool routing and parameter names — `content/skills/mcp-1c-tools/SKILL.md`.
-
-Subagent-specific: the chain binds subagents exactly as it binds the parent; when you fall back to a native discovery tool, state in the report which MCP attempts were tried and why they missed. `1c-arch-reviewer` and `1c-code-reviewer` have no Shell by design — their `Grep` / `Glob` only read sources the parent already pointed at, and any wider search is requested via the parent or `1c-explorer`.
-
-### Metadata, infobase and repository hard gates (mutating agents)
-
-Canon — `AGENTS.md → Skills and Subagents` (metadata mutations through the `1c-metadata-manage` skill, infobase operations through the slash commands / `db-ops`, repository operations through `1c-repository-manage`, vendor-support refusals); exceptions only per `content/skills/1c-metadata-manage/SKILL.md → Hard rule`.
-
-Subagent-specific: the gates bind **every** mutating subagent, not only `1c-metadata-manager`. A `1c-developer` / `1c-error-fixer` / `1c-refactoring` / `1c-performance-optimizer` task that turns out to require a form or metadata change either drives it through the skill itself or reports it back to the parent for delegation — it never hand-edits the XML. In EDT projects (`.dev.env` `USE_EDT=true`) establish the source format before the first mutation and route per `content/rules/edt-workflow.md`; hand-editing `*.mdo` / `*.form` is a defect with no exception. Name the path used in the report: `Metadata tooling: …`, `EDT tooling: …`, `Repository tooling: …`.
-
-### Validator chain (mutating agents)
-
-Canon — `content/rules/verification-gates.md` (ordered hard gates: `syntaxcheck` → `check_1c_code` → `review_1c_code` → impact analysis → metadata XML validation, as applicable; graceful degradation when a validator is not exposed — the skip is recorded in the report, never silent). Retry budget — `content/rules/verification-policy.md → "Validator budget"`.
-
-Subagent-specific: the agent that makes the final edit owns the validator run; for every mutated artifact report its content fingerprint, each applicable validator's result and run count **after the final edit**, and relevant execution context per `verification-gates.md → Gate execution and evidence reuse`. The parent reuses matching evidence instead of repeating validators on unchanged content. Read-only agents (`1c-explorer`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-doc-writer` when not writing project sources) skip the mutating gates but follow every other item of this section.
-
-### Scope and done criteria
-
-- Edit only the files / objects in the assigned scope: no "while we're here" changes, no reverting or overwriting edits outside the scope, no deleting files without an explicit instruction — the subagent is not alone in the codebase.
-- A real defect orthogonal to the assigned task (wrong logic, missing check, security or performance issue) is **reported** to the parent in the final report, never fixed within the task.
-- Every assigned item is implemented or explicitly listed as not done. A plan that turns out wrong goes back to the parent as a `CONFUSION`; the subagent does not re-plan.
-- If a criterion or a gate cannot be met, say so in the report — never present a partial result as complete.
-
-### Handoff in / out (implementation subagents)
-
-When one change is split across several implementation subagents (`1c-metadata-manager`, `1c-developer`, `1c-refactoring`, `1c-performance-optimizer`, `1c-error-fixer` — typical chain: metadata stubs first, BSL bodies next), the upstream subagent puts a fixed-format **Handoff** block at the very top of its final report. The parent's `## Upstream Handoff` copy preserves decisions and the reported artifact snapshot; current file contents remain the source of truth for the next edit. Parent-side forwarding rules — `subagent-pipeline.md → Stage 3 — Handoff between implementation subagents`.
-
-**Handoff out** — emit whenever a further implementation subagent is expected (when unsure, emit). Machine-readable: one fact per line, ≤ 120 chars, no prose paragraphs; explanations belong in the report body.
-
-```text
-## Handoff for the next subagent
-
-### Artifacts
-- <full repo path> — <one-line role> [stub | done | edited]
-
-### Verification evidence
-- <file> — <content fingerprint> — <validator, result, run count>
-- <relevant configuration / extension, platform / modes, source-to-IB match when applicable>
-
-### Public surface
-- <ObjectName>.<RoutineName>(<params>) → <return type> — <one-line purpose>
-- <Metadata.Object> — <attribute / tabular section / form / command>: <type / role>
-
-### Open TODOs / stubs for the next subagent
-- <file>:<region or routine> — <what to implement> — <signature hint, if pre-agreed>
-
-### Locked decisions (do not revisit without approval)
-- <decision> — <one-line rationale>
-
-### Open questions raised
-- <CONFUSION-id> — <one-line summary> — <status: resolved / pending>
-```
-
-**Handoff in** — read `## Upstream Handoff` first; reuse its decisions, inventory and public-contract intent instead of rediscovering them. Before editing, read the current target fragment and the context needed to preserve intervening changes; a fingerprint check or targeted `Read` is normal work, not forbidden re-exploration. Reuse validation only when the current content fingerprint and relevant execution context match the recorded evidence (`verification-gates.md → Gate execution and evidence reuse`). A missing / changed fingerprint makes affected evidence stale: inspect the change and run only missing or invalidated gates. Additional discovery still follows `mcp-first-search.md`; avoid bulk re-reads of unchanged files. If current contents contradict a locked decision or public contract materially, raise `CONFUSION`; never overwrite another agent's edits or silently revise the decision.
-
-### Report vocabulary
-
-Severity of findings: `critical` (blocks delivery) / `major` (must be addressed or consciously accepted) / `minor` (informational). Status line: implementers report `✅ DONE / ⚠️ PARTIAL / ❌ BLOCKED`; reviewers and the tester report `✅ APPROVE / ⚠️ CONCERNS / ❌ BLOCK`. Each agent keeps its own report skeleton; no other scale is used.
-
-### Shell and SDD
-
-- Agents whose frontmatter lists `Shell` follow the `powershell-windows` skill for every shell command.
-- If the project has an `openspec/` workspace — `content/rules/sdd-integrations.md` (MCP evidence for 1C facts, `Subagent → OpenSpec artifact mapping`, traceability updates after implementation).
+Owned by `content/rules/subagent-core.md` — CONFUSION on material forks, MCP-first search, metadata / infobase / repository gates, validator chain, scope and done criteria, the Handoff block, report vocabulary, shell and SDD. Every subagent inherits `AGENTS.md` in full plus that file; every agent prompt opens with a one-line preamble pointing there. Parent agents and subagent authors must not weaken any item. Load it before writing a delegation brief or forwarding a Handoff.
 
 ## Subagent catalog
 
@@ -140,19 +68,19 @@ Severity of findings: `critical` (blocks delivery) / `major` (must be addressed 
 | **1c-analytic** | User asks for a PRD, specification, or analysis of an existing area without writing code | Task is to write code |
 | **1c-planner** | A multi-step implementation or refactoring plan is needed before coding | Task is small enough that the plan is 1–2 lines |
 | **1c-architect** | Designing the architecture of a sizable modification (new subsystem, integration, multi-module change) | Single-procedure or single-module change |
-| **1c-arch-reviewer** | User asks to review or validate an architectural decision before implementation | No architectural design exists yet |
+| **1c-arch-reviewer** | User or pipeline stage 2 requests validation of an existing design, and the reviewer model gate below is satisfied | No architectural design exists yet; no explicitly selected reviewer model |
 | **1c-developer** | Bulk code writing or modification across multiple modules that would otherwise drain the parent's context | Small local edit (Quick-fix path — see `AGENTS.md → Development Procedure`) |
 | **1c-metadata-manager** | Creating, scaffolding, compiling, or multi-step / multi-domain metadata operations (objects, forms, reports, layouts, roles, extensions) | Single info lookup or single XML attribute fix — use a direct edit or the `1c-metadata-manage` skill |
 | **1c-refactoring** | Dead-code cleanup, consolidation, or deduplication across multiple modules | Refactor is local to one procedure |
 | **1c-performance-optimizer** | User reports slowness, or query / loop optimization is the explicit task | No performance concern was raised |
 | **1c-error-fixer** | Quick fix of syntax / runtime errors / BSL LS warnings without architectural changes (tier `coding` — it authors production code, often on transactional paths) | The fix requires architectural rework — escalate to `1c-architect` / `1c-developer` |
 | **1c-tester** | User asks to verify changes via deploy + UI automation against a test infobase, **and** `UI_TESTING` allows it (canon — `dev-standards-env.md`) | No test infobase; purely static task; `UI_TESTING=off`, or `manual` without an explicit UI-test request — never auto-trigger |
-| **1c-code-reviewer** | **Only when the user explicitly asks for a code review** | Auto-triggering after edits is forbidden |
+| **1c-code-reviewer** | **Only when the user explicitly asks for a code review** and the reviewer model gate below is satisfied | Auto-triggering after edits is forbidden; no explicitly selected reviewer model |
 | **1c-doc-writer** | User-facing documentation: user guides, admin manuals, tutorials, codemaps, API references | Inline code documentation (module / procedure headers) — that is the developer's responsibility |
 
 ## Tool declarations
 
-Like `modelTier`, the `tools` frontmatter of a source agent file is an **abstract vocabulary**, not a host tool list: `Read`, `Write`, `Edit`, `Grep`, `Glob`, `Shell`, `MCP`. `Shell` means "may run shell commands" and `MCP` means "may call the project's MCP servers"; neither is a tool name in any AI client. The installer resolves the list into what the active tool actually understands — `disallowedTools` for Claude Code / Kimi / Qwen, `readonly: true` for Cursor, a `permission` object for OpenCode, dropped entirely for hosts that have no per-agent tool control (`AGENT-INSTALL.md → Lean placement`, step 4).
+Like `modelTier`, the `tools` frontmatter of a source agent file is an **abstract vocabulary**, not a host tool list: `Read`, `Write`, `Edit`, `Grep`, `Glob`, `Shell`, `MCP`. `Shell` means "may run shell commands" and `MCP` means "may call the project's MCP servers"; neither is a tool name in any AI client. The installer resolves the list into what the active tool actually understands — `disallowedTools` for Claude Code / Kimi / Qwen / ZCode / Command Code, `readonly: true` for Cursor, a `permission` object for OpenCode / MiMo Code, dropped entirely for hosts that have no per-agent tool control (`AGENT-INSTALL.md → Lean placement`, step 4).
 
 Two consequences for anyone editing these files or diagnosing a subagent:
 
@@ -160,6 +88,8 @@ Two consequences for anyone editing these files or diagnosing a subagent:
 - **Never "fix" a subagent by deleting its `tools` line.** That is how the read-only agents (`1c-explorer`, `1c-code-reviewer`, `1c-arch-reviewer`) lose their write and shell boundary and end up guarded by prompt text alone. If an installed agent is missing shell or MCP, the installer mapping is what needs re-running.
 
 ## Model-tier routing
+
+Host limitation: the new Kimi Code runtime ignores custom-agent `model` fields. Its adapter drops the resolved model hint; `SUBAGENT_MODEL_*` cannot select per-agent models there. Command Code needs `tools: "*"` plus native `disallowedTools` to inherit MCP while preserving read-only roles. Follow the adapter, not another client's defaults.
 
 Subagent source files do **not** hard-code model names. Each agent declares an abstract tier in its frontmatter — `modelTier: coding`, `modelTier: analysis`, or `modelTier: light` — and the installer resolves the tier into a concrete model from `.dev.env` (`SUBAGENT_MODEL_CODING` / `SUBAGENT_MODEL_ANALYSIS` / `SUBAGENT_MODEL_LIGHT`, all Defaulted: empty = the AI client's default model; see `dev-standards-env.md → "Subagent model parameters"`). Model names live only in project settings, never in rules or agent prompts. On first install the installer proposes a benchmark-based profile (`Balanced` / `Economy` / `Quality`, derived from <https://onec-llm-bench.lovable.app/>); the recommendation lives in the installer / `.dev.env`, not here.
 
@@ -175,6 +105,16 @@ Routing rules:
 - **Never use the `light` tier as the final authority** for architecture, metadata / form design, transactions, registers, complex queries, security, data integrity, or release-critical decisions. Output of a light-tier run is working material, not a source of truth — the parent agent owns decomposition, source boundaries, the final decision, verification, and integration.
 - **Do not delegate trivial single-step tasks at all** — the launch overhead exceeds the saving.
 - The tier system does not change validation obligations: whatever tier produced the change, the applicable validator chain and closing gate from `verification-gates.md` still apply, including quick-fixes.
+
+## Reviewer model gate
+
+`1c-code-reviewer` and `1c-arch-reviewer` are **disabled unless a reviewer model is explicitly selected**: a non-empty `SUBAGENT_MODEL_ANALYSIS` in `.dev.env`, or a concrete model explicitly chosen by the user for this review invocation. An absent file / key, an empty value, the client's default model, and the legacy fallback to `SUBAGENT_MODEL_CODING` do not enable reviewers. Do not ask for a model merely to complete an ordinary development task.
+
+Before dispatch, confirm that the active client's reviewer definition or supported invocation override selects that model. A setting that has not been rendered into the installed agent is insufficient; never silently substitute inheritance or another model. This is a launch condition, not a change to installer tier resolution for other agents.
+
+When the gate is not satisfied, skip the review subagent. If the user requested a review, the parent performs it directly and states that no separate reviewer ran; do not replace it with another subagent. A pipeline-only architectural review is omitted. An explicitly selected model does not itself trigger a review: the catalog's request conditions still apply.
+
+This gate does **not** disable `review_1c_code`, other MCP validators, the parent's spec-compliance check, or full-cycle review by the parent (`verification-delivery.md → Soft gate C`).
 
 ## Bounded sidecar task templates
 
@@ -226,13 +166,13 @@ for metadata XML run verify_xml (and both chains when it embeds BSL).
 Return: changed files, diff summary against the plan, checks performed, unresolved risks.
 ```
 
-### reviewer-risk — independent review (`1c-code-reviewer`, **only when the user explicitly asked for a review**)
+### reviewer-risk — independent review (`1c-code-reviewer`, **only when the user explicitly asked for a review and the reviewer model gate is satisfied**)
 
 ```text
 Independent review of the current change for bugs, regressions, missing checks, and project-rule
 violations. Review scope: <parent-provided git diff and/or explicit file list>. Do not edit files.
 The reviewer has no Shell and must not infer an absent scope. High-confidence
-findings only, ordered by severity, with file/line references; then test gaps and residual risk.
+findings only, ordered by severity, with file/line references; then residual risk.
 ```
 
 ### smoke-check — mechanical post-change verification (`1c-explorer`, light-tier candidate)

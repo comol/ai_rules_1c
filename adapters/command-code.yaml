@@ -37,13 +37,23 @@ rules:
 agents:
   copyTo: ".commandcode/agents/{name}.md"
   frontmatter:
-    # Command Code documents `tools` as a comma-separated string; dropping
-    # the source YAML array avoids a shape mismatch. Agents inherit the
-    # parent tool set (equivalent to tools: "*").
-    keep: [name, description, modelHint]
+    # https://commandcode.ai/docs/agents (checked 2026-09-24): omitted
+    # tools means NO tools. Explicitly inherit the pool, including MCP,
+    # then deny withheld capabilities using Command Code's own tool ids.
+    toolsToDenylist:
+      source: tools
+      target: disallowedTools
+      map:
+        Write: [write_file]
+        Edit: [edit_file]
+        Shell: [shell_command, run_command, kill_shell]
+    keep: [name, description, disallowedTools, modelHint]
     rename:
       modelHint: model
     drop: [tools, allowParallel, reasoningEffort, isSubagent]
+    addIf:
+      isSubagent: { tools: "*" }
+      "!isSubagent": { tools: "*" }
 
 commands:
   copyTo: ".commandcode/commands/{name}.md"

@@ -1,11 +1,13 @@
 ---
 name: mcp-1c-tools
-description: "Router for the 1C MCP ecosystem — which server answers which need, which operation skill carries the exact calls, and the fallback chain. Load before selecting any 1c-*-mcp / 1C-*-mcp tool; the per-operation skills (1c-code-search, 1c-meta-info, 1c-impact, 1c-form-inspect, 1c-validate, 1c-platform-help, 1c-templates-memory, 1c-live-ib) hold parameter names and JSON call examples; per-server references in docs/ hold rare modes and response formats."
+description: "Router for the 1C MCP ecosystem — which server answers which need, which operation skill holds the exact calls and parameter names, and the fallback chain. Load before selecting any 1c-*-mcp / 1C-*-mcp tool."
 ---
 
 # MCP tools for 1C — router
 
-A server counts as available only when its tools are exposed in the current session's tool schema; an entry in `mcp-servers.json` proves nothing. Obligations (what is mandatory, budgets, how a typed server answer maps to an action) — `content/rules/mcp-policy.md`. Search discipline — `content/rules/mcp-first-search.md`. Per-task sequences — `content/rules/tooling-playbooks.md`.
+Apply `content/rules/mcp-policy.md → Tool availability` before routing: `.dev.env` `TOOL_*` policy plus callable tools and verified scope. Config entries alone prove nothing. The same policy owns obligations, budgets and typed-error recovery. Search: `content/rules/mcp-first-search.md`; task sequences: `content/rules/tooling-playbooks.md`.
+
+**Project scope is part of the call.** For extensions or a multi-project graph, first match the current source roots to a returned base `project_id` through `list_graph_projects` (`content/rules/multi-contour-search.md`). Supply it explicitly on every graph project-data call that exposes it, including paging and evidence. Resolve extension-layer coverage separately. Use each other server's actual selector (`configurationId` or another field only if exposed); its identifiers are not interchangeable with graph IDs. If a tool has no explicit selector, require a verified fixed/session/entity scope or use a suitable scoped tool/fallback. Never invent unsupported parameters or accept a default/foreign project as the current one. Reuse a valid mapping until the workspace/server context changes.
 
 ## Need → operation skill
 
@@ -52,6 +54,6 @@ These are experimental projects, separate from the seven main servers above and 
 
 **Project source** (code, metadata, usages, forms, file locations): within verified contour coverage, graph → mapped code-metadata → scoped native `Grep` / `Glob` / `Read` after a bounded miss, with a one-line fallback note. Code chooses its file-scan fallback internally; current tools have no `grep` input. Skip uncovered lanes; no eligible exposed index means native search in that contour immediately. Owner: `content/rules/mcp-first-search.md`; multiple roots, catalog/scope selectors and acceptance: `content/rules/multi-contour-search.md`.
 
-**External knowledge** has no native equivalent: templates and memory → БСП → platform docs and standards → Напарник / ITS → validators → live IB, each only when its knowledge is needed.
+**External knowledge** has no interchangeable fallback chain. Select only the relevant eligible provider. Missing templates: disclose no template check; memory: `project-memory.md`; routed standards: `help-corpus-retrieval.md`; validators/live IB: `verification-gates.md`. An unavailable source never proves API absence or a passed check; block dependent design when authoritative facts are missing.
 
 Open `docs/<server>.md` once per server per session and only for a mode or response shape the operation skill does not cover; the environment descriptor wins over any document here.

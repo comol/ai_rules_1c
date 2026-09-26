@@ -1,5 +1,6 @@
 ---
 description: Download the 1C MCP server distribution from vibecoding1c.ru and install all servers from it, in the stable or the beta image channel
+userOnly: true
 argumentHint: "[stable|beta]"
 ---
 
@@ -26,7 +27,7 @@ MCP_Distr/
     └── .env                            ← Graph parameters (filled from config.env)
 ```
 
-Use `/checkmcp` to inspect already installed servers. Use `/updatemcp` to update an already installed set (and to re-fetch a newer distribution + new license keys).
+Use `/setupmcp` (`content/commands/setupmcp.md`) to connect already installed servers and available memory to a new repository by their actual addresses. Use `/checkmcp` to inspect those connections. Use `/updatemcp` to update an already installed set (and to re-fetch a newer distribution + new license keys).
 
 ## Release channel — stable or beta (`IMAGE_TAG`)
 
@@ -375,8 +376,12 @@ After containers are up, write the MCP config for the active client. **The file 
 | Codex CLI | `.codex/config.toml` (project) or `~/.codex/config.toml` (global) | `[mcp_servers."<id>"]` | TOML keys `url = ...`, `connection_id = ...` |
 | Qwen Code | `.qwen/settings.json` (project) or `~/.qwen/settings.json` (user) | `mcpServers` | HTTP: `{ "httpUrl": "..." }`; SSE: `{ "url": "..." }`; stdio: `{ "command", "args?" }` |
 | Kimi Code CLI | `.kimi-code/mcp.json` (project) | `mcpServers` | `{ "url": "..." }` |
+| ZCode | `.zcode/config.json` (project) | `mcp.servers` | HTTP `{ "type": "http", "url": "...", "headers"?: {} }`; stdio `{ "type": "stdio", "command": "...", "args"?: [], "env"?: {} }` |
+| MiMo Code | `mimocode.json` (project; `mimocode.jsonc` overrides it) | `mcp` | HTTP `{ "type": "remote", "url": "...", "enabled": true }`; stdio `{ "type": "local", "command": ["..."], "environment"?: {}, "enabled": true }` |
 | Cline | `~/.cline/mcp.json` or `~/.cline/data/settings/cline_mcp_settings.json` (**global only** — no project MCP file) | `mcpServers` | `{ "url": "..." }` or stdio `{ "command", "args?" }` |
 | Pi | — | — | No built-in MCP; use a Pi extension if needed |
+
+ZCode and MiMo Code use strict native schemas: omit catalog-only `connection_id` and `description`. Preserve other settings and user-owned MCP entries; the adapters' `mergeServers` / `managedServers` contract is defined in `AGENT-INSTALL.md`. ZCode's `.agents/mcp.json` fallback is ignored when native servers exist, so write to `.zcode/config.json`. Sources: [ZCode MCP](https://zcode.z.ai/en/docs/mcp-services), [MiMo MCP](https://mimo.xiaomi.com/mimocode/mcp-servers), [MiMo config precedence](https://mimo.xiaomi.com/mimocode/config-overrides).
 
 Canonical fragments (Cursor / Claude Code — `mcpServers`):
 

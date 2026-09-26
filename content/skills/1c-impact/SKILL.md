@@ -1,6 +1,6 @@
 ---
 name: 1c-impact
-description: "Usages, dependencies, call chains and change impact for 1C objects and routines — who uses an object, who calls a routine, what breaks downstream, which documents move a register, what an extension changes — through the graph MCP with the code-metadata fallback. Mandatory before renames, removals, refactoring and public-contract changes (Gate 4)."
+description: "Usages, dependencies, call chains and change impact of 1C objects and routines — callers, downstream breakage, register movements, extension changes — via the graph MCP with code-metadata fallback. Mandatory before renames, removals, refactoring and public-contract changes (Gate 4)."
 argument-hint: "<Kind.Name | routine> [callers | callees | downstream] [depth]"
 allowed-tools: mcp__1c-graph-metadata-mcp__trace_impact, mcp__1c-graph-metadata-mcp__trace_call_chain, mcp__1c-graph-metadata-mcp__find_usages_of_object, mcp__1c-graph-metadata-mcp__find_objects_using_object, mcp__1c-graph-metadata-mcp__find_register_movement_docs, mcp__1c-graph-metadata-mcp__get_register_writers, mcp__1c-graph-metadata-mcp__find_object_referrers, mcp__1c-graph-metadata-mcp__affected_subgraph, mcp__1c-graph-metadata-mcp__list_graph_projects, mcp__1c-graph-metadata-mcp__resolve_effective_entity, mcp__1c-graph-metadata-mcp__compare_base_and_extension, mcp__1c-code-metadata-mcp__graph_dependencies, mcp__1c-code-metadata-mcp__get_method_call_hierarchy
 ---
@@ -8,6 +8,8 @@ allowed-tools: mcp__1c-graph-metadata-mcp__trace_impact, mcp__1c-graph-metadata-
 # 1c-impact — usages, call graph, change impact
 
 Evidence for `content/rules/verification-gates.md → Gate 4` and for the pre-refactor analysis of `content/rules/tooling-playbooks.md → Refactoring`. Refactoring blind when these servers are exposed is a defect; when they are not, follow Gate 4 graceful degradation.
+
+All graph project-data calls require the explicit returned `project_id` bound to the current roots; substitute `<resolved-project-id>` in the examples. Reuse it for searches, impact, evidence and pagination, with verified layer provenance for an extension. Follow the live schema for tools without this selector and for code-server scope; use verified fixed/session/entity scope or another scoped route, never invent arguments (`content/rules/multi-contour-search.md`).
 
 ## Tools and exact arguments
 
@@ -26,10 +28,10 @@ Object/call tools use `object_name`, `routine_name`, `register_name`, `method_na
 ## Calls
 
 ```json
-{"tool": "trace_impact", "args": {"object_name": "РегистрНакопления.ТоварыНаСкладах", "direction": "downstream", "depth": 3}}
-{"tool": "trace_call_chain", "args": {"routine_name": "ПровестиДокумент", "object_name": "ОбщийМодуль.ПроведениеСервер", "direction": "callers", "depth": 3}}
-{"tool": "find_usages_of_object", "args": {"object_name": "Справочник.Контрагенты"}}
-{"tool": "find_register_movement_docs", "args": {"register_name": "РегистрНакопления.ТоварыНаСкладах"}}
+{"tool": "trace_impact", "args": {"project_id": "<resolved-project-id>", "object_name": "РегистрНакопления.ТоварыНаСкладах", "direction": "downstream", "depth": 3}}
+{"tool": "trace_call_chain", "args": {"project_id": "<resolved-project-id>", "routine_name": "ПровестиДокумент", "object_name": "ОбщийМодуль.ПроведениеСервер", "direction": "callers", "depth": 3}}
+{"tool": "find_usages_of_object", "args": {"project_id": "<resolved-project-id>", "object_name": "Справочник.Контрагенты"}}
+{"tool": "find_register_movement_docs", "args": {"project_id": "<resolved-project-id>", "register_name": "РегистрНакопления.ТоварыНаСкладах"}}
 {"tool": "get_method_call_hierarchy", "args": {"method_name": "ПровестиДокумент", "direction": "callers", "depth": 3}}
 {"tool": "find_object_referrers", "args": {"project_id": "<resolved-project-id>", "object_name": "РегистрСведений.ПлановыеЕжегодныеОтпуска", "access": "write", "min_referrers": 1}}
 {"tool": "affected_subgraph", "args": {"project_id": "<resolved-project-id>", "roots": ["РегистрНакопления.ТоварыНаСкладах"], "max_depth": 2, "direction": "downstream"}}
@@ -37,7 +39,7 @@ Object/call tools use `object_name`, `routine_name`, `register_name`, `method_na
 
 ## Configurations with extensions
 
-When the graph covers the relevant base/extension layers: `list_graph_projects` once per session, keep the base `project_id`, never register extensions as projects. Effective implementation in that index — `resolve_effective_entity(object_name, entity_kind="MetadataObject", entity_name?)`; what one indexed extension changed — `compare_base_and_extension(object_name, extension_name)`. Neither a plain hit nor an indexed effective view alone proves what runs in a named infobase.
+When the graph covers the relevant base/extension layers: `list_graph_projects`, match the current roots, keep the base `project_id`, and never register extensions as projects. Repeat discovery only when workspace/server context changes or the mapping becomes invalid. Effective implementation in that index — `resolve_effective_entity(project_id, object_name, entity_kind="MetadataObject", entity_name?)`; what one indexed extension changed — `compare_base_and_extension(project_id, object_name, extension_name)`. Keep the base and extension comparison inside that same project. Neither a plain hit nor an indexed effective view alone proves what runs in a named infobase.
 
 For separate indexes or missing graph layers, use each contour's mapped code tools or own files. Account for base, primary, secondary and relevant infrastructure contours before project-wide impact/absence claims; disclose missing coverage. Routing and runtime-evidence boundaries — `content/rules/multi-contour-search.md`.
 

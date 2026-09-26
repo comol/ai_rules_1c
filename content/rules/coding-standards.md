@@ -22,7 +22,7 @@ Load the owner that matches the task; do not preload the whole set. Routed stand
 | Performance baseline; anti-pattern catalog with severity; platform pitfalls | `standards(name="dev-standards-architecture") §5`, `standards(name="anti-patterns")`, `standards(name="platform-solutions")` |
 | Queries — routing and pre-flight | `query-design.md` (load first for any non-trivial query) |
 | Managed forms — routing | `forms.md` (load first; companions via its table) |
-| Locks and transactions · logging · extensions · registers · СКД · БСП access rights | `standards(name="locks-and-transactions")` · `standards(name="logging-strategy")` · `standards(name="extension-patterns")` · `standards(name="registers-design")` · `standards(name="dcs-design")` · `standards(name="bsp-access-rights")` |
+| Locks and transactions · logging · extensions · registers · СКД · БСП access rights | `standards(name="locks-and-transactions")` · `standards(name="logging-strategy")` · `standards(name="extension-patterns")` · `standards(name="registers-design")` · `standards(name="dcs-design")` (advanced two-pass composition — `standards(name="dcs-advanced-composition")`) · `standards(name="bsp-access-rights")` |
 
 ## Code reuse
 

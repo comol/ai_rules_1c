@@ -1,5 +1,5 @@
 ---
-description: Programmatic work with БСП access-group profiles and rights — `ПрофилиГруппДоступа` structure, the `Роли.Роль` reference type, extension roles, assigning profiles to users, and the right / role / RLS check API. Load when code creates or updates access profiles, assigns them, or checks rights on a БСП-based configuration.
+description: Programmatic БСП access-group profiles and rights — profile structure, role references, assignment to users, right / role / RLS checks. Load when code creates, updates or assigns access profiles or checks rights in a БСП configuration.
 alwaysApply: false
 category: development
 ---

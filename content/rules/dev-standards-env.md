@@ -6,7 +6,7 @@ category: development
 
 # Development Standards — Environment and Process Parameters
 
-**When to load this file:** only when the current task depends on a project parameter, infobase / deployment operation, EDT integration (`USE_EDT`), UI testing, subagent routing, the active-model profile (`AGENT_MODEL`), quick-fix limit, debugging mode, verification depth, metadata-tool preview (`METADATA_PREVIEW`), the `caveman` communication-style toggle, or the support channel (`SUPPORT_KEY` / `SUPPORT_EMAIL`). Do not load it for a code-style-only question.
+**When to load this file:** when selecting tool policy (`TOOL_*`) or when the task depends on project parameters, infobase/deployment, EDT (`USE_EDT`), UI testing, subagent/model routing, triage/debugging, verification depth, metadata preview, communication style or support settings. Read only the relevant section; no code-style-only lookup.
 
 Section number 1 is a stable anchor for `§1` references.
 
@@ -15,6 +15,8 @@ Section number 1 is a stable anchor for `§1` references.
 `.dev.env` is the **single source of truth** for project parameters across the whole rules set. There is no `infobasesettings.md`, no separate per-command settings file — all rules, on-demand instructions, slash commands and subagents read from `.dev.env`.
 
 An optional source-contour catalog (`content/rules/multi-contour-search.md`) owns only source identities, search roles and index mappings. It neither duplicates operation defaults nor restricts source analysis to `EXTENSION_NAME`. It does not override `EXTENSION_NAMES` load order or the dump/load path conventions below; resolve the target through the operation's dedicated procedure.
+
+For a shared main-configuration/extension project, load `content/rules/extension-workspace.md`. Keep one settings file: an explicitly selected operation target overrides the single-target default for that pass without rewriting `EXTENSION_NAME`, `EXTENSION_NAMES` or the configured roots. The recommended new-project `src/cf`, `src/cfe/<Name>` layout is an explicit setup choice; existing paths and the defaults below remain supported.
 
 Read `.dev.env` **only when the current task actually depends on a parameter** (prefix / naming, modification comments, platform-version choices, metadata placement, infobase commands, deploy, UI tests). Guessing values is PROHIBITED.
 
@@ -56,10 +58,11 @@ Used by `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test
 | `{PLATFORM_PATH}` | 1C platform install dir (must contain `bin\1cv8.exe`); used as the executable for all Designer-mode commands | Highly desirable for any IB-bound command | Ask when an IB-bound command is scheduled; the command cannot run without it |
 | `{INFOBASE_KIND}` | `file` → `/F`, `server` → `/S` flag for Designer | Defaulted | Defaults to `file` (per `.dev.env.example`) |
 | `{INFOBASE_PATH}` | Path to file infobase or connection string of server infobase | **Highly desirable** for configuration load / dump operations | Ask only when `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test` is invoked; otherwise stay silent |
+| `{INFOBASE_ROLE}` | Role of the project infobase: `dev` \| `test` \| `prod`. The role covers the base at `INFOBASE_PATH` and its web publication `INFOBASE_PUBLISH_URL`, which `1c-data-mcp` and UI tests use. It is the explicit answer every "identified dev/test infobase" gate asks for | Defaulted | Empty = role unknown: each dev/test gate asks the user once before its first mutating step, as it always has. **Never set, lower or clear it yourself**; see the note below |
 | `{IB_USER}` / `{IB_PASSWORD}` | Optional credentials (`/N`, `/P`); empty values omit the flags | Defaulted | Empty = no credentials, the `/N` / `/P` (or `--user` / `--password`) flags are omitted. **Never ask up front.** Re-ask only if the command itself fails with an authentication error from the platform. An empty password is a fully valid configuration for dev / test infobases. |
-| `{EXTENSION_NAME}` | Optional `-Extension` argument | Defaulted | Empty = operations apply to main configuration |
-| `{EXTENSION_NAMES}` | Comma-separated extension list defining the **full snapshot** (cf + cfe), order = load order; consumed by `/initproject`, `/restore-testbase`, `/build-release` and the `all` mode of `/loadfrom1cbase` / `/update1cbase` / `/deploy-and-test` | Defaulted | Empty = single-target mode via `EXTENSION_NAME`; the `all` mode falls back to the regular run. **Never ask up front** — `/initproject` asks once as its own documented step |
-| `{EXPORT_PATH}` | Source-export directory | Defaulted | Empty = current repository root |
+| `{EXTENSION_NAME}` | Default/primary extension for a single-target operation; the resolved pass supplies `-Extension` | Defaulted | Empty = main configuration unless the task explicitly selects another target; never overwrite this setting just to switch a pass |
+| `{EXTENSION_NAMES}` | Comma-separated extension list defining the **full snapshot** (cf + cfe), order = load order, not runtime application order; consumed by full-snapshot commands | Defaulted | Ordinary single-target calls use `EXTENSION_NAME`. Explicit `all` / full-snapshot work resolves inventory via `extension-workspace.md`; confirmed no extensions means main only, never a silent single-extension fallback. **Never ask up front**; resolve missing inventory only when the full snapshot is requested |
+| `{EXPORT_PATH}` | Main source-export directory in a shared project; established legacy single-extension source root remains valid | Defaulted | Empty = current repository root; commands resolve the chosen target's actual root before substituting templates |
 | `{EXTENSIONS_PATH}` | Root directory of extension sources — each extension from `EXTENSION_NAMES` lives in `{EXTENSIONS_PATH}\<Name>\` | Defaulted | Empty = the `cfe` directory at the repository root |
 | `{DT_SNAPSHOT_PATH}` | `.dt` snapshot (data + configuration) used by `/restore-testbase` as the data baseline | Defaulted | Empty = `/restore-testbase` skips the data step and refreshes configuration only |
 | `{RELEASE_PATH}` | Output directory for `/build-release` artifacts (`.cf` / `.cfe` / `.cfu`) | Defaulted | Empty = the `release` directory at the repository root |
@@ -74,6 +77,19 @@ Used by `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test
 | `{REPOSITORY_PATH}` | Configuration repository (хранилище) address — local path or `tcp://server/alias`. **Master switch of repository mode**: non-empty activates the `1c-repository-manage` skill and the lock-before-edit / commit-after-verify SDLC discipline | Defaulted (see the note below) | Empty = the configuration is not repository-bound; the skill and repository steps stay inactive. **Never ask up front**; ask once only when the user explicitly requests a repository operation and the value is missing |
 | `{REPOSITORY_USER}` / `{REPOSITORY_PASSWORD}` | Repository credentials (`/ConfigurationRepositoryN` / `/ConfigurationRepositoryP`); empty values omit the flags | Defaulted | Empty = no repository authentication flags. **Never ask up front**; re-ask only after a repository authentication error |
 | `{REPOSITORY_ALLOW_FORCE}` | First half of the double opt-in for `-force` repository operations in the `repo-ops` script (forced get/commit, forced unlock discarding uncommitted changes) | Defaulted | Empty = `false` — every `-Force` call is refused. **Never ask, never set it yourself**: the value is the user's decision for an approved maintenance window |
+
+#### `INFOBASE_ROLE` — what the agent may do to the project infobase
+
+The role is the project's statement about its infobase, not the agent's guess from a path, a name or a user list. Every command that says "the target must be an explicitly identified dev/test infobase" reads it first: `/update1cbase`, `/deploy-and-test`, `/restore-testbase`, `/initproject from-ib`, the Designer batch check ladder, Gates 3a and 6, and the live-IB write rules.
+
+| Value | Meaning |
+|---|---|
+| `dev`, `test` | The base is identified as dev/test. The gates pass without the confirmation question, forced session termination included. |
+| `prod` | The agent does **not** change this base. Refused: configuration and extension loads, DB configuration apply (`/UpdateDBCfg`, extension apply), `.dt` restore, `/RollbackCfg`, repository `lock -Revised` / `update` / `commit` through it, and writes through `1c-data-mcp`. Allowed: read-only work — dumps (`/loadfrom1cbase`, `/getconfigfiles`), repository `status` / `history` / `diff`, and live-IB queries on the user's explicit request (Gate 3a does not run). A change that must reach this base is handed to the user as exact commands with the production overrides of `/update1cbase` and the `/build-release` Step 7 checklist. |
+| empty | Unknown. Each dev/test gate asks the user once before its first mutating step; the answer holds for the current task only. |
+
+- Only the user sets the value. Record `dev` / `test` / `prod` in `.dev.env` only when the user states the role explicitly. Never lower `prod`, never clear it, and never repoint `INFOBASE_PATH` / `INFOBASE_PUBLISH_URL` to get past a refusal. A refusal on `prod` is the correct outcome, not an obstacle.
+- The role applies to the base these keys name. Work on a copy only when the user supplies the copy's connection; that copy is identified on its own terms.
 
 #### `REPOSITORY_PATH` — configuration repository binding
 
@@ -134,14 +150,39 @@ Browser UI testing (via the `1c-tester` subagent and Step 4 of `/deploy-and-test
 
 Missing, empty or invalid values are `unknown`, not proof that EDT is absent. Only `/installtools`, `/install-edt-mcp`, or an explicit user statement that the project moved to EDT may ask and persist the choice; ordinary development tasks must not interrupt work to ask. An EDT installation found on the workstation, or a leftover `edt-mcp` entry in a client config, is evidence about the machine — not about the project.
 
+### Tool policy
+
+`TOOL_*` parameters control whether a provider may be used, separately from whether it is installed or callable. Values: `auto` (default when missing/empty), `off`, `required`; resolution and failure handling belong to `content/rules/mcp-policy.md → Tool availability`. No per-task questionnaire. Invalid non-empty values block only the dependent provider step. Older `.dev.env` files retain automatic routing; the installer appends missing keys as `auto` without overwriting choices.
+
+| Parameter | Provider / capability |
+|---|---|
+| `TOOL_COGNEE` | Cognee memory, including `cognee-memory` aliases |
+| `TOOL_OPENVIKING` | OpenViking memory/context |
+| `TOOL_TEMPLATES` | `1c-templates-mcp`: both code templates and memory |
+| `TOOL_GRAPH` | `1c-graph-metadata-mcp`: indexed project discovery and impact |
+| `TOOL_CODE` | `1c-code-metadata-mcp`: code/metadata/form search and XML validation |
+| `TOOL_DOCS` | `1C-docs-mcp`: platform help, routed standards and formats |
+| `TOOL_SSL` | `1c-ssl-mcp`: БСП APIs |
+| `TOOL_SYNTAX` | `1c-syntax-checker-mcp`: syntax validation |
+| `TOOL_CHECKER` | `1c-code-check-mcp`: code checks, reviews, AI/ITS tools |
+| `TOOL_DATA` | `1c-data-mcp`: live-IB checks |
+| `TOOL_EDT` | EDT-MCP; workflow still requires `USE_EDT=true` |
+| `TOOL_AGENT_BROWSER` | agent-browser, MCP and CLI |
+| `TOOL_BROWSER` | Active client's built-in browser tools |
+| `TOOL_WINDOWS_MCP` | Windows-MCP desktop automation |
+| `TOOL_UI_TEST` | Optional `MCP_Test` / `1C Visual UI Test` |
+| `TOOL_CONVERSION` | Optional `MCP_ConversionData20` |
+
+Examples: `TOOL_COGNEE=off` excludes Cognee while other memory providers remain eligible; `TOOL_SYNTAX=required` blocks syntax verification when its tool is missing; `TOOL_AGENT_BROWSER=off` selects an eligible browser fallback without an installation question. No key switches off the shipped metadata/IB/repository procedures. `rtk` remains a user-global shell proxy managed by `/install-rtk`, not project tool routing.
+
 ### Subagent model parameters
 
-Consumed by the **installer** when rendering subagent files (source agents declare an abstract `modelTier: coding | analysis | light` instead of a concrete model — see `content/rules/subagents.md → Model-tier routing`). Not consulted at task time. On first install the installer offers a benchmark-based profile (`Balanced` / `Economy` / `Quality`, from <https://onec-llm-bench.lovable.app/>) that fills all three values; any of them may still be overridden or left empty.
+Consumed by the **installer** when rendering subagent files (source agents declare an abstract `modelTier: coding | analysis | light` instead of a concrete model — see `content/rules/subagents.md → Model-tier routing`). At task time, `SUBAGENT_MODEL_ANALYSIS` also controls reviewer eligibility (`content/rules/subagents.md → Reviewer model gate`); empty / missing means review subagents are disabled unless the user explicitly selects a model for that invocation. Other agents retain the defaults below. On first install the installer offers a benchmark-based profile (`Balanced` / `Economy` / `Quality`, from <https://onec-llm-bench.lovable.app/>) that fills all three values; any of them may still be overridden or left empty.
 
 | Parameter | Effect | Class | Behavior when empty |
 |---|---|---|---|
 | `{SUBAGENT_MODEL_CODING}` | Concrete model for tier `coding` (code / metadata authorship, architecture design: `1c-developer`, `1c-metadata-manager`, `1c-architect`, `1c-performance-optimizer`, `1c-refactoring`) | Defaulted | Empty = the model field is omitted from installed agent files; the AI client uses its default model. **Never ask at task time**; re-render via `install.ps1 update` after editing. |
-| `{SUBAGENT_MODEL_ANALYSIS}` | Concrete model for tier `analysis` (planning / analysis / review / testing / docs: `1c-planner`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-doc-writer`, `1c-tester`) | Defaulted | Same as above. Legacy 2-tier `.dev.env` files with no `SUBAGENT_MODEL_ANALYSIS` key fall back to `SUBAGENT_MODEL_CODING` for this tier. |
+| `{SUBAGENT_MODEL_ANALYSIS}` | Concrete model for tier `analysis` (planning / analysis / review / testing / docs: `1c-planner`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-doc-writer`, `1c-tester`) | Defaulted | Installer: same as above; legacy 2-tier files with no key fall back to `SUBAGENT_MODEL_CODING`. Dispatch: inherited / fallback models do not enable review subagents — apply the reviewer model gate. |
 | `{SUBAGENT_MODEL_LIGHT}` | Concrete model for tier `light` (small bounded read-only tasks: repo scouting, search, impact lists, mechanical checks: `1c-explorer`) | Defaulted | Same as above |
 
 These three describe the models **subagents** run on. The model the **parent agent** runs on is a different parameter — `AGENT_MODEL` below — and the two never affect each other.
@@ -178,14 +219,14 @@ Consumed by the triage and debugging rules at task time. All are **Defaulted** �
 |---|---|---|---|
 | `{QUICKFIX_MAX_LINES}` | Line budget of the quick-fix path (`AGENTS.md → Triage`): the maximum changed BSL lines for which a one-logical-change-in-one-module edit may stay quick-fix. Promotion triggers (`verification-policy.md → Triage details`) always win over the budget. | Defaulted | Empty / invalid = `40`. Raise for teams comfortable with larger direct edits; lower for stricter projects. |
 | `{DEBUG_FAST_PATH}` | Debugging fast-path mode (`standards(name="systematic-debugging") → Fast path`): `standard` \| `extended` \| `off`. Controls when a directly evidenced bug may skip the full 4-phase loop. | Defaulted | Empty / invalid = `standard` |
-| `{VERIFICATION_DEPTH}` | Static code-verification depth (`verification-policy.md → "Verification depth levels"`): `full` \| `standard` \| `lite`. Tunes the depth of Gates 1–3 for low-risk edits. Toggled by `/litemode`. | Defaulted | Empty / invalid = `standard` |
+| `{VERIFICATION_DEPTH}` | SDLC QA profile (`verification-policy.md → "Verification depth levels"`): `lite` \| `standard` \| `full`. Tunes Gates 1–3 for low-risk edits, independently of task triage. Set by `/sdlc`; `/litemode` remains a compatibility alias. | Defaulted | Empty / invalid = `standard` |
 | `{CAVEMAN}` | caveman communication-style auto-activation (`content/skills/caveman/SKILL.md`): `on` \| `auto` \| `off`. Controls whether the terse style turns on automatically and for which tasks. Does not affect the mandatory report structure or verification. | Defaulted | Empty / invalid = `auto` |
 | `{METADATA_PREVIEW}` | When wrapper `-Preview` on `Invoke-1CEdit.ps1` runs before a metadata write: `auto` \| `on` \| `off`. Toggled by `/previewmode`. Does not relax native `-DryRun` / `-Force` on deletions. | Defaulted | Empty / invalid = `auto` — preview only for DSL generation and an operation new to the project |
 | `{AGENT_MODEL}` | Active-model behaviour profile of the parent agent (`model-adaptation.md`): `opus5` \| `sonnet5` \| `fable5` \| `gpt56` \| `gpt6`. Tunes verbosity, narration, planning depth, delegation eagerness and self-invented extra passes; never weakens a hard gate. Toggled by `/rulesmodel`. Full description — `#### AGENT_MODEL` above. | Defaulted | Empty / unrecognised = no profile; the base model-neutral ruleset applies |
 
 #### `VERIFICATION_DEPTH` — static code-verification depth
 
-Tunes **how deep** the validator chain (`syntaxcheck → check_1c_code → review_1c_code`) runs for **low-risk** edits. It is **Defaulted** — empty / invalid resolves to `standard`, and the agent **must not** ask for the value. The canonical editor is the `/litemode` slash command (which also sets `UI_TESTING=off` at level `lite`); manual edits are allowed but not required. Canonical semantics — `verification-policy.md → "Verification depth levels"`.
+Select the SDLC QA profile via `/sdlc lite|standard|full` (`/litemode` remains compatible). `VERIFICATION_DEPTH` tunes Gates 1–3 for **low-risk** edits; missing / empty / invalid = `standard`, never ask at task time. Selecting `lite` also sets `UI_TESTING=off`; manual edits are allowed. Canonical semantics — `verification-policy.md → "Verification depth levels"`.
 
 | Value | Meaning |
 |---|---|

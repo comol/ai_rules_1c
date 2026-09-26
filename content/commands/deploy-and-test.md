@@ -6,7 +6,9 @@ description: Load the configuration into the test infobase from .dev.env and run
 
 Deploy the current configuration to the test infobase defined in `.dev.env`, then optionally run UI tests in the web client at `INFOBASE_PUBLISH_URL`. UI testing is an opt-in step gated by `UI_TESTING`; see Step 4.
 
-When `EXTENSION_NAMES` is filled and the user asked to deploy the full snapshot ("all" / "with extensions"), Steps 2–3 run as multiple passes — main configuration, then each extension in order — per `/update1cbase → Full-snapshot mode` (`content/commands/update1cbase.md`); everything else in this command is unchanged.
+Resolve project, main/named-extension target and source root through `content/rules/extension-workspace.md` before substitution. Keep that target through deployment, applicability checks and scenarios; a single-extension task uses its own root, and does not rewrite the primary `EXTENSION_NAME`. MCP-backed test preparation must use the same verified project/layer; confirm the live test connection is the intended infobase before attributing its results.
+
+When the user asks to deploy the full snapshot ("all" / "with extensions"), resolve inventory even if `EXTENSION_NAMES` is empty, then run Steps 2–3 as main followed by each selected extension per `/update1cbase → Full-snapshot mode` (`content/commands/update1cbase.md`). Confirmed no extensions means main only; a stored single-extension default cannot narrow `all`.
 
 **Load scope is owned by `/update1cbase → Select load scope`.** For partial / Git deployment, follow that command's complete load → checks → apply sequence, including file-list validation and baseline handling, then continue here at Step 4. Do not execute the full-load examples below as well. A failed load or apply blocks UI tests. A requested return export follows `/loadfrom1cbase` after apply with the same target and scope guards (`content/rules/getconfigfiles.md → Configuration file synchronization contract`).
 
@@ -20,11 +22,11 @@ Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; D
 
 When substituting `.dev.env` values into the templates below, resolve `{INFOBASE_FLAG}` once from the effective `INFOBASE_KIND` (`/F` for `file`, `/S` for `server`; reject any other value), and substitute resolved `{LOG_PATH}` / `{RESULT_PATH}` values that contain `$env:` double-quoted — single quotes do not expand it. Delete a stale `{RESULT_PATH}` file before every Designer launch.
 
-Before running, make sure `{EXPORT_PATH}` contains dumped configuration sources (for example, `Configuration.xml` at the root or in the extension subdirectory). If no sources exist, stop and tell the user.
+Before running, inherit `/update1cbase`'s source-identity, completeness and selection preflight for every chosen target. A `Configuration.xml` somewhere under `EXPORT_PATH` alone is insufficient, and a partial dump cannot feed a full deployment.
 
 **EDT gate:** when `.dev.env` `USE_EDT=true`, the same source-format check as `/update1cbase` applies — Steps 2–3 load a Designer XML dump, not an EDT `src/**/*.mdo` tree, and only one deployment owner (this command **or** EDT's `update_database`) may act on the infobase in a run. Canon — `content/rules/edt-workflow.md`.
 
-This command uses forced session termination while applying the DB configuration. The target must be an explicitly identified dev/test infobase. If the current context does not establish that, stop before Step 3 and ask the user to confirm the target; never infer that an arbitrary `.dev.env` points to a test base.
+This command uses forced session termination while applying the DB configuration. The target must be an explicitly identified dev/test infobase: `.dev.env` `INFOBASE_ROLE=dev|test` identifies it, `prod` refuses the deploy steps (canon `content/rules/dev-standards-env.md → INFOBASE_ROLE`). If the role is empty and the current context does not establish it, stop before Step 3 and ask the user to confirm the target; never infer that an arbitrary `.dev.env` points to a test base.
 
 ## Step 1. Choose tool: `ibcmd` or Designer
 
@@ -143,5 +145,9 @@ Open `{INFOBASE_PUBLISH_URL}` with the tool chosen in 4a. Prefer **`agent-browse
 ## Step 5. Final report
 
 Briefly report which infobase was updated, which tool was used (`ibcmd` or Designer), which test scenarios passed/failed, and list errors separately with log fragments and screenshots.
+
+Identify the project and each main/extension pass, its load/check/apply outcome and relevant active-extension mismatches. UI success does not prove that an omitted extension was deployed or that another MCP project's sources describe this infobase.
+
+Update the extension's existing README or delivery description with the checked combination and actual evidence per `content/rules/extension-workspace.md → Checked compatibility`. Keep source, loaded configuration, applied DB and MCP freshness distinct in any continuation handoff; skipped tests stay unrun, and this target's result does not certify other extensions.
 
 When scenarios failed and the user wants the failures driven to green, do not improvise ad-hoc retries — suggest `/test-fix-loop` (`content/commands/test-fix-loop.md`): the closed deploy → test → fix → redeploy loop with its own iteration budget and no-change-repeat rules. It runs only on explicit invocation.

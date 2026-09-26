@@ -1,0 +1,59 @@
+# Adapter: ZCode (Z.ai), runtime v3.14.3.
+# Sources checked 2026-09-24:
+# https://zcode.z.ai/en/docs/agents
+# https://zcode.z.ai/en/docs/qa
+# https://zcode.z.ai/en/docs/commands
+# https://zcode.z.ai/en/docs/mcp-services
+# https://github.com/zai-org/ZCode/blob/main/packages/services/src/subagents/subagentMarkdown.ts
+# The runtime supports workspace .zcode/agents; the subagents guide still
+# describes the earlier user-only Settings UI. Never write into ~/.zcode.
+# Rules stay on demand via root AGENTS.md. Native MCP config is strict;
+# use mcp.servers, not an invented .zcode/mcp.json or the .agents fallback.
+
+tool: zcode
+schemaVersion: 1
+
+detection:
+  - exists: ".zcode/"
+
+rules:
+  copyTo: ".zcode/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+agents:
+  copyTo: ".zcode/agents/{name}.md"
+  frontmatter:
+    toolsToDenylist:
+      source: tools
+      target: disallowedTools
+      map:
+        Write: [Write]
+        Edit: [Edit]
+        Shell: [Bash]
+    keep: [name, description, disallowedTools, modelHint]
+    rename:
+      modelHint: model
+    drop: [tools, allowParallel, reasoningEffort, isSubagent]
+
+commands:
+  copyTo: ".zcode/commands/{name}.md"
+  frontmatter:
+    keep: [description, argumentHint]
+    rename:
+      argumentHint: argument-hint
+    drop: [allowedTools]
+
+skills:
+  copyTo: ".zcode/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".zcode/config.json"
+  schema: "mcp.servers[id]={ type: 'http', url } | { type: 'stdio', command, args }"
+  format: json
+  merge: true
+  mergeKey: mcp.servers
+  mergeServers: true

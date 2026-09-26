@@ -20,6 +20,29 @@ Layout, spec format, delta format, and the full workflow are described in the wo
 
 Read those files before writing or editing OpenSpec artifacts.
 
+## Full-cycle Definition of Done
+
+For full-cycle development, `propose → apply → archive` means specify → implement, verify and review → archive. This contract also applies when the parent implements directly; delegation is not a prerequisite. Quick-fix and docs-fix keep their own triage gates.
+
+### Specify completion before apply
+
+- Delta specs MUST state observable acceptance criteria in requirements and scenarios, including relevant negative / boundary cases. Each affected requirement carries a **Definition of Done** verification criterion (method and expected result) inside its requirement block, so sync/archive preserves it with the requirement.
+- `proposal.md` MUST contain `## Definition of Done`: a checklist of criterion IDs linked to those requirements/scenarios, applicable validation gates, UI confirmation of user-visible behaviour, and a final review with no unresolved blocking findings. Name the verification method, expected result and required environment; a list of commands without expected outcomes is insufficient.
+- `tasks.md` MUST include implementation, verification (gates and UI confirmation), review, any necessary fixes, and final DoD reconciliation. Link verification tasks to criterion IDs. Do not plan unit, regression or acceptance tests. Static validators alone do not prove behavioural scenarios; UI confirmation does.
+- An explicit user waiver of UI confirmation or review MUST be recorded with its source, scope and affected criterion IDs in the DoD and corresponding task. Waiving one does not waive the other or mandatory validator/security/metadata gates. Record it as `waived by user`, never `passed`. A depth setting, `UI_TESTING=off`, disabled reviewer subagent, missing tools or missing environment is not a waiver.
+
+Propose is ready only when each criterion has a verification task and executable acceptance conditions. Preserve this mapping during `/opsx:update`; do not weaken approved criteria to fit the implementation. If an older change lacks DoD or verification tasks, derive them from its approved requirements and this contract before apply. Ask only when that exposes a material unresolved decision; adding the required checks alone needs no new approval.
+
+### Apply until DoD is satisfied
+
+1. Read the DoD and linked specs along with the CLI context. Include outstanding verification in the execution plan even when every implementation task is checked. CLI `all_done` and completed checkboxes describe task tracking; they are not evidence that DoD passed. Inspect current evidence before emitting completion or suggesting archive.
+2. Implement and run the applicable gates and planned UI confirmation against the current artifact. Honour infobase authorization and `UI_TESTING` policy; if an essential scenario cannot be verified through an allowed method, leave it open and report the exact missing prerequisite. Continue independent work. Do not invent a pass, silently shrink coverage, or bypass a disabled tool.
+3. Perform a final change review unless explicitly prohibited by the user: requirements, correctness, regressions and security/data integrity. The parent owns this by default; `1c-code-reviewer` still requires an explicit review request and the reviewer model gate (`subagents.md`). Existing fresh review evidence may be reused; MCP style review alone does not establish acceptance.
+4. Fix in-scope UI-confirmation failures and blocking review findings; confirm the affected checks on the changed state within `verification-policy.md` budgets. A later edit invalidates affected evidence. Exhausted budgets, failed checks and unavailable required evidence leave DoD incomplete; they do not become waivers.
+5. Reconcile every DoD criterion with evidence in `tasks.md`: criterion ID, checked artifact state, check/review performed, expected vs actual result and log/report reference. Use `passed`, `failed`, `blocked/unverified` or `waived by user`. Check a verification task only after its obligation was performed, or annotate an explicitly waived task so a checkbox cannot be mistaken for a pass.
+
+Declare apply complete and suggest archive only when every criterion is passed or explicitly waived within the user's scope, and all mandatory gates are satisfied. Report verification results, review verdict and any waivers. Otherwise report partial implementation and the remaining criteria. Delivering partial work under a tool's graceful-degradation rule does not establish DoD completion or archive readiness. `/opsx:archive` must check the same evidence before describing a change as complete; an explicit request to archive unfinished work must retain its incomplete status and gaps.
+
 ## MCP discipline for OpenSpec authoring
 
 OpenSpec artifacts (`proposal.md`, `design.md`, `tasks.md`, delta and current specs) are Markdown, but they make **factual claims about the 1C system** — metadata names, attributes, tabular sections, public API signatures, БСП subsystems, platform-version behaviour, project conventions. Every such claim must be grounded in MCP evidence, not memory or guessing. This is the **spec-authoring path** from `AGENTS.md → Development Procedure → Triage`.
@@ -99,7 +122,7 @@ Before declaring "All artifacts created! Ready for implementation.", run a conso
 
 1. Every `### Requirement:` in delta `specs/` and every `design.md` decision — does the implementer need any further user input to code it? If yes → add to a single batched list.
 2. `proposal.md → Constraints / Out of scope / Non-goals` — any edge ambiguous enough to be crossed accidentally? Sharpen the wording or batch a clarification.
-3. Every `tasks.md` task — executable from the artifacts alone? Any "no" → batch the missing input.
+3. Every `tasks.md` task — executable from the artifacts alone? Every DoD criterion mapped to a gate/UI-confirmation/review task or explicit waiver? Any "no" → close the gap or batch genuinely missing input.
 4. `design.md → ## Open Questions` — close now everything closable; leave only items that genuinely depend on later facts.
 5. Non-empty batch → one consolidated question round → apply the answers to the artifacts → re-run the gate. Repeat until the batch is empty.
 
@@ -209,5 +232,6 @@ Each subagent owns specific OpenSpec artifacts. Use this table to decide where a
 
 Subagent **selection** is owned elsewhere — do not duplicate it here: the catalog in `content/rules/subagents.md` and the stage-by-stage choice lists in `content/rules/subagent-pipeline.md`. The default `propose → apply → archive` workflow maps onto those stages directly; artifact ownership is fixed by the table above. OpenSpec-specific additions:
 
-- **Verification phase** — `1c-tester` runs UI tests only when `UI_TESTING` allows it (canon — `dev-standards-env.md`); `1c-code-reviewer` — only on an explicit user request.
+- **Verification phase** — full-cycle verification and review follow the DoD above; the parent owns them unless delegated. `1c-tester` runs UI tests only when `UI_TESTING` allows it (`dev-standards-env.md`); `1c-code-reviewer` still requires an explicit request and the reviewer model gate.
 - **Documentation & archive phase** — `1c-doc-writer` derives user docs from `specs/`; then `/opsx:archive` merges deltas into `specs/` and moves the change to `changes/archive/`.
+- **Revising a change** — `/opsx:update` is the sanctioned way to reopen a locked decision: it revises the change's planning artifacts, and the new content follows the Propose-phase rules (ask up front, confirm every concrete 1C fact through MCP) before apply resumes. `/opsx:sync` merges delta specs into `specs/` without archiving; the same traceability and fact-confirmation rules as for `/opsx:archive` apply.

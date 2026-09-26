@@ -1,5 +1,6 @@
 ---
 description: Toggle the caveman communication style — set CAVEMAN (on|auto|off) in .dev.env for the whole project; on|off|auto persist, lite|full|ultra switch the session level
+userOnly: true
 argumentHint: "[on|off|auto|status|lite|full|ultra]"
 ---
 

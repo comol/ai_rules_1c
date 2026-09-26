@@ -2,7 +2,7 @@
 #
 # Generic, tool-agnostic placement for AI clients that are NOT in the explicit
 # supported list (cursor, claude-code, codex, opencode, kilocode, kimi, qwen,
-# command-code, cline, pi). The intent is to produce the most portable layout
+# command-code, cline, zcode, mimocode, pi). The intent is to produce the most portable layout
 # possible:
 #
 #   - AGENTS.md at the project root (de-facto standard, read by most modern

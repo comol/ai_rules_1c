@@ -1,6 +1,6 @@
 ---
 name: 1c-platform-help
-description: "External knowledge for 1C work — platform syntax reference by name or description, the platform-capability check before hand-rolling a specialized mechanism, БСП / SSL reusable APIs, routed project standards, file-format specifications, ITS standards and configuration documentation — through the docs, SSL and code-check MCP servers. Use only when a versioned platform fact, a БСП API or a standard affects the task."
+description: "External 1C knowledge — platform syntax reference, the platform-capability check before a custom specialized mechanism, БСП / SSL APIs, routed standards, file-format specs, ITS docs — via the docs, SSL and code-check MCP. Use only when such a fact affects the task."
 argument-hint: "<name | capability description> [version]"
 allowed-tools: mcp__1C-docs-mcp__docsearch, mcp__1C-docs-mcp__docinfo, mcp__1C-docs-mcp__standards, mcp__1C-docs-mcp__formatspec, mcp__1c-ssl-mcp__ssl_search, mcp__1c-code-check-mcp__its_help, mcp__1c-code-check-mcp__fetch_its, mcp__1c-code-check-mcp__search_1c_documentation, mcp__1c-code-check-mcp__config_help, mcp__1c-code-metadata-mcp__helpsearch
 ---

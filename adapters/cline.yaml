@@ -7,6 +7,9 @@
 # Schema: closed adapter schema described in AGENT-INSTALL.md (Lean placement)
 # and implemented by install.ps1.
 # Notes:
+#   - Project layout rechecked 2026-09-24:
+#     https://docs.cline.bot/getting-started/config
+#     https://docs.cline.bot/customization/cline-rules
 #   - Always-on context: root `AGENTS.md` (Cline reads it as a cross-tool
 #     rule source). Do NOT dump the full on-demand rule set into
 #     `.clinerules/` — Cline eagerly loads every `.md` / `.txt` there into

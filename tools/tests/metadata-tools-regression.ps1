@@ -1274,6 +1274,147 @@ Register-Case 'support xml: skd-edit keeps compact tags without changing literal
     }
 }
 
+# ---------------------------------------------------------------- Complete dump integrity (read-only)
+
+function Write-DumpTestXml([string]$Path, [string]$Body) {
+    New-Item -ItemType Directory -Path (Split-Path $Path -Parent) -Force | Out-Null
+    [IO.File]::WriteAllText($Path, $Body, (New-Object Text.UTF8Encoding($true)))
+}
+
+function New-DumpTestFixture([string]$Work, [switch]$Extension) {
+    $dir = Join-Path $Work 'dump'
+    $extensionProperty = if ($Extension) { '<ObjectBelonging>Adopted</ObjectBelonging>' } else { '' }
+    $header = '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">'
+    Write-DumpTestXml (Join-Path $dir 'Configuration.xml') ($header + '<Configuration><Properties><Name>Probe</Name>' + $extensionProperty + '<DefaultLanguage>Language.Test</DefaultLanguage><Comment>Catalog.NotAReference</Comment></Properties><ChildObjects><Language>Test</Language><Subsystem>Main</Subsystem><Catalog>TestCatalog</Catalog></ChildObjects></Configuration></MetaDataObject>')
+    Write-DumpTestXml (Join-Path $dir 'Languages/Test.xml') ($header + '<Language><Properties><Name>Test</Name></Properties></Language></MetaDataObject>')
+    Write-DumpTestXml (Join-Path $dir 'Subsystems/Main.xml') ($header + '<Subsystem><Properties><Name>Main</Name><Content><Item>Catalog.TestCatalog</Item><Item>Subsystem.Main.Subsystem.Child</Item></Content></Properties><ChildObjects><Subsystem>Child</Subsystem></ChildObjects></Subsystem></MetaDataObject>')
+    Write-DumpTestXml (Join-Path $dir 'Subsystems/Main/Subsystems/Child.xml') ($header + '<Subsystem><Properties><Name>Child</Name><Content/></Properties><ChildObjects/></Subsystem></MetaDataObject>')
+    $catalog = Join-Path $dir 'Catalogs/TestCatalog.xml'
+    New-Item -ItemType Directory -Path (Split-Path $catalog -Parent) -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $FixturesDir 'config-dump/Catalogs/TestCatalog.xml') -Destination $catalog
+    Write-DumpTestXml (Join-Path $dir 'ConfigDumpInfo.xml') '<ConfigDumpInfo xmlns="http://v8.1c.ru/8.3/xcf/dumpinfo" version="2.17" format="Hierarchical"><ConfigVersions><Metadata name="Configuration.Probe.ManagedApplicationModule"/><Metadata name="Catalog.TestCatalog"><Metadata name="Catalog.TestCatalog.Attribute.Baza"/></Metadata><Metadata name="Subsystem.Main.Subsystem.Child"/></ConfigVersions></ConfigDumpInfo>'
+    # These are intentionally not root metadata descriptors and must not be traversed.
+    Write-DumpTestXml (Join-Path $dir 'Catalogs/TestCatalog/Forms/Form/Ext/Form.xml') '<ignored/>'
+    Write-DumpTestXml (Join-Path $dir 'Ext/ParentConfigurations/Supplier/Configuration.xml') '<ignored/>'
+    return $dir
+}
+
+function Invoke-DumpTest([string]$Dir, [string]$Work, [string[]]$Extra = @()) {
+    $tool = Join-Path $ToolsDir '1c-cf-manage/scripts/dump-validate.ps1'
+    $run = Invoke-Tool $tool (@('-ConfigPath', $Dir, '-Format', 'Json') + $Extra) $Work
+    Assert-True ([string]::IsNullOrWhiteSpace($run.StdErr)) "dump validator stderr: $($run.StdErr)"
+    $json = $run.StdOut | ConvertFrom-Json
+    Assert-Equal 1 $json.schema_version 'dump result schema'
+    return [pscustomobject]@{ Run=$run; Json=$json }
+}
+
+function Assert-DumpFinding($Result, [string]$Kind, [string]$Object = '') {
+    Assert-Equal 1 $Result.Run.ExitCode 'invalid dump exit code'
+    $hits = @($Result.Json.findings | Where-Object { $_.kind -eq $Kind -and (-not $Object -or $_.object -eq $Object) })
+    Assert-True ($hits.Count -gt 0) "missing finding $Kind ($Object): $($Result.Run.StdOut)"
+}
+
+Register-Case 'dump-validate: healthy CF and CFE, nested subsystems and internal dump-info records' {
+    param($Work)
+    foreach ($extension in @($false, $true)) {
+        $base = Join-Path $Work "$extension"
+        $dir = New-DumpTestFixture $base -Extension:$extension
+        $before = @(Get-ChildItem -LiteralPath $dir -Recurse -File | Sort-Object FullName | Get-FileHash | Select-Object -ExpandProperty Hash)
+        $result = Invoke-DumpTest $dir $Work
+        Assert-Equal 0 $result.Run.ExitCode $result.Run.StdOut
+        Assert-Equal 'valid' $result.Json.status 'healthy dump verdict'
+        Assert-Equal 5 $result.Json.objects_checked 'root and nested object count'
+        Assert-Equal 0 @($result.Json.findings).Count 'healthy findings'
+        $after = @(Get-ChildItem -LiteralPath $dir -Recurse -File | Sort-Object FullName | Get-FileHash | Select-Object -ExpandProperty Hash)
+        Assert-Equal ($before -join ',') ($after -join ',') 'validation mutated a file'
+    }
+}
+
+Register-Case 'dump-validate: missing root and nested objects, orphan and unknown types' {
+    param($Work)
+    $dir = New-DumpTestFixture $Work
+    Remove-Item -LiteralPath (Join-Path $dir 'Catalogs/TestCatalog.xml'), (Join-Path $dir 'Subsystems/Main/Subsystems/Child.xml')
+    $configuration = Join-Path $dir 'Configuration.xml'
+    $text = [IO.File]::ReadAllText($configuration).Replace('<Catalog>TestCatalog</Catalog>', '<Catalog>TestCatalog</Catalog><Catalog>TestCatalog</Catalog><Unknown>Bad</Unknown>')
+    Write-DumpTestXml $configuration $text
+    $orphan = [IO.File]::ReadAllText((Join-Path $dir 'Languages/Test.xml')).Replace('<Name>Test</Name>', '<Name>Orphan</Name>')
+    Write-DumpTestXml (Join-Path $dir 'Languages/Orphan.xml') $orphan
+    $result = Invoke-DumpTest $dir $Work
+    Assert-DumpFinding $result 'missing-file' 'Catalog.TestCatalog'
+    Assert-DumpFinding $result 'missing-file' 'Subsystem.Main.Subsystem.Child'
+    Assert-DumpFinding $result 'orphan-file' 'Language.Orphan'
+    Assert-DumpFinding $result 'duplicate-entry' 'Catalog.TestCatalog'
+    Assert-DumpFinding $result 'unknown-type' 'Unknown.Bad'
+    Assert-DumpFinding $result 'dangling-reference' 'Catalog.TestCatalog'
+    Assert-DumpFinding $result 'dump-info-extra' 'Catalog.TestCatalog'
+}
+
+Register-Case 'dump-validate: object versions, malformed XML and mismatched descriptor names' {
+    param($Work)
+    $dir = New-DumpTestFixture $Work
+    $language = Join-Path $dir 'Languages/Test.xml'
+    Write-DumpTestXml $language ([IO.File]::ReadAllText($language).Replace('2.17', '2.20').Replace('<Name>Test</Name>', '<Name>Wrong</Name>'))
+    Write-DumpTestXml (Join-Path $dir 'Catalogs/TestCatalog.xml') '<broken'
+    $child = Join-Path $dir 'Subsystems/Main/Subsystems/Child.xml'
+    Write-DumpTestXml $child ([IO.File]::ReadAllText($child).Replace(' version="2.17"', ''))
+    $result = Invoke-DumpTest $dir $Work
+    Assert-DumpFinding $result 'version-mismatch' 'Language.Test'
+    Assert-DumpFinding $result 'name-mismatch' 'Language.Test'
+    Assert-DumpFinding $result 'xml-unreadable' 'Catalog.TestCatalog'
+    Assert-DumpFinding $result 'version-unreadable' 'Subsystem.Main.Subsystem.Child'
+    Assert-Equal 0 @($result.Json.findings | Where-Object kind -eq 'dangling-reference').Count 'unreadable existing file is not missing'
+}
+
+Register-Case 'dump-validate: ConfigDumpInfo version and missing objects without duplicate child reports' {
+    param($Work)
+    $dir = New-DumpTestFixture $Work
+    $info = Join-Path $dir 'ConfigDumpInfo.xml'
+    Write-DumpTestXml $info ([IO.File]::ReadAllText($info).Replace('2.17', '2.20').Replace('Catalog.TestCatalog', 'Catalog.Deleted'))
+    $result = Invoke-DumpTest $dir $Work
+    Assert-DumpFinding $result 'dump-info-version'
+    Assert-DumpFinding $result 'dump-info-extra' 'Catalog.Deleted'
+    Assert-Equal 1 @($result.Json.findings | Where-Object kind -eq 'dump-info-extra').Count 'duplicate missing-owner reports'
+}
+
+Register-Case 'dump-validate: optional dump-info and root file input, text and JSON output' {
+    param($Work)
+    $dir = New-DumpTestFixture $Work
+    Remove-Item -LiteralPath (Join-Path $dir 'ConfigDumpInfo.xml')
+    $out = Join-Path $Work 'result.json'
+    $result = Invoke-DumpTest (Join-Path $dir 'Configuration.xml') $Work @('-OutFile', $out)
+    Assert-Equal 0 $result.Run.ExitCode $result.Run.StdOut
+    Assert-Equal 'valid' ((Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json).status) 'saved JSON'
+    $run = Invoke-Tool (Join-Path $ToolsDir '1c-cf-manage/scripts/dump-validate.ps1') @('-ConfigPath', $dir) $Work
+    Assert-Equal 0 $run.ExitCode $run.StdErr
+    Assert-True ($run.StdOut -match 'valid') 'text verdict missing'
+}
+
+Register-Case 'dump-validate: refuses source overwrite and reports missing configuration' {
+    param($Work)
+    $dir = New-DumpTestFixture $Work
+    $configuration = Join-Path $dir 'Configuration.xml'
+    $before = (Get-FileHash -LiteralPath $configuration).Hash
+    $result = Invoke-DumpTest $dir $Work @('-OutFile', $configuration)
+    Assert-DumpFinding $result 'scan-error'
+    Assert-Equal $before (Get-FileHash -LiteralPath $configuration).Hash 'source overwritten by report'
+    Remove-Item -LiteralPath $configuration
+    Assert-DumpFinding (Invoke-DumpTest $dir $Work) 'configuration-missing'
+}
+
+Register-Case 'dump-validate: missing composition, invalid metadata root and unsupported dump layout' {
+    param($Work)
+    $dir = New-DumpTestFixture $Work
+    $configuration = Join-Path $dir 'Configuration.xml'
+    Write-DumpTestXml $configuration ([regex]::Replace([IO.File]::ReadAllText($configuration), '<ChildObjects>.*?</ChildObjects>', ''))
+    Write-DumpTestXml (Join-Path $dir 'Languages/Test.xml') '<not-metadata/>'
+    $info = Join-Path $dir 'ConfigDumpInfo.xml'
+    Write-DumpTestXml $info ([IO.File]::ReadAllText($info).Replace('Hierarchical', 'Plain'))
+    $result = Invoke-DumpTest $dir $Work
+    Assert-DumpFinding $result 'composition-missing'
+    Assert-DumpFinding $result 'metadata-root-invalid' 'Language.Test'
+    Assert-DumpFinding $result 'dump-format-unsupported'
+}
+
 # ---------------------------------------------------------------- run
 
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ("1c-rules-regr-" + [guid]::NewGuid().ToString('N').Substring(0, 8))

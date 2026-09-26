@@ -1,6 +1,6 @@
 ---
 name: 1c-live-ib
-description: "Answer questions only the running infobase can answer — does this query parse, what does it return on real data, does this BSL fragment run on this platform, what error did the event log record — through the 1c-data-mcp HTTP service published on the infobase. Read-only by default; every mutation needs explicit user consent."
+description: "Answer what only the running infobase knows — does a query parse, what it returns on real data, does a BSL fragment run, what the event log recorded — via the 1c-data-mcp service on the infobase. Read-only by default; any mutation needs explicit user consent."
 argument-hint: "<query text | bsl fragment | lasterror>"
 allowed-tools: mcp__1c-data-mcp__validatequery, mcp__1c-data-mcp__vcexecutequery, mcp__1c-data-mcp__vcexecutecode, mcp__1c-data-mcp__vcloggetlasterror
 ---
@@ -30,7 +30,7 @@ Escalate here only when the configuration dump, the static validators and the do
 ## Safety
 
 - Read-only first: `validatequery` → `vcexecutequery`; non-mutating fragments for `vcexecutecode`.
-- No `Записать()`, `Удалить()`, `НачатьТранзакцию`, register movements without asking the user, naming the object and having a rollback plan; on a production IB refuse and request a copy.
+- No `Записать()`, `Удалить()`, `НачатьТранзакцию`, register movements without asking the user, naming the object and having a rollback plan; on a production IB (`.dev.env` `INFOBASE_ROLE=prod`) refuse and request a copy.
 - No secrets or personal data in `bslcode` / `querytext` — they travel over HTTP and may be logged.
 - Validate AI-generated text first (`validatequery`, `syntaxcheck`), then run it here.
 - Gate 3a (`content/rules/verification-gates.md`) uses only the read-only tools.

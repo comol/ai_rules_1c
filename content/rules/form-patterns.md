@@ -1,5 +1,5 @@
 ---
-description: Managed-form layout patterns — archetypes (document, data processor, list, catalog item, wizard), naming conventions, layout principles, and advanced ERP patterns. Load when designing a form layout from scratch or when the requirements do not specify element placement.
+description: Managed-form layout patterns — archetypes (document, data processor, list, catalog item, wizard), naming, layout principles. Load when designing a form layout from scratch or when element placement is unspecified.
 alwaysApply: false
 category: forms
 ---

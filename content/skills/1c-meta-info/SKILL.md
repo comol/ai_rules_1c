@@ -1,6 +1,6 @@
 ---
 name: 1c-meta-info
-description: "Read facts about 1C metadata objects — passport, attributes with types, tabular-part columns, forms, predefined items, objects by category or by Russian description — from the graph and code-metadata MCP servers. Use before writing code or metadata that depends on an object's structure, and to identify objects by synonym."
+description: "Facts about 1C metadata objects — passport, typed attributes, tabular-part columns, forms, predefined items, objects by category or Russian description — from the graph and code-metadata MCP. Use before code or metadata that depends on an object's structure, and to find objects by synonym."
 argument-hint: "<Kind.Name | description> [sections]"
 allowed-tools: mcp__1c-graph-metadata-mcp__get_object_dossier, mcp__1c-graph-metadata-mcp__search_metadata, mcp__1c-graph-metadata-mcp__search_metadata_by_description, mcp__1c-graph-metadata-mcp__business_search, mcp__1c-graph-metadata-mcp__resolve_qualified_name, mcp__1c-graph-metadata-mcp__find_by_guid, mcp__1c-graph-metadata-mcp__run_graph_cypher_template, mcp__1c-code-metadata-mcp__metadatasearch, mcp__1c-code-metadata-mcp__get_metadata_details
 ---
@@ -8,6 +8,8 @@ allowed-tools: mcp__1c-graph-metadata-mcp__get_object_dossier, mcp__1c-graph-met
 # 1c-meta-info — facts about a metadata object
 
 Facts only; a verdict about an object needs the validators of `1c-validate`. Search discipline and freshness — `content/rules/mcp-first-search.md`.
+
+For each graph call, explicitly pass the returned `project_id` verified against the current source roots; substitute `<resolved-project-id>` below. Discover through `list_graph_projects` using the `mcp-1c-tools` router first when needed. Keep project scope outside JSON `query` operations and template `arguments`. An extension requires verified layer coverage/provenance; neither the first project nor the base-only response is an extension lookup. Code-server selectors use their own live schema and mappings (`content/rules/multi-contour-search.md`).
 
 ## Address
 
@@ -30,10 +32,10 @@ Graph object lookups accept qualified names such as `Справочник.Кон
 ## Calls
 
 ```json
-{"tool": "get_object_dossier", "args": {"object_name": "Документ.НачислениеЗарплаты", "sections": ["structure", "forms"]}}
+{"tool": "get_object_dossier", "args": {"project_id": "<resolved-project-id>", "object_name": "Документ.НачислениеЗарплаты", "sections": ["structure", "forms"]}}
 {"tool": "get_metadata_details", "args": {"object_name": "Документы.НачислениеЗарплаты", "sections": "tabular_parts", "detail_level": "outline", "max_items": 200}}
-{"tool": "search_metadata_by_description", "args": {"query": "начисление премии сотрудникам", "filter_type": "Документы", "top_k": 5}}
-{"tool": "search_metadata", "args": {"query": "{\"operation\": \"list_attributes_with_type\", \"type_name\": \"СправочникСсылка.Контрагенты\"}"}}
+{"tool": "search_metadata_by_description", "args": {"project_id": "<resolved-project-id>", "query": "начисление премии сотрудникам", "filter_type": "Документы", "top_k": 5}}
+{"tool": "search_metadata", "args": {"project_id": "<resolved-project-id>", "query": "{\"operation\": \"list_attributes_with_type\", \"type_name\": \"СправочникСсылка.Контрагенты\"}"}}
 {"tool": "metadatasearch", "args": {"query": "Контрагенты", "names_only": true, "limit": 5}}
 ```
 

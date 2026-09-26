@@ -1,10 +1,13 @@
 ---
 description: Check availability of 1C MCP servers and install/start the missing ones
+userOnly: true
 ---
 
 # /checkmcp — check and install 1C MCP servers
 
-This command checks that all MCP servers from the project catalog (`content/mcp-servers.json`; after 1c-rules installation, rendered into the active tool config such as `.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` / `opencode.json` / `.codex/config.toml` / `.qwen/settings.json` / `.kimi-code/mcp.json`) are actually available in the current session, and helps start or install missing ones. Config file, top-level key and per-server shape per client — including the Kilo legacy `.kilocode/mcp.json` warning and the OpenCode `onec-` key rule — are owned by `/installmcp` → *Step 7. Per-client MCP config*; `install.ps1` renders the same placement. This command only reads those files.
+To connect already installed servers and memory to a new repository, use `/setupmcp` (`content/commands/setupmcp.md`). It collects their actual endpoints and writes project connections; `/checkmcp` keeps MCP configs read-only.
+
+This command checks that all MCP servers from the project catalog (`content/mcp-servers.json`; after 1c-rules installation, rendered into the active tool config such as `.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` / `opencode.json` / `.codex/config.toml` / `.qwen/settings.json` / `.kimi-code/mcp.json` / `.zcode/config.json` under `mcp.servers` / `mimocode.json` under `mcp`) are actually available in the current session, and helps start or install missing ones. Config file, top-level key and per-server shape per client — including the Kilo legacy `.kilocode/mcp.json` warning and the OpenCode `onec-` key rule — are owned by `/installmcp` → *Step 7. Per-client MCP config*; `install.ps1` renders the same placement. This command only reads those files.
 
 **External MCP installation (INSTALL.md, режим 3).** If `.ai-rules.json` has `integrations.mcp.mode = "external"` (or the env `BASESAI_MCP_GLOBAL_ROOT` points at a folder with `install.manifest.json`), the server set, ids, urls, and ports come from the **actual install artifacts**, not from the catalog or the default table below: read `install.manifest.json`, resolve paths via its `artifacts` / `consumers` / `resolution` contract (legacy manifest without `schema_version` → schema-v1 defaults: registry at `<GLOBAL_ROOT>/projects.registry.json`, global servers in `%USERPROFILE%/.cursor/mcp.json`, project servers in `<path_code>/.cursor/mcp.json`), then merge global + project `mcpServers` (project keys win on duplicate id). Ports are parsed **only from each server's `url`** (`localhost:<PORT>`); Docker container names come from the registry's project row (`containers.*`). The `mcp:install_forme` section of `USER-RULES.md` holds the rendered tables as a convenient cache. The catalog and the default ports below apply only to **managed** installs.
 
@@ -80,7 +83,7 @@ The source of truth for images, ports, and environment variables is [docs.onerpa
    $servers  = @($project) + @($global | Where-Object { $_.Id -notin $project.Id })
    ```
 
-2. Else, if the project has `.ai-rules.json`, take the catalog from the active tool config referenced by the manifest (`.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` under the `mcp` key / `opencode.json` under the `mcp` key / `.codex/config.toml` under `[mcp_servers."<id>"]` / `.qwen/settings.json` under `mcpServers` with `httpUrl` / `.kimi-code/mcp.json`). A leftover `.kilocode/mcp.json` is **legacy** — ignore it. In `opencode.json` the server keys are `onec-...` (e.g. `onec-syntax-checker-mcp`; why — `/installmcp` → *Step 7*) — match them to the canonical `1c-...` ids by the bare tool names below, not by the prefix.
+2. Else, if the project has `.ai-rules.json`, take the catalog from the active tool config referenced by the manifest (`.cursor/mcp.json` / `.mcp.json` / `.kilo/kilo.json` under the `mcp` key / `opencode.json` under the `mcp` key / `.codex/config.toml` under `[mcp_servers."<id>"]` / `.qwen/settings.json` under `mcpServers` with `httpUrl` / `.kimi-code/mcp.json` / `.zcode/config.json` under `mcp.servers` / `mimocode.json` under `mcp`). A leftover `.kilocode/mcp.json` is **legacy** — ignore it. In `opencode.json` the server keys are `onec-...` (e.g. `onec-syntax-checker-mcp`; why — `/installmcp` → *Step 7*) — match them to the canonical `1c-...` ids by the bare tool names below, not by the prefix.
 3. Otherwise use `content/mcp-servers.json` from the rules repository.
 4. If neither source exists, use the table above as the default set.
 

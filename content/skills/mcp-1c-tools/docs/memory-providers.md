@@ -1,6 +1,6 @@
 # Memory providers — Cognee, OpenViking and templates MCP
 
-Policy, write priority, search coverage and failure handling are owned by `content/rules/project-memory.md`. This catalog maps those logical operations to tools; it does not make a configured or installed server available in the current session.
+Policy, write priority, search coverage and failure handling are owned by `content/rules/project-memory.md`. Apply `TOOL_COGNEE` / `TOOL_OPENVIKING` / `TOOL_TEMPLATES` before runtime discovery (`content/rules/mcp-policy.md → Tool availability`). This catalog does not make a configured or installed server callable.
 
 ## Cognee
 
@@ -25,6 +25,6 @@ Installation: `content/commands/install-openviking.md`. Verified against the [of
 
 ## 1c-templates-mcp
 
-Search with `recall(query=...)` on every memory lookup while exposed, even when Cognee or OpenViking receives writes. Use `remember(content=...)` as the write fallback when neither primary provider is available for writing. `templatesearch` searches code templates and does not replace memory retrieval.
+Search with `recall(query=...)` at the triage scope in `project-memory.md`: all eligible providers for full-cycle/spec work; the primary eligible reader for quick-fix. Use `remember(content=...)` when earlier eligible writers cannot save in `auto`; do not bypass a pending `required` save. `TOOL_TEMPLATES=off` excludes both memory and code templates. `templatesearch` never replaces memory retrieval.
 
 The current server always registers `remember`; it needs neither `MCP_ENABLE_WRITE_TOOLS` nor an operator bearer token. Check that the tool is exposed, then inspect the actual write result. Older deployments may differ: an absent tool or an actual authorization rejection follows the memory fallback policy, without a token pre-flight or blind retry. Authentication for `add_template` / `plugin_reload`, schemas and template retrieval: `content/skills/mcp-1c-tools/docs/1c-templates-mcp.md`. A `stored=true` / `index_pending=true` response is already durable; do not retry that write.

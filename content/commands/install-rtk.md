@@ -1,10 +1,11 @@
 ---
 description: Install rtk (third-party shell-output compression proxy) and wire it into the active AI client; uninstall on request
+userOnly: true
 ---
 
 # /install-rtk — install the rtk output-compression proxy
 
-Installs [rtk](https://github.com/rtk-ai/rtk): a CLI proxy that compresses the output of **shell** commands (git, tests, docker, build / lint, `ls` / `grep` / `cat`) by 60–90 % before it reaches the model. A complementary lever to `/economymode`: economy mode saves orchestrator tokens by delegating, `rtk` saves them on every shell call. It works regardless of the `ORCHESTRATION` value.
+Installs [rtk](https://github.com/rtk-ai/rtk): a CLI proxy that compresses the output of **shell** commands (git, docker, build / lint, `ls` / `grep` / `cat`) by 60–90 % before it reaches the model. A complementary lever to `/economymode`: economy mode saves orchestrator tokens by delegating, `rtk` saves them on every shell call. It works regardless of the `ORCHESTRATION` value.
 
 `rtk` is a **third-party, user-global** tool: it installs a binary and per-client hooks in the user's home config, **not** in the project, and it is **not** recorded in `.dev.env`. Shell on Windows — `powershell-windows` skill.
 

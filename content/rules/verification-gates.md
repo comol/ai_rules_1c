@@ -10,6 +10,8 @@ category: quality
 
 Delivery-only soft gates and the final report contract live in `verification-delivery.md`.
 
+All gates resolve `TOOL_*` through `content/rules/mcp-policy.md → Tool availability`. Evaluate task/depth triggers before tool presence: a needed `required` capability remains a blocker when absent. `off`/failed tools use only the gate's documented fallback; missing XML, impact, live-IB or EDT evidence is never a pass.
+
 ## Gate execution and evidence reuse
 
 A gate is a requirement for the current artifact state, not a request to call the same tool
@@ -32,7 +34,7 @@ impact-analysis evidence.
 
 You MUST run all five gates in order. Each gate has an explicit pass / fail criterion and an explicit retry budget. When a required validator is not exposed in the current session, follow the graceful-degradation subsections (after Gate 3 and inside Gate 4) instead of silently skipping. **Gates 3a and 6 are conditional** — each runs only when its own trigger fires and its prerequisite (an exposed server, or a reachable platform + infobase) is present; neither ever replaces Gates 1–3.
 
-The gate descriptions below state the `full` behaviour — the strictest level, and the one a promotion-trigger path always gets. The project default is `standard`: all three validators on full-cycle changes, Gates 1–2 on quick-fix-eligible edits, one mandatory confirmation after a blocking fix instead of an open-ended retry budget. When `VERIFICATION_DEPTH` is `standard` or `lite`, Gates 1–3 are modulated per `verification-policy.md → "Verification depth levels"` — but a full-cycle change on any promotion-trigger path always runs the complete chain regardless of the level (the safety floor).
+The gate descriptions below state the `full` behaviour — the strictest level, and the one a promotion-trigger path always gets. When `VERIFICATION_DEPTH` is `standard` or `lite`, Gates 1–3 are modulated per `verification-policy.md → "Verification depth levels"` — but a full-cycle change on any promotion-trigger path always runs the complete chain regardless of the level (the safety floor).
 
 ### Gate 1 — Syntax (`syntaxcheck`)
 
@@ -58,9 +60,9 @@ The gate descriptions below state the `full` behaviour — the strictest level, 
 
 ### Graceful degradation for Gates 1–3 — when a validator is not exposed
 
-Gates 1–3 are mandatory only when the corresponding validator is exposed in the current session (`AGENTS.md → MCP Tool Calling → A.1`: a server counts as available only when its tools are visible in the tool schema). When a validator is missing, do **not** silently skip its gate:
+Apply `TOOL_SYNTAX` / `TOOL_CHECKER` (`content/rules/mcp-policy.md → Tool availability`) at the active depth. An unavailable `required` validator blocks its gate. For `auto` absence/failure or `off`, use the compensation below and report the actual reason; policy never produces a passing verdict:
 
-1. Record the fact in the delivery summary under **Risks** as a fixed line: *"Gate N skipped — `<tool>` (`<server>`) not exposed in this session."*
+1. Record: *"Gate N unverified — `<tool>` (`<server>`): `<disabled by policy / not exposed / failed / unsuitable scope>`."*
 2. Compensate with what is available. **The platform itself is the first fallback** when `PLATFORM_PATH` and `INFOBASE_PATH` are configured **and the checked configuration contains the current artifact**. Establish the source-to-IB match per `content/rules/designer-batch-checks.md → Bind the check to the current artifact` before running its check ladder. `/CheckModules` supplies syntax / context evidence for the loaded modules; `/CheckConfig` supplies structural evidence, not a replacement for business-logic or ITS review. Record the artifact fingerprint, target, platform / modes, process exit code, log path and `/DumpResult` code. A pass against an older configuration never verifies local changes. If a matching dev/test state cannot be established through an authorized workflow, record that limitation and use manual syntax review (paired keywords, directives, parameter lists) for Gate 1 and the internal checklist for Gates 2–3.
 
    **Minimum internal review checklist.** These independent checks remain available when a validator is missing. They do not reproduce a routed standard or prove compliance with standards that were not retrieved through MCP; report that evidence gap and follow `content/rules/help-corpus-retrieval.md` for any required standard.
@@ -69,7 +71,7 @@ Gates 1–3 are mandatory only when the corresponding validator is exposed in th
    - **Full-cycle** — the full list: style, readability, correctness, edge cases, security, concurrency / locks / transactions, BSL-LS compliance.
    - Always consider whether an external transaction already exists (e.g. an object-write transaction) before opening a new one.
    - Findings follow `verification-policy.md → Validator budget` (a blocking defect needs a clean confirming run on the changed state; style noise does not start another loop; budget exhausted = unverified).
-3. Delivery is not blocked, but a transactional / metadata / public-API change that went through without Gate 2 must be flagged as needing a follow-up validation run in a session where the server is exposed.
+3. `auto`/`off` allow delivery with these limitations; `required` leaves the dependent verification incomplete. A transactional / metadata / public-API change without Gate 2 needs a follow-up validation run.
 
 Skipping a gate without recording it under Risks is a defect — the same rule as Gate 4's graceful degradation below.
 
@@ -81,7 +83,7 @@ Gate 3a supplies narrowly scoped evidence from a dev/test infobase. Distinguish 
 
 1. The change authored or modified 1C **query text** (module code, DCS scheme, dynamic list) **or** a self-contained BSL function with no side effects whose result the static validators cannot confirm.
 2. `1c-data-mcp` is exposed in the current session (`validatequery` / `vcexecutecode` visible in the tool schema).
-3. The connected infobase is a development / test base. **On a production infobase this gate is not run** — record the skip and move on.
+3. The connected infobase is a development / test base (`INFOBASE_ROLE`). **On a production infobase this gate is not run** — record the skip and move on.
 
 **Execution:**
 
@@ -89,7 +91,7 @@ Gate 3a supplies narrowly scoped evidence from a dev/test infobase. Distinguish 
 - **Metadata references / runtime resolution.** Reuse current metadata lookups to confirm referenced tables, fields and types; those lookups alone do not prove the whole query resolves at runtime. If runtime resolution is the open question, use a bounded read-only `vcexecutequery` against a dev/test IB with the relevant current metadata / extensions and representative safe parameter values; record that state and the technical user's rights. A successful run proves resolution only for that tested query and context.
 - **Result correctness → expected-value comparison.** For a query, compare returned rows / values against the stated scenario; for a pure function use a **read-only** `vcexecutecode` fragment returning the value via `Результат`. `"ошибок нет"` without an expected-value comparison proves absence of a runtime exception only. A run under the technical user does not prove RLS behaviour for other users.
 - **Mutations are out of scope for this gate.** No `Записать()` / `Удалить()` / `НачатьТранзакцию` / register movements — the read-only discipline and the consent rules of `content/skills/mcp-1c-tools/docs/1c-data-mcp.md → Safety and discipline` apply unchanged. If confirming the change requires a mutation, that is a task for `1c-tester` against a test base, not for this gate.
-- **Budget:** one call per applicable tool / artifact state; run only the checks needed to close an open question. Re-run after a relevant artifact or test-state change only — the no-change-repeat rule (`AGENTS.md → MCP Tool Calling → C.2`) applies.
+- **Budget:** one call per applicable tool / artifact state; run only the checks needed to close an open question. Re-run after a relevant artifact or test-state change only — the no-change-repeat rule (`AGENTS.md → MCP Tool Calling → C.1`) applies.
 
 **Failure is blocking for the artifact,** the same as a Gate 1 `error`: fix the query / fragment and re-run once against the changed state.
 
@@ -129,9 +131,9 @@ Skip this gate **only** when no metadata XML was touched.
 
 When XML was edited:
 
-- **`verify_xml`** on every modified XML file. Pass criterion: zero schema violations.
+- **`verify_xml`** on every modified XML file. Pass criterion: zero schema violations. If unavailable in `auto`/`off`, run the skill's applicable local validator and report its actual coverage; parsing alone is not schema validation. Uncovered checks stay unverified. In `required`, substitutes do not close the gate.
 - **Execution-path check.** Metadata mutations (new objects, attributes, tabular sections, forms, layouts) must have gone through the `1c-metadata-manage` skill / `1c-metadata-manager` subagent — hard gate per `AGENTS.md → Skills and Subagents`. If hand edits were used, this gate passes only when the exception is one of those documented in `SKILL.md → Hard rule` **and** is stated in the delivery summary (`Metadata tooling: hand-edit — <exception>`); additionally cross-check `metadata-xml-workarounds.md` for the recurring traps (LineNumber, PagesGroupExtInfo, Page.enabled, UID uniqueness). Hand-edited metadata without a stated documented exception is a gate failure — the same class as a skipped validator.
-- For `Form.xml` edits: also confirm the form opens in Configurator without warnings — schema validity is necessary but not sufficient.
+- For `Form.xml` edits: schema validity is necessary but not sufficient — whether the form loads cleanly is platform evidence. When the change reaches an infobase, Gate 6 (`/CheckConfig` on the loaded configuration) supplies it; otherwise record under **Risks**: *"Form load not verified on the platform — open `<form>` in Configurator / run `/CheckConfig` before release."* Never claim the form opens without that evidence.
 
 **EDT-format sources (`USE_EDT=true`, MDO tree).** `verify_xml` does not apply to `*.mdo` / `*.form`. The equivalent evidence is EDT's own validation — `revalidate_objects` on the changed objects → `get_project_errors` / `get_problem_summary` — recorded in the delivery summary exactly as `verify_xml` evidence is. The execution-path check is unchanged in spirit: the mutation must have gone through EDT (EDT-MCP, the EDT UI, or a confirmed export/import round trip), and a hand-edited `*.mdo` is a gate failure with no documented exception. Canon — `content/rules/edt-workflow.md → Validation`. Gates 1–3 on BSL are unaffected: modules are plain `.bsl` in both formats. The same substitution applies to Gate 6 below: EDT's validation and `update_database` are that project's applicability evidence, and the batch ladder must not run as a second deployment owner in the same run.
 

@@ -1,5 +1,5 @@
 ---
-description: Managed locks, transaction boundaries, lock ordering, deadlock prevention, shared / exclusive lock modes, monitoring via the technological log. Load when designing posting / multi-document operations, debugging lock conflicts, or extending an existing transactional path.
+description: Managed locks, transaction boundaries, lock ordering, deadlock prevention, lock modes. Load when designing posting or multi-document operations, debugging lock conflicts, or extending a transactional path.
 alwaysApply: false
 category: quality
 ---

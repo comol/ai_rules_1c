@@ -1,6 +1,6 @@
 ---
 name: 1c-repository-manage
-description: "1C configuration repository (хранилище конфигурации) operations — status, history, diff, lock, update, commit, unlock, dump — and the SDLC discipline for repository-bound configurations (lock before edit, commit after verify). Use when .dev.env REPOSITORY_PATH is set or the task mentions the configuration repository / хранилище."
+description: "1C configuration repository (хранилище) — status, history, diff, lock, update, commit, unlock, dump; lock before edit, commit after verify. Use when .dev.env REPOSITORY_PATH is set or the task mentions the configuration repository / хранилище."
 ---
 
 # 1C Repository Manage — Configuration Repository Skill
@@ -47,6 +47,7 @@ Invariants 1–4 are enforced by the script. Invariants 5–6 are agent refusals
 | Release locks (no changes / after commit with `-KeepLocked`) | `-Operation unlock` | [repo-ops.md](docs/repo-ops.md) |
 | Export a repository version to CF/CFE | `-Operation dump` | [repo-ops.md](docs/repo-ops.md) |
 | How repository binding changes the dev cycle, `/update1cbase`, metadata mutations, conflict handling | — | [repo-sdlc.md](docs/repo-sdlc.md) |
+| Refresh source files after `lock -Revised` / `update`; freshness check before loading them into the IB | — | [repo-sdlc.md → Source files follow the infobase](docs/repo-sdlc.md#source-files-follow-the-infobase) |
 
 Reports (`status` / `history` / `diff`) are written to a file and only an excerpt is printed — read the report file for targeted analysis instead of pulling megabytes into context.
 

@@ -1,5 +1,5 @@
 ---
-description: Driving the 1C web client during UI tests — what the accessibility snapshot shows, how lists / trees / grids / reports behave, field filling, dialogs, keyboard shortcuts, and the anti-loop discipline. Load after the `ui-testing-tools.md` preflight, before the first action against `INFOBASE_PUBLISH_URL`.
+description: Driving the 1C web client in UI tests — accessibility snapshot, lists / grids / reports, field filling, dialogs, shortcuts, anti-loop discipline. Load after the `ui-testing-tools.md` preflight, before the first action on the web client.
 alwaysApply: false
 category: tooling
 ---

@@ -11,6 +11,8 @@ Project-source search is MCP-first within verified contour coverage: graph → m
 
 ## Tools and exact arguments
 
+Every graph call below includes the returned `project_id` matched to the current source roots; `<resolved-project-id>` in examples must be substituted, never sent literally. Discover via `list_graph_projects` using the `mcp-1c-tools` router before this skill when needed. Verify the relevant extension layer and response attribution. Code-server scope comes from its own live schema/mapping; do not copy graph arguments into it. Contract and ambiguity handling — `content/rules/multi-contour-search.md`.
+
 | Need | Call | Arguments (exact names) |
 |---|---|---|
 | Code by behaviour / intent | `search_code` (graph) | `query`, `search_type="semantic"`, `detail_level="L1"`, `top_k=3`, optional `filter_type` |
@@ -26,7 +28,7 @@ Text searches above use `query`; routine lookup uses `name`. Do not invent `q`, 
 ## Calls
 
 ```json
-{"tool": "search_code", "args": {"query": "расчёт остатков по складу на дату", "search_type": "semantic", "detail_level": "L1", "top_k": 5}}
+{"tool": "search_code", "args": {"project_id": "<resolved-project-id>", "query": "расчёт остатков по складу на дату", "search_type": "semantic", "detail_level": "L1", "top_k": 5}}
 {"tool": "search_function", "args": {"name": "ОбработкаПроведения", "exact": true, "limit": 10}}
 {"tool": "codesearch", "args": {"query": "ТекущаяДатаСеанса()", "limit": 5}}
 {"tool": "get_module_structure", "args": {"module_path": "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl"}}

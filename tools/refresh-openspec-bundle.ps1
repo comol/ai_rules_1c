@@ -44,7 +44,9 @@ $script:OpenSpecToolsArg = 'cursor,claude,codex,opencode,kilocode'
 $script:DotMap = @{
     'cursor'      = '.cursor'
     'claude-code' = '.claude'
-    'codex'       = '.codex'
+    # OpenSpec >= 1.13 writes Codex skills to the vendor-neutral .agents/skills/;
+    # the installer maps them onto the Codex adapter's .codex/skills/.
+    'codex'       = '.agents'
     'opencode'    = '.opencode'
     'kilocode'    = '.kilocode'
 }
@@ -98,11 +100,15 @@ function Invoke-OpenSpecInit {
     }
 }
 
+# CLI bookkeeping files that must not ship (e.g. .agents/skills/.openspec-target).
+$script:SkipNames = @('.openspec-target')
+
 function Get-RelativeFiles {
     param([string]$BaseDir)
     if (-not (Test-Path $BaseDir)) { return @() }
     $base = (Resolve-Path $BaseDir).Path.TrimEnd('\', '/')
-    return @(Get-ChildItem -Recurse -File $BaseDir -ErrorAction SilentlyContinue | ForEach-Object {
+    return @(Get-ChildItem -Recurse -File -Force $BaseDir -ErrorAction SilentlyContinue |
+        Where-Object { $script:SkipNames -notcontains $_.Name } | ForEach-Object {
         $_.FullName.Substring($base.Length + 1).Replace('\', '/')
     } | Sort-Object)
 }
@@ -116,15 +122,17 @@ function Sync-ToolBundle {
     )
     $dot = $script:DotMap[$Tool]
     $sourceDir = Join-Path $ProbeRoot $dot
-    $targetDir = Join-Path $BundleRoot "$Tool\$dot"
+    # The whole per-tool folder is compared and replaced, so a dot directory the
+    # CLI stopped writing (e.g. codex/.codex after the move to .agents) is removed.
+    $toolDir = Join-Path $BundleRoot $Tool
 
     if (-not (Test-Path $sourceDir)) {
         Write-Warning "  [$Tool] no $dot in probe output - skipped"
         return [pscustomobject]@{ Tool = $Tool; Added = 0; Updated = 0; Removed = 0 }
     }
 
-    $sourceFiles = Get-RelativeFiles $sourceDir
-    $targetFiles = Get-RelativeFiles $targetDir
+    $sourceFiles = @(Get-RelativeFiles $sourceDir | ForEach-Object { "$dot/$_" })
+    $targetFiles = Get-RelativeFiles $toolDir
     $sourceSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$sourceFiles)
     $targetSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$targetFiles)
 
@@ -133,14 +141,19 @@ function Sync-ToolBundle {
     $shared = @($sourceFiles | Where-Object { $targetSet.Contains($_) })
     $updated = @()
     foreach ($rel in $shared) {
-        $a = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $sourceDir $rel)).Hash
-        $b = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $targetDir $rel)).Hash
+        $a = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $ProbeRoot $rel)).Hash
+        $b = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $toolDir $rel)).Hash
         if ($a -ne $b) { $updated += $rel }
     }
 
     if (-not $DryRun) {
-        if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
-        Copy-Item -Recurse -Force -Path $sourceDir -Destination $targetDir
+        if (Test-Path $toolDir) { Remove-Item -Recurse -Force $toolDir }
+        foreach ($rel in $sourceFiles) {
+            $dest = Join-Path $toolDir $rel
+            $parent = Split-Path -Parent $dest
+            if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+            Copy-Item -Force -Path (Join-Path $ProbeRoot $rel) -Destination $dest
+        }
     }
 
     return [pscustomobject]@{

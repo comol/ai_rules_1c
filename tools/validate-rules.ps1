@@ -33,10 +33,16 @@
       5. Always-on budget - AGENTS.md stays under a byte ceiling. This is the one
          file loaded into every request; unbounded growth there is a silent,
          permanent cost on every task.
+      6. Load-set budgets - a single rule stays under -RuleMaxBytes; the rules a
+         typical full-cycle BSL change loads ($hotPathFiles) stay under
+         -HotPathMaxBytes; what a subagent reads at start (AGENTS.md +
+         subagent-core.md + its own prompt) stays under -SubagentStartMaxBytes.
+         Growth of any of them is a per-task token cost, so it has to be a
+         visible decision, not drift.
 
     Generated trees (content/openspec-bundle/) are excluded: they are produced by
     tools/refresh-openspec-bundle.ps1 from the OpenSpec CLI and are not authored
-    here.
+    here. Installed dependencies (node_modules/) are excluded likewise.
 
     NOTE: this file is deliberately pure ASCII. Windows PowerShell 5.1 reads a
     BOM-less .ps1 as ANSI, which mangles non-ASCII source characters and breaks
@@ -58,6 +64,29 @@
     Byte ceiling for AGENTS.md. Ratchet it downward as the file shrinks; never
     raise it without a deliberate decision.
 
+.PARAMETER RuleMaxBytes
+    Byte ceiling for one file under content/rules. Above it, split detail into
+    a companion rule loaded on its own trigger.
+
+.PARAMETER HotPathMaxBytes
+    Byte ceiling for the combined files a typical full-cycle BSL change loads.
+    Ratchet it downward as the set shrinks.
+
+.PARAMETER SubagentStartMaxBytes
+    Byte ceiling for AGENTS.md + content/rules/subagent-core.md + the largest
+    agent prompt - the context every subagent pays before its first action.
+
+.PARAMETER SkillDescriptionMaxBytes
+    Byte ceiling for one skill description. Hosts list every skill description
+    in every session, so it is always-on context like AGENTS.md.
+
+.PARAMETER AgentDescriptionMaxBytes
+    Byte ceiling for one agent description (listed in every session).
+
+.PARAMETER RuleDescriptionMaxBytes
+    Byte ceiling for one rule description (Cursor lists agent-requested rule
+    descriptions in every session).
+
 .PARAMETER Strict
     Treat warnings as errors (exit code 1).
 
@@ -69,7 +98,13 @@
 param(
     [string]$Root,
     [string]$StandardsDir,
-    [int]$AgentsMaxBytes = 16384,
+    [int]$AgentsMaxBytes = 11264,
+    [int]$RuleMaxBytes = 40960,
+    [int]$HotPathMaxBytes = 126976,
+    [int]$SubagentStartMaxBytes = 28672,
+    [int]$SkillDescriptionMaxBytes = 300,
+    [int]$AgentDescriptionMaxBytes = 250,
+    [int]$RuleDescriptionMaxBytes = 250,
     [switch]$Strict
 )
 
@@ -185,7 +220,7 @@ function Test-Frontmatter {
 # File inventory
 # --------------------------------------------------------------------------
 
-$excludedDirs = @('openspec-bundle')
+$excludedDirs = @('openspec-bundle', 'node_modules')
 
 function Get-RulesetFiles {
     param([string]$Subpath, [string]$Filter = '*.md')
@@ -247,7 +282,8 @@ $commandFiles = @(Get-RulesetFiles -Subpath 'content/commands')
 foreach ($file in $commandFiles) {
     Test-Frontmatter -Path $file.FullName `
         -Required @('description') `
-        -Optional @('argumentHint', 'allowedTools')
+        -Optional @('argumentHint', 'allowedTools', 'userOnly') `
+        -AllowedValues @{ userOnly = @('true', 'false') }
 }
 
 # --- skills --------------------------------------------------------------
@@ -269,7 +305,7 @@ $mdIndex = New-Object System.Collections.Generic.HashSet[string]
 foreach ($f in (Get-ChildItem -LiteralPath $Root -Filter '*.md' -File -Recurse |
         Where-Object {
             $rel = $_.FullName.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
-            $rel -notlike '.git/*' -and $rel -notlike 'content/openspec-bundle/*'
+            $rel -notlike '.git/*' -and $rel -notlike 'content/openspec-bundle/*' -and $rel -notlike '*/node_modules/*'
         })) {
     [void]$mdIndex.Add($f.Name.ToLowerInvariant())
 }
@@ -597,6 +633,9 @@ foreach ($ps in $psFiles) {
 # always-on file cannot drift apart silently.
 
 $scenarioPath = Join-Path $Root 'tools/tests/gate-scenarios.json'
+# Arguments the rules explicitly say do not exist (mcp-first-search.md -> Hard rule:
+# current Code tools have no grep input). A scenario wiring one grades a defect as a pass.
+$retiredArgs = @('grep')
 $gateCount = 0
 $scenarioCount = 0
 if (Test-Path -LiteralPath $scenarioPath) {
@@ -647,6 +686,13 @@ if (Test-Path -LiteralPath $scenarioPath) {
                 $srv = [string]$step.server
                 $tool = [string]$step.tool
                 if (-not $servers.ContainsKey($srv)) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' uses unknown server key ' + $srv) }
+                if ($step.PSObject.Properties['args'] -and $step.args) {
+                    foreach ($argName in @($step.args.PSObject.Properties | ForEach-Object { $_.Name })) {
+                        if ($retiredArgs -contains $argName) {
+                            Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' sends ' + $tool + '(' + $argName + '=...), an argument the ruleset declares non-existent - the scenario would reward a forbidden call')
+                        }
+                    }
+                }
                 if ($skillsText -notmatch ('(?<![A-Za-z0-9_])' + [regex]::Escape($tool) + '(?![A-Za-z0-9_])')) {
                     Add-Problem -Level warning -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' calls ' + $tool + ', which no skill under content/skills documents')
                 }
@@ -678,6 +724,96 @@ if (Test-Path -LiteralPath $agentsPath) {
     if ($size -gt $AgentsMaxBytes) {
         Add-Problem -Level error -File $agentsPath -Message ('always-on budget exceeded: ' + $size + ' bytes > ' + $AgentsMaxBytes + '. This file is loaded into every request - move detail into an on-demand rule instead of raising the ceiling.')
     }
+}
+
+# --------------------------------------------------------------------------
+# Load-set budgets
+# --------------------------------------------------------------------------
+
+foreach ($file in $ruleFiles) {
+    if ($file.Length -gt $RuleMaxBytes) {
+        Add-Problem -Level error -File $file.FullName -Message ('rule budget exceeded: ' + $file.Length + ' bytes > ' + $RuleMaxBytes + '. Split detail into a companion rule loaded on its own trigger.')
+    }
+}
+
+# What a typical full-cycle BSL change loads: triage, MCP policy and router, search,
+# standards index, playbooks, memory, gates, delivery and the operation skills of the
+# write -> validate path. Keep in sync with the AGENTS.md triggers.
+$hotPathFiles = @(
+    'AGENTS.md',
+    'content/rules/verification-policy.md', 'content/rules/verification-gates.md', 'content/rules/verification-delivery.md',
+    'content/rules/mcp-policy.md', 'content/rules/mcp-first-search.md', 'content/rules/coding-standards.md',
+    'content/rules/tooling-playbooks.md', 'content/rules/project-memory.md',
+    'content/skills/mcp-1c-tools/SKILL.md', 'content/skills/1c-code-search/SKILL.md',
+    'content/skills/1c-validate/SKILL.md', 'content/skills/1c-templates-memory/SKILL.md'
+)
+$hotBytes = 0
+foreach ($rel in $hotPathFiles) {
+    $path = Join-Path $Root $rel
+    if (Test-Path -LiteralPath $path) { $hotBytes += (Get-Item -LiteralPath $path).Length }
+    else { Add-Problem -Level error -File $path -Message 'hot-path budget: listed file is missing - update $hotPathFiles' }
+}
+Write-Host ('Full-cycle load set: {0:N0} bytes (~{1:N0} tokens), ceiling {2:N0}' -f $hotBytes, [math]::Round($hotBytes / 3.7), $HotPathMaxBytes)
+if ($hotBytes -gt $HotPathMaxBytes) {
+    Add-Problem -Level error -File (Join-Path $Root 'AGENTS.md') -Message ('full-cycle load set exceeded: ' + $hotBytes + ' bytes > ' + $HotPathMaxBytes + '. Deduplicate against the owning rule or move trigger-only detail out of the set.')
+}
+
+$corePath = Join-Path $Root 'content/rules/subagent-core.md'
+if ((Test-Path -LiteralPath $corePath) -and (Test-Path -LiteralPath $agentsPath) -and $agentFiles.Count -gt 0) {
+    $largestAgent = $agentFiles | Sort-Object Length -Descending | Select-Object -First 1
+    $startBytes = (Get-Item -LiteralPath $agentsPath).Length + (Get-Item -LiteralPath $corePath).Length + $largestAgent.Length
+    Write-Host ('Subagent start set: {0:N0} bytes (~{1:N0} tokens, largest prompt {2}), ceiling {3:N0}' -f $startBytes, [math]::Round($startBytes / 3.7), $largestAgent.Name, $SubagentStartMaxBytes)
+    if ($startBytes -gt $SubagentStartMaxBytes) {
+        Add-Problem -Level error -File $largestAgent.FullName -Message ('subagent start set exceeded: ' + $startBytes + ' bytes > ' + $SubagentStartMaxBytes + '. Keep shared obligations in subagent-core.md and role detail short.')
+    }
+}
+
+# --------------------------------------------------------------------------
+# Description budgets
+# --------------------------------------------------------------------------
+# Hosts list skill and agent descriptions (Cursor also agent-requested rule
+# descriptions) in every session, so their length is always-on cost exactly
+# like AGENTS.md. Get-Frontmatter keeps only the first line of a folded scalar,
+# hence the dedicated reader.
+
+function Get-DescriptionText {
+    param([string]$Path)
+    $lines = [System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8)
+    if ($lines.Count -eq 0 -or $lines[0].Trim() -ne '---') { return '' }
+    $parts = New-Object System.Collections.ArrayList
+    $inDescription = $false
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ($line.Trim() -eq '---') { break }
+        if ($line -match '^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$') {
+            if ($inDescription) { break }
+            if ($Matches[1] -eq 'description') {
+                $inDescription = $true
+                $value = $Matches[2].Trim()
+                if ($value -notmatch '^[>|][+-]?$') { [void]$parts.Add($value) }
+            }
+            continue
+        }
+        if ($inDescription) { [void]$parts.Add($line.Trim()) }
+    }
+    return (($parts -join ' ').Trim().Trim('"', "'"))
+}
+
+$descriptionBudgets = @(
+    @{ Kind = 'Skill'; Files = $skillFiles; Max = $SkillDescriptionMaxBytes },
+    @{ Kind = 'Agent'; Files = $agentFiles; Max = $AgentDescriptionMaxBytes },
+    @{ Kind = 'Rule';  Files = $ruleFiles;  Max = $RuleDescriptionMaxBytes }
+)
+foreach ($budget in $descriptionBudgets) {
+    $total = 0
+    foreach ($file in @($budget.Files)) {
+        $bytes = [System.Text.Encoding]::UTF8.GetByteCount((Get-DescriptionText -Path $file.FullName))
+        $total += $bytes
+        if ($bytes -gt $budget.Max) {
+            Add-Problem -Level error -File $file.FullName -Line 1 -Message ($budget.Kind.ToLower() + ' description budget exceeded: ' + $bytes + ' bytes > ' + $budget.Max + '. Hosts list it in every session - keep the trigger, move detail into the body.')
+        }
+    }
+    Write-Host ('{0} descriptions: {1:N0} bytes in {2} files, per-file ceiling {3:N0}' -f $budget.Kind, $total, @($budget.Files).Count, $budget.Max)
 }
 
 # --------------------------------------------------------------------------

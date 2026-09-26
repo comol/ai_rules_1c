@@ -1,5 +1,6 @@
 ---
 description: Install Windows-MCP (desktop UI automation MCP) as a last-resort alternative to home-grown screenshot/OCR
+userOnly: true
 ---
 
 # /install-windows-mcp — install Windows desktop UI MCP

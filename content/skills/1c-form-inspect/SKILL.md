@@ -1,6 +1,6 @@
 ---
 name: 1c-form-inspect
-description: "Read managed and ordinary 1C forms — find similar forms, inspect element trees, bindings, commands and handlers, read form / role / report artifacts, fetch the XSD or format spec of a form — through the code-metadata, graph and docs MCP servers. Use before generating or changing a form; the mutation itself goes through 1c-metadata-manage."
+description: "Read 1C managed and ordinary forms — similar forms, element trees, bindings, commands, handlers, form / role / report artifacts, form XSD or format spec — via the code-metadata, graph and docs MCP. Use before generating or changing a form; mutations go through 1c-metadata-manage."
 argument-hint: "<Kind.Name> [form name]"
 allowed-tools: mcp__1c-code-metadata-mcp__search_forms, mcp__1c-code-metadata-mcp__inspect_form_layout, mcp__1c-code-metadata-mcp__get_form_artifact, mcp__1c-code-metadata-mcp__get_xsd_schema, mcp__1c-graph-metadata-mcp__get_form_structure, mcp__1c-graph-metadata-mcp__find_form_links, mcp__1C-docs-mcp__formatspec
 ---

@@ -58,10 +58,15 @@ agents:
 commands:
   copyTo: ".claude/commands/{name}.md"
   frontmatter:
-    keep: [description, argumentHint, allowedTools]
+    # Source `userOnly: true` marks service commands the user runs by hand
+    # (install / update / toggles). Claude Code keeps the description of a
+    # `disable-model-invocation: true` command out of the session context;
+    # the user still invokes it, and the agent can still read the file.
+    keep: [description, argumentHint, allowedTools, userOnly]
     rename:
       argumentHint: argument-hint
       allowedTools: allowed-tools
+      userOnly: disable-model-invocation
 
 skills:
   copyTo: ".claude/skills/{name}/"

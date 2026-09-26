@@ -1,5 +1,5 @@
 ---
-description: Form-module code (`Form.Module.bsl` / ФормаМодуль) — client-server interaction, wiring event handlers into `Form.xml`, reserved property names forbidden as local variables, async pointers, form-data conversion. Load from `forms.md` when editing form-module logic or adding event handlers.
+description: Form-module code (`Form.Module.bsl`) — client-server interaction, event handlers wired into `Form.xml`, reserved names, async calls, form-data conversion. Load from `forms.md` when editing form-module logic or adding handlers.
 alwaysApply: false
 category: forms
 ---

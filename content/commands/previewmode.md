@@ -1,5 +1,6 @@
 ---
 description: Toggle the metadata preview mode — set METADATA_PREVIEW (on|auto|off) in .dev.env, or run a one-off preview for the current task
+userOnly: true
 argumentHint: "[on|auto|off|once|status]"
 ---
 

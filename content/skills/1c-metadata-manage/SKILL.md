@@ -1,6 +1,6 @@
 ---
 name: 1c-metadata-manage
-description: "1C metadata management — create, edit, validate, and remove configuration objects (catalogs, documents, registers, enums), managed forms, data composition schemas (SKD), spreadsheet layouts (MXL), roles, external processors (EPF/ERF), extensions (CFE), configurations (CF), databases, subsystems, command interfaces, templates. Use when working with 1C metadata structure."
+description: "Create, edit, validate and remove 1C metadata — catalogs, documents, registers, enums, managed forms, SKD, MXL, roles, EPF/ERF, CFE, CF, databases, subsystems, command interfaces, templates. Use for any change to 1C metadata structure."
 ---
 
 # 1C Metadata Manage — Skill Dispatch
@@ -111,7 +111,7 @@ The subagent already knows how to read the skill docs, execute PowerShell script
 | Roles and access rights — create, analyze, validate | role, rights, RLS, access, permissions | [role-manage.md](docs/role-manage.md) |
 | External processors/reports (EPF/ERF) — scaffold, build, dump, validate | EPF, ERF, data processor, external report, build, dump | [epf-manage.md](docs/epf-manage.md) |
 | BSP/SSL registration and commands | BSP, SSL, ExternalDataProcessorInfo, registration, command | [bsp-manage.md](docs/bsp-manage.md) |
-| Configuration (CF) — create, edit, analyze, validate | configuration, Configuration.xml, CF | [cf-manage.md](docs/cf-manage.md) |
+| Configuration (CF) and complete dump integrity (CF/CFE) — create, edit, analyze, validate | configuration, Configuration.xml, CF, missing/orphan objects, ConfigDumpInfo | [cf-manage.md](docs/cf-manage.md) |
 | Extensions (CFE) — create, borrow, diff, patch, validate | extension, CFE, borrow, interceptor, patch | [cfe-manage.md](docs/cfe-manage.md) |
 | Vendor support state — "на замке", editability, off-support | support, поддержка, на замке, замок, vendor updates, support-guard, SUPPORT_GUARD | [support-manage.md](docs/support-manage.md) |
 | XDTO packages — analyze, create from XSD, export, edit, validate | XDTO, package, XSD, XML schema, ФабрикаXDTO, namespace, exchange format, EnterpriseData | [xdto-manage.md](docs/xdto-manage.md) |

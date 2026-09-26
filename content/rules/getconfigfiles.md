@@ -10,6 +10,8 @@ category: workflow
 
 `/loadfrom1cbase` owns **infobase → source directory**; `/getconfigfiles` is its selected-object export procedure. `/update1cbase` owns **source directory → configuration → database configuration**; `/deploy-and-test` inherits that sequence. These are stages of one workflow, with the same infobase, main configuration or named extension, source directory and format throughout a pass.
 
+Resolve the current project and exact target through `content/rules/extension-workspace.md` before transfer. In the templates below, `EXPORT_PATH` and `EXTENSION_NAME` are the resolved source-root/extension values for that pass, not an instruction to rewrite settings. Metadata discovery for the selection uses that same project's verified MCP scope and extension layer (`content/rules/multi-contour-search.md`); identical object names in another project or the base do not establish the extension's export list.
+
 Before a transfer, establish the direction, target and scope from the task and current files. Inspect local changes in every destination that may be overwritten, including `ConfigDumpInfo.xml`; preserve them or obtain explicit overwrite authorization. A partial dump is not a complete snapshot suitable for an unrestricted full load. An empty selection is a no-op, never permission to remove the selection flag and process everything. Never silently widen a partial request to a full transfer.
 
 ### Export modes — `/DumpConfigToFiles`

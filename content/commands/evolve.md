@@ -1,5 +1,6 @@
 ---
 description: Aggregate accumulated rule-friction signals into user-approved behavior rules in LLM-RULES.md (ruleset self-improvement loop)
+userOnly: true
 argumentHint: "[note <text>|show]"
 ---
 

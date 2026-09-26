@@ -1,6 +1,6 @@
 ---
 name: v8unpack-cf
-description: "Read and write 1C binary artifacts without the 1C:Enterprise platform. Two workflows: an ordinary form (обычная форма) `Ext/Form.bin` through the `unpack_ordinary_form` / `build_ordinary_form` MCP tools, and a whole CF / CFE / EPF through the `v8unpack` CLI. Use when the task mentions `Form.bin`, обычные формы, a form with no `Form.xml`, or when you have a binary artifact and no infobase / Designer / `ibcmd`."
+description: "Read and write 1C binaries without the platform: an ordinary form `Ext/Form.bin` via the `unpack_ordinary_form` / `build_ordinary_form` MCP tools, a whole CF / CFE / EPF via the `v8unpack` CLI. Use for `Form.bin`, обычные формы, or a binary with no infobase / Designer / `ibcmd`."
 ---
 
 # v8unpack-cf — read and write 1C binary artifacts

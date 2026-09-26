@@ -35,21 +35,7 @@ Sources of the deltas: the Anthropic prompting best-practices set (`platform.cla
 
 ## 3. Accepted spellings (normalisation)
 
-Users write model names however they like. `/rulesmodel` and any manual `.dev.env` edit resolve free-form input to a slug from §2; the mapping is by **family + major version**, case-insensitive, ignoring spaces, dashes, dots, underscores, vendor prefixes and language:
-
-| Slug | Recognised as |
-|---|---|
-| `opus5` | `opus5`, `opus 5`, `opus-5`, `claude-opus-5`, `claude opus 5`, `Claude Opus 5.0`, `клод опус 5`, `опус 5` |
-| `sonnet5` | `sonnet5`, `sonnet 5`, `claude-sonnet-5`, `Claude Sonnet 5`, `сонет 5`, `соннет 5` |
-| `fable5` | `fable5`, `fable 5`, `claude-fable-5`, `Claude Fable 5`, `mythos5`, `claude-mythos-5`, `фейбл 5`, `фабл 5`, `мифос 5` |
-| `gpt56` | `gpt56`, `gpt5.6`, `gpt-5.6`, `GPT 5.6`, `openai gpt-5.6`, `гпт 5.6`, `гпт-5.6` |
-| `gpt6` | `gpt6`, `gpt-6`, `GPT 6`, `gpt-6-astra`, `gpt6astra`, `astra`, `astra6`, `astra 6`, `openai gpt-6`, `гпт 6`, `гпт-6`, `астра`, `астра6`, `астра 6` |
-
-Rules for the resolution:
-
-- **Ambiguous or unsupported input is never silently coerced.** `gpt-5.5`, `opus 4.8`, `sonnet 4.6`, `haiku`, `gemini`, `glm`, `qwen`, a bare `claude` or a bare `5` resolve to **nothing**: report the supported set and leave / clear the value (base ruleset). Offer the nearest same-family profile only as an explicit choice the user confirms.
-- **A version qualifier is not part of the slug.** Client-side variants and effort suffixes (`-thinking`, `-high`, `#xhigh`, `-max`, `-fast`, provider prefixes such as `anthropic/`, `openai/`) are stripped before matching: `anthropic/claude-opus-5#xhigh` → `opus5`.
-- The canonical slug written to `.dev.env` is always the dot-free form from §2 (`gpt56`, not `gpt5.6`; `gpt6`, not `gpt-6`) — rule file names and the `AGENTS.md` path rewriting both require it.
+Free-form input (`/rulesmodel` or a manual `.dev.env` edit) resolves to a slug from §2 by **family + major version**, case-insensitive, ignoring spaces, dashes, dots, underscores, vendor prefixes, client-side effort suffixes and language (`anthropic/claude-opus-5#xhigh` → `opus5`). Ambiguous or unsupported input (`gpt-5.5`, `opus 4.8`, `haiku`, a bare `claude` or `5`, …) resolves to **nothing** — base ruleset, never a silently coerced neighbour. The value written is always the dot-free slug of §2 (`gpt56`, `gpt6`) — rule file names and the `AGENTS.md` path rewriting require it. Alias table — `content/commands/rulesmodel.md → Accepted spellings`.
 
 ## 4. Precedence — what a profile may and may not change
 
@@ -84,7 +70,7 @@ These are the parts of both vendor guides that apply to **every** model. They ar
 - **Structure mixed content with tags.** Wrap distinct kinds of content (instructions vs. input vs. examples) in named tags in long briefs. Worked examples are a **per-model** lever, not part of this baseline: the latest guides of both vendors report that examples narrow the newest models' exploration and cost tokens, so each profile decides their place; an example remains the right tool to pin an exact output format.
 - **Long context: data first, question last.** Put long inputs (module listings, XML dumps, logs) above the instruction, and ground answers in quoted fragments of what you read.
 - **Say what to do, not what not to do.** Positive examples of the wanted shape beat prohibitions.
-- **Parallel independent tool calls; never guess parameters.** Batch independent MCP / file calls, keep dependent calls sequential, and never invent an argument name or value (`AGENTS.md → MCP Tool Calling → C.1`, `C.3`, `C.5`).
+- **Parallel independent tool calls; never guess parameters.** Batch independent MCP / file calls, keep dependent calls sequential, and never invent an argument name or value (`AGENTS.md → MCP Tool Calling → C.1`, `C.4`).
 - **Investigate before answering.** Never speculate about code you have not opened; read the file the user named (`AGENTS.md → MCP Tool Calling → A.3`, `content/rules/mcp-first-search.md`).
 - **Define success criteria and verify against them.** Turn imperative tasks into verifiable goals (`AGENTS.md → Development Procedure → 4`).
 - **Keep instructions non-contradictory.** Conflicting instructions degrade every model; resolve a conflict explicitly (`CONFUSION`, or the precedence chain above) instead of averaging the two readings.

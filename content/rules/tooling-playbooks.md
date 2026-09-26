@@ -1,5 +1,5 @@
 ---
-description: Per-task MCP tool playbooks (writing code, review, architecture, error fixing, performance, refactoring — including the safe-refactoring method and mandatory pre-refactor impact analysis, metadata XML, forms, integrations, documentation, platform-version comparison)
+description: Per-task MCP tool playbooks — code writing, review, architecture, error fixing, performance, safe refactoring with impact analysis, metadata XML, forms, integrations. Load for code / review / debug / refactor / performance / metadata work.
 alwaysApply: false
 category: tooling
 ---

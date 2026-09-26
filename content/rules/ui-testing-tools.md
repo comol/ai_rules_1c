@@ -12,11 +12,11 @@ Whether UI tests run at all is still gated by `UI_TESTING` + `INFOBASE_PUBLISH_U
 
 ## Preflight before web UI tests (hard gate)
 
-Runs **every time** Step 4 of `/deploy-and-test`, `1c-tester`, or any ad-hoc web UI check against `INFOBASE_PUBLISH_URL` is about to open the browser. Skipping this check and silently using `cursor-ide-browser` / Playwright / vision is a **defect**.
+Runs before an authorized web UI test. First apply `TOOL_AGENT_BROWSER`, `TOOL_BROWSER`, `TOOL_WINDOWS_MCP` (`content/rules/mcp-policy.md → Tool availability`). In `auto`, use the preflight below. With `TOOL_AGENT_BROWSER=off`, skip its probes/install question and select an eligible built-in browser. With `required`, a missing agent-browser blocks execution. If no permitted web driver works, report the test unrun; do not substitute desktop automation for a web scenario. A selected built-in driver's `required` failure also blocks the test.
 
 1. **Detect `agent-browser`.** Available if **either**:
    - CLI on `PATH` (`agent-browser --version` succeeds), **or**
-   - MCP server `agent-browser` is configured **and** its tools are exposed in the current session (e.g. `agent_browser_open`, `agent_browser_snapshot`).
+   - its MCP tools are callable in the current session (e.g. `agent_browser_open`, `agent_browser_snapshot`).
 2. **If available** — proceed with preference order below. No prompt.
 3. **If missing — stop before any browser action** and ask the user in Russian (one message, do not bury it in prose):
 
@@ -25,8 +25,8 @@ Runs **every time** Step 4 of `/deploy-and-test`, `1c-tester`, or any ad-hoc web
    > - **нет** — продолжу на встроенном browser MCP (дороже по токенам)
 
 4. **On «да» / yes / «установи»** — execute `/install-agent-browser` (`content/commands/install-agent-browser.md`) fully, then continue UI tests with `agent-browser` (after client restart if MCP tools are still missing — tell the user once and pause until they confirm restart, or fall back only if they refuse to restart and explicitly allow the built-in browser).
-5. **On «нет» / no / decline** — continue with the built-in browser MCP; state in one line that `agent-browser` was declined and token cost will be higher. Do not ask again in the same session unless the user starts a new UI-test request.
-6. **Autonomous / batch / no operator** (cannot ask) — do **not** auto-install. Log one line: `agent-browser missing — using built-in browser MCP (no operator to confirm /install-agent-browser)` and continue. Never invent a screenshotter/OCR stack.
+5. **On «нет» / no / decline** — continue with an eligible built-in browser; otherwise report the test unrun. Do not ask again in the same session unless the user starts a new UI-test request.
+6. **Autonomous / batch / no operator** — do not auto-install. Use an eligible built-in browser and state the fallback once; if none exists, report the test unrun. Never invent a screenshotter/OCR stack.
 
 This gate does **not** change `UI_TESTING` or `INFOBASE_PUBLISH_URL`. It only ensures the cheap driver is offered before an expensive run.
 
@@ -35,7 +35,7 @@ Once a driver is chosen, load `web-client-driving.md` before the first action �
 ## Preference order (hard)
 
 1. **`agent-browser`** (https://github.com/vercel-labs/agent-browser) — **default for 1C web client tests**. Use accessibility-tree snapshots (`snapshot` / MCP equivalents), refs (`@eN`), and typed interactions. Screenshots only for evidence in the test report, not as the primary observe loop. Install: `/install-agent-browser`.
-2. **Built-in browser MCP** of the active client (`cursor-ide-browser`, Playwright / `browser-use`, etc.) — fallback only after the preflight gate above (user declined, or no operator). Same human-like typing / TAB / wait rules as in `1c-tester`.
+2. **Built-in browser MCP** of the active client (`cursor-ide-browser`, Playwright / `browser-use`, etc.) — eligible fallback after the preflight above (agent-browser disabled, declined, or absent with no operator). Same human-like typing / TAB / wait rules as in `1c-tester`.
 3. **`Windows-MCP`** (https://github.com/CursorTouch/Windows-MCP) — **last resort**, Windows only. Use when the scenario truly needs desktop / thick-client / OS UI and the web client is not an option. Install: `/install-windows-mcp`.
 
 Never invent a parallel stack (PowerShell screenshot loops, custom OCR, ad-hoc vision pipelines) while a tool from this list can cover the need.

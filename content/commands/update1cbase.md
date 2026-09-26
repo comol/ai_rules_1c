@@ -9,6 +9,8 @@ Load the configuration (`/LoadConfigFromFiles`) from the current repository dire
 
 Read `content/rules/getconfigfiles.md → Configuration file synchronization contract`. A partial load is a first-class branch of this update procedure: **load → checks → database apply → requested directory refresh**. Do not stop after importing files or merely offer the database update when the user has already requested it.
 
+**Target before mode:** follow `content/rules/extension-workspace.md`. Select the current project, exact main/extension target and its source root before selecting `full` / `partial` / `git`. Substitute the resolved pass values in the templates below and carry them through load, checks, apply and any return dump. Do not change `EXTENSION_NAME` or redirect `EXPORT_PATH` in settings to select another extension. A Git diff spanning several roots must be split and validated per target; never feed its combined list into one extension load.
+
 ## Select load scope
 
 - `full` / `all`: load a verified complete snapshot. A selected-object dump or a delta directory is not a full-load source.
@@ -28,11 +30,14 @@ If the project still has legacy `infobasesettings.md`, migrate values to `.dev.e
 
 Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for. Keys read: `PLATFORM_PATH`, `INFOBASE_PATH` (**blocking** — if either is empty, ask once and write the value to `.dev.env`), `INFOBASE_KIND`, `IB_USER` / `IB_PASSWORD`, `EXTENSION_NAME`, `EXTENSION_NAMES` (`all` mode), `EXPORT_PATH`, `EXTENSIONS_PATH`, `LOG_PATH`, `RESULT_PATH`, `IBCMD_CONFIG`, `REPOSITORY_PATH` (repository gate below).
 
-**Dev/test gate:** this command forcibly terminates sessions while applying the DB configuration (`--session-terminate=force` / `-SessionTerminate force`). The target must be an explicitly identified dev/test infobase. If the current context does not establish that, stop before Step 3 and ask the user to confirm the target — never infer that an arbitrary `.dev.env` points to a test base. On production, drop the forced termination (`--session-terminate=prompt`, or omit `-SessionTerminate`) and agree on an update window with the user.
+**Dev/test gate:** this command forcibly terminates sessions while applying the DB configuration (`--session-terminate=force` / `-SessionTerminate force`). The target must be an explicitly identified dev/test infobase. The gate reads `.dev.env` `INFOBASE_ROLE` (canon `content/rules/dev-standards-env.md → INFOBASE_ROLE`):
+- `dev` / `test` — the target is identified; proceed.
+- `prod` — do not run Steps 2–3 against it. Hand the user the exact commands with the production overrides (no forced termination: `--session-terminate=prompt`, or omit `-SessionTerminate`; an agreed update window; a verified backup first) and stop.
+- empty — if the current context does not establish the role, stop before Step 3 and ask the user to confirm the target. Never infer that an arbitrary `.dev.env` points to a test base.
 
 **EDT gate:** when `.dev.env` `USE_EDT=true`, establish the source format before running. This command loads a **Designer XML dump**; it cannot load an EDT (`src/**/*.mdo`) tree. In an EDT-format project either produce a dump first (`export_configuration_to_xml`) or let EDT apply the change (`update_database`) — and keep **one deployment owner per run**, named in the `IB tooling:` line. Canon — `content/rules/edt-workflow.md → DB update, launches, external objects`.
 
-**Repository gate:** when `REPOSITORY_PATH` is non-empty, the target infobase is bound to a configuration repository — the objects being loaded must be **locked in the repository first** (`1c-repository-manage` skill, process — its `docs/repo-sdlc.md`); otherwise the load fails or silently skips read-only objects. A "configuration is read-only / object locked" line in the load/update log routes to that skill, not into the retry loop below. **Never unbind** the configuration from the repository to make the load proceed.
+**Repository gate:** when `REPOSITORY_PATH` is non-empty, the target infobase is bound to a configuration repository — the objects being loaded must be **locked in the repository first** (`1c-repository-manage` skill, process — its `docs/repo-sdlc.md`); otherwise the load fails or silently skips read-only objects. A "configuration is read-only / object locked" line in the load/update log routes to that skill, not into the retry loop below. **Never unbind** the configuration from the repository to make the load proceed. Before Step 2, run the freshness check (`repo-sdlc.md → Source files follow the infobase`). If an object of the load list changed in the infobase after its files were exported, the load is blocked: loading it would silently overwrite a teammate's committed change.
 
 When substituting `.dev.env` values into the templates below, resolve `{INFOBASE_FLAG}` once from the effective `INFOBASE_KIND` (`/F` for `file`, `/S` for `server`; reject any other value), and substitute resolved `{LOG_PATH}` / `{RESULT_PATH}` values that contain `$env:` double-quoted — single quotes do not expand it. Delete a stale `{RESULT_PATH}` file before every Designer launch.
 
@@ -181,11 +186,13 @@ Kill **only the PID started by this command**. Never blanket-kill `Get-Process 1
 
 Loads the **effective snapshot**: main configuration + every extension from `EXTENSION_NAMES` (`.dev.env`, comma-separated, order = load order). Used by `/restore-testbase`, `/build-release` and whenever the user asks to deploy "with extensions".
 
-- If `EXTENSION_NAMES` is empty, fall back to the regular single-target run above and note that in the report.
+- If `EXTENSION_NAMES` is empty, resolve the requested inventory via `content/rules/extension-workspace.md`. Confirmed no extensions means a full main pass with no extension option; unresolved inventory must be resolved before any full-snapshot mutation. Never fall back to `EXTENSION_NAME` for `all`.
+- Before modifying the infobase, preflight **every** selected source root for identity, format, completeness and required dependencies. A missing/partial extension source blocks the requested full snapshot before the main pass; resolve it from the existing context or ask only when the owner must change scope. Do not discover an already-visible missing root after applying main.
 - **Pass 1 — main configuration:** Steps 2–3 as written, from `{EXPORT_PATH}`, without `-Extension` / `--extension`.
 - **Pass per extension**, in `EXTENSION_NAMES` order: the same Steps 2–3 with `-Extension <Name>` / `--extension=<Name>`, sources from `{EXTENSIONS_PATH}\<Name>\`.
 - **Every extension pass runs Step 2c between load and update**; a failure stops that pass before `/UpdateDBCfg`.
-- A listed extension whose sources directory is missing or empty breaks the snapshot contract — stop and ask the user (skip it or abort); never skip silently.
+- A listed extension whose sources directory is missing or empty breaks the snapshot contract — resolve its source or an explicitly authorized scope change before starting; never skip silently.
+- `EXTENSION_NAMES` is a load sequence, not runtime-order evidence or authorization to delete unlisted installed extensions. Preserve/identify relevant extras and report any runtime mismatch. Save each pass's log/result evidence before the next pass reuses those paths.
 - The **Update retry loop** applies to every pass with its own 3-attempt budget. A pass that exhausts its budget stops the mode; report which passes completed and which failed.
 
 ## Step 4. Final report

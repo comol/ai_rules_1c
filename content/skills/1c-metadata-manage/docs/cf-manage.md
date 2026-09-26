@@ -93,6 +93,50 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scr
 
 Exit code: 0 = OK, 1 = errors.
 
+### Complete dump integrity
+
+For a **complete hierarchical Designer XML dump**, run the read-only composition
+check after `cf-validate` (or `cfe-validate` for an extension):
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/dump-validate.ps1 -ConfigPath "<dump-directory>" -Format Json
+```
+
+`ConfigPath` also accepts `Configuration.xml`. `Format` is `Text` by default or
+`Json` for automation. Optional `OutFile` saves the same result as UTF-8 with BOM;
+it must be outside the checked dump, so a report cannot overwrite its sources.
+The command does not repair, delete or regenerate any source file.
+
+Coverage:
+
+- Declared root metadata objects and recursively declared nested subsystems:
+  missing descriptor files, orphan descriptor files, duplicate declarations,
+  unknown composition types, invalid names, unreadable XML and mismatched names.
+- Each scanned descriptor's format version against `Configuration.xml`.
+- Object references in configuration `Default*` properties and subsystem
+  `Content`. Nested subsystem references resolve to their own descriptor.
+- Optional `ConfigDumpInfo.xml`: root/format, version and records whose owning
+  metadata object is absent. Attribute/module records are resolved to their
+  owner; their individual existence is outside this check. Absence of
+  `ConfigDumpInfo.xml` alone is not an error.
+
+JSON has `schema_version: 1`, `status` (`valid`, `invalid`, `error`), `root`,
+`objects_checked` and `findings`. Each finding has stable `kind`, `severity`,
+relative `path`, qualified `object` and human-readable `message`. Consumers use
+`kind`, never parse `message`. Main integrity codes are `missing-file`,
+`orphan-file`, `duplicate-entry`, `unknown-type`, `version-mismatch`,
+`dangling-reference`, `dump-info-version` and `dump-info-extra`; malformed input
+and an incomplete scan also return findings. Exit 0 means no findings within
+this coverage; exit 1 means findings or an incomplete scan.
+
+Do not run this on a partial export or automatically during intermediate
+scaffolding: unexported objects would correctly appear as missing. This is a
+separate check from per-object/schema validation, UUID checking and platform
+loading. It does not inspect forms/templates internals, BSL, all metadata
+references or extension applicability. Supplier configurations under `Ext` are
+not traversed. Object ordering remains the responsibility of `cf-validate` /
+`cfe-validate`; there is no new alphabetical-order requirement.
+
 ---
 
 ## Typical Workflow

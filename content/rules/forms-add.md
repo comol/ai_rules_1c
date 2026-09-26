@@ -1,5 +1,5 @@
 ---
-description: Generating or significantly altering a managed 1C form (`Form.xml` + `Form.Module.bsl`), including form-presentation rules — programmatic modification of typical forms, element placement, fill checking, form commands. Load from `forms.md` for any form-creation or form-presentation task.
+description: Creating or substantially changing a managed form (`Form.xml` + `Form.Module.bsl`), including typical-form modification, element placement, fill checks, commands. Load from `forms.md` for any form creation or presentation task.
 alwaysApply: false
 category: forms
 ---

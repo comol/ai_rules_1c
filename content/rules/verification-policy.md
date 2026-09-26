@@ -10,6 +10,8 @@ category: quality
 
 The closing gates themselves live in `verification-gates.md`; delivery-only checks live in `verification-delivery.md`.
 
+Depth controls validators, not UI confirmation or completion review. `lite` is not a waiver of either; OpenSpec DoD: `sdd-integrations.md`.
+
 ## Validator budget
 
 Single owner of the retry budget for `syntaxcheck`, `check_1c_code` and `review_1c_code`; `AGENTS.md → MCP Tool Calling → B.1` and the gate descriptions point here.
@@ -25,7 +27,7 @@ Single owner of the retry budget for `syntaxcheck`, `check_1c_code` and `review_
 
 ## Verification depth levels (`VERIFICATION_DEPTH`)
 
-The `VERIFICATION_DEPTH` parameter in `.dev.env` (`dev-standards-env.md → "Process-tuning parameters"`) tunes **how deep** Gates 1–3 run for **low-risk** edits. It is **Defaulted** — empty / invalid = `standard`; the canonical editor is the `/litemode` slash command (which also flips `UI_TESTING` at level `lite`); the agent must not ask for the value. Three levels:
+SDLC QA profiles set `VERIFICATION_DEPTH` in `.dev.env`: `lite`, `standard` (default), `full`. They tune Gates 1–3 for **low-risk** edits; task paths (`docs-fix`, `spec-authoring`, `quick-fix`, `full-cycle`) remain risk-based. Empty / invalid = `standard`; never ask at task time. Select with `/sdlc lite|standard|full`; `/sdlc status` reads the state. `/litemode` remains compatible. Selecting `lite` also sets `UI_TESTING=off`. Three levels:
 
 | Level | Full-cycle change | Quick-fix-eligible edit (Triage details below) |
 |---|---|---|
