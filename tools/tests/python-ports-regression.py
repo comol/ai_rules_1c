@@ -2386,6 +2386,12 @@ def main():
                         help="Skip cases that need a PowerShell host (Linux CI job).")
     args = parser.parse_args()
 
+    # Case names and failure messages carry Cyrillic 1C names; a redirected
+    # Windows stdout (the CI runner) defaults to cp1252 and cannot encode them.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
     root = os.path.join(tempfile.gettempdir(), "1c-rules-py-regr-" + uuid.uuid4().hex[:8])
     os.makedirs(root, exist_ok=True)
     print(f"Work dir: {root}")
