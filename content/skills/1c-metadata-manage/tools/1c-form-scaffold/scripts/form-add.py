@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# form-add v1.11 — Add managed form to 1C config object
+# form-add v1.12 — Add managed form to 1C config object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, pinned at
 #         ecd289fe11733028d87b55284ea9fb5feff8f513 — the same upstream state the
 #         vendored form-add.ps1 was synced from.
@@ -8,6 +8,9 @@
 #          skills/1c-metadata-manage/NOTICE.md).
 # Local: the support guard reads `.dev.env` `SUPPORT_GUARD` and fails
 #        closed on an unreadable support state, mirroring form-add.ps1.
+#        -FormName must be a 1C identifier (refused with exit 2 before any path
+#        or XPath is built from it), and the object form of an information
+#        register names its RecordManager main attribute "Запись".
 
 import argparse
 import json
@@ -250,6 +253,11 @@ NSMAP = {
     "v8": "http://v8.1c.ru/8.1/data/core",
 }
 
+# A 1C identifier: a Latin or Cyrillic letter or underscore, then letters, digits
+# and underscores, up to 128 characters (the remove-form allowlist).
+CYRILLIC = "А-яЁё"
+FORM_NAME_RE = re.compile(rf"[A-Za-z_{CYRILLIC}][0-9A-Za-z_{CYRILLIC}]{{0,127}}")
+
 
 def detect_format_version(d):
     while d:
@@ -346,6 +354,14 @@ def main():
 
     object_path = args.ObjectPath
     form_name = args.FormName
+    # The name becomes a file name, a directory name and an XPath literal below,
+    # so it is checked before any of them is built. Same allowlist as
+    # remove-form.py; fullmatch so a trailing newline is not accepted.
+    if not FORM_NAME_RE.fullmatch(form_name or ""):
+        print(f"Недопустимое имя формы (-FormName): {form_name!r}. Ожидается идентификатор 1С "
+              f"(латиница или кириллица, цифры и подчёркивание, не начинается с цифры, "
+              f"до 128 символов).", file=sys.stderr)
+        sys.exit(2)
     synonym = args.Synonym if args.Synonym is not None else form_name
     purpose = args.Purpose
     set_default = args.SetDefault
@@ -573,8 +589,12 @@ def main():
         )
 
     else:
-        # Object — object form
-        main_attr_name = "\u041e\u0431\u044a\u0435\u043a\u0442"
+        # Object — object form. An information register names its RecordManager
+        # main attribute "Запись", as the Configurator's record forms do.
+        if object_type == "InformationRegister":
+            main_attr_name = "\u0417\u0430\u043f\u0438\u0441\u044c"
+        else:
+            main_attr_name = "\u041e\u0431\u044a\u0435\u043a\u0442"
 
         attr_type_map = {
             "Document": "DocumentObject",

@@ -1,4 +1,4 @@
-# meta-validate v1.12 — Validate 1C metadata object structure (Python port) (+корневой <Type>: скаляр без структуры = ошибка)
+# meta-validate v1.13 — Validate 1C metadata object structure (Python port) (+корневой <Type>: скаляр без структуры = ошибка)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, pinned at
 #         ecd289fe11733028d87b55284ea9fb5feff8f513 — the same upstream state the
 #         vendored meta-validate.ps1 was synced from.
@@ -11,6 +11,17 @@
 #        and a scalar registration with no `Forms/<Name>.xml` next to it pass as
 #        valid. Here a form registration must be a scalar reference and must have
 #        its descriptor file on disk.
+#        v1.13 (local, both runtimes): the object, its form descriptors and
+#        Form.xml files carry the version of Configuration.xml (1e/6e); every
+#        GeneratedType category is required and named exactly (2); Default* /
+#        Auxiliary*Form references resolve and match the form role (6f); a form
+#        binds Description / Code only when the length is positive (6g), and
+#        the main object form shows a mandatory Description nobody fills (6h,
+#        warning); names
+#        are unique case-insensitively and across attributes, tabular sections,
+#        dimensions and resources (8); InformationRegister forbids Periodicity
+#        and DefaultRecordSetForm (12); a type spelled with an export folder name
+#        (cfg:Catalogs.X) is an error (16a).
 import argparse
 import os
 import re
@@ -114,6 +125,17 @@ for _ in range(4):
         config_dir = probe
         break
     probe = os.path.dirname(probe)
+
+# Format version of the configuration the object belongs to (local, checks 1e / 6e).
+config_version = ""
+if config_dir:
+    try:
+        with open(os.path.join(config_dir, "Configuration.xml"), "r", encoding="utf-8-sig") as f:
+            m = re.search(r'<MetaDataObject[^>]+version="(\d+\.\d+)"', f.read(2000))
+        if m:
+            config_version = m.group(1)
+    except OSError:
+        pass
 
 # ── output infrastructure ────────────────────────────────────
 
@@ -305,6 +327,49 @@ forbidden_properties = {
     "ChartOfAccounts":            ["Autonumbering", "Hierarchical"],
     "ChartOfCalculationTypes":    ["CheckUnique", "Autonumbering"],
     "ExchangePlan":               ["CodeType", "CheckUnique", "Autonumbering"],
+    # Local: the periodicity property is InformationRegisterPeriodicity, and an
+    # information register has no record-set default form.
+    "InformationRegister":        ["Periodicity", "DefaultRecordSetForm"],
+}
+
+# GeneratedType names that do not follow <Type><Category>.<Name> (Designer dumps).
+generated_type_prefix_exceptions = {
+    ("DefinedType", "DefinedType"): "DefinedType",
+    ("ChartOfCharacteristicTypes", "Characteristic"): "Characteristic",
+    ("CalculationRegister", "Recalcs"): "RecalculationsManager",
+    ("ChartOfCalculationTypes", "DisplacingCalculationTypes"): "DisplacingCalculationTypes",
+    ("ChartOfCalculationTypes", "DisplacingCalculationTypesRow"): "DisplacingCalculationTypesRow",
+    ("ChartOfCalculationTypes", "BaseCalculationTypes"): "BaseCalculationTypes",
+    ("ChartOfCalculationTypes", "BaseCalculationTypesRow"): "BaseCalculationTypesRow",
+    ("ChartOfCalculationTypes", "LeadingCalculationTypes"): "LeadingCalculationTypes",
+    ("ChartOfCalculationTypes", "LeadingCalculationTypesRow"): "LeadingCalculationTypesRow",
+}
+
+# Export folder names that are sometimes written where a type belongs
+# (cfg:Catalogs.X instead of cfg:CatalogRef.X) -> the reference type, if any.
+export_folder_types = {
+    "Catalogs": "CatalogRef", "Documents": "DocumentRef", "Enums": "EnumRef",
+    "ChartsOfAccounts": "ChartOfAccountsRef",
+    "ChartsOfCharacteristicTypes": "ChartOfCharacteristicTypesRef",
+    "ChartsOfCalculationTypes": "ChartOfCalculationTypesRef",
+    "BusinessProcesses": "BusinessProcessRef", "ExchangePlans": "ExchangePlanRef",
+    "Tasks": "TaskRef", "DefinedTypes": "DefinedType",
+    "InformationRegisters": "", "AccumulationRegisters": "", "AccountingRegisters": "",
+    "CalculationRegisters": "", "Constants": "", "DataProcessors": "", "Reports": "",
+    "DocumentJournals": "",
+}
+
+# An assignment of the standard Description in BSL (6h): "<x>.Наименование =" or a
+# bare "Наименование =" at the start of a line in an object module.
+DESCRIPTION_ASSIGNMENT = re.compile(r"(?im)(?:\.\s*|^[ \t]*)(?:Наименование|Description)\s*=(?!=)")
+
+# Default*Form / Auxiliary*Form property -> role its form must have. Choice forms are
+# not role-checked: vendor configurations point DefaultChoiceForm at object forms.
+default_form_roles = {
+    "DefaultObjectForm": "object", "AuxiliaryObjectForm": "object",
+    "DefaultFolderForm": "object", "AuxiliaryFolderForm": "object",
+    "DefaultRecordForm": "record", "AuxiliaryRecordForm": "record",
+    "DefaultListForm": "list", "AuxiliaryListForm": "list",
 }
 
 # ── Namespaces ───────────────────────────────────────────────
@@ -382,6 +447,10 @@ if root_ns != expected_ns:
 version = root.get("version", "")
 if not version:
     report_warn("1. Missing version attribute on MetaDataObject")
+elif config_version and version != config_version:
+    report_error(f"1e. Format version '{version}' differs from Configuration.xml ({config_version}) — "
+                 f"the Configurator refuses to load a dump with mixed format versions")
+    check1_ok = False
 elif version not in ("2.17", "2.20"):
     report_warn(f"1. Unusual version '{version}' (expected 2.17 or 2.20)")
 
@@ -472,9 +541,15 @@ elif md_type in generated_type_categories:
             gt_category = gt.get("category", "")
             found_categories.append(gt_category)
 
-            # Validate name format
+            # Validate name format: exactly <Type><Category>.<Name> for a known category
             if gt_name and obj_name != "(unknown)":
-                if not gt_name.endswith(f".{obj_name}"):
+                if gt_category in expected_categories:
+                    prefix = generated_type_prefix_exceptions.get((md_type, gt_category), md_type + gt_category)
+                    expected_name = f"{prefix}.{obj_name}"
+                    if gt_name != expected_name:
+                        report_error(f"2. GeneratedType '{gt_category}' name '{gt_name}' — expected '{expected_name}'")
+                        check2_ok = False
+                elif not gt_name.endswith(f".{obj_name}"):
                     report_error(f"2. GeneratedType name '{gt_name}' does not end with '.{obj_name}'")
                     check2_ok = False
 
@@ -504,7 +579,9 @@ elif md_type in generated_type_categories:
         # Check count mismatch
         missing_cats = [c for c in expected_categories if c not in found_categories]
         if missing_cats:
-            report_warn(f"2. Missing GeneratedType categories: {', '.join(missing_cats)}")
+            report_error(f"2. Missing GeneratedType categories: {', '.join(missing_cats)} — "
+                         f"every category of {md_type} is required")
+            check2_ok = False
 
         if check2_ok:
             cat_list = ", ".join(sorted(found_categories))
@@ -754,6 +831,192 @@ if stopped:
     finalize()
     sys.exit(1)
 
+# ── Checks 6e-6g (local): versions, default-form references, standard fields ──
+#
+# 6e: a form descriptor and its Form.xml carry the version of Configuration.xml.
+# 6f: a Default*/Auxiliary*Form property names a form of this object that is
+#     declared in ChildObjects (or an existing common form), and an object,
+#     record or list slot points at a form with that role (main attribute type).
+# 6g: a form whose main attribute is this object binds <Main>.Description /
+#     <Main>.Code only when DescriptionLength / CodeLength is positive — with 0
+#     the standard attribute does not exist.
+
+declared_forms = []
+if child_obj_node is not None:
+    declared_forms = [text_of(c) for c in child_obj_node
+                      if isinstance(c.tag, str) and local_name(c) == "Form"
+                      and len([x for x in c if isinstance(x.tag, str)]) == 0 and text_of(c)]
+object_dir_path = os.path.join(os.path.dirname(resolved_path),
+                               os.path.splitext(os.path.basename(resolved_path))[0])
+LF_NS = "http://v8.1c.ru/8.3/xcf/logform"
+form_roots = {}
+
+
+def form_xml_root(form_name):
+    """Parsed Ext/Form.xml of a declared managed form, or None (ordinary / absent)."""
+    if form_name not in form_roots:
+        path = os.path.join(object_dir_path, "Forms", form_name, "Ext", "Form.xml")
+        root_el = None
+        if os.path.isfile(path):
+            try:
+                root_el = etree.parse(path).getroot()
+            except etree.XMLSyntaxError:
+                root_el = None
+        form_roots[form_name] = root_el
+    return form_roots[form_name]
+
+
+def form_main_attribute(form_root):
+    """(name, [types]) of the main attribute of a managed form, or (None, [])."""
+    for attr in form_root.findall(f"{{{LF_NS}}}Attributes/{{{LF_NS}}}Attribute"):
+        main = attr.find(f"{{{LF_NS}}}MainAttribute")
+        if main is not None and (main.text or "").strip() == "true":
+            types = [(t.text or "").strip() for t in attr.iter("{http://v8.1c.ru/8.1/data/core}Type")
+                     if (t.text or "").strip()]
+            return attr.get("name", ""), types
+    return None, []
+
+
+def form_role(form_root):
+    _, types = form_main_attribute(form_root)
+    if types == ["cfg:DynamicList"]:
+        return "list"
+    if len(types) == 1 and re.match(r"^cfg:\w+Object\.", types[0]):
+        return "object"
+    if len(types) == 1 and re.match(r"^cfg:\w+RecordManager\.", types[0]):
+        return "record"
+    return ""
+
+
+if config_version and declared_forms:
+    check6e_ok = True
+    for form_name in declared_forms:
+        descriptor = os.path.join(object_dir_path, "Forms", form_name + ".xml")
+        if os.path.isfile(descriptor):
+            try:
+                d_version = etree.parse(descriptor).getroot().get("version", "")
+            except etree.XMLSyntaxError:
+                d_version = ""
+            if d_version and d_version != config_version:
+                report_error(f"6e. Form descriptor '{form_name}' has version '{d_version}', "
+                             f"Configuration.xml has '{config_version}'")
+                check6e_ok = False
+        form_root = form_xml_root(form_name)
+        if form_root is not None:
+            f_version = form_root.get("version", "")
+            if f_version and f_version != config_version:
+                report_error(f"6e. Form '{form_name}' (Ext/Form.xml) has version '{f_version}', "
+                             f"Configuration.xml has '{config_version}'")
+                check6e_ok = False
+    if check6e_ok:
+        report_ok(f"6e. Form versions match Configuration.xml ({config_version}): {len(declared_forms)} form(s)")
+
+if props_node is not None and obj_name != "(unknown)":
+    check6f_ok = True
+    checked_refs = 0
+    for prop in props_node:
+        if not isinstance(prop.tag, str):
+            continue
+        prop_name = local_name(prop)
+        if not re.match(r"^(Default|Auxiliary)\w*Form$", prop_name):
+            continue
+        ref = text_of(prop)
+        if not ref:
+            continue
+        checked_refs += 1
+        parts = ref.split(".")
+        if len(parts) == 2 and parts[0] == "CommonForm":
+            if config_dir and not os.path.isfile(os.path.join(config_dir, "CommonForms", parts[1] + ".xml")):
+                report_error(f"6f. {prop_name} = '{ref}': common form '{parts[1]}' not found in CommonForms/")
+                check6f_ok = False
+            continue
+        own_prefix = f"{md_type}.{obj_name}.Form."
+        if len(parts) != 4 or not ref.startswith(own_prefix):
+            report_error(f"6f. {prop_name} = '{ref}': expected '{own_prefix}<Form>' or 'CommonForm.<Name>'")
+            check6f_ok = False
+            continue
+        if parts[3] not in declared_forms:
+            report_error(f"6f. {prop_name} = '{ref}': form '{parts[3]}' is not declared in ChildObjects")
+            check6f_ok = False
+            continue
+        expected_role = default_form_roles.get(prop_name)
+        form_root = form_xml_root(parts[3]) if expected_role else None
+        if form_root is None:
+            continue
+        actual_role = form_role(form_root)
+        if actual_role and actual_role != expected_role:
+            report_error(f"6f. {prop_name} = '{ref}': the form is a {actual_role} form "
+                         f"(main attribute type), expected a {expected_role} form")
+            check6f_ok = False
+    if check6f_ok and checked_refs > 0:
+        report_ok(f"6f. Default form references: {checked_refs} resolved")
+
+if props_node is not None and declared_forms and obj_name != "(unknown)":
+    zero_fields = []
+    for length_prop, field in (("DescriptionLength", "Description"), ("CodeLength", "Code")):
+        length_node = find(props_node, f"md:{length_prop}")
+        if length_node is not None and text_of(length_node) == "0":
+            zero_fields.append((length_prop, field))
+    if zero_fields:
+        check6g_ok = True
+        own_type = f"cfg:{md_type}Object.{obj_name}"
+        for form_name in declared_forms:
+            form_root = form_xml_root(form_name)
+            if form_root is None:
+                continue
+            main_name, main_types = form_main_attribute(form_root)
+            if not main_name or main_types != [own_type]:
+                continue
+            paths = {(dp.text or "").strip() for dp in form_root.iter(f"{{{LF_NS}}}DataPath")}
+            for length_prop, field in zero_fields:
+                if f"{main_name}.{field}" in paths:
+                    report_error(f"6g. Form '{form_name}' binds '{main_name}.{field}', but {length_prop}=0 — "
+                                 f"the object has no {field}")
+                    check6g_ok = False
+        if check6g_ok:
+            report_ok(f"6g. Standard fields: no binding to a zero-length {'/'.join(f for _, f in zero_fields)}")
+
+# 6h (warning): the main object form of an object with a mandatory Description
+# (DescriptionLength > 0, FillChecking ShowError — the platform default without a
+# StandardAttributes block) does not show <Main>.Description, and neither the form
+# module nor the object / manager module assigns it: the item cannot be written
+# from that form. A warning, not an error — the value may be filled elsewhere.
+if props_node is not None and obj_name != "(unknown)":
+    desc_length = text_of(find(props_node, "md:DescriptionLength"))
+    default_object_ref = text_of(find(props_node, "md:DefaultObjectForm"))
+    own_prefix = f"{md_type}.{obj_name}.Form."
+    if (re.match(r"^\d+$", desc_length) and int(desc_length) > 0
+            and default_object_ref.startswith(own_prefix)
+            and default_object_ref[len(own_prefix):] in declared_forms):
+        std_block = find(props_node, "md:StandardAttributes")
+        fill_node = find(props_node, "md:StandardAttributes/xr:StandardAttribute[@name='Description']/xr:FillChecking")
+        fill_checking = text_of(fill_node) if fill_node is not None else ("" if std_block is not None else "ShowError")
+        default_form = default_object_ref[len(own_prefix):]
+        form_root = form_xml_root(default_form)
+        if fill_checking == "ShowError" and form_root is not None:
+            main_name, main_types = form_main_attribute(form_root)
+            paths = {(dp.text or "").strip() for dp in form_root.iter(f"{{{LF_NS}}}DataPath")}
+            if main_name and main_types == [f"cfg:{md_type}Object.{obj_name}"] \
+                    and f"{main_name}.Description" not in paths:
+                assigned = False
+                for rel in (os.path.join("Forms", default_form, "Ext", "Form", "Module.bsl"),
+                            os.path.join("Ext", "ObjectModule.bsl"), os.path.join("Ext", "ManagerModule.bsl")):
+                    module_path = os.path.join(object_dir_path, rel)
+                    if os.path.isfile(module_path):
+                        with open(module_path, "r", encoding="utf-8-sig") as f:
+                            if DESCRIPTION_ASSIGNMENT.search(f.read()):
+                                assigned = True
+                                break
+                if not assigned:
+                    report_warn(f"6h. Default object form '{default_form}' does not show '{main_name}.Description', "
+                                f"which is mandatory (DescriptionLength={desc_length}, FillChecking=ShowError), and no "
+                                f"form, object or manager module assigns it — writing from this form fails unless the value "
+                                f"is filled elsewhere")
+
+if stopped:
+    finalize()
+    sys.exit(1)
+
 # ── Check 7: Child elements -- UUID, Name, Type ──────────────
 
 
@@ -866,8 +1129,12 @@ if stopped:
 # ── Check 8: Name uniqueness ─────────────────────────────────
 
 
-def check_uniqueness(nodes, kind):
-    names = {}
+def check_uniqueness(nodes, kind, names=None):
+    """1C names are case-insensitive. Pass one shared `names` dict to check several
+    kinds against each other (attributes, tabular sections, dimensions, resources
+    are fields of one object and share a namespace)."""
+    if names is None:
+        names = {}
     has_dupes = False
     for node in nodes:
         el_props = find(node, "md:Properties")
@@ -877,40 +1144,31 @@ def check_uniqueness(nodes, kind):
         if el_name is None or not inner_text(el_name):
             continue
         name_val = inner_text(el_name)
-        if name_val in names:
-            report_error(f"8. Duplicate {kind} name: '{name_val}'")
+        key = name_val.lower()
+        if key in names:
+            other_kind, other_name = names[key]
+            if other_kind == kind and other_name == name_val:
+                report_error(f"8. Duplicate {kind} name: '{name_val}'")
+            else:
+                report_error(f"8. {kind} '{name_val}' clashes with {other_kind} '{other_name}' — "
+                             f"names are case-insensitive and shared by attributes, tabular sections, "
+                             f"dimensions and resources")
             has_dupes = True
         else:
-            names[name_val] = True
+            names[key] = (kind, name_val)
     return not has_dupes
 
 
 if child_obj_node is not None:
     check8_ok = True
 
-    # Attributes
-    attrs = find_all(child_obj_node, "md:Attribute")
-    if len(attrs) > 0:
-        if not check_uniqueness(attrs, "Attribute"):
-            check8_ok = False
-
-    # TabularSections
-    tss = find_all(child_obj_node, "md:TabularSection")
-    if len(tss) > 0:
-        if not check_uniqueness(tss, "TabularSection"):
-            check8_ok = False
-
-    # Dimensions
-    dims = find_all(child_obj_node, "md:Dimension")
-    if len(dims) > 0:
-        if not check_uniqueness(dims, "Dimension"):
-            check8_ok = False
-
-    # Resources
-    ress = find_all(child_obj_node, "md:Resource")
-    if len(ress) > 0:
-        if not check_uniqueness(ress, "Resource"):
-            check8_ok = False
+    # Attributes, TabularSections, Dimensions, Resources — one shared namespace
+    field_names = {}
+    for field_kind in ("Attribute", "TabularSection", "Dimension", "Resource"):
+        field_nodes = find_all(child_obj_node, f"md:{field_kind}")
+        if len(field_nodes) > 0:
+            if not check_uniqueness(field_nodes, field_kind, field_names):
+                check8_ok = False
 
     # EnumValues
     evs = find_all(child_obj_node, "md:EnumValue")
@@ -1438,6 +1696,25 @@ if child_obj_node is not None:
                 check15_ok = False
     if check15_ok and cmd_count > 0:
         report_ok(f"15. Commands: {cmd_count} command(s), groups valid")
+
+# ── Check 16a (local): a type spelled with an export folder name ──
+# cfg:Catalogs.X is the directory of the dump, not a type; the platform refuses it.
+# Checked without a configuration directory: the spelling is wrong on its own.
+
+folder_type_values = {}
+for tn in find_all(root, ".//v8:Type | .//v8:TypeSet"):
+    tv = inner_text(tn).strip()
+    if not tv:
+        continue
+    bare = tv.split(":", 1)[1] if ":" in tv else tv
+    head_seg = bare.split(".", 1)[0]
+    if "." in bare and head_seg in export_folder_types:
+        folder_type_values[tv] = head_seg
+for tv in sorted(folder_type_values):
+    head_seg = folder_type_values[tv]
+    ref_kind = export_folder_types[head_seg]
+    hint = f" — a reference type is '{ref_kind}.<Name>'" if ref_kind else ""
+    report_error(f"16a. Type '{tv}' uses the export folder name '{head_seg}' instead of a type{hint}")
 
 # ── Check 16: Reference type existence — типы вида CatalogRef.X должны разрешаться в объекты конфигурации ──
 # WARN-уровень: ложное срабатывание на частичных выгрузках хуже пропуска. Расширения (CFE) пропускаем —

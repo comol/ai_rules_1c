@@ -124,6 +124,14 @@ The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refre
 
 ## form-manage.md
 
+### Local fix `2026-09-25` — vendor-shaped defaults, closed enum values, Form.xml against Module.bsl
+
+Rules taken from the static checks of [AzeevAN/mcp-1c](https://github.com/AzeevAN/mcp-1c) (Apache-2.0; rules re-implemented, no code copied) and calibrated on the ERP (8.3.27) and ZUP Designer dumps so that vendor forms raise no errors.
+
+- **`form-compile` v1.176** (both runtimes): the from-object document choice form sets `ChoiceMode` on its list table like the catalog one; the `document.item` preset (hard-coded default and `presets/erp-standard.json`) writes `AutoTime=CurrentOrLast`, `UsePostingMode=Auto`, `RepostOnWrite=true` in Configurator order; `Description` is bound only when `DescriptionLength > 0`. `windowOpeningMode` / `autoTime` / `usePostingMode` accept only the platform enum values — `form-dsl-spec.md` listed `Modeless`, `Current`, `Postings`, `Movements`, which do not exist. A missing `Configuration.xml` is a `[WARN]` naming the assumed 2.17 instead of a silent guess.
+- **`form-add` v1.12** (both runtimes): `-FormName` must be a 1C identifier (exit 2 before any path or XPath is built from it); the object form of an information register names its `RecordManager` main attribute `Запись`, as the Configurator does.
+- **`form-validate` v1.10**: version equal to `Configuration.xml` (check 1); `cfg:Catalogs.X` is an error (12); owner type of the main attribute in default object / record forms and no zero-length `Description` / `Code` binding (12b); handlers against `Module.bsl` (13 — duplicate declaration is an error, the rest are warnings because ERP ships them); `РеквизитФормыВЗначение` / `ЗначениеВРеквизитФормы` only in `&НаСервере` (14).
+
 ### Local fix `2026-09-14` — compact XML across the reported writers
 
 `form-edit.ps1` normalizes empty tags to Configurator's `<Tag/>` spelling and retains the input EOL. The same save-time behavior covers `form-add`, `remove-form`, parent registration by `form-compile`, `cf-edit`, object registration/merge by `cfe-borrow`, `subsystem-edit`, parent registration by `subsystem-compile`, `interface-edit`, `add-template` and `add-help`. `skd-edit` already normalized tags; its normalization now protects CDATA, comments and processing instructions. No shared runtime dependency was added.
@@ -199,6 +207,10 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 - **`interface-validate`** — universal validator improvements (one-liner output by default, `-Detailed`, folder path auto-resolution) — see `role-manage.md` → "Recent Additions".
 
 ## meta-manage.md
+
+### Local fix `2026-09-25` — versions, generated types, default forms, name clashes
+
+`meta-validate` v1.13, both runtimes with identical messages: object, form descriptor and `Form.xml` versions equal `Configuration.xml` (1e, 6e); every GeneratedType category is required and named exactly (2); `Default*Form` / `Auxiliary*Form` resolve to a declared form of the right role (6f); no `Description` / `Code` binding when the length is 0 (6g) and a warning when the default object form hides a mandatory `Description` nobody assigns (6h); case-insensitive name uniqueness shared by attributes, tabular sections, dimensions and resources (8); `Periodicity` and `DefaultRecordSetForm` forbidden in an information register (12); `cfg:Catalogs.X` is an error (16a). Over all 10 965 ERP objects none of the new error checks fires; 6h warns on 6 attached-file / exchange catalogs.
 
 ### Local fix `2026-09-13` — refuse false-success template additions
 

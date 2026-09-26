@@ -1,5 +1,11 @@
-﻿# form-compile v1.175 — Compile 1C managed form from JSON or object metadata
+﻿# form-compile v1.176 — Compile 1C managed form from JSON or object metadata
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: from-object — a document choice form gets ChoiceMode like the catalog
+# one, the document item preset writes AutoTime=CurrentOrLast /
+# UsePostingMode=Auto / RepostOnWrite=true, and `Description` is bound only when
+# DescriptionLength > 0. windowOpeningMode / autoTime / usePostingMode accept only
+# the platform enum values, and a missing Configuration.xml is reported instead of
+# silently assuming 2.17. Same deltas as form-compile.py.
 param(
 	[string]$JsonPath,
 
@@ -206,7 +212,7 @@ function Load-Preset([string]$PresetName, [string]$ScriptDir) {
 			additional = @{ position = "page"; layout = "2col"; bspGroup = $true }
 			fieldDefaults = @{ ref = @{ choiceButton = $true }; boolean = @{ element = "check" } }
 			commandBar = "auto"
-			properties = @{ autoTitle = $false }
+			properties = @{ autoTitle = $false; autoTime = "CurrentOrLast"; usePostingMode = "Auto"; repostOnWrite = $true }
 		}
 		"document.list" = @{
 			columns = "all"; columnType = "labelField"; hiddenRef = $true
@@ -355,6 +361,9 @@ function Load-Preset([string]$PresetName, [string]$ScriptDir) {
 	return $defaults
 }
 
+# Document form posting properties, in the order the Configurator writes them.
+$script:documentPostingProperties = @('autoTime', 'usePostingMode', 'repostOnWrite')
+
 # --- Helper: build a field element DSL entry ---
 # Non-displayable types — cannot be bound to form elements
 $script:nonDisplayableTypes = @('v8:ValueStorage', 'ValueStorage', 'ХранилищеЗначения')
@@ -414,8 +423,10 @@ function Generate-CatalogFolderDSL($meta, [hashtable]$p) {
 	if ($meta.CodeLength -gt 0) {
 		$elements += [ordered]@{ input = "Код"; path = "Объект.Code" }
 	}
-	# Description
-	$elements += [ordered]@{ input = "Наименование"; path = "Объект.Description" }
+	# Description (if DescriptionLength > 0 — with 0 the standard attribute does not exist)
+	if ($meta.DescriptionLength -gt 0) {
+		$elements += [ordered]@{ input = "Наименование"; path = "Объект.Description" }
+	}
 	# Parent
 	$parentTitle = if ($p.parent -and $p.parent.title) { $p.parent.title } else { $null }
 	$parentEl = [ordered]@{ input = "Родитель"; path = "Объект.Parent" }
@@ -441,8 +452,10 @@ function Generate-CatalogFolderDSL($meta, [hashtable]$p) {
 function Generate-CatalogListDSL($meta, [hashtable]$p) {
 	# Columns
 	$columns = @()
-	# Description always first
-	$columns += [ordered]@{ labelField = "Наименование"; path = "Список.Description" }
+	# Description first (if DescriptionLength > 0)
+	if ($meta.DescriptionLength -gt 0) {
+		$columns += [ordered]@{ labelField = "Наименование"; path = "Список.Description" }
+	}
 	# Code if present
 	if ($meta.CodeLength -gt 0) {
 		$columns += [ordered]@{ labelField = "Код"; path = "Список.Code" }
@@ -516,8 +529,9 @@ function Generate-CatalogItemDSL($meta, [hashtable]$p, [hashtable]$fd) {
 	$cdLayout = if ($p.codeDescription -and $p.codeDescription.layout) { $p.codeDescription.layout } else { "horizontal" }
 	$cdOrder = if ($p.codeDescription -and $p.codeDescription.order) { $p.codeDescription.order } else { "descriptionFirst" }
 	$hasCode = ($meta.CodeLength -gt 0)
+	$hasDesc = ($meta.DescriptionLength -gt 0)
 
-	if ($cdLayout -eq "horizontal" -and $hasCode) {
+	if ($cdLayout -eq "horizontal" -and $hasCode -and $hasDesc) {
 		$cdChildren = @()
 		$descEl = [ordered]@{ input = "Наименование"; path = "Объект.Description" }
 		$codeEl = [ordered]@{ input = "Код"; path = "Объект.Code" }
@@ -531,8 +545,10 @@ function Generate-CatalogItemDSL($meta, [hashtable]$p, [hashtable]$fd) {
 			representation = "none"; children = $cdChildren
 		}
 	} else {
-		# Vertical or no code
-		$headerChildren += [ordered]@{ input = "Наименование"; path = "Объект.Description" }
+		# Vertical, or only one of the two standard fields exists
+		if ($hasDesc) {
+			$headerChildren += [ordered]@{ input = "Наименование"; path = "Объект.Description" }
+		}
 		if ($hasCode) {
 			$headerChildren += [ordered]@{ input = "Код"; path = "Объект.Code" }
 		}
@@ -696,6 +712,9 @@ function Generate-DocumentChoiceDSL($meta, [hashtable]$p, [hashtable]$presetData
 
 	$dsl.properties["windowOpeningMode"] = "LockOwnerWindow"
 	if ($p.properties) { foreach ($k in $p.properties.Keys) { $dsl.properties[$k] = $p.properties[$k] } }
+
+	# Set ChoiceMode on table (the document list DSL has exactly one root element, the table)
+	$dsl.elements[0]["choiceMode"] = $true
 
 	return $dsl
 }
@@ -903,9 +922,18 @@ function Generate-DocumentItemDSL($meta, [hashtable]$p, [hashtable]$fd) {
 		}
 	}
 
-	# Properties
+	# Properties. The posting properties go last and in Configurator order
+	# (AutoTime, UsePostingMode, RepostOnWrite): preset sections are hashtables,
+	# so their key order is not the order the platform writes.
 	$formProps = [ordered]@{ autoTitle = $false }
-	if ($p.properties) { foreach ($k in $p.properties.Keys) { $formProps[$k] = $p.properties[$k] } }
+	if ($p.properties) {
+		foreach ($k in $p.properties.Keys) {
+			if ($script:documentPostingProperties -notcontains $k) { $formProps[$k] = $p.properties[$k] }
+		}
+		foreach ($k in $script:documentPostingProperties) {
+			if ($p.properties.ContainsKey($k)) { $formProps[$k] = $p.properties[$k] }
+		}
+	}
 
 	return [ordered]@{
 		title = $meta.Synonym
@@ -1344,6 +1372,9 @@ function Detect-FormatVersion([string]$dir) {
 		if ($parent -eq $d) { break }
 		$d = $parent
 	}
+	# Local: say so instead of guessing silently — a Form.xml whose version differs
+	# from Configuration.xml is refused on load.
+	Write-Host "[WARN] Configuration.xml not found above the output path — Form.xml version 2.17 assumed; check it against the target configuration"
 	return "2.17"
 }
 
@@ -6292,6 +6323,16 @@ function Emit-CommandInterface {
 
 # --- 11. Properties emitter ---
 
+# Local: closed value sets of the platform enums behind these form properties
+# (FormWindowOpeningMode, AutoTimeMode, PostingModeUse). Upstream accepted any
+# string, and its spec listed values that do not exist (Modeless, Current,
+# Postings, Movements) — the Configurator refuses such a Form.xml on load.
+$script:formPropertyValues = @{
+	"windowOpeningMode" = @("Independent", "LockOwnerWindow", "LockWholeInterface")
+	"autoTime"          = @("DontUse", "First", "Last", "CurrentOrFirst", "CurrentOrLast")
+	"usePostingMode"    = @("Auto", "RealTime", "Regular")
+}
+
 function Emit-Properties {
 	param($props, [string]$indent)
 
@@ -6332,6 +6373,10 @@ function Emit-Properties {
 		$val = $p.Value
 		# Пустая строка = суппресс-маркер (напр. autoTitle:"" — не эмитить и не додумывать)
 		if ($val -is [string] -and $val -eq '') { continue }
+		if ($script:formPropertyValues.ContainsKey($p.Name) -and $script:formPropertyValues[$p.Name] -cnotcontains [string]$val) {
+			[Console]::Error.WriteLine("[ERROR] Недопустимое значение свойства формы '$($p.Name)': '$val'. Допустимые: $($script:formPropertyValues[$p.Name] -join ', ')")
+			exit 1
+		}
 		if ($val -is [bool]) {
 			$val = if ($val) { "true" } else { "false" }
 		}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# form-compile v1.175 — Compile 1C managed form from JSON or object metadata
+# form-compile v1.176 — Compile 1C managed form from JSON or object metadata
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, pinned at
 #         ecd289fe11733028d87b55284ea9fb5feff8f513 — the same upstream state the
 #         vendored form-compile.ps1 was synced from.
@@ -17,6 +17,12 @@
 #        exit 1 before any XML is written, `OnEditEnd` maps to
 #        `ПриОкончанииРедактирования`, and an unknown event name is a refusal,
 #        not a warning.
+#        From-object: a document choice form gets ChoiceMode like the catalog
+#        one, the document item preset writes AutoTime=CurrentOrLast /
+#        UsePostingMode=Auto / RepostOnWrite=true, and `Description` is bound
+#        only when DescriptionLength > 0. windowOpeningMode / autoTime /
+#        usePostingMode accept only the platform enum values, and a missing
+#        Configuration.xml is reported instead of silently assuming 2.17.
 import argparse
 import copy
 import json
@@ -472,7 +478,7 @@ def load_preset(preset_name, script_dir, out_path_resolved):
             'additional': {'position': 'page', 'layout': '2col', 'bspGroup': True},
             'fieldDefaults': {'ref': {'choiceButton': True}, 'boolean': {'element': 'check'}},
             'commandBar': 'auto',
-            'properties': {'autoTitle': False},
+            'properties': {'autoTitle': False, 'autoTime': 'CurrentOrLast', 'usePostingMode': 'Auto', 'repostOnWrite': True},
         },
         'document.list': {
             'columns': 'all', 'columnType': 'labelField', 'hiddenRef': True,
@@ -582,6 +588,9 @@ def load_preset(preset_name, script_dir, out_path_resolved):
     return defaults
 
 
+# Document form posting properties, in the order the Configurator writes them.
+DOCUMENT_POSTING_PROPERTIES = ('autoTime', 'usePostingMode', 'repostOnWrite')
+
 # Non-displayable types — cannot be bound to form elements
 NON_DISPLAYABLE_TYPES = ('ValueStorage', 'v8:ValueStorage', 'ХранилищеЗначения')
 
@@ -634,8 +643,9 @@ def generate_catalog_folder_dsl(meta, p):
     # Code (if CodeLength > 0)
     if meta.get('CodeLength', 0) > 0:
         elements.append(OrderedDict([('input', '\u041a\u043e\u0434'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Code')]))
-    # Description
-    elements.append(OrderedDict([('input', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Description')]))
+    # Description (if DescriptionLength > 0 \u2014 with 0 the standard attribute does not exist)
+    if meta.get('DescriptionLength', 0) > 0:
+        elements.append(OrderedDict([('input', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Description')]))
     # Parent
     parent_title = p.get('parent', {}).get('title')
     parent_el = OrderedDict([('input', '\u0420\u043e\u0434\u0438\u0442\u0435\u043b\u044c'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Parent')])
@@ -664,8 +674,9 @@ def generate_catalog_folder_dsl(meta, p):
 
 def generate_catalog_list_dsl(meta, p):
     columns = []
-    # Description always first
-    columns.append(OrderedDict([('labelField', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Description')]))
+    # Description first (if DescriptionLength > 0)
+    if meta.get('DescriptionLength', 0) > 0:
+        columns.append(OrderedDict([('labelField', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Description')]))
     # Code if present
     if meta.get('CodeLength', 0) > 0:
         columns.append(OrderedDict([('labelField', '\u041a\u043e\u0434'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Code')]))
@@ -739,8 +750,9 @@ def generate_catalog_item_dsl(meta, p, fd):
     cd_layout = (p.get('codeDescription') or {}).get('layout', 'horizontal')
     cd_order = (p.get('codeDescription') or {}).get('order', 'descriptionFirst')
     has_code = meta.get('CodeLength', 0) > 0
+    has_desc = meta.get('DescriptionLength', 0) > 0
 
-    if cd_layout == 'horizontal' and has_code:
+    if cd_layout == 'horizontal' and has_code and has_desc:
         cd_children = []
         desc_el = OrderedDict([('input', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Description')])
         code_el = OrderedDict([('input', '\u041a\u043e\u0434'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Code')])
@@ -753,8 +765,9 @@ def generate_catalog_item_dsl(meta, p, fd):
             ('representation', 'none'), ('children', cd_children),
         ]))
     else:
-        # Vertical or no code
-        header_children.append(OrderedDict([('input', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Description')]))
+        # Vertical, or only one of the two standard fields exists
+        if has_desc:
+            header_children.append(OrderedDict([('input', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Description')]))
         if has_code:
             header_children.append(OrderedDict([('input', '\u041a\u043e\u0434'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Code')]))
 
@@ -901,6 +914,9 @@ def generate_document_choice_dsl(meta, p, preset_data):
     if p.get('properties'):
         for k in p['properties']:
             dsl['properties'][k] = p['properties'][k]
+
+    # Set ChoiceMode on table (the document list DSL has exactly one root element, the table)
+    dsl['elements'][0]['choiceMode'] = True
 
     return dsl
 
@@ -1082,11 +1098,17 @@ def generate_document_item_dsl(meta, p, fd):
         if footer_pos == 'belowPages' and footer_elements:
             root_elements.extend(footer_elements)
 
-    # Properties
+    # Properties. The posting properties go last and in Configurator order
+    # (AutoTime, UsePostingMode, RepostOnWrite), whatever order the preset sections
+    # were merged in, so both runtimes emit the same XML.
     form_props = OrderedDict([('autoTitle', False)])
-    if p.get('properties'):
-        for k in p['properties']:
-            form_props[k] = p['properties'][k]
+    preset_props = p.get('properties') or {}
+    for k in preset_props:
+        if k not in DOCUMENT_POSTING_PROPERTIES:
+            form_props[k] = preset_props[k]
+    for k in DOCUMENT_POSTING_PROPERTIES:
+        if k in preset_props:
+            form_props[k] = preset_props[k]
 
     return OrderedDict([
         ('title', meta['Synonym']),
@@ -6151,6 +6173,17 @@ PROP_MAP = {
 }
 
 
+# Local: closed value sets of the platform enums behind these form properties
+# (FormWindowOpeningMode, AutoTimeMode, PostingModeUse). Upstream accepted any
+# string, and its spec listed values that do not exist (Modeless, Current,
+# Postings, Movements) — the Configurator refuses such a Form.xml on load.
+FORM_PROPERTY_VALUES = {
+    "windowOpeningMode": ("Independent", "LockOwnerWindow", "LockWholeInterface"),
+    "autoTime": ("DontUse", "First", "Last", "CurrentOrFirst", "CurrentOrLast"),
+    "usePostingMode": ("Auto", "RealTime", "Regular"),
+}
+
+
 def emit_properties(lines, props, indent):
     if not props:
         return
@@ -6164,6 +6197,11 @@ def emit_properties(lines, props, indent):
         # Пустая строка = суппресс-маркер (напр. autoTitle:"" — не эмитить и не додумывать)
         if isinstance(p_value, str) and p_value == '':
             continue
+        allowed = FORM_PROPERTY_VALUES.get(p_name)
+        if allowed is not None and str(p_value) not in allowed:
+            print(f"[ERROR] Недопустимое значение свойства формы '{p_name}': '{p_value}'. "
+                  f"Допустимые: {', '.join(allowed)}", file=sys.stderr)
+            sys.exit(1)
         # Convert boolean to lowercase
         if isinstance(p_value, bool):
             val = 'true' if p_value else 'false'
@@ -6186,6 +6224,10 @@ def detect_format_version(d):
         if parent == d:
             break
         d = parent
+    # Local: say so instead of guessing silently — a Form.xml whose version differs
+    # from Configuration.xml is refused on load.
+    print("[WARN] Configuration.xml not found above the output path — Form.xml "
+          "version 2.17 assumed; check it against the target configuration")
     return "2.17"
 
 

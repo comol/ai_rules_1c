@@ -53,12 +53,12 @@
 |----------|-------------|----------|
 | `autoTitle` | `<AutoTitle>` | `true` / `false`. **При наличии `title` компилятор сам инъектит `false`** (≈95% форм). Маркер `""` подавляет инъекцию (редкие формы с title, но без `<AutoTitle>`) |
 | `saveWindowSettings` | `<SaveWindowSettings>` | `true` / `false` |
-| `windowOpeningMode` | `<WindowOpeningMode>` | `LockOwnerWindow`, `Modeless` |
+| `windowOpeningMode` | `<WindowOpeningMode>` | `LockOwnerWindow`, `LockWholeInterface`, `Independent` (значения перечисления `РежимОткрытияОкнаФормы`; `Independent` — значение по умолчанию, Конфигуратор его не выгружает). Другое значение — отказ компиляции |
 | `commandBarLocation` | `<CommandBarLocation>` | `Top`, `Bottom`, `None` |
 | `saveDataInSettings` | `<SaveDataInSettings>` | `UseList`, `Use`, `DontUse` |
 | `autoSaveDataInSettings` | `<AutoSaveDataInSettings>` | `Use`, `DontUse` |
-| `autoTime` | `<AutoTime>` | `CurrentOrLast`, `Current`, `Last` |
-| `usePostingMode` | `<UsePostingMode>` | `Auto`, `Postings`, `Movements` |
+| `autoTime` | `<AutoTime>` | `CurrentOrLast`, `DontUse`, `CurrentOrFirst`, `First`, `Last` (перечисление `РежимАвтоВремя`). Другое значение — отказ компиляции |
+| `usePostingMode` | `<UsePostingMode>` | `Auto`, `Regular`, `RealTime` (перечисление `ИспользованиеРежимаПроведения`). Другое значение — отказ компиляции |
 | `repostOnWrite` | `<RepostOnWrite>` | `true` / `false` |
 | `autoURL` | `<AutoURL>` | `true` / `false` |
 | `enabled` | `<Enabled>` | `true` / `false` — доступность всей формы (редкое; форма-уровень) |

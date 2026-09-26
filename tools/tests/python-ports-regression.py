@@ -1986,6 +1986,254 @@ def _(work):
                                 run_powershell_tool, work, "powershell")
 
 
+# ------------------------------------------ 2026-09-25: vendor-shaped defaults and new checks
+#
+# Pinned for both runtimes: form-compile from-object gives a document choice form
+# ChoiceMode and a document form the posting defaults, binds Description only when
+# DescriptionLength > 0 and refuses enum values the platform does not have;
+# form-add refuses a non-identifier -FormName and names an information register's
+# object-form main attribute "Запись"; meta-validate rejects the shapes of checks
+# 1e, 2, 6f, 6g, 8, 12 and 16a with the same diagnostics in both runtimes.
+
+MINIMAL_DOCUMENT = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"'
+    ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17">\n'
+    '\t<Document uuid="5e0c6f3a-1b1d-4c8e-9a51-0d3c2b7a9e11">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>TestDocument</Name>\n'
+    '\t\t\t<NumberType>String</NumberType>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</Document>\n'
+    '</MetaDataObject>\n'
+)
+
+MINIMAL_REGISTER = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"'
+    ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17">\n'
+    '\t<InformationRegister uuid="7a2f4c1e-3d5b-4e6f-8a9b-1c2d3e4f5a6b">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>TestRegister</Name>\n'
+    '\t\t\t<DefaultRecordForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</InformationRegister>\n'
+    '</MetaDataObject>\n'
+)
+
+OBJECT_PREFIX = "Объект."   # "Объект."
+LIST_PREFIX = "Список."      # "Список."
+RECORD_NAME = "Запись"       # "Запись"
+
+
+def write_text(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"\xef\xbb\xbf" + text.encode("utf-8"))
+
+
+def edit_text(path, old, new):
+    facts = file_facts(path)
+    assert_true(old in facts["text"], f"fixture edit: '{old}' not found in {path}")
+    write_text(path, facts["text"].replace(old, new, 1))
+
+
+def form_facts(path):
+    """Root properties, table ChoiceMode flags and DataPaths of a compiled form."""
+    root = ElementTree.parse(path).getroot()
+    local = lambda el: el.tag.rsplit("}", 1)[-1]
+    props = {local(c): (c.text or "").strip() for c in root if len(c) == 0}
+    choice = [(c.text or "").strip() for el in root.iter() if local(el) == "Table"
+              for c in el if local(c) == "ChoiceMode"]
+    paths = {(el.text or "").strip() for el in root.iter() if local(el) == "DataPath"}
+    return {"props": props, "choice": choice, "paths": paths}
+
+
+def compile_from_object(script, directory, kind_dir, object_file, form, purpose):
+    runner = run_python_tool if script.endswith(".py") else run_powershell_tool
+    out = os.path.join(directory, kind_dir, object_file[:-4], "Forms", form, "Ext", "Form.xml")
+    run = runner(script, ["-FromObject", "-OutputPath", out, "-ObjectPath",
+                          os.path.join(directory, kind_dir, object_file), "-Purpose", purpose], directory)
+    assert_equal(0, run["exit_code"], f"{form}: from-object exit code (stderr: {run['stderr'][-400:]})")
+    return form_facts(out)
+
+
+def assert_from_object_defaults(script, work, label):
+    directory = os.path.join(work, "from-object-" + label)
+    copy_fixture("config-dump", directory)
+    write_text(os.path.join(directory, "Documents", "TestDocument.xml"), MINIMAL_DOCUMENT)
+
+    choice = compile_from_object(script, directory, "Documents", "TestDocument.xml", "ChoiceForm", "Choice")
+    assert_equal(["true"], choice["choice"], f"{label}: document choice form ChoiceMode")
+    assert_equal("LockOwnerWindow", choice["props"].get("WindowOpeningMode"),
+                 f"{label}: document choice form WindowOpeningMode")
+    item = compile_from_object(script, directory, "Documents", "TestDocument.xml", "ItemForm", "Item")
+    for prop, value in (("AutoTime", "CurrentOrLast"), ("UsePostingMode", "Auto"), ("RepostOnWrite", "true")):
+        assert_equal(value, item["props"].get(prop), f"{label}: document form {prop}")
+
+    edit_text(os.path.join(directory, "Catalogs", "TestCatalog.xml"),
+              "<DescriptionLength>25</DescriptionLength>", "<DescriptionLength>0</DescriptionLength>")
+    catalog_item = compile_from_object(script, directory, "Catalogs", "TestCatalog.xml", "ItemForm", "Item")
+    assert_true(OBJECT_PREFIX + "Description" not in catalog_item["paths"],
+                f"{label}: a catalog without a description binds it: {sorted(catalog_item['paths'])}")
+    assert_true(OBJECT_PREFIX + "Code" in catalog_item["paths"], f"{label}: the code field is gone too")
+    catalog_list = compile_from_object(script, directory, "Catalogs", "TestCatalog.xml", "ListForm", "List")
+    assert_true(LIST_PREFIX + "Description" not in catalog_list["paths"],
+                f"{label}: the list of a catalog without a description binds it")
+
+    source = os.path.join(directory, "bad-enum.json")
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump({"title": "T", "properties": {"windowOpeningMode": "Modeless"}, "elements": [],
+                   "attributes": []}, handle)
+    out = os.path.join(directory, "bad-enum", "Form.xml")
+    runner = run_python_tool if script.endswith(".py") else run_powershell_tool
+    run = runner(script, ["-JsonPath", source, "-OutputPath", out], directory)
+    assert_true(run["exit_code"] != 0, f"{label}: windowOpeningMode=Modeless was accepted")
+    assert_true(not os.path.exists(out), f"{label}: refused but still wrote {out}")
+
+
+@case("form-compile: from-object defaults follow vendor forms, enum values are a closed set")
+def _(work):
+    assert_from_object_defaults(FORM_COMPILE_PY, work, "py")
+
+
+@case("form-compile defaults parity: PowerShell writes the same defaults and refusals",
+      needs_powershell=True)
+def _(work):
+    assert_from_object_defaults(FORM_COMPILE_PS1, work, "ps")
+
+
+def assert_form_add_name_and_record(script, runner, work, label):
+    directory, target = catalog_target(work, "form-add-names-" + label)
+    before = snapshot_tree(directory)
+    for bad in ("..\\Escape", "a/b", "x'y", "1Form"):
+        run = runner(script, ["-ObjectPath", target, "-FormName", bad], directory)
+        assert_equal(2, run["exit_code"], f"{label}: -FormName {bad!r} exit code")
+    assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused -FormName")
+
+    register = os.path.join(directory, "InformationRegisters", "TestRegister.xml")
+    write_text(register, MINIMAL_REGISTER)
+    run = runner(script, ["-ObjectPath", register, "-FormName", "ObjectForm", "-Purpose", "Object"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: register object form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "InformationRegisters", "TestRegister", "Forms", "ObjectForm", "Ext", "Form.xml")
+    names = [a.get("name") for a in ElementTree.parse(form).getroot().iter()
+             if a.tag.rsplit("}", 1)[-1] == "Attribute"]
+    assert_equal([RECORD_NAME], names, f"{label}: register object-form main attribute")
+
+
+@case("form-add: a non-identifier -FormName is refused, a register's object form uses Запись")
+def _(work):
+    assert_form_add_name_and_record(FORM_ADD_PY, run_python_tool, work, "py")
+
+
+@case("form-add names parity: PowerShell refuses the same names and names the attribute Запись",
+      needs_powershell=True)
+def _(work):
+    assert_form_add_name_and_record(FORM_ADD_PS1, run_powershell_tool, work, "ps")
+
+
+CLASH_ATTRIBUTE = (
+    "\t\t\t<Attribute uuid=\"0b7c9d2e-4f61-4a8b-9c3d-2e1f0a9b8c7d\">\n"
+    "\t\t\t\t<Properties>\n"
+    "\t\t\t\t\t<Name>Clash</Name>\n"
+    "\t\t\t\t\t<Type>\n"
+    "\t\t\t\t\t\t<v8:Type>xs:string</v8:Type>\n"
+    "\t\t\t\t\t</Type>\n"
+    "\t\t\t\t</Properties>\n"
+    "\t\t\t</Attribute>\n"
+    "\t\t\t<TabularSection uuid=\"1c8d0e3f-5a72-4b9c-8d4e-3f2a1b0c9d8e\">\n"
+    "\t\t\t\t<Properties>\n"
+    "\t\t\t\t\t<Name>clash</Name>\n"
+    "\t\t\t\t</Properties>\n"
+    "\t\t\t\t<ChildObjects/>\n"
+    "\t\t\t</TabularSection>\n"
+)
+
+FOLDER_TYPE_ATTRIBUTE = (
+    "\t\t\t<Attribute uuid=\"2d9e1f4a-6b83-4cad-9e5f-4a3b2c1d0e9f\">\n"
+    "\t\t\t\t<Properties>\n"
+    "\t\t\t\t\t<Name>Link</Name>\n"
+    "\t\t\t\t\t<Type>\n"
+    "\t\t\t\t\t\t<v8:Type>cfg:Catalogs.TestCatalog</v8:Type>\n"
+    "\t\t\t\t\t</Type>\n"
+    "\t\t\t\t</Properties>\n"
+    "\t\t\t</Attribute>\n"
+)
+
+
+def meta_validate_shapes(work, label):
+    """Directory, target and expected marker of every shape the new checks reject."""
+    shapes = []
+
+    directory, target = catalog_target(work, f"mv-{label}-1e")
+    edit_text(os.path.join(directory, "Configuration.xml"), 'version="2.17"', 'version="2.20"')
+    shapes.append(("1e", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-2")
+    text = file_facts(target)["text"]
+    start = text.index('<xr:GeneratedType name="CatalogList.TestCatalog"')
+    end = text.index("</xr:GeneratedType>", start) + len("</xr:GeneratedType>")
+    write_text(target, text[:start] + text[end:])
+    shapes.append(("2.", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-6f")
+    edit_text(target, "<DefaultObjectForm/>", "<DefaultObjectForm>Catalog.TestCatalog.Form.Ghost</DefaultObjectForm>")
+    shapes.append(("6f.", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-6g")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", target, "-FormName", "ItemForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add for 6g (stderr: {run['stderr'][-300:]})")
+    edit_text(target, "<DescriptionLength>25</DescriptionLength>", "<DescriptionLength>0</DescriptionLength>")
+    edit_text(os.path.join(directory, "Catalogs", "TestCatalog", "Forms", "ItemForm", "Ext", "Form.xml"),
+              "<ChildItems/>",
+              "<ChildItems>\n\t\t<InputField name=\"Name\" id=\"1\">\n\t\t\t<DataPath>" + OBJECT_PREFIX
+              + "Description</DataPath>\n\t\t</InputField>\n\t</ChildItems>")
+    shapes.append(("6g.", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-8")
+    inject_child(target, CLASH_ATTRIBUTE)
+    shapes.append(("8.", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-12")
+    register = os.path.join(directory, "InformationRegisters", "TestRegister.xml")
+    write_text(register, MINIMAL_REGISTER.replace("<DefaultRecordForm/>", "<Periodicity>Day</Periodicity>"))
+    shapes.append(("12.", directory, register))
+
+    directory, target = catalog_target(work, f"mv-{label}-16a")
+    inject_child(target, FOLDER_TYPE_ATTRIBUTE)
+    shapes.append(("16a.", directory, target))
+    return shapes
+
+
+def diagnostics(run):
+    return sorted(line.strip() for line in (run["stdout"] + run["stderr"]).splitlines()
+                  if line.startswith("[ERROR]") or line.startswith("[WARN]"))
+
+
+@case("meta-validate: versions, generated types, default forms, names, IR properties, folder types")
+def _(work):
+    directory, target = catalog_target(work, "mv-clean")
+    run = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+    assert_equal(0, run["exit_code"], f"the clean fixture is rejected: {run['stdout'][-400:]}")
+    for marker, directory, target in meta_validate_shapes(work, "py"):
+        run = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+        combined = run["stdout"] + run["stderr"]
+        assert_true(run["exit_code"] != 0, f"{marker}: the validator exited 0\n{combined[-600:]}")
+        assert_true(f"[ERROR] {marker}" in combined, f"no [ERROR] {marker} diagnostic\n{combined[-600:]}")
+
+
+@case("meta-validate new checks parity: PowerShell prints the same diagnostics",
+      needs_powershell=True)
+def _(work):
+    for marker, directory, target in meta_validate_shapes(work, "parity"):
+        py = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+        ps = run_powershell_tool(META_VALIDATE_PS1, ["-ObjectPath", target], directory)
+        assert_equal(py["exit_code"], ps["exit_code"], f"{marker}: exit codes differ")
+        assert_equal(diagnostics(py), diagnostics(ps), f"{marker}: diagnostics differ")
+
+
 # ---------------------------------------------------------------- the five shipped ports
 
 PORTED_COMMANDS = OrderedDict((

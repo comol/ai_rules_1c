@@ -36,7 +36,7 @@ Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it i
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
 | ObjectPath | yes | — | Path to the object XML file (e.g. `Documents/Doc.xml`) or directory; for EPF/ERF — path to the processor/report root XML (`src/MyProcessor.xml` or its directory) |
-| FormName | yes | — | Form name |
+| FormName | yes | — | Form name — a 1C identifier (Latin / Cyrillic letters, digits, underscore, not starting with a digit); anything else, including path separators, is refused with exit 2 before any file is written |
 | Purpose | no | Object | Purpose: `Object`, `List`, `Choice`, `Record`, `Folder` |
 | Synonym | no | = FormName | Form synonym |
 | --set-default | no | auto | Set as default form (auto for the first form of that purpose) |
@@ -55,7 +55,7 @@ The script auto-detects the format version of `Form.xml` from the nearest `Confi
 | Object | Document, Catalog, DataProcessor, Report, ChartOf*, ExchangePlan, BusinessProcess, Task | Object (type: *Object.Name) | DefaultObjectForm (DefaultForm for DataProcessor/Report) |
 | List | All except DataProcessor | List (DynamicList) | DefaultListForm |
 | Choice | Document, Catalog, ChartOf*, ExchangePlan, BusinessProcess, Task | List (DynamicList) | DefaultChoiceForm |
-| Record | InformationRegister | Record (InformationRegisterRecordManager) | DefaultRecordForm |
+| Record | InformationRegister | Запись (InformationRegisterRecordManager) | DefaultRecordForm |
 
 #### What Gets Created
 
@@ -484,7 +484,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-validate
 
 | # | Check | Severity |
 |---|-------|----------|
-| 1 | Root element `<Form>`, version="2.17" | ERROR / WARN |
+| 1 | Root element `<Form>`; `version` equals `Configuration.xml` when one is found above the form (else 2.17 / 2.20 expected) | ERROR / WARN |
 | 2 | `<AutoCommandBar>` present, id="-1" | ERROR |
 | 3 | Element ID uniqueness (separate pool) | ERROR |
 | 4 | Attribute ID uniqueness (separate pool) | ERROR |
@@ -495,6 +495,10 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-validate
 | 9 | Events have non-empty handler names | ERROR |
 | 10 | Commands have Action (handler) | ERROR |
 | 11 | No more than one MainAttribute | ERROR |
+| 12 | Type values — known namespaces and `cfg:` prefixes; `cfg:Catalogs.X` (export folder name) is an error | ERROR / WARN |
+| 12b | A default / auxiliary object, folder or record form of a catalog, document, chart, exchange plan, business process, task or information register has a main attribute of its owner's own type (`<Kind>Object.<Name>`, `InformationRegisterRecordManager.<Name>`); no `Description` / `Code` binding when the owner's length is 0 | ERROR |
+| 13 | Handlers in `Ext/Form/Module.bsl` — every event handler and command `Action` declared exactly once (duplicate = error); missing handler, missing directive, wrong context (`*AtServer` event on a client procedure, client event or command on a server one), more mandatory parameters than the platform passes — warnings | ERROR / WARN |
+| 14 | `РеквизитФормыВЗначение` / `ЗначениеВРеквизитФормы` only in `&НаСервере` (a procedure without a directive is server-side) | ERROR |
 
 ### Output
 

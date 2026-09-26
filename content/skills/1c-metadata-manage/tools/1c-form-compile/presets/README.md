@@ -82,7 +82,7 @@
 | `fieldDefaults.ref.choiceButton` | Кнопка выбора для ссылок | `true` / `false` |
 | `fieldDefaults.boolean.element` | Элемент для Boolean | `"check"` (флажок) |
 | `commandBar` | Командная панель формы | `"auto"`, `"none"` |
-| `properties` | Свойства формы | объект: `autoTitle`, `windowOpeningMode` и др. |
+| `properties` | Свойства формы | объект: `autoTitle`, `windowOpeningMode` и др. У `document.item` по умолчанию `autoTime: "CurrentOrLast"`, `usePostingMode: "Auto"`, `repostOnWrite: true` — как у типовых форм документов ERP; значения `windowOpeningMode` / `autoTime` / `usePostingMode` — только из [form-dsl-spec.md](../form-dsl-spec.md), иначе компилятор отказывает |
 
 ### Форма списка (List/Choice)
 

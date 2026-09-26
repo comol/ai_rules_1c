@@ -31,12 +31,18 @@ carries its downstream deltas in its own file header:
   spellings (`events`, `on` + `handlers`, standalone `handlers`), an explicit
   non-zero refusal when two spellings are given at once or an event name is
   unknown, and the corrected `OnEditEnd` → `ПриОкончанииРедактирования` suffix
-  (upstream spells the key `OnEndEdit`, so the auto-name fell through).
+  (upstream spells the key `OnEndEdit`, so the auto-name fell through);
+  from-object document choice forms get `ChoiceMode`, the document item preset
+  writes `AutoTime` / `UsePostingMode` / `RepostOnWrite`, `Description` is bound
+  only when `DescriptionLength > 0`, form-property enum values are a closed set,
+  and a missing `Configuration.xml` is reported instead of assuming 2.17.
 - `tools/1c-form-scaffold/scripts/form-add.py` — Python runtime of `form-add`,
   the managed-form scaffolder. Downstream deltas: `.dev.env` support guard via
   `tools/_common/dev_env.py`, and XML escaping of the user-supplied `-FormName` /
   `-Synonym` in the generated descriptor (upstream interpolates them verbatim, so
-  an ordinary `A & B` produced a descriptor no parser accepts).
+  an ordinary `A & B` produced a descriptor no parser accepts); `-FormName` must be
+  a 1C identifier, and an information register's object form names its
+  `RecordManager` main attribute `Запись`.
 - `tools/1c-meta-edit/scripts/meta-edit.py` — Python runtime of `meta-edit`.
   Downstream deltas: `add-form` is refused before any mutation and redirected to
   `form-add`, in every key spelling the dispatcher itself accepts and across the
@@ -48,7 +54,11 @@ carries its downstream deltas in its own file header:
   `meta-validate`. Downstream deltas: checks 6a–6d — a `ChildObjects/Form`
   registration must be a scalar reference (6a), it must resolve to
   `Forms/<Name>.xml` on disk (6b), that descriptor must parse as XML (6c), and the
-  name it declares must be the name that was registered (6d).
+  name it declares must be the name that was registered (6d); versions equal to
+  `Configuration.xml` (1e, 6e), required and exactly named GeneratedTypes (2),
+  default-form references and roles (6f), `Description` / `Code` bindings (6g, 6h),
+  case-insensitive cross-kind name uniqueness (8), information-register forbidden
+  properties (12) and export-folder type names (16a).
 - `tools/_common/dev_env.py` — not upstream code: the Python peer of the local
   `DevEnv.ps1`, so both runtimes read project parameters from `.dev.env`.
 
