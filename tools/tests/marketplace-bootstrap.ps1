@@ -17,6 +17,7 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $Script = Join-Path $RepoRoot 'plugins\1c-rules\scripts\invoke-install.ps1'
+$PowerShellCommand = if (Get-Command powershell.exe -ErrorAction SilentlyContinue) { 'powershell.exe' } else { 'pwsh' }
 
 if (-not (Test-Path -LiteralPath $Script)) { throw "Missing $Script" }
 
@@ -39,7 +40,7 @@ function Read-Plan {
         '-DryRun'
     )
     if ($Source) { $argList += @('-Source', $Source) }
-    $raw = & powershell.exe @argList
+    $raw = & $PowerShellCommand @argList
     if ($LASTEXITCODE -ne 0) { throw "DryRun failed: $raw" }
     $json = ($raw | Out-String).Trim()
     if (-not $json) { throw "DryRun produced no JSON" }
@@ -65,7 +66,8 @@ function Run-Case([string]$Name, [scriptblock]$Body) {
     }
 }
 
-$work = Join-Path $env:TEMP ("1c-rules-mp-" + [guid]::NewGuid().ToString('N'))
+$tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+$work = Join-Path $tempRoot ("1c-rules-mp-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     Run-Case 'source walks up to this checkout' {
@@ -82,7 +84,8 @@ try {
     }
 
     Run-Case 'forbidden home is skipped' {
-        $plan = Read-Plan -Command ensure -Tool cursor -ProjectRoot $env:USERPROFILE
+        $homeDir = [Environment]::GetFolderPath('UserProfile')
+        $plan = Read-Plan -Command ensure -Tool cursor -ProjectRoot $homeDir
         Assert-Eq $plan.action 'skip' 'home must skip'
         Assert-Eq $plan.reason 'forbidden-root' 'home reason'
     }
