@@ -153,6 +153,10 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $codexPlugin '.codex-plugin\plugin.json'))) {
             throw 'Codex marketplace source does not contain .codex-plugin/plugin.json'
         }
+        $codexManifest = (Get-Content -LiteralPath (Join-Path $codexPlugin '.codex-plugin\plugin.json') -Raw) | ConvertFrom-Json
+        if ($codexManifest.PSObject.Properties.Name -notcontains 'hooks' -or @($codexManifest.hooks).Count -ne 0) {
+            throw 'Codex must explicitly disable the Claude Code SessionStart hook'
+        }
     }
 
     Run-Case 'plugin does not ship content rules' {
