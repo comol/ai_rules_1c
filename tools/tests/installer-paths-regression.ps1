@@ -130,11 +130,31 @@ try {
     foreach ($path in $sourceHashes.Keys) { Assert-True ($sourceHashes[$path] -eq (Get-FileHash -LiteralPath $path).Hash) "Installer mutated source: $path" }
     Pass 'Init through short paths installs correct links, scans, scaffold and bundle without changing sources'
 
+    # Regression: rebuilding the manifest used to drop the clean AGENTS.md entry,
+    # so update installed new rules but left the existing entry point user-owned.
+    $agentsPath = Join-Path $project 'AGENTS.md'
+    $oldAgentsHash = $manifest.files.'AGENTS.md'.installedHash
+    Assert-True (-not ([IO.File]::ReadAllText($agentsPath)).Contains('mcp-first-search')) 'Initial fixture already has the new reference'
+    Write-Fixture (Join-Path $SourceRoot 'AGENTS.md') "# Rules`n$refs`nSee content/rules/mcp-first-search.md."
+    Write-Fixture (Join-Path $SourceRoot 'content/rules/mcp-first-search.md') "---`ndescription: New rule fixture`nalwaysApply: false`ncategory: workflow`n---`n# Search"
     $null = Invoke-Installer $shortProject @('update') $shortSource
     $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    $updatedAgents = [IO.File]::ReadAllText($agentsPath)
+    Assert-True ($updatedAgents.Contains('.cursor/rules/mcp-first-search.mdc')) 'Update left AGENTS.md without the new installed reference'
+    Assert-True (Test-Path -LiteralPath (Join-Path $project '.cursor/rules/mcp-first-search.mdc')) 'New AGENTS.md reference has no installed target'
+    Assert-Links $agentsPath '.cursor/rules' 'mdc' '.cursor/agents' '.cursor/commands' '.cursor/skills'
+    Assert-True ($manifest.files.'AGENTS.md'.installedHash -ne $oldAgentsHash) 'AGENTS.md kept the previous installedHash'
     foreach ($property in $manifest.files.PSObject.Properties) { Assert-True (-not $property.Value.userModified) "Clean transformed file became userModified: $($property.Name)" }
     Assert-ManifestHashes $project
-    Pass 'Clean update hashes transformed bytes and does not mark installed files userModified'
+    Pass 'Update refreshes existing AGENTS.md, installs its new reference and records the new hash without userModified'
+
+    $updatedAgentsEntry = $manifest.files.'AGENTS.md' | ConvertTo-Json -Compress
+    $null = Invoke-Installer $shortProject @('update') $shortSource
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    Assert-True (([IO.File]::ReadAllText($agentsPath)) -eq $updatedAgents) 'Repeated update changed rendered AGENTS.md'
+    Assert-True (($manifest.files.'AGENTS.md' | ConvertTo-Json -Compress) -eq $updatedAgentsEntry) 'Repeated update changed AGENTS.md ownership or hash'
+    Assert-ManifestHashes $project
+    Pass 'Repeated update keeps AGENTS.md content and manifest entry identical'
 
     Write-Fixture (Join-Path $project '.cursor/rules/probe.mdc') 'my rule'
     Write-Fixture (Join-Path $project '.cursor/skills/probe/docs/detail.md') 'my skill docs'
@@ -253,6 +273,19 @@ Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -Requested
     Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
     Assert-ManifestHashes $exportProject
     Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+
+    $managedAgentsHash = (Read-Json (Join-Path $project '.ai-rules.json')).files.'AGENTS.md'.installedHash
+    $customAgents = ([IO.File]::ReadAllText($agentsPath)) + "`nUser instruction: keep this line."
+    Write-Fixture $agentsPath $customAgents
+    $customAgentsHash = (Get-FileHash -LiteralPath $agentsPath).Hash
+    Write-Fixture (Join-Path $SourceRoot 'AGENTS.md') "# Changed upstream again`n$refs"
+    $null = Invoke-Installer $project @('update')
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    Assert-True ((Get-FileHash -LiteralPath $agentsPath).Hash -eq $customAgentsHash) 'Update overwrote user-modified AGENTS.md'
+    Assert-True $manifest.files.'AGENTS.md'.userModified 'Edited AGENTS.md ownership lost'
+    Assert-True ($manifest.files.'AGENTS.md'.installedHash -eq $managedAgentsHash) 'Update replaced the last managed hash with the user edit hash'
+    Assert-ManifestHashes $project
+    Pass 'Update preserves user-modified AGENTS.md and its last managed hash'
 
     Write-Host "OK: $script:Passed installer path cases; real 8.3 paths checked: $script:ShortPathChecked; no network or infobase accessed."
 }
