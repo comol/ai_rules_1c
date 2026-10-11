@@ -2302,12 +2302,16 @@ def _(work):
 
 @case("docs: the skill documents the Python runtime for the shipped commands only")
 def _(work):
-    path = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage", "SKILL.md")
-    with open(path, "rb") as handle:
+    skill_dir = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage")
+    with open(os.path.join(skill_dir, "SKILL.md"), "rb") as handle:
+        skill_text = handle.read().decode("utf-8-sig")
+    assert_true("docs/runtime-selection.md" in skill_text,
+                "SKILL.md does not route runtime selection to its documentation")
+    with open(os.path.join(skill_dir, "docs", "runtime-selection.md"), "rb") as handle:
         text = handle.read().decode("utf-8-sig")
     for stem in PORTED_COMMANDS:
         assert_true(f"{stem}.py" in text,
-                    f"SKILL.md does not name the ported entry point {stem}.py")
+                    f"runtime-selection.md does not name the ported entry point {stem}.py")
     # The honest half: a tool with no Python peer must not be advertised with one.
     unported = sorted(
         entry for entry in os.listdir(TOOLS_DIR)

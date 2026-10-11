@@ -164,6 +164,14 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 Команды: `init` / `update` / `add <tool>` / `remove [<tool>]` / `doctor` / `eject`.
 
+На Linux (или macOS с Bash) при установленном PowerShell 7 (`pwsh`) можно вызвать тот же движок через `scripts/install.sh` из клонированного репозитория:
+
+```bash
+bash scripts/install.sh /path/to/1c-project --tools cursor,codex
+```
+
+Обёртка выбирает `init`/`update` по манифесту, запускает `install.ps1` в неинтерактивном режиме и сохраняет существующие MCP URL, авторизацию и настройки клиентов. `--host` и `--publish-url` задают значения **новых** подключений; адреса рабочего контура не берутся из шаблонного каталога. Отсутствие `pwsh` — ошибка до записи файлов, не обещание самостоятельной Bash-установки. Платформенные инструменты 1С требуют собственных проверок на целевой ОС.
+
 ### Совместимость с мультипроектной установкой MCP (INSTALL.md, режим 3)
 
 Если MCP-серверы уже установлены дистрибутивом MCP по его `INSTALL.md` в мультипроектном режиме (каталог `GLOBAL_ROOT`, `projects.registry.json`, динамические порты по проектам), установщик правил это **автоматически обнаруживает** (переменная окружения `BASESAI_MCP_GLOBAL_ROOT` либо `MCP_GLOBAL_ROOT` в `.dev.env` + файл `install.manifest.json`) и **не трогает** `mcp.json` — ни проектный, ни глобальный. Вместо этого он записывает в `USER-RULES.md` секцию `mcp:install_forme` с фактическими серверами, url и портами из артефактов установки. Правильный порядок: **сначала MCP по `INSTALL.md`, затем правила** — повторные `init` / `update` правил рабочую MCP-схему не ломают. Принудительное поведение — флаг `-McpMode auto|managed|external` (по умолчанию `auto`). Подробности — в `AGENT-INSTALL.md → External MCP installation`.

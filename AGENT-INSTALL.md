@@ -341,6 +341,8 @@ The script implements the protocol above. Notes:
 - Commands: `init` / `update` / `add <tool>` / `remove [<tool>]` / `doctor` (read-only diagnostic) / `eject` (delete the manifest, leave files in place).
 - Flags: `-Tools cursor,claude-code,kimi` (explicit list), `-NonInteractive` (auto-resolve prompts), `-AssumeYes` (answer yes to confirmations but still pause on destructive conflicts unless `-NonInteractive` is also set), `-Force` (on `update`: overwrite user-modified files with the shipped version), `-ForcePaths <path>[,<path>…]` (on `update`: restrict the overwrite to the listed project-relative paths, comma-separated; exact match or `*`/`?` wildcard; implies `-Force`), `-McpMode auto|managed|external` (MCP phase behaviour — see *External MCP installation* above; default `auto` detects an external installation and leaves MCP configs untouched when found).
 
+On Linux/macOS with PowerShell 7 installed, `bash scripts/install.sh <project-root> --tools cursor,codex` is a non-interactive `init`/`update` entry into the same `install.ps1` engine. `--host` / `--publish-url` supply defaults only for newly added MCP connections. For existing JSON entries, the configured URL, headers and extra client settings are retained even on a forced rules update; an existing Codex TOML is left untouched. If `pwsh` is absent the wrapper fails before modifying the target. This wrapper does not make platform-dependent 1C tooling portable.
+
 ### Agent recovery after an incomplete PowerShell install
 
 This is an **explicit recovery path**, not a routine post-install test. Use it only when the user reports that `install.ps1` exited with an error, says that files are missing, or provides a failing `doctor` result. Do not run it automatically after a successful install.

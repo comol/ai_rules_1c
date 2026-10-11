@@ -106,6 +106,10 @@ param(
     [string[]]$Tools,
     [string]$Source,
     [string]$ProjectRoot,
+    [ValidatePattern('^[^/\\:]+$')]
+    [string]$McpHost,
+    [ValidatePattern('^https?://[^\s]+$')]
+    [string]$InfobasePublishUrl,
     [switch]$NonInteractive,
     [switch]$AssumeYes,
     [switch]$Force,
@@ -917,6 +921,26 @@ function Get-InfobasePublishUrlBase {
     return $url
 }
 
+function Get-McpHost {
+    param([string]$Root)
+    if ($McpHost) { return $McpHost }
+    $envPath = Join-Path $Root $script:DevEnvFileName
+    if (-not (Test-Path -LiteralPath $envPath)) { return 'localhost' }
+    $keys = Read-DevEnvKeys -Path $envPath
+    if (-not $keys.Contains('MCP_HOST')) { return 'localhost' }
+    $hostName = ([string]$keys['MCP_HOST']).Trim().Trim('"', "'")
+    if ([string]::IsNullOrWhiteSpace($hostName)) { return 'localhost' }
+    if ($hostName -match '[/\\:]') { throw 'MCP_HOST must be a hostname or IP address' }
+    return $hostName
+}
+
+function Resolve-McpServerHost {
+    param([array]$Servers, [string]$HostName)
+    foreach ($s in $Servers) {
+        if ($s.url) { $s.url = $s.url -replace '(?<=://)localhost(?=[:/])', $HostName }
+    }
+}
+
 function Resolve-McpServerPlaceholders {
     # Substitutes {INFOBASE_PUBLISH_URL} in the `url` field of every server
     # entry that contains it. Mutates the input collection. Returns the list
@@ -1678,7 +1702,7 @@ function Invoke-OpenSpecArtifacts {
         }
         $toolCopied = 0
         $toolKept = 0
-        Get-ChildItem -Recurse -File -Path $toolBundle -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-ChildItem -Recurse -Force -File -LiteralPath $toolBundle -ErrorAction SilentlyContinue | ForEach-Object {
             $rel = Get-InstallerRelativePath -BasePath $toolBundle -ChildPath $_.FullName
             $destRel = Get-OpenSpecBundleDestRel -Tool $tool -Rel $rel
             if ($Manifest.files.Contains($destRel)) {
@@ -2909,6 +2933,7 @@ function Invoke-McpPhase {
         return
     }
     $servers = Read-McpServers -Root $SourceRoot
+    Resolve-McpServerHost -Servers $servers -HostName (Get-McpHost -Root $Root)
 
     # Substitute {INFOBASE_PUBLISH_URL} placeholders in server URLs from the
     # project's .dev.env (Place-DevEnv runs earlier in the pipeline so the
@@ -2916,6 +2941,12 @@ function Invoke-McpPhase {
     # keep the literal placeholder in the rendered config — the user sees a
     # clear TODO marker and a warning telling them what to fill in.
     $infobaseBase = Get-InfobasePublishUrlBase -Root $Root
+    if ($InfobasePublishUrl) {
+        $infobaseBase = $InfobasePublishUrl.Trim().TrimEnd('/')
+        if ($infobaseBase -match '/([a-z]{2,3})$' -and $script:KnownInfobaseLocales -contains $Matches[1]) {
+            $infobaseBase = $infobaseBase.Substring(0, $infobaseBase.LastIndexOf('/'))
+        }
+    }
     $unresolved = Resolve-McpServerPlaceholders -Servers $servers -InfobaseBase $infobaseBase
     if ($unresolved.Count -gt 0) {
         Write-Warn ("  MCP config: следующие серверы используют плейсхолдер {INFOBASE_PUBLISH_URL}, но INFOBASE_PUBLISH_URL в .dev.env пуст: " + ($unresolved -join ', ') + '.')
@@ -3010,6 +3041,13 @@ function Invoke-McpPhase {
             if ($Manifest.files.Contains($legacy)) { [void]$Manifest.files.Remove($legacy) }
         }
 
+        if ($tool -eq 'codex' -and (Test-Path -LiteralPath $absTarget)) {
+            # TOML contains settings outside MCP and has no safe key-level merge here.
+            # Never replace an existing client config, even on init or -Force.
+            Write-Info "  [$tool] Existing MCP TOML preserved: $target; add connections through /setupmcp"
+            continue
+        }
+
         # Respect user modifications to the MCP config the same way artefact
         # files are respected: if a previous `update` flagged this target as
         # userModified (the user trimmed the server list, switched the format,
@@ -3049,7 +3087,15 @@ function Invoke-McpPhase {
         }
 
         $finalContent = $content
-        $mergeServers = $adapter.mcp -is [System.Collections.IDictionary] -and $adapter.mcp['mergeServers']
+        # Existing JSON connections may point at a separately managed MCP
+        # deployment. The portable catalog only fills missing IDs.
+        $mergeServers = $tool -ne 'codex' -and $tool -ne 'opencode' -and $adapter.mcp.format -eq 'json'
+        if ($mergeServers) {
+            $mergeRequested = $true
+            if ($mergeKey -eq 'mcp' -and $tool -in @('cursor', 'claude-code', 'command-code', 'kimi', 'other')) {
+                $mergeKey = 'mcpServers'
+            }
+        }
         $managedServers = @()
         if ($mergeRequested -and $mergeServers) {
             # New adapters merge individual servers. A pre-existing server
@@ -3066,18 +3112,19 @@ function Invoke-McpPhase {
             if ($Manifest.files.Contains($target) -and $Manifest.files[$target].Contains('managedServers')) {
                 $previousServers = @($Manifest.files[$target]['managedServers'])
             }
-            foreach ($id in $previousServers) {
-                if (-not $newServers.Contains($id) -and $currentServers.Contains($id)) {
-                    [void]$currentServers.Remove($id)
-                }
-            }
             foreach ($id in $newServers.Keys) {
-                if ($currentServers.Contains($id) -and $id -notin $previousServers) {
-                    Write-Info "  [$tool] MCP server kept (user-owned): $id"
+                if ($currentServers.Contains($id)) {
+                    # Deployment records own addresses and authentication, even
+                    # for entries the rules installer originally added.
+                    if ($id -in $previousServers) { $managedServers += $id }
+                    Write-Info "  [$tool] MCP connection preserved: $id"
                     continue
                 }
                 $currentServers[$id] = $newServers[$id]
                 $managedServers += $id
+            }
+            foreach ($key in $renderedObj.Keys) {
+                if (-not $merged.Contains($key)) { $merged[$key] = $renderedObj[$key] }
             }
             $finalContent = ConvertTo-Json $merged -Depth 20
         }
@@ -3104,8 +3151,7 @@ function Invoke-McpPhase {
                 $finalContent = (ConvertTo-Json $merged -Depth 20)
             }
             catch {
-                Write-Info "  [$tool] MCP merge: existing $target не парсится как JSON — пишу заново. Ошибка: $($_.Exception.Message)"
-                $finalContent = $content
+                throw "  [$tool] MCP merge: existing $target is not valid JSON; refusing to overwrite: $($_.Exception.Message)"
             }
         }
 
@@ -3129,7 +3175,12 @@ function Invoke-McpPhase {
         if ($mergeRequested) {
             $mcpEntry['merged'] = $true
             $mcpEntry['mergeKey'] = $mergeKey
-            if ($mergeServers) { $mcpEntry['managedServers'] = @($managedServers) }
+            if ($mergeServers) {
+                $mcpEntry['managedServers'] = @($managedServers)
+                $mcpEntry['installedServers'] = [ordered]@{}
+                $written = Get-McpConfigMap -Config (ConvertTo-OrderedHashtable ($finalContent | ConvertFrom-Json)) -Key $mergeKey
+                foreach ($id in $managedServers) { $mcpEntry['installedServers'][$id] = $written[$id] }
+            }
         }
         # Track joint ownership when several tools share one MCP target
         # (currently Claude Code + Command Code both write `.mcp.json`).
@@ -5582,7 +5633,14 @@ function Remove-McpKeyFromConfig {
         $servers = Get-McpConfigMap -Config $kept -Key $Key
         if ($null -eq $servers) { return }
         foreach ($id in @($Entry['managedServers'])) {
-            if ($servers.Contains($id)) { [void]$servers.Remove($id) }
+            if (-not $servers.Contains($id)) { continue }
+            # A changed endpoint no longer belongs to the static catalog. If
+            # the former installed value is unknown, retain rather than guess.
+            if (-not $Entry.Contains('installedServers') -or
+                -not $Entry['installedServers'].Contains($id)) { continue }
+            $original = ConvertTo-Json $Entry['installedServers'][$id] -Depth 20 -Compress
+            $current = ConvertTo-Json $servers[$id] -Depth 20 -Compress
+            if ($current -eq $original) { [void]$servers.Remove($id) }
         }
         # Prune empty containers, but preserve sibling settings at every level.
         $parts = @($Key -split '\.')

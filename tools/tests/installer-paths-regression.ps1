@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $Installer = Join-Path $RepoRoot 'install.ps1'
+$PowerShellHost = (Get-Process -Id $PID).Path
 $Work = Join-Path ([IO.Path]::GetTempPath()) ('installer-paths-' + [guid]::NewGuid().ToString('N'))
 $SourceRoot = Join-Path $Work 'source repository with long name'
 $Utf8 = New-Object Text.UTF8Encoding $false
@@ -21,7 +22,7 @@ function Read-Json([string]$Path) { Get-Content -LiteralPath $Path -Raw | Conver
 function Pass([string]$Name) { $script:Passed++; Write-Host "OK  $Name" }
 function Invoke-Installer([string]$Project, [string[]]$Arguments, [string]$SourcePath = $SourceRoot) {
     $log = Join-Path $Work ('run-' + [guid]::NewGuid().ToString('N') + '.log')
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer @Arguments `
+    & $PowerShellHost -NoProfile -File $Installer @Arguments `
         -ProjectRoot $Project -Source $SourcePath -NonInteractive -McpMode managed *> $log
     Assert-True ($LASTEXITCODE -eq 0) "Installer failed: $(Get-Content -LiteralPath $log -Raw)"
     return (Get-Content -LiteralPath $log -Raw)
@@ -219,40 +220,44 @@ try {
     Assert-True ($init.LastIndexOf('Invoke-OpenSpecProjectMd -Root') -gt $init.IndexOf('Invoke-InitialSourceDump -Root')) 'Initial dump cannot refresh project context'
     Pass 'Context generation follows .dev.env placement and optional initial source export'
 
-    # Run the real init flow with explicit test consent and a local export stub.
-    # This verifies the post-export project.md write, not just function order.
-    Write-Fixture (Join-Path $SourceRoot 'content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1') @'
-param($ConfigDir, $Mode, $InfoBasePath)
-[void][IO.Directory]::CreateDirectory($ConfigDir)
-[IO.File]::WriteAllText((Join-Path $ConfigDir 'Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>DumpedConfig</Name></Properties></Configuration></MetaDataObject>')
-exit 0
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        # Run the real init flow with explicit test consent and a local export stub.
+        # This verifies the post-export project.md write, not just function order.
+        Write-Fixture (Join-Path $SourceRoot 'content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1') @'
+    param($ConfigDir, $Mode, $InfoBasePath)
+    [void][IO.Directory]::CreateDirectory($ConfigDir)
+    [IO.File]::WriteAllText((Join-Path $ConfigDir 'Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>DumpedConfig</Name></Properties></Configuration></MetaDataObject>')
+    exit 0
 '@
-    $exportProject = Join-Path $Work 'accepted-export-project'
-    Write-Fixture (Join-Path $exportProject '.dev.env') "INFOBASE_PATH=fixture-only`nEXPORT_PATH=`nUSE_EDT=false`n"
-    $wrapper = Join-Path $Work 'accepted-export.ps1'
-    Write-Fixture $wrapper @'
-param($InstallerFile, $ProjectFixture, $SourceFixture)
-$ErrorActionPreference = 'Stop'
-$installerText = [IO.File]::ReadAllText($InstallerFile)
-$dispatch = $installerText.IndexOf('# SECTION 14: MAIN DISPATCH')
-if ($dispatch -lt 0) { throw 'Installer dispatch marker missing' }
-. ([scriptblock]::Create($installerText.Substring(0, $dispatch)))
-function Read-YesNo { param($Prompt, $Default) return $true }
-function Read-Required { param($Prompt, $DefaultValue) return $DefaultValue }
-function Read-Choice { param($Prompt, $Options, $Default) return $Default }
-$script:NonInteractive = $false
-$script:AssumeYes = $false
-$script:McpMode = 'managed'
-Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -RequestedTools @('cursor')
+        $exportProject = Join-Path $Work 'accepted-export-project'
+        Write-Fixture (Join-Path $exportProject '.dev.env') "INFOBASE_PATH=fixture-only`nEXPORT_PATH=`nUSE_EDT=false`n"
+        $wrapper = Join-Path $Work 'accepted-export.ps1'
+        Write-Fixture $wrapper @'
+    param($InstallerFile, $ProjectFixture, $SourceFixture)
+    $ErrorActionPreference = 'Stop'
+    $installerText = [IO.File]::ReadAllText($InstallerFile)
+    $dispatch = $installerText.IndexOf('# SECTION 14: MAIN DISPATCH')
+    if ($dispatch -lt 0) { throw 'Installer dispatch marker missing' }
+    . ([scriptblock]::Create($installerText.Substring(0, $dispatch)))
+    function Read-YesNo { param($Prompt, $Default) return $true }
+    function Read-Required { param($Prompt, $DefaultValue) return $DefaultValue }
+    function Read-Choice { param($Prompt, $Options, $Default) return $Default }
+    $script:NonInteractive = $false
+    $script:AssumeYes = $false
+    $script:McpMode = 'managed'
+    Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -RequestedTools @('cursor')
 '@
-    $exportLog = Join-Path $Work 'accepted-export.log'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -InstallerFile $Installer `
-        -ProjectFixture $exportProject -SourceFixture $SourceRoot *> $exportLog
-    Assert-True ($LASTEXITCODE -eq 0) "Accepted export failed: $(Get-Content -LiteralPath $exportLog -Raw)"
-    Assert-True (([IO.File]::ReadAllText((Join-Path $exportProject 'openspec/project.md'))).Contains('DumpedConfig')) 'Successful initial dump did not refresh project.md'
-    Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
-    Assert-ManifestHashes $exportProject
-    Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+        $exportLog = Join-Path $Work 'accepted-export.log'
+        & $PowerShellHost -NoProfile -File $wrapper -InstallerFile $Installer `
+            -ProjectFixture $exportProject -SourceFixture $SourceRoot *> $exportLog
+        Assert-True ($LASTEXITCODE -eq 0) "Accepted export failed: $(Get-Content -LiteralPath $exportLog -Raw)"
+        Assert-True (([IO.File]::ReadAllText((Join-Path $exportProject 'openspec/project.md'))).Contains('DumpedConfig')) 'Successful initial dump did not refresh project.md'
+        Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
+        Assert-ManifestHashes $exportProject
+        Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+
+    }
+    else { Write-Host 'SKIP  Interactive initial export runs only on Windows; Linux uses the agent workflow.' }
 
     Write-Host "OK: $script:Passed installer path cases; real 8.3 paths checked: $script:ShortPathChecked; no network or infobase accessed."
 }
