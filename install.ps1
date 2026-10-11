@@ -3109,14 +3109,25 @@ function Invoke-McpPhase {
             $renderedObj = ConvertTo-OrderedHashtable ($content | ConvertFrom-Json)
             $newServers = Get-McpConfigMap -Config $renderedObj -Key $mergeKey
             $previousServers = @()
+            $previousWritten = $null
             if ($Manifest.files.Contains($target) -and $Manifest.files[$target].Contains('managedServers')) {
-                $previousServers = @($Manifest.files[$target]['managedServers'])
+                $previousEntry = $Manifest.files[$target]
+                $previousServers = @($previousEntry['managedServers'])
+                if ($previousEntry.Contains('installedServers')) { $previousWritten = $previousEntry['installedServers'] }
             }
             foreach ($id in $newServers.Keys) {
                 if ($currentServers.Contains($id)) {
-                    # Deployment records own addresses and authentication, even
-                    # for entries the rules installer originally added.
-                    if ($id -in $previousServers) { $managedServers += $id }
+                    if ($id -in $previousServers) {
+                        $managedServers += $id
+                        # Refresh an unchanged installer-owned entry when its
+                        # catalog source changes. A modified entry stays put.
+                        if ($previousWritten -and $previousWritten.Contains($id) -and
+                            (ConvertTo-Json $currentServers[$id] -Depth 20 -Compress) -eq
+                            (ConvertTo-Json $previousWritten[$id] -Depth 20 -Compress)) {
+                            $currentServers[$id] = $newServers[$id]
+                            continue
+                        }
+                    }
                     Write-Info "  [$tool] MCP connection preserved: $id"
                     continue
                 }
