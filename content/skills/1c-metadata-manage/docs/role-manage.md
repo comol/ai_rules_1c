@@ -14,15 +14,15 @@ Creates role files (metadata + Rights.xml) from a JSON description.
 ## Usage
 
 ```
-1c-role-compile <RolePath> <OutputDir>
+1c-role-compile <JsonPath> <OutputDir>
 ```
 
-- **RolePath** — path to the JSON role definition.
+- **JsonPath** — path to the JSON role definition (`-RolePath` is accepted as an alias).
 - **OutputDir** — either the configuration source root (the script creates `Roles/` itself) or a path that already ends with `Roles`.
 
 **Command:**
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -RolePath "<role.json>" -OutputDir "<src-root-or-Roles>"
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -JsonPath "<role.json>" -OutputDir "<src-root-or-Roles>"
 ```
 
 The script accepts the DSL keys `objects` (canonical) or its synonym `rights`. UUIDs and registration in `Configuration.xml` are handled automatically.

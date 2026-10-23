@@ -1,7 +1,9 @@
-﻿# role-compile v1.8 — Compile 1C role from JSON
+﻿# role-compile v1.9 — Compile 1C role from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (v1.9): -JsonPath also answers to -RolePath, the name the docs used.
 param(
 	[Parameter(Mandatory)]
+	[Alias('RolePath')]
 	[string]$JsonPath,
 
 	[Parameter(Mandatory)]

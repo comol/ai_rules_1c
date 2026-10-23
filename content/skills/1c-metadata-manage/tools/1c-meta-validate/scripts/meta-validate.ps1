@@ -1,4 +1,4 @@
-﻿# meta-validate v1.13 — Validate 1C metadata object structure (+корневой <Type>: скаляр без структуры = ошибка)
+﻿# meta-validate v1.14 — Validate 1C metadata object structure (+корневой <Type>: скаляр без структуры = ошибка)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local (v1.13, same as meta-validate.py): the object, its form descriptors and
 # Form.xml files carry the version of Configuration.xml (1e/6e); every
@@ -9,6 +9,8 @@
 # case-insensitively and across attributes, tabular sections, dimensions and
 # resources (8); InformationRegister forbids Periodicity and DefaultRecordSetForm
 # (12); a type spelled with an export folder name (cfg:Catalogs.X) is an error (16a).
+# Local (v1.14, same as meta-validate.py): an AccumulationRegister with
+# RegisterType Turnovers has no RecordType standard attribute (5).
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -672,6 +674,14 @@ if ($typesWithStdAttrs -contains $mdType) {
 	} else {
 		$stdAttrs = $stdAttrNode.SelectNodes("xr:StandardAttribute", $ns)
 		$expectedStdAttrs = $standardAttributesByType[$mdType]
+		# Local: a turnovers-only accumulation register has no RecordType (it is the
+		# receipt/expense flag of a balance register).
+		if ($mdType -eq "AccumulationRegister") {
+			$regTypeNode = $propsNode.SelectSingleNode("md:RegisterType", $ns)
+			if ($regTypeNode -and $regTypeNode.InnerText.Trim() -eq "Turnovers") {
+				$expectedStdAttrs = @($expectedStdAttrs | Where-Object { $_ -ne "RecordType" })
+			}
+		}
 		$check5Ok = $true
 
 		$foundNames = @()

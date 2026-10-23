@@ -239,10 +239,11 @@ Applies main configuration changes to the database configuration (`/UpdateDBCfg`
 | `-Extension <name>` | Update extension |
 | `-AllExtensions` | Update all extensions |
 | `-Dynamic <auto/disable>` | `auto` dynamic update, `disable` turn it off (`+`/`-` still accepted, but a lone `-` never reaches the script through `powershell.exe -File` — PowerShell 5.1 exits silently; use `disable` or `-Dynamic:-`) |
+| `-SessionTerminate <disable/prompt/force>` | What to do with open sessions; `force` ends them (`/UpdateDBCfg … -SessionTerminate force`, `ibcmd --session-terminate=force`). Dev/test bases only. Without it the update stops on the exclusive-lock error while any session is open. Not accepted through `-AdditionalV8Arguments` / `-AdditionalIbcmdArguments` — the platform reads the key only right after `/UpdateDBCfg` |
 | `-Server` | Server-side update |
 | `-WarningsAsErrors` | Treat warnings as errors |
 
-**Warning**: Non-dynamic update requires exclusive database access (all users must exit).
+**Warning**: Non-dynamic update requires exclusive database access (all users must exit, or pass `-SessionTerminate force` on a dev/test base).
 
 ---
 

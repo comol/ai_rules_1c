@@ -1,5 +1,6 @@
-﻿# mxl-decompile v1.0 — Decompile 1C spreadsheet to JSON
+﻿# mxl-decompile v1.1 — Decompile 1C spreadsheet to JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (v1.1): an absolute -OutputPath is written as given, not appended to the current directory.
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -632,8 +633,9 @@ $json = [regex]::Replace($json, '\\u([0-9A-Fa-f]{4})', {
 
 if ($OutputPath) {
 	$enc = New-Object System.Text.UTF8Encoding($false)
+	$outFile = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location) $OutputPath }
 	[System.IO.File]::WriteAllText(
-		(Join-Path (Get-Location) $OutputPath),
+		$outFile,
 		$json,
 		$enc
 	)

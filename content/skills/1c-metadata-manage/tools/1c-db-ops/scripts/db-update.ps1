@@ -1,5 +1,8 @@
-﻿# db-update v1.14 — Update 1C database configuration
+﻿# db-update v1.15 — Update 1C database configuration
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (v1.15): -SessionTerminate (disable|prompt|force) ends open sessions so the
+# update does not stop on the exclusive-lock error; it goes right after /UpdateDBCfg
+# (1cv8) or as --session-terminate= (ibcmd), where the platform reads it.
 # NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
@@ -38,6 +41,12 @@
     Через powershell.exe -File одиночный "-" не доходит до скрипта (PowerShell 5.1
     завершается без вывода) — там используйте "disable" или -Dynamic:-
 
+.PARAMETER SessionTerminate
+    Что делать с открытыми сеансами: disable, prompt или force (принудительно завершить).
+    Без параметра обновление, требующее монопольного доступа, падает, пока в базе есть
+    сеансы. force — только для dev/test базы; -AdditionalV8Arguments этот ключ не
+    передаёт: платформа читает его только сразу после /UpdateDBCfg.
+
 .PARAMETER Server
     Обновление на стороне сервера
 
@@ -55,6 +64,9 @@
 
 .EXAMPLE
     .\db-update.ps1 -InfoBasePath "C:\Bases\MyDB" -Dynamic "+" -Extension "МоёРасширение"
+
+.EXAMPLE
+    .\db-update.ps1 -InfoBasePath "C:\Bases\MyDB" -Dynamic "+" -SessionTerminate force
 #>
 
 [CmdletBinding()]
@@ -89,6 +101,10 @@ param(
 
     [Parameter(Mandatory=$false)]
     [switch]$Server,
+
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("disable", "prompt", "force")]
+    [string]$SessionTerminate,
 
     [Parameter(Mandatory=$false)]
     [switch]$WarningsAsErrors,
@@ -137,13 +153,13 @@ $script:V8OwnedKeys = @(
     '/F', '/S', '/N', '/P', '/Out', '/DisableStartupDialogs',
     '/UseTemplate', '/AddToList', '/Execute', '/C', '/URL', '/UC',
     '/DumpIB', '/RestoreIB', '/DumpCfg', '/LoadCfg',
-    '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg',
+    '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg', '-SessionTerminate',
     '/DumpExternalDataProcessorOrReportToFiles', '/LoadExternalDataProcessorOrReportFromFiles'
 )
 $script:IbcmdOwnedKeys = @(
     '--db-path', '--data', '--out', '--file', '--load', '--restore',
     '--import', '--export', '--apply', '--force', '--create-database',
-    '--user', '--password'
+    '--user', '--password', '--session-terminate'
 )
 $script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP')
 $script:IbcmdSecretKeys = @('--password', '--token', '--db-pwd')
@@ -424,7 +440,7 @@ function Write-PlatformOutput {
 $engine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
 
 # --- Resolve additional arguments for the selected engine ---
-$argHints = @{ '/F' = '-InfoBasePath'; '/S' = '-InfoBaseServer + -InfoBaseRef'; '/N' = '-UserName'; '/P' = '-Password'; '--db-path' = '-InfoBasePath'; '--user' = '-UserName'; '--password' = '-Password' }
+$argHints = @{ '/F' = '-InfoBasePath'; '/S' = '-InfoBaseServer + -InfoBaseRef'; '/N' = '-UserName'; '/P' = '-Password'; '--db-path' = '-InfoBasePath'; '--user' = '-UserName'; '--password' = '-Password'; '-SessionTerminate' = '-SessionTerminate'; '--session-terminate' = '-SessionTerminate' }
 $extraArgs = @(Resolve-ExtraArgs $engine $AdditionalV8Arguments $AdditionalIbcmdArguments $argHints)
 
 # --- Validate connection ---
@@ -452,6 +468,7 @@ try {
         $arguments = @("infobase", "config", "apply", "--db-path=$InfoBasePath", "--force")
         if ($Dynamic -eq "+") { $arguments += "--dynamic=auto" }
         elseif ($Dynamic -eq "-") { $arguments += "--dynamic=disable" }
+        if ($SessionTerminate) { $arguments += "--session-terminate=$SessionTerminate" }
         if ($Extension) { $arguments += "--extension=$Extension" }
         if ($UserName) { $arguments += "--user=$UserName" }
         if ($Password) { $arguments += "--password=$Password" }
@@ -488,6 +505,9 @@ try {
     # --- Options ---
     if ($Dynamic) {
         $arguments += "-Dynamic$Dynamic"
+    }
+    if ($SessionTerminate) {
+        $arguments += "-SessionTerminate", $SessionTerminate
     }
     if ($Server) {
         $arguments += "-Server"

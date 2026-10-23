@@ -1986,6 +1986,33 @@ def _(work):
                                 run_powershell_tool, work, "powershell")
 
 
+@case("meta-validate: a turnover register has no RecordType, a balance register still needs it")
+def _(work):
+    directory = os.path.join(work, "turnover-register")
+    copy_fixture("config-dump", directory)
+    copy_fixture("turnover-register", directory)
+    target = os.path.join(directory, "AccumulationRegisters", "TurnReg.xml")
+
+    run = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target, "-Detailed"], directory)
+    combined = run["stdout"] + run["stderr"]
+    assert_equal(0, run["exit_code"], f"a turnover register was rejected: {combined[-600:]}")
+    assert_true("Missing StandardAttributes" not in combined,
+                f"false Missing StandardAttributes warning: {combined[-600:]}")
+
+    # The same file declared as a balance register lacks RecordType for real.
+    with open(target, "rb") as handle:
+        raw = handle.read()
+    swapped = raw.replace(b"<RegisterType>Turnovers</RegisterType>",
+                          b"<RegisterType>Balance</RegisterType>")
+    assert_true(swapped != raw, "the fixture lost its RegisterType element")
+    with open(target, "wb") as handle:
+        handle.write(swapped)
+    run = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target, "-Detailed"], directory)
+    combined = run["stdout"] + run["stderr"]
+    assert_true("Missing StandardAttributes: RecordType" in combined,
+                f"a balance register without RecordType was not warned about: {combined[-600:]}")
+
+
 # ------------------------------------------ 2026-09-25: vendor-shaped defaults and new checks
 #
 # Pinned for both runtimes: form-compile from-object gives a document choice form

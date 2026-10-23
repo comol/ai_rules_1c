@@ -12,9 +12,10 @@ Creates or removes a template (layout) of specified type and registers/unregiste
 |-----------|:--------:|---------|-------------|
 | ObjectName | yes | — | Object name, or absolute / relative path to the object's `.xml` file; alias `ProcessorName` |
 | TemplateName | yes | — | Template name |
-| TemplateType | yes | — | Type: HTML, Text, SpreadsheetDocument, BinaryData |
+| TemplateType | yes | — | Type: HTML, Text, SpreadsheetDocument, BinaryData, DataCompositionSchema |
 | Synonym | no | = TemplateName | Template synonym |
 | SrcDir | no | `src` | Source directory |
+| SetMainSKD | no | off | `DataCompositionSchema` on a Report / ExternalReport: also overwrite `MainDataCompositionSchema` when it already points at another template (see below) |
 
 ### Command (EPF)
 
@@ -42,6 +43,9 @@ User may specify type in free form. Determine the correct one from context:
 | Text, text document | TextDocument | `.txt` | Empty file |
 | SpreadsheetDocument, MXL, spreadsheet | SpreadsheetDocument | `.xml` | Minimal spreadsheet |
 | BinaryData, binary | BinaryData | `.bin` | Empty file |
+| DataCompositionSchema, DCS, SKD | DataCompositionSchema | `.xml` | Empty schema with one local data source (`ИсточникДанных1`) |
+
+**`DataCompositionSchema`** creates only the scaffold: a schema with a data source and no data sets. Build the real content with `1c-skd-compile` straight into the created `Template.xml` ([skd-manage.md](skd-manage.md)), then run `1c-skd-validate`. For a `Report` or `ExternalReport` the script also fills `MainDataCompositionSchema` of the object with `<Report|ExternalReport>.<Name>.Template.<TemplateName>` when that property is empty; a property that already names a template is kept unless `-SetMainSKD` is passed. For other object types nothing besides the registration changes.
 
 ### Print Form Naming Convention
 
@@ -112,5 +116,7 @@ The script refuses a real deletion without `-Force`. It parses and serializes th
 2. For SpreadsheetDocument: use `1c-mxl-compile` to generate the template content
 3. `1c-mxl-validate` — validate template structure
 4. `1c-mxl-info` — analyze template structure
+
+For DataCompositionSchema: `1c-skd-compile` generates the content, then `1c-skd-validate` and `1c-skd-info` — see [skd-manage.md](skd-manage.md).
 
 Scripts vendored from Nikolay-Shirokov/cc-1c-skills; sync history — `docs/CHANGELOG.md`.

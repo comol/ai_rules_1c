@@ -1,4 +1,4 @@
-# meta-validate v1.13 — Validate 1C metadata object structure (Python port) (+корневой <Type>: скаляр без структуры = ошибка)
+# meta-validate v1.14 — Validate 1C metadata object structure (Python port) (+корневой <Type>: скаляр без структуры = ошибка)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, pinned at
 #         ecd289fe11733028d87b55284ea9fb5feff8f513 — the same upstream state the
 #         vendored meta-validate.ps1 was synced from.
@@ -22,6 +22,8 @@
 #        dimensions and resources (8); InformationRegister forbids Periodicity
 #        and DefaultRecordSetForm (12); a type spelled with an export folder name
 #        (cfg:Catalogs.X) is an error (16a).
+#        v1.14 (local, both runtimes): an AccumulationRegister with RegisterType
+#        Turnovers has no RecordType standard attribute (5).
 import argparse
 import os
 import re
@@ -673,6 +675,12 @@ if md_type in types_with_std_attrs:
     else:
         std_attrs = find_all(std_attr_node, "xr:StandardAttribute")
         expected_std_attrs = standard_attributes_by_type.get(md_type, [])
+        # Local: a turnovers-only accumulation register has no RecordType (it is the
+        # receipt/expense flag of a balance register).
+        if md_type == "AccumulationRegister":
+            reg_type_node = find(props_node, "md:RegisterType")
+            if reg_type_node is not None and (reg_type_node.text or "").strip() == "Turnovers":
+                expected_std_attrs = [a for a in expected_std_attrs if a != "RecordType"]
         check5_ok = True
 
         found_names = []

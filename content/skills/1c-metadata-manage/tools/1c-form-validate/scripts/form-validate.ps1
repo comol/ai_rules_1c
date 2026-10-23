@@ -1,4 +1,4 @@
-﻿# form-validate v1.10 — Validate 1C managed form
+﻿# form-validate v1.11 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: DynamicList attributes without MainTable and QueryText are an error —
 # the form loads but fails to open.
@@ -9,6 +9,11 @@
 # handlers Form.xml references (13) and for form-data conversion outside
 # &НаСервере (14); a button or command Representation outside its own
 # enumeration is an error (15).
+# Local (v1.11): external processor / report sources stored inside a configuration
+# dump repo (<repo>/.ExternalDataProcessors/<Name>/Forms/...) are EPF/ERF context,
+# not config context: the walk stops at the object folder whose root descriptor
+# is ExternalDataProcessor / ExternalReport before it reaches the repo's
+# Configuration.xml (no false "External* type in configuration context", 12).
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -76,6 +81,20 @@ $script:configVersion = ""
 $walkDir = Split-Path (Resolve-Path $FormPath) -Parent
 for ($i = 0; $i -lt 15; $i++) {
 	if (-not $walkDir -or $walkDir -eq (Split-Path $walkDir)) { break }
+	# Local: an object folder <parent>\<Name> whose root descriptor <parent>\<Name>.xml
+	# is an ExternalDataProcessor / ExternalReport is EPF/ERF context, even when a
+	# Configuration.xml lies further up (sources kept inside a configuration repo).
+	$objDescriptor = Join-Path (Split-Path $walkDir) ((Split-Path $walkDir -Leaf) + ".xml")
+	if (Test-Path -LiteralPath $objDescriptor -PathType Leaf) {
+		try {
+			$extReader = New-Object System.IO.StreamReader($objDescriptor, [System.Text.Encoding]::UTF8)
+			$extBuffer = New-Object char[] 2000
+			$extRead = $extReader.Read($extBuffer, 0, 2000)
+			$extReader.Close()
+			$extHead = New-Object string($extBuffer, 0, $extRead)
+			if ($extHead -match '<MetaDataObject\b[^>]*>\s*<(ExternalDataProcessor|ExternalReport)\b') { break }
+		} catch {}
+	}
 	if (Test-Path (Join-Path $walkDir "Configuration.xml")) {
 		$script:isConfigContext = $true
 		# Local: the format version of the configuration (Check 1).
