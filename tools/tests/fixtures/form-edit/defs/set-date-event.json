@@ -1,0 +1,1 @@
+{ "set": [ { "element": "Дата", "on": [ { "event": "OnChange", "handler": "ДатаПриИзменении" } ] } ] }

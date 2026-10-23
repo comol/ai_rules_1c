@@ -1,0 +1,15 @@
+{
+  "attributes": [
+    {
+      "name": "Таблица",
+      "type": "ValueTable",
+      "columns": [
+        { "name": "Первая", "type": "string(10)" },
+        { "name": "Вторая", "type": "decimal(10,2)" }
+      ],
+      "additionalColumns": [
+        { "table": "Объект.Товары", "columns": [ { "name": "Третья", "type": "string(10)" }, { "name": "Четвертая", "type": "boolean" } ] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "into": "ГруппаШапка",
+  "after": "Номер",
+  "elements": [
+    {
+      "input": "Склад",
+      "path": "Объект.Склад",
+      "title": "Склад отгрузки",
+      "textEdit": false,
+      "maxWidth": 28,
+      "chooseType": false,
+      "minValue": 0,
+      "choiceParameters": [ "Отбор.Активный=true" ],
+      "choiceParameterLinks": [ "Отбор.Организация=Объект.Организация" ],
+      "on": [ "OnChange" ]
+    }
+  ]
+}

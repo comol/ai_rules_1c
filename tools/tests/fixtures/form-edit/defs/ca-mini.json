@@ -1,0 +1,8 @@
+{
+  "conditionalAppearance": [
+    {
+      "selection": [ "Поле" ],
+      "appearance": { "ЦветТекста": "web:Red", "ЦветФона": "style:FormBackColor" }
+    }
+  ]
+}

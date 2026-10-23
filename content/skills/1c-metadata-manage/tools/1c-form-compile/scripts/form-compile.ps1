@@ -6,6 +6,11 @@
 # DescriptionLength > 0. windowOpeningMode / autoTime / usePostingMode accept only
 # the platform enum values, and a missing Configuration.xml is reported instead of
 # silently assuming 2.17. Same deltas as form-compile.py.
+# Local: Button children are written in the platform order (Type, Visible,
+# Representation, DefaultButton, Enabled, ..., CommandName, ..., Picture, Title,
+# LocationInCommandBar) - derived from 168762 buttons in 29738 Form.xml files;
+# CommandName before Representation was refused with an XDTO exception on load.
+# A button's TextPicture is written as PictureAndText. Same deltas as form-compile.py.
 param(
 	[string]$JsonPath,
 
@@ -4997,11 +5002,51 @@ function Emit-Page {
 	X "$indent</Page>"
 }
 
+# Platform order of Button children: 168762 buttons in 29738 Form.xml files of the
+# ZUP / vendor dumps - every pair that occurs together has one direction (a dozen
+# borrowed-form outliers apart). Tags that never occur together in the dumps
+# (ReadOnly, HorizontalAlign, ToolTip, Shape, ShapeRepresentation, PictureLocation,
+# RepresentationInContextMenu) are placed by their neighbours.
+$script:buttonChildOrder = @(
+	'Type','Visible','UserVisible','TitleHeight','Representation','DefaultButton','SkipOnInput',
+	'Enabled','ReadOnly','DefaultItem','Width','AutoMaxWidth','MaxWidth','Height','AutoMaxHeight',
+	'MaxHeight','HorizontalStretch','VerticalStretch','GroupHorizontalAlign','GroupVerticalAlign',
+	'HorizontalAlign','Check','CommandName','Parameter','DataPath','TextColor','BackColor',
+	'BorderColor','Font','Picture','Title','ToolTip','ToolTipRepresentation','Shape',
+	'ShapeRepresentation','PictureLocation','RepresentationInContextMenu','LocationInCommandBar'
+)
+
+# Re-order the child blocks written since $startLen (the Button's own children, before
+# the companion) into the platform order. A tag outside the table keeps its place
+# after the tag that preceded it.
+function Sort-ButtonChildren {
+	param([int]$startLen, [string]$inner)
+	$body = $script:xml.ToString($startLen, $script:xml.Length - $startLen)
+	$script:xml.Length = $startLen
+	$lines = @($body -split "`r?`n")
+	if ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines = @($lines[0..($lines.Count - 2)]) }
+	$chunks = New-Object System.Collections.ArrayList
+	$rank = -1.0
+	foreach ($line in $lines) {
+		if ($line.StartsWith("$inner<") -and -not $line.StartsWith("$inner</")) {
+			$m = [regex]::Match($line.Substring($inner.Length), '^<([\w:]+)')
+			$ix = if ($m.Success) { [array]::IndexOf($script:buttonChildOrder, $m.Groups[1].Value) } else { -1 }
+			if ($ix -ge 0) { $rank = [double]$ix }
+			[void]$chunks.Add(@{ Rank = $rank; Idx = $chunks.Count; Lines = (New-Object System.Collections.ArrayList) })
+		}
+		[void]$chunks[$chunks.Count - 1].Lines.Add($line)
+	}
+	foreach ($c in ($chunks | Sort-Object -Property @{ Expression = { $_.Rank } }, @{ Expression = { $_.Idx } })) {
+		foreach ($l in $c.Lines) { $script:xml.AppendLine($l) | Out-Null }
+	}
+}
+
 function Emit-Button {
 	param($el, [string]$name, [int]$id, [string]$indent, [bool]$inCmdBar = $false)
 
 	X "$indent<Button name=`"$name`" id=`"$id`"$(DI-Attr $el)>"
 	$inner = "$indent`t"
+	$btnStartLen = $script:xml.Length
 	# (общие свойства — через Emit-Layout ниже; отдельный вызов был бы двойной эмиссией)
 
 	# Type — context-aware:
@@ -5086,7 +5131,9 @@ function Emit-Button {
 	Emit-CommandPicture -pic $el.picture -elemLt $el.loadTransparent -indent $inner
 
 	if ($el.representation) {
-		X "$inner<Representation>$($el.representation)</Representation>"
+		# A button spells picture-and-text PictureAndText; TextPicture is the command's spelling.
+		$btnRepr = if ("$($el.representation)" -eq 'TextPicture') { 'PictureAndText' } else { "$($el.representation)" }
+		X "$inner<Representation>$btnRepr</Representation>"
 	}
 
 	if ($el.locationInCommandBar) {
@@ -5096,6 +5143,8 @@ function Emit-Button {
 
 	# Оформление (цвета/шрифт/граница) — перед компаньоном (профиль кнопки)
 	Emit-Appearance -el $el -indent $inner -profile 'button'
+
+	Sort-ButtonChildren -startLen $btnStartLen -inner $inner
 
 	# Companion
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip

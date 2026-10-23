@@ -1,0 +1,10 @@
+{
+  "set": [
+    {
+      "form": true,
+      "title": "Заказ покупателя",
+      "properties": { "windowOpeningMode": "LockOwnerWindow" },
+      "on": [ { "event": "ChoiceProcessing", "handler": "ОбработкаВыбора" } ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "conditionalAppearance": [
+    {
+      "selection": [ "Номер" ],
+      "filter": [ "Объект.Номер = 1" ],
+      "appearance": { "ЦветТекста": "web:Red", "ЦветФона": "style:FormBackColor" },
+      "presentation": "Подсветка номера"
+    }
+  ]
+}

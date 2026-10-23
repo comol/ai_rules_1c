@@ -1515,6 +1515,58 @@ def _(work):
         assert_true(not os.path.exists(out), f"ps {tag}: refused but still wrote {out}")
 
 
+# ---------------------------------------------------------------- form-compile: button order
+#
+# A button's children are read as a sequence: CommandName before Representation was
+# refused with an XDTO exception on load. The order below is the one of the vendor
+# dumps (168762 buttons in 29738 Form.xml), the same in both runtimes.
+
+BUTTON_ORDER_ELEMENT = OrderedDict((
+    ("button", "B"), ("command", "Cmd"), ("defaultButton", True), ("representation", "TextPicture"),
+    ("picture", "StdPicture.Write"), ("locationInCommandBar", "InCommandBar"), ("visible", False),
+    ("enabled", False), ("width", 10), ("height", 2), ("tooltip", "tip"), ("title", "Title"),
+    ("skipOnInput", True), ("checked", True), ("textColor", "style:ButtonTextColor"),
+))
+BUTTON_ORDER_EXPECTED = ["Type", "Visible", "Representation", "DefaultButton", "SkipOnInput", "Enabled",
+                         "Width", "Height", "Check", "CommandName", "TextColor", "Picture", "Title",
+                         "ToolTip", "LocationInCommandBar", "ExtendedTooltip"]
+
+
+def compiled_button(script, work, tag):
+    directory = os.path.join(work, "bo-" + tag)
+    os.makedirs(directory, exist_ok=True)
+    source = os.path.join(directory, "input.json")
+    out = os.path.join(directory, "Form.xml")
+    dsl = {"elements": [{"cmdBar": "Bar", "children": [BUTTON_ORDER_ELEMENT]}],
+           "commands": [{"name": "Cmd", "action": "Cmd"}]}
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump(dsl, handle)
+    runner = run_python_tool if script.endswith(".py") else run_powershell_tool
+    run = runner(script, ["-JsonPath", source, "-OutputPath", out], directory)
+    assert_equal(0, run["exit_code"], f"{tag}: exit code (stderr: {run['stderr'][-400:]})")
+    for element in ElementTree.parse(out).getroot().iter():
+        if element.tag.rsplit("}", 1)[-1] == "Button":
+            return element
+    raise AssertionError(f"{tag}: no Button in {out}")
+
+
+def check_button_order(script, work, tag):
+    button = compiled_button(script, work, tag)
+    assert_equal(BUTTON_ORDER_EXPECTED, [c.tag.rsplit("}", 1)[-1] for c in button], f"{tag}: Button children")
+    representation = [c for c in button if c.tag.rsplit("}", 1)[-1] == "Representation"][0]
+    assert_equal("PictureAndText", representation.text, f"{tag}: a button spells picture-and-text PictureAndText")
+
+
+@case("form-compile: Button children follow the platform order, TextPicture is written as PictureAndText")
+def _(work):
+    check_button_order(FORM_COMPILE_PY, work, "py")
+
+
+@case("form-compile button order parity: PowerShell writes the same order", needs_powershell=True)
+def _(work):
+    check_button_order(FORM_COMPILE_PS1, work, "ps")
+
+
 # ------------------------------------------------- meta-edit: add-form and the validator gate
 
 

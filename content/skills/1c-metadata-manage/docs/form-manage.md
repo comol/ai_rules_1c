@@ -198,9 +198,11 @@ Only when `form-compile` reports an unknown key or rejects a construct — open 
 
 ---
 
-## 4. Edit — Add Elements, Attributes, Commands
+## 4. Edit — Add, Change, Move, Remove
 
-Adds elements, attributes, and/or commands to an existing Form.xml. Automatically allocates IDs from the correct pool, generates companion elements (ContextMenu, ExtendedTooltip, etc.) and event handlers.
+Adds elements, attributes, and/or commands to an existing Form.xml, changes properties and events of existing elements and of the form (`set`), moves (`move`) and removes (`remove`) existing elements, and appends conditional appearance items (`conditionalAppearance`). Automatically allocates IDs from the correct pool, generates companion elements (ContextMenu, ExtendedTooltip, etc.) and event handlers.
+
+Elements and attributes are compiled by `1c-form-compile`: `form-edit` writes the new items into a temporary DSL, compiles it, takes the generated nodes, gives them fresh IDs from the free pools of the form and inserts them with the indent of their container. Every key `form-compile` understands works here, and its warnings (`unknown key ... ignored`, unrecognized enum values) are shown as they are. Commands, `formEvents` and `elementEvents` are written by `form-edit` itself.
 
 Saving uses Configurator-style compact empty tags (`<Tag/>`) and retains the existing CRLF or LF line endings. Literal text in CDATA, comments and processing instructions is excluded from empty-tag normalization.
 
@@ -244,14 +246,81 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-edit/scr
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `into` | root ChildItems | Name of group/table/page to insert into |
-| `after` | at end | Name of element to insert after |
+| `into` | root ChildItems | Name of the container to insert into: a group, pages, page, table, command bar (`CommandBar`), button group, popup, or a companion command bar / context menu of any element (`<Table>КоманднаяПанель`, `<Field>КонтекстноеМеню`) or the form's own `ФормаКоманднаяПанель` |
+| `after` | at end | Name of element to insert after (searched in the whole form, its parent container is the target unless `into` is given) |
+| `before` | at end | Name of element to insert before; the new elements keep their DSL order ahead of it. Excludes `after` (both → `[ERROR]`, nothing written) |
+
+Into a command bar, context menu, popup or button group only buttons, button groups and popups go; they are compiled with the command-bar rules (`CommandBarButton`). A button (button group, popup) given `into` a **Table** is refused: the ChildItems of a table hold its columns, the message names the table's command bar to use. A missing `ChildItems` is created, a self-closing `<AutoCommandBar .../>` is opened on its own lines.
 
 #### Element keys, events, types
 
 Same DSL as `1c-form-compile` — element keys, `command` / `stdCommand`, event names and attribute types are in [`form-compile-dsl.md`](form-compile-dsl.md); the companion elements each type receives (ContextMenu, ExtendedTooltip, AutoCommandBar, …) are listed in its *Auto-generation* section. Groups and tables support `children` / `columns` for nested elements.
 
-A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.query`. Without a source the designer accepts the XML, but the form fails to open (`Основная таблица динамического списка задана неверно`). `form-edit` refuses that JSON before writing; `form-validate` reports the same gap on an existing form. The `settings` keys are the ones in [`form-compile-dsl.md`](form-compile-dsl.md) (`mainTable`, `query`, `manualQuery`, `dynamicDataRead`). `form-edit` emits those four; filters / order / conditional appearance stay with `form-compile`.
+A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.query`. Without a source the designer accepts the XML, but the form fails to open (`Основная таблица динамического списка задана неверно`). `form-edit` refuses that JSON before writing; `form-validate` reports the same gap on an existing form. The `settings` keys are the ones in [`form-compile-dsl.md`](form-compile-dsl.md); the attribute is written by `form-compile`, so filters / order / conditional appearance come out as they do there.
+
+Behaviour of the compiler that `form-edit` now shares: an element without `title` gets a title derived from its name (`title: ""` suppresses it), an attribute likewise; explicit `false` / `true` values (`showTitle`, `autoMaxWidth`, ...) are written as given; an unknown event name is a refusal, not a warning. `form-compile` infers a main attribute from a single object-like attribute; `form-edit` turns that off (`main: false` unless the attribute has its own `main` key), the form being edited has its own. A table bound to a `DynamicList` attribute that already exists in the form gets the list-table defaults of `form-compile`.
+
+### Changing properties and events of existing elements — `set`
+
+`set` changes what an element or the form already has; it never touches the element's id, companions or `ChildItems`.
+
+```json
+{ "set": [
+  { "element": "Contractor", "choiceButton": true, "clearButton": true, "on": ["StartChoice"], "off": ["OnChange"] },
+  { "element": "Agreement", "choiceParameterLinks": [] },
+  { "element": "Basis", "on": ["AfterDeleteRow", { "event": "BeforeAddRow", "handler": "BasisBeforeAddRow", "callType": "Before" }] },
+  { "form": true, "title": "Customer order", "properties": { "autoTitle": false },
+    "on": [ { "event": "ChoiceProcessing", "handler": "ChoiceProcessing" } ], "off": ["OnOpen"] }
+] }
+```
+
+- `element` names an existing element of the element tree (also one inside a command bar, a popup, a button group). Its DSL type comes from the XML tag: `InputField` → `input`, `CheckBoxField` → `check`, `RadioButtonField` → `radio`, `LabelDecoration` → `label`, `LabelField` → `labelField`, `PictureDecoration` → `picture`, `PictureField` → `picField`, `CalendarField` → `calendar`, `Table`, `UsualGroup` → `group`, `ColumnGroup`, `Pages`, `Page`, `Button`, `ButtonGroup`, `CommandBar` → `cmdBar`, `Popup`. Other tags (and the companions: context menu, extended tooltip, a table's command bar and additions) are refused: `set does not support <Tag> yet`. An element is named once per `set`; the name must exist after `remove` and `move` and before the additions of this edit — `set` cannot reach an element added by the same JSON.
+- Every other key of the item is a DSL key of `form-compile` for that type ([`form-compile-dsl.md`](form-compile-dsl.md)). `form-edit` compiles `{ <type>: <name>, <keys> }` (with `title: ""` when the item has no `title`, so no title is derived) and takes the property nodes: each replaces the node of the same tag, or is inserted at its schema position. A key that names no property of that tag (`unknown key`), and the keys that change structure (`children`, `columns`, `name`, `contextMenu`, `extendedTooltip`, `commandBar`, `tableAutofill`, `additions`, `displayImportance`, `events`, the type keys of other elements) are refused before anything is written. English DSL keys only; `path` sets `DataPath`.
+- **Removal:** a key with `null`, `[]` or `{}` removes the property; a property that is not there is an info line. A value the compiler treats as the default writes nothing, and then the existing property goes too (`visible: true` removes `Visible`, `title: ""` removes `Title`).
+- **Block keys** (`choiceParameters`, `choiceParameterLinks`, `choiceList`, `typeLink`, `format`, `editFormat`, `tooltip`, ...) replace the whole block: there is no item-level add / remove, `choiceList` must list all items.
+- **Schema position.** The platform keeps one child order per element; there is no XSD in the repository, so the order is derived from the vendor dumps (every `Form.xml` under the 1C projects: 29727 files, 14917 distinct, 473382 elements of the supported tags plus the form roots) and sits in `form-edit.ps1` as a table, one line per tag. A property is inserted before the first child of a greater rank; a tag missing from the table goes before the companions / `ChildItems` / `Events` with a `[WARN]`.
+- `on`: a string is an event with the handler name `form-compile` derives (`<Element><Event suffix>`), an object is `{ "event": ..., "handler"?: ..., "callType"?: ... }`. An event of the same name **and** callType is replaced, the others are appended; `<Events>` is created at its position. `off`: names or `{ "event", "callType"? }`; without `callType` every event of that name goes; an emptied `<Events>` is removed. An unknown event name is `form-compile`'s refusal. The same event cannot be in `on` and `off` of one item.
+- **Form item** (`"form": true`): `title` → the form's `<Title>`; `properties` → form properties (`form-compile`'s `properties`: `autoTitle`, `windowOpeningMode`, `commandBarLocation`, ... PascalCase tags; `null` or `""` removes one); `on` / `off` act on the form's `<Events>`. A form event needs an explicit `handler` (a string entry is refused: the form has no handler naming rule). `formEvents` keeps working as before.
+- Output: a `Changed:` section, one line per element: `~ [InputField] Contractor: +ChoiceButton, ~Title, -ClearButton, +event StartChoice, -event OnChange`.
+
+### Moving elements — `move`
+
+```json
+{ "move": { "elements": ["Passed", "OverMonthPlan"], "into": "ControlPage", "before": "Comment" } }
+```
+
+The named elements go, with their whole subtree and their ids, to the place given by `into` / `after` / `before` — resolved and checked as for new elements (a button cannot go into the `ChildItems` of a table, only buttons go into a command bar; give at least one of the three). The moved subtree is re-indented to its new depth, the whitespace it leaves behind goes with it (no blank line), and a `ChildItems` that is left empty is removed, as the platform writes a group without children. Refused before anything is written: an element not found or only a part of another one (a companion), an element named twice, `after` together with `before`, an anchor that is not an item of the target container, a move into the element itself or into its own descendant, an element that is also in `remove`.
+
+### Removing elements — `remove`
+
+```json
+{ "remove": ["AdditionalProcessing"], "force": false }
+```
+
+Each element is removed with its subtree (companions, columns, nested items) and the whitespace before it; an emptied `ChildItems` goes too (a command bar left without items becomes a self-closing tag). Nothing else changes: ids are not reused, the element's attribute and the commands stay. A removal that something still refers to is refused with `[ERROR] '<Name>' is referenced by ...` (nothing is written); `"force": true` removes anyway and prints a `[WARN]` per reference. What counts as a reference, outside the removed subtrees:
+
+- `AdditionSource/Item` equal to the name (the search / status / control additions of another table);
+- a `CommandName` containing `Form.Item.<Name>.` (a button of a standard command of the table);
+- `AssociatedTableElementId` of a command equal to the name;
+- the `field` of the form's `ConditionalAppearance` selection (`Attributes/ConditionalAppearance/.../dcsset:selection/dcsset:item/dcsset:field`) equal to the name;
+- any text containing `Items.<Name>.` or ending with `Items.<Name>` (the `DataPath`, `TitleDataPath`, `RowPictureDataPath`, `FooterDataPath`, `TypeLink` of other elements, e.g. `Items.List.CurrentData.Field`);
+- the form module `Ext/Form/Module.bsl` next to `Form.xml`: `Items.<Name>` / `Элементы.<Name>` (any case), outside comments and string literals (multi-line strings included), as a whole word.
+
+The `DataPath` of the removed element itself is not a reference. After a removal `form-edit` prints `[INFO]` for every event handler of the removed subtree that is still a procedure or function in `Module.bsl`: the `Events` and the commands' `Action`s are not touched, delete the handler by hand when nothing else calls it.
+
+**Order of one JSON:** `remove`, `move`, `set`, then the additions (`elements`, `attributes`, `conditionalAppearance`, `commands`, `formEvents`, `elementEvents`). Each step sees the result of the previous one; `set` on a removed element and the same element in `remove` and `move` are refused.
+
+### Conditional appearance of the form — `conditionalAppearance`
+
+```json
+{ "conditionalAppearance": [
+  { "selection": ["Contractor"], "filter": ["Object.Amount > 100"],
+    "appearance": { "ЦветТекста": "web:Red", "ЦветФона": "style:FormBackColor" },
+    "presentation": "Highlight" }
+] }
+```
+
+The grammar is the one of `form-compile` ([`form-compile-dsl.md`](form-compile-dsl.md), *conditionalAppearance*: `selection`, `filter`, `appearance`, `presentation`, `viewMode`, `userSettingID`, `use`). `form-edit` compiles the items and appends them to the form's own `<ConditionalAppearance>` — the last child of `<Attributes>` (an extension form keeps its own block there, the `BaseForm` copy is not touched); the block and `<Attributes>` are created when absent. Items are only added: an existing item is never changed. Attributes added in the same JSON (or later) go before the block. The prefixes the items use (`dcsset`, `dcscor`, `v8ui`, `xs`, `xsi`, `web`, `style`, ...) are declared once on `<Form>` when it lacks them. A `selection` field that names no element of the form (after the edit, the elements of the same JSON included) is a `[WARN]`, not a refusal — the compiler does not check it either.
 
 ### Output
 
@@ -259,7 +328,7 @@ A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.q
 === form-edit: FormName ===
 
 Added elements (into HeaderGroup, after Contractor):
-  + [Input] Warehouse -> Object.Warehouse {OnChange}
+  + [InputField] Warehouse -> Object.Warehouse {OnChange}
 
 Added attributes:
   + TotalAmount: decimal(15,2) (id=12)

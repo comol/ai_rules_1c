@@ -1,0 +1,8 @@
+{
+  "elements": [
+    {
+      "group": "vertical", "name": "ГруппаВнешняя", "title": "",
+      "children": [ { "group": "vertical", "name": "ГруппаВнутренняя", "title": "" } ]
+    }
+  ]
+}

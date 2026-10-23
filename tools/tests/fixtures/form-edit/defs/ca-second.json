@@ -1,0 +1,9 @@
+{
+  "conditionalAppearance": [
+    {
+      "selection": [ "Дата", "НетТакогоЭлемента" ],
+      "appearance": { "ЦветТекста": "web:Blue" },
+      "presentation": "Подсветка даты"
+    }
+  ]
+}

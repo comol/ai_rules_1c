@@ -23,6 +23,11 @@
 #        only when DescriptionLength > 0. windowOpeningMode / autoTime /
 #        usePostingMode accept only the platform enum values, and a missing
 #        Configuration.xml is reported instead of silently assuming 2.17.
+#        Buttons: children are written in the platform order (Type, Visible,
+#        Representation, DefaultButton, Enabled, ..., CommandName, ..., Picture,
+#        Title, LocationInCommandBar) - derived from 168762 buttons in 29738
+#        Form.xml files; CommandName before Representation was refused with an
+#        XDTO exception on load. A button's TextPicture is written as PictureAndText.
 import argparse
 import copy
 import json
@@ -4793,9 +4798,44 @@ def emit_page(lines, el, name, eid, indent):
     lines.append(f'{indent}</Page>')
 
 
+# Platform order of Button children: 168762 buttons in 29738 Form.xml files of the
+# ZUP / vendor dumps - every pair that occurs together has one direction (a dozen
+# borrowed-form outliers apart). Tags that never occur together in the dumps
+# (ReadOnly, HorizontalAlign, ToolTip, Shape, ShapeRepresentation, PictureLocation,
+# RepresentationInContextMenu) are placed by their neighbours.
+BUTTON_CHILD_ORDER = [
+    'Type', 'Visible', 'UserVisible', 'TitleHeight', 'Representation', 'DefaultButton', 'SkipOnInput',
+    'Enabled', 'ReadOnly', 'DefaultItem', 'Width', 'AutoMaxWidth', 'MaxWidth', 'Height', 'AutoMaxHeight',
+    'MaxHeight', 'HorizontalStretch', 'VerticalStretch', 'GroupHorizontalAlign', 'GroupVerticalAlign',
+    'HorizontalAlign', 'Check', 'CommandName', 'Parameter', 'DataPath', 'TextColor', 'BackColor',
+    'BorderColor', 'Font', 'Picture', 'Title', 'ToolTip', 'ToolTipRepresentation', 'Shape',
+    'ShapeRepresentation', 'PictureLocation', 'RepresentationInContextMenu', 'LocationInCommandBar',
+]
+
+
+def sort_button_children(lines, start, inner):
+    """Re-order the child blocks written since lines[start] (the Button's own children,
+    before the companion) into the platform order. A tag outside the table keeps its
+    place after the tag that preceded it."""
+    body = lines[start:]
+    del lines[start:]
+    chunks = []
+    rank = -1.0
+    for line in body:
+        if line.startswith(inner + '<') and not line.startswith(inner + '</'):
+            m = re.match(r'<([\w:]+)', line[len(inner):])
+            if m and m.group(1) in BUTTON_CHILD_ORDER:
+                rank = float(BUTTON_CHILD_ORDER.index(m.group(1)))
+            chunks.append((rank, len(chunks), []))
+        chunks[-1][2].append(line)
+    for _, _, chunk in sorted(chunks, key=lambda c: (c[0], c[1])):
+        lines.extend(chunk)
+
+
 def emit_button(lines, el, name, eid, indent, in_cmd_bar=False):
     lines.append(f'{indent}<Button name="{name}" id="{eid}"{di_attr(el)}>')
     inner = f'{indent}\t'
+    btn_start = len(lines)
     # (общие свойства — через emit_layout ниже; отдельный вызов был бы двойной эмиссией)
 
     # Type — context-aware. Inside command bars (cmdBar/autoCmdBar/popup) only
@@ -4873,7 +4913,9 @@ def emit_button(lines, el, name, eid, indent, in_cmd_bar=False):
     emit_command_picture(lines, el.get('picture'), el.get('loadTransparent'), inner)
 
     if el.get('representation'):
-        lines.append(f'{inner}<Representation>{el["representation"]}</Representation>')
+        # A button spells picture-and-text PictureAndText; TextPicture is the command's spelling.
+        btn_repr = 'PictureAndText' if str(el['representation']) == 'TextPicture' else el['representation']
+        lines.append(f'{inner}<Representation>{btn_repr}</Representation>')
 
     if el.get('locationInCommandBar'):
         lines.append(f'{inner}<LocationInCommandBar>{el["locationInCommandBar"]}</LocationInCommandBar>')
@@ -4881,6 +4923,8 @@ def emit_button(lines, el, name, eid, indent, in_cmd_bar=False):
 
     # Оформление (цвета/шрифт/граница) — перед компаньоном (профиль кнопки)
     emit_appearance(lines, el, inner, 'button')
+
+    sort_button_children(lines, btn_start, inner)
 
     # Companion
     emit_companion(lines, 'ExtendedTooltip', f'{name}\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u043d\u0430\u044f\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0430', inner, el.get('extendedTooltip'))

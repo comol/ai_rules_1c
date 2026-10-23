@@ -1,0 +1,10 @@
+{
+  "set": [
+    {
+      "element": "Товары",
+      "visible": true,
+      "off": [ { "event": "BeforeAddRow", "callType": "Before" } ],
+      "on": [ { "event": "AfterDeleteRow", "handler": "ТоварыПослеУдаленияСтроки" } ]
+    }
+  ]
+}
