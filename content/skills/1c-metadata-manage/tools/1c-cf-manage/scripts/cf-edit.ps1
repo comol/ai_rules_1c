@@ -1393,7 +1393,8 @@ if (-not $NoValidate) {
 	if (Test-Path -LiteralPath $validateScript) {
 		Write-Host ""
 		Write-Host "--- Running cf-validate ---"
-		& powershell.exe -NoProfile -File $validateScript -ConfigPath $resolvedPath
+		$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
+		& $psExe -NoProfile -File $validateScript -ConfigPath $resolvedPath
 		$script:validateExitCode = $LASTEXITCODE
 		if ($script:validateExitCode -ne 0) {
 			[Console]::Error.WriteLine("[ERROR] cf-validate завершился с кодом $($script:validateExitCode): изменение записано, но проверка не пройдена. Разберите вывод выше перед загрузкой в базу.")
