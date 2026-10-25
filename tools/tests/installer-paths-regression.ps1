@@ -35,6 +35,23 @@ function Assert-Links([string]$Path, [string]$RulesDir, [string]$RulesExt, [stri
     }
     Assert-True (-not ($text -match 'content/(rules|agents|commands|skills)/')) "Source reference leaked into $Path"
 }
+function Assert-RelativeLinks([string]$Project) {
+    $checked = 0; $placeholders = 0; $broken = @()
+    foreach ($file in Get-ChildItem -LiteralPath $Project -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+        $text = [IO.File]::ReadAllText($file.FullName)
+        foreach ($match in [regex]::Matches($text, '(?m)(?:!?\[[^\]\r\n]*\]\([ \t]*|^[ \t]{0,3}\[[^\]\r\n]+\]:[ \t]*)(?<dest><[^>\r\n]+>|[^\s)\r\n]+)')) {
+            $dest = $match.Groups['dest'].Value.Trim('<', '>')
+            if ($dest -match '^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|[/\\#?])') { continue }
+            if ($dest -match 'YYYY-MM') { $placeholders++; continue }
+            $path = [Uri]::UnescapeDataString(($dest -split '[#?]', 2)[0])
+            if (-not (Test-Path -LiteralPath (Join-Path $file.DirectoryName $path))) { $broken += "$($file.FullName) -> $dest" }
+            $checked++
+        }
+    }
+    Assert-True ($checked -gt 0) 'No relative links were checked'
+    Assert-True ($broken.Count -eq 0) "Relative links: checked=$checked; broken=$($broken.Count); placeholders=$placeholders; $($broken -join '; ')"
+    return @{ Checked = $checked; Placeholders = $placeholders }
+}
 function Assert-ManifestHashes([string]$Project) {
     $manifest = Read-Json (Join-Path $Project '.ai-rules.json')
     foreach ($property in $manifest.files.PSObject.Properties) {
@@ -58,7 +75,11 @@ try {
     Write-Fixture (Join-Path $SourceRoot 'content/agents/probe.md') "---`nname: probe`ndescription: Fixture`ntools: [Read, Grep, Glob, MCP]`nisSubagent: true`n---`n# Agent`n$refs"
     Write-Fixture (Join-Path $SourceRoot 'content/commands/probe.md') "---`ndescription: Fixture`n---`n# Command`n$refs"
     Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/SKILL.md') "---`nname: probe`ndescription: Fixture`n---`n# Skill`n$refs"
-    Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/docs/detail.md') "# Detail`n$refs"
+    $relativeRefs = '[rule](../../../rules/probe.md#gate) [agent](../../../agents/probe.md) [command](../../../commands/probe.md) [sibling](local.md) [external](https://example.invalid/rules/probe.md) [placeholder](../../../docs/archive/enhancements/YYYY-MM/feature-name.md)'
+    Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/docs/detail.md') "# Detail`n$refs`n$relativeRefs`n[rule-ref]: ../../../rules/probe.md#gate"
+    Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/docs/local.md') '# Local sibling'
+    Add-Content -LiteralPath (Join-Path $SourceRoot 'content/agents/probe.md') -Value '`n[rule](../rules/probe.md) [command](../commands/probe.md)' -Encoding UTF8
+    Add-Content -LiteralPath (Join-Path $SourceRoot 'content/commands/probe.md') -Value '`n[rule](../rules/probe.md) [agent](../agents/probe.md) [skill](../skills/probe/docs/detail.md)' -Encoding UTF8
     Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/scripts/probe.ps1') "# $refs`nWrite-Output 'verbatim'"
     Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/stale.txt') 'prune this managed file'
     [IO.File]::WriteAllBytes((Join-Path $SourceRoot 'content/skills/probe/payload.bin'), [byte[]](0..255))
@@ -253,6 +274,29 @@ Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -Requested
     Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
     Assert-ManifestHashes $exportProject
     Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+
+    foreach ($tool in @('cursor', 'claude-code', 'kimi', 'opencode')) {
+        $relativeProject = Join-Path $Work "relative-$tool"
+        [void][IO.Directory]::CreateDirectory($relativeProject)
+        # Kimi has no command channel; Cursor supplies that section in this combined case.
+        $selectedTools = if ($tool -eq 'kimi') { 'cursor,kimi' } else { $tool }
+        $null = Invoke-Installer $relativeProject @('init', '-Tools', $selectedTools)
+        $first = Assert-RelativeLinks $relativeProject
+        Assert-True ($first.Placeholders -ge 1) "Placeholder was changed for $tool"
+        $beforeUpdate = @{}
+        foreach ($file in Get-ChildItem -LiteralPath $relativeProject -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+            $beforeUpdate[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        }
+        $null = Invoke-Installer $relativeProject @('update')
+        $second = Assert-RelativeLinks $relativeProject
+        Assert-True ($first.Checked -eq $second.Checked -and $first.Placeholders -eq $second.Placeholders) "Relative link census changed on repeat update for $tool"
+        foreach ($path in $beforeUpdate.Keys) {
+            Assert-True ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $beforeUpdate[$path]) "Repeated update changed $path"
+        }
+        Assert-ManifestHashes $relativeProject
+        Write-Host "LINKS $tool`: $($second.Checked) resolved; broken=0; placeholders=$($second.Placeholders); repeat update byte-identical"
+    }
+    Pass 'Cross-section relative links use canonical adapter paths; placeholders and repeat updates are stable'
 
     Write-Host "OK: $script:Passed installer path cases; real 8.3 paths checked: $script:ShortPathChecked; no network or infobase accessed."
 }

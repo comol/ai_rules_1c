@@ -2214,6 +2214,7 @@ function Invoke-PlaceArtifactFile {
         $absTarget = Join-Path $Root $TargetRel
     }
     if ($Mode -eq 'rebuild-toml') {
+        $SourceBody = Convert-ContentRelativeLinks -Text $SourceBody -SourcePath $SourcePath -TargetPath $absTarget -Root $Root -Layouts $Layouts
         $SourceBody = Convert-AgentsMdPaths -Text $SourceBody -Layouts $Layouts
         $rendered = Invoke-CodexAgentTemplate -Template $Template -Fm $SourceFm -Body $SourceBody
         Write-TextFile -Path $absTarget -Content $rendered
@@ -2224,7 +2225,8 @@ function Invoke-PlaceArtifactFile {
             New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
         }
         if ([IO.Path]::GetExtension($SourcePath) -ieq '.md') {
-            $rendered = Convert-AgentsMdPaths -Text (Read-TextFile $SourcePath) -Layouts $Layouts
+            $rendered = Convert-ContentRelativeLinks -Text (Read-TextFile $SourcePath) -SourcePath $SourcePath -TargetPath $absTarget -Root $Root -Layouts $Layouts
+            $rendered = Convert-AgentsMdPaths -Text $rendered -Layouts $Layouts
             Write-TextFile -Path $absTarget -Content $rendered
         }
         else { Copy-Item -LiteralPath $SourcePath -Destination $absTarget -Force }
@@ -2238,6 +2240,7 @@ function Invoke-PlaceArtifactFile {
         else {
             $full = $SourceBody
         }
+        $full = Convert-ContentRelativeLinks -Text $full -SourcePath $SourcePath -TargetPath $absTarget -Root $Root -Layouts $Layouts
         $full = Convert-AgentsMdPaths -Text $full -Layouts $Layouts
         Write-TextFile -Path $absTarget -Content $full
     }
@@ -2300,7 +2303,8 @@ function Invoke-PlaceSkill {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
         }
         if ($sf.Extension -ieq '.md') {
-            $rendered = Convert-AgentsMdPaths -Text (Read-TextFile $sf.FullName) -Layouts $Layouts
+            $rendered = Convert-ContentRelativeLinks -Text (Read-TextFile $sf.FullName) -SourcePath $sf.FullName -TargetPath $destFull -Root $Root -Layouts $Layouts
+            $rendered = Convert-AgentsMdPaths -Text $rendered -Layouts $Layouts
             Write-TextFile -Path $destFull -Content $rendered
         }
         else { Copy-Item -LiteralPath $sf.FullName -Destination $destFull -Force }
@@ -2796,6 +2800,54 @@ function Resolve-CanonicalArtifactLayouts {
 # The name regex accepts `<` and `>` so placeholder paths like
 # `content/agents/<name>.md` in prose are also rewritten to the installed
 # directory but keep the literal `<name>` token.
+function Convert-ContentRelativeLinks {
+    # Resolve a Markdown destination in the source tree first, then map its
+    # section through the existing canonical layouts. Never guess from ../ depth.
+    # Uri.MakeRelativeUri is available on both Windows PowerShell 5.1 and Core.
+    param(
+        [string]$Text,
+        [string]$SourcePath,
+        [string]$TargetPath,
+        [string]$Root,
+        [System.Collections.IDictionary]$Layouts
+    )
+    if (-not $Text -or -not $Layouts -or $Layouts.Count -eq 0) { return $Text }
+    $sourceFull = [IO.Path]::GetFullPath($SourcePath)
+    $sourceMatch = [regex]::Match($sourceFull.Replace('\', '/'), '^(?<content>.+/content)/(?<section>skills|agents|commands|docs)/')
+    if (-not $sourceMatch.Success) { return $Text }
+    $contentRoot = [IO.Path]::GetFullPath($sourceMatch.Groups['content'].Value)
+    $contentPrefix = $contentRoot.TrimEnd('/', '\') + [IO.Path]::DirectorySeparatorChar
+    $sourceDir = Split-Path -Parent $sourceFull
+    $targetDir = [IO.Path]::GetFullPath((Split-Path -Parent $TargetPath)).TrimEnd('/', '\') + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $pattern = '(?m)(?<prefix>!?\[[^\]\r\n]*\]\([ \t]*|^[ \t]{0,3}\[[^\]\r\n]+\]:[ \t]*)(?<dest><[^>\r\n]+>|[^\s)\r\n]+)'
+    return [regex]::Replace($Text, $pattern, {
+        param($m)
+        $token = $m.Groups['dest'].Value
+        $angled = $token.StartsWith('<') -and $token.EndsWith('>')
+        $destination = if ($angled) { $token.Substring(1, $token.Length - 2) } else { $token }
+        if ($destination -match '^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|[/\\#?])' -or
+            $destination -match 'YYYY-MM|[{}<>*]') { return $m.Value }
+        $parts = [regex]::Match($destination, '^(?<path>[^#?]+)(?<suffix>[#?].*)?$')
+        if (-not $parts.Success) { return $m.Value }
+        $linkPath = [Uri]::UnescapeDataString($parts.Groups['path'].Value).Replace('/', [IO.Path]::DirectorySeparatorChar)
+        try { $resolved = [IO.Path]::GetFullPath((Join-Path $sourceDir $linkPath)) } catch { return $m.Value }
+        if (-not $resolved.StartsWith($contentPrefix, $comparison) -or -not (Test-Path -LiteralPath $resolved)) { return $m.Value }
+        $sourceRel = $resolved.Substring($contentPrefix.Length).Replace('\', '/')
+        $section = ($sourceRel -split '/', 2)[0]
+        if ($section -eq $sourceMatch.Groups['section'].Value -or -not $Layouts.Contains($section)) { return $m.Value }
+        $installed = Convert-AgentsMdPaths -Text ("content/$sourceRel") -Layouts $Layouts
+        if ($installed -eq "content/$sourceRel") { return $m.Value }
+        if ($installed.StartsWith('~/')) { $installed = Join-Path $HOME $installed.Substring(2) }
+        $installedFull = [IO.Path]::GetFullPath((Resolve-ManifestPath -Root $Root -Rel $installed))
+        $relative = ([Uri]::new($targetDir, [UriKind]::Absolute)).MakeRelativeUri([Uri]::new($installedFull, [UriKind]::Absolute))
+        if ($relative.IsAbsoluteUri) { return $m.Value }
+        $newDestination = $relative.ToString() + $parts.Groups['suffix'].Value
+        if ($angled) { $newDestination = '<' + $newDestination + '>' }
+        return $m.Groups['prefix'].Value + $newDestination
+    })
+}
+
 function Convert-AgentsMdPaths {
     param(
         [string]$Text,
