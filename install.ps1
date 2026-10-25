@@ -2800,10 +2800,42 @@ function Resolve-CanonicalArtifactLayouts {
 # The name regex accepts `<` and `>` so placeholder paths like
 # `content/agents/<name>.md` in prose are also rewritten to the installed
 # directory but keep the literal `<name>` token.
+function Get-LegacyRelativeLinkPath {
+    # .NET Framework (Windows PowerShell 5.1) has no Path.GetRelativePath.
+    # Inputs are absolute filesystem paths; compare segments without URI parsing.
+    param([string]$BaseDirectory, [string]$TargetPath)
+    $base = [IO.Path]::GetFullPath($BaseDirectory)
+    $target = [IO.Path]::GetFullPath($TargetPath)
+    $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $baseRoot = [IO.Path]::GetPathRoot($base)
+    $targetRoot = [IO.Path]::GetPathRoot($target)
+    if (-not [string]::Equals($baseRoot, $targetRoot, $comparison)) { return $target }
+    $baseParts = @($base.Substring($baseRoot.Length).Split([IO.Path]::DirectorySeparatorChar) | Where-Object { $_ -ne '' })
+    $targetParts = @($target.Substring($targetRoot.Length).Split([IO.Path]::DirectorySeparatorChar) | Where-Object { $_ -ne '' })
+    $common = 0
+    while ($common -lt $baseParts.Count -and $common -lt $targetParts.Count -and
+        [string]::Equals($baseParts[$common], $targetParts[$common], $comparison)) { $common++ }
+    $parts = @()
+    for ($i = $common; $i -lt $baseParts.Count; $i++) { $parts += '..' }
+    for ($i = $common; $i -lt $targetParts.Count; $i++) { $parts += $targetParts[$i] }
+    if ($parts.Count -eq 0) { return '.' }
+    return ($parts -join '/')
+}
+
+function Get-RelativeLinkPath {
+    param([string]$BaseDirectory, [string]$TargetPath)
+    $base = [IO.Path]::GetFullPath($BaseDirectory)
+    $target = [IO.Path]::GetFullPath($TargetPath)
+    if ([IO.Path].GetMethods().Name -contains 'GetRelativePath') {
+        return [IO.Path]::GetRelativePath($base, $target).Replace('\', '/')
+    }
+    return (Get-LegacyRelativeLinkPath -BaseDirectory $base -TargetPath $target)
+}
+
 function Convert-ContentRelativeLinks {
     # Resolve a Markdown destination in the source tree first, then map its
     # section through the existing canonical layouts. Never guess from ../ depth.
-    # Uri.MakeRelativeUri is available on both Windows PowerShell 5.1 and Core.
+    # Compute relative filesystem paths without constructing or comparing URIs.
     param(
         [string]$Text,
         [string]$SourcePath,
@@ -2840,9 +2872,10 @@ function Convert-ContentRelativeLinks {
         if ($installed -eq "content/$sourceRel") { return $m.Value }
         if ($installed.StartsWith('~/')) { $installed = Join-Path $HOME $installed.Substring(2) }
         $installedFull = [IO.Path]::GetFullPath((Resolve-ManifestPath -Root $Root -Rel $installed))
-        $relative = ([Uri]::new($targetDir, [UriKind]::Absolute)).MakeRelativeUri([Uri]::new($installedFull, [UriKind]::Absolute))
-        if ($relative.IsAbsoluteUri) { return $m.Value }
-        $newDestination = $relative.ToString() + $parts.Groups['suffix'].Value
+        $relative = Get-RelativeLinkPath -BaseDirectory $targetDir -TargetPath $installedFull
+        if ([IO.Path]::IsPathRooted($relative)) { return $m.Value }
+        $escaped = (($relative.Replace('\', '/') -split '/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+        $newDestination = $escaped + $parts.Groups['suffix'].Value
         if ($angled) { $newDestination = '<' + $newDestination + '>' }
         return $m.Groups['prefix'].Value + $newDestination
     })

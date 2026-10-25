@@ -96,11 +96,21 @@ try {
     foreach ($name in @('Resolve-InstallerExistingPath', 'Get-InstallerRelativePath', 'Get-1cProjectInfo',
         'Get-1cFieldValue', 'Get-1cSynonymRu', 'Get-EnvFileValue', 'Read-DevEnvKeys', 'Convert-AgentsMdPaths',
         'Resolve-CanonicalArtifactLayouts', 'Get-AdapterForTool', 'Parse-SimpleYaml', 'Read-TextFile',
-        'Invoke-CodexAgentTemplate', 'ConvertTo-TomlString')) {
+        'Invoke-CodexAgentTemplate', 'ConvertTo-TomlString', 'Get-RelativeLinkPath', 'Get-LegacyRelativeLinkPath')) {
         $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
         if ($function) { . ([scriptblock]::Create($function.Extent.Text)) }
     }
     $script:DevEnvFileName = '.dev.env'
+
+    $linkBase = [IO.Path]::GetFullPath((Join-Path $Work 'link project/skills'))
+    $linkTarget = [IO.Path]::GetFullPath((Join-Path $Work 'link project/rules/probe space#name.mdc'))
+    foreach ($baseDir in @($linkBase, ($linkBase + [IO.Path]::DirectorySeparatorChar))) {
+        $relative = Get-RelativeLinkPath -BaseDirectory $baseDir -TargetPath $linkTarget
+        $legacy = Get-LegacyRelativeLinkPath -BaseDirectory $baseDir -TargetPath $linkTarget
+        Assert-True ($relative -ceq '../rules/probe space#name.mdc') "Filesystem relative path corrupted: $relative"
+        Assert-True ($legacy -ceq $relative) "PS5.1 fallback differs: $legacy"
+    }
+    Pass 'Absolute filesystem paths with spaces/hash use Path.GetRelativePath or the equivalent PS5.1 fallback'
 
     $project = Join-Path $Work 'project directory with long name'
     Write-Fixture (Join-Path $project '.dev.env') "EXPORT_PATH=`"src/custom dump`"`nINFOBASE_PATH=`nUSE_EDT=false`n"
