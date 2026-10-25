@@ -9,6 +9,7 @@
   "repository": "https://github.com/comol/ai_rules_1c",
   "keywords": ["1c", "1c-enterprise", "bsl", "rules", "codex"],
   "skills": "./skills/",
+  "hooks": [],
   "interface": {
     "displayName": "1c-rules",
     "shortDescription": "1C rules installer for Codex",
