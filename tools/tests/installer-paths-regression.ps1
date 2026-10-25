@@ -80,6 +80,27 @@ function Assert-RelativeLinks([string]$Project, [string]$Tool) {
     Assert-True ($broken.Count -eq 0) "Relative links: checked=$checked; broken=$($broken.Count); not-installed-section=$($notInstalled.Count); placeholders=$($placeholders.Count); $($broken -join '; ')"
     return @{ Checked = $checked; Resolved = $checked - $notInstalled.Count; Broken = $broken.Count; NotInstalled = $notInstalled; Placeholders = $placeholders }
 }
+function Assert-AdapterLinkTargets([string]$Project, [string]$DocumentRel, [string]$Tool) {
+    # Independent check of declared copyTo targets, not just file existence.
+    $adapter = Get-AdapterForTool -Root $SourceRoot -Tool $Tool
+    $file = Join-Path $Project $DocumentRel
+    $labels = @{ rule = 'rules'; agent = 'agents'; command = 'commands'; skill = 'skills' }
+    $checked = 0
+    foreach ($link in [regex]::Matches([IO.File]::ReadAllText($file), '\[(?<label>rule|agent|command|skill)\]\((?<dest>[^)]+)\)')) {
+        $section = $labels[$link.Groups['label'].Value]
+        if (-not $adapter.Contains($section) -or -not $adapter[$section].copyTo) { continue }
+        $expected = ([string]$adapter[$section].copyTo).Replace('{name}', 'probe').TrimEnd('/', '\')
+        if ($section -eq 'skills') { $expected += '/docs/detail.md' }
+        $expectedFull = [IO.Path]::GetFullPath((Join-Path $Project $expected))
+        $dest = [Uri]::UnescapeDataString(($link.Groups['dest'].Value -split '[#?]', 2)[0])
+        $actualFull = [IO.Path]::GetFullPath((Join-Path (Split-Path $file -Parent) $dest))
+        Assert-True ([string]::Equals($actualFull, $expectedFull, [StringComparison]::OrdinalIgnoreCase)) "Foreign adapter target: $DocumentRel -> $dest; expected $expected for $Tool"
+        Assert-True (Test-Path -LiteralPath $actualFull) "Missing adapter target: $DocumentRel -> $dest"
+        $checked++
+    }
+    Assert-True ($checked -gt 0) "No adapter-owned targets checked in $DocumentRel"
+    return $checked
+}
 function Assert-ManifestHashes([string]$Project) {
     $manifest = Read-Json (Join-Path $Project '.ai-rules.json')
     foreach ($property in $manifest.files.PSObject.Properties) {
@@ -329,6 +350,12 @@ Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -Requested
             if ($adapter.Contains($section) -and $adapter[$section].copyTo) { $copies += "$section=$($adapter[$section].copyTo)" }
         }
         Write-Host "ADAPTER $tool`: $($copies -join '; ')"
+        $ownedDocuments = @($adapter.agents.copyTo.Replace('{name}', 'probe'),
+            ($adapter.skills.copyTo.Replace('{name}', 'probe').TrimEnd('/', '\') + '/docs/detail.md'))
+        if ($adapter.Contains('commands') -and $adapter.commands.copyTo) { $ownedDocuments += $adapter.commands.copyTo.Replace('{name}', 'probe') }
+        $ownedTargets = 0
+        foreach ($document in $ownedDocuments) { $ownedTargets += Assert-AdapterLinkTargets -Project $relativeProject -DocumentRel $document -Tool $tool }
+        Write-Host "OWNER-TARGETS $tool`: $ownedTargets match declared copyTo"
         # Negative control: an installed section with a missing target must still fail.
         $ruleFixture = [IO.Path]::GetFullPath((Join-Path $relativeProject $adapter.rules.copyTo.Replace('{name}', 'probe')))
         Assert-True ($ruleFixture.StartsWith([IO.Path]::GetFullPath($relativeProject) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'Unsafe negative fixture path'
@@ -357,7 +384,56 @@ Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -Requested
         foreach ($detail in $second.NotInstalled) { Write-Host "  NOT-INSTALLED-SECTION $tool`: $detail" }
         foreach ($detail in $second.Placeholders) { Write-Host "  PLACEHOLDER $tool`: $detail" }
     }
-    Pass 'Cross-section relative links use canonical adapter paths; placeholders and repeat updates are stable'
+    Pass 'Cross-section relative links use adapter-owned paths; placeholders and repeat updates are stable'
+
+    foreach ($toolsCase in @('claude-code,opencode', 'opencode,claude-code', 'cursor,claude-code,kimi,opencode')) {
+        $sharedProject = Join-Path $Work ('owner-' + $toolsCase.Replace(',', '-'))
+        [void][IO.Directory]::CreateDirectory($sharedProject)
+        $null = Invoke-Installer $sharedProject @('init', '-Tools', $toolsCase)
+        $sharedDoc = '.claude/skills/probe/docs/detail.md'
+        $sharedTargets = Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $sharedDoc -Tool 'claude-code'
+        $checkedOwned = $sharedTargets
+        foreach ($toolId in ($toolsCase -split ',')) {
+            $caseAdapter = Get-AdapterForTool -Root $SourceRoot -Tool $toolId
+            $checkedOwned += Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $caseAdapter.agents.copyTo.Replace('{name}', 'probe') -Tool $toolId
+            if ($caseAdapter.Contains('commands') -and $caseAdapter.commands.copyTo) {
+                $checkedOwned += Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $caseAdapter.commands.copyTo.Replace('{name}', 'probe') -Tool $toolId
+            }
+            if ($toolId -in @('cursor', 'kimi')) {
+                $skillDoc = $caseAdapter.skills.copyTo.Replace('{name}', 'probe').TrimEnd('/', '\') + '/docs/detail.md'
+                $checkedOwned += Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $skillDoc -Tool $toolId
+            }
+        }
+        $doc = Join-Path $sharedProject $sharedDoc
+        $firstBytes = [IO.File]::ReadAllBytes($doc)
+        # A valid foreign file must be rejected too: existence alone is insufficient.
+        if (-not (Test-Path -LiteralPath (Join-Path $sharedProject '.cursor/rules/probe.mdc'))) {
+            Write-Fixture (Join-Path $sharedProject '.cursor/rules/probe.mdc') '# existing foreign rule'
+        }
+        $foreignDoc = [IO.File]::ReadAllText($doc).Replace('../../../rules-1c/probe.md', '../../../../.cursor/rules/probe.mdc')
+        try {
+            [IO.File]::WriteAllText($doc, $foreignDoc, $Utf8)
+            $refusedForeign = $false
+            try { $null = Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $sharedDoc -Tool 'claude-code' }
+            catch { $refusedForeign = $_.Exception.Message -like 'Foreign adapter target:*' }
+            Assert-True $refusedForeign 'Existing foreign rule was accepted for a Claude-owned shared document'
+        }
+        finally { [IO.File]::WriteAllBytes($doc, $firstBytes) }
+        $before = @{}
+        foreach ($f in Get-ChildItem -LiteralPath $sharedProject -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+            $before[$f.FullName] = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+        }
+        $null = Invoke-Installer $sharedProject @('update')
+        foreach ($p in $before.Keys) {
+            # Cursor is active in the full multi-client case and refreshes its own rule.
+            if ($toolsCase.StartsWith('cursor,') -and $p -eq (Join-Path $sharedProject '.cursor/rules/probe.mdc')) { continue }
+            Assert-True ((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash -eq $before[$p]) "Owner layouts changed on repeat update: $p"
+        }
+        Assert-True ((Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $sharedDoc -Tool 'claude-code') -eq $sharedTargets) 'Shared owner changed after update'
+        Assert-ManifestHashes $sharedProject
+        Write-Host "OWNER $toolsCase`: targets=$checkedOwned; foreign-targets=0; shared-rule=.claude/rules-1c/probe.md; repeat update byte-identical"
+    }
+    Pass 'Shared directory owner beats writer order; foreign existing trees are rejected'
 
     Write-Host "OK: $script:Passed installer path cases; real 8.3 paths checked: $script:ShortPathChecked; no network or infobase accessed."
 }
