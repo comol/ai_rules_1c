@@ -35,22 +35,50 @@ function Assert-Links([string]$Path, [string]$RulesDir, [string]$RulesExt, [stri
     }
     Assert-True (-not ($text -match 'content/(rules|agents|commands|skills)/')) "Source reference leaked into $Path"
 }
-function Assert-RelativeLinks([string]$Project) {
-    $checked = 0; $placeholders = 0; $broken = @()
+function Assert-RelativeLinks([string]$Project, [string]$Tool) {
+    $checked = 0; $placeholders = @(); $notInstalled = @(); $broken = @()
+    $adapter = Get-AdapterForTool -Root $SourceRoot -Tool $Tool
+    $manifest = Read-Json (Join-Path $Project '.ai-rules.json')
+    $contentPrefix = [IO.Path]::GetFullPath((Join-Path $SourceRoot 'content')).TrimEnd('/', '\') + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
     foreach ($file in Get-ChildItem -LiteralPath $Project -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+        $rel = Get-InstallerRelativePath -BasePath $Project -ChildPath $file.FullName
+        $entryProperty = $manifest.files.PSObject.Properties[$rel]
+        $sourceFile = $null
+        if ($entryProperty -and $entryProperty.Value.source) {
+            $sourceFile = Join-Path $SourceRoot $entryProperty.Value.source
+            if (Test-Path -LiteralPath $sourceFile -PathType Container) {
+                $marker = '/' + (Split-Path $sourceFile -Leaf) + '/'
+                $offset = ('/' + $rel).IndexOf($marker, [StringComparison]::Ordinal)
+                if ($offset -ge 0) { $sourceFile = Join-Path $sourceFile ('/' + $rel).Substring($offset + $marker.Length) }
+                else { $sourceFile = $null }
+            }
+        }
         $text = [IO.File]::ReadAllText($file.FullName)
         foreach ($match in [regex]::Matches($text, '(?m)(?:!?\[[^\]\r\n]*\]\([ \t]*|^[ \t]{0,3}\[[^\]\r\n]+\]:[ \t]*)(?<dest><[^>\r\n]+>|[^\s)\r\n]+)')) {
             $dest = $match.Groups['dest'].Value.Trim('<', '>')
+            $detail = "$rel -> $dest"
             if ($dest -match '^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|[/\\#?])') { continue }
-            if ($dest -match 'YYYY-MM') { $placeholders++; continue }
+            if ($dest -match 'YYYY-MM') { $placeholders += $detail; continue }
             $path = [Uri]::UnescapeDataString(($dest -split '[#?]', 2)[0])
-            if (-not (Test-Path -LiteralPath (Join-Path $file.DirectoryName $path))) { $broken += "$($file.FullName) -> $dest" }
+            $section = $null
+            if ($sourceFile -and (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+                $sourceTarget = [IO.Path]::GetFullPath((Join-Path (Split-Path $sourceFile -Parent) $path))
+                if ($sourceTarget.StartsWith($contentPrefix, $comparison)) {
+                    $section = ($sourceTarget.Substring($contentPrefix.Length).Replace('\', '/') -split '/', 2)[0]
+                }
+            }
+            if ($section -in @('rules', 'agents', 'commands', 'skills', 'docs') -and
+                (-not $adapter.Contains($section) -or -not $adapter[$section].copyTo)) {
+                $notInstalled += "$detail (section=$section)"
+            }
+            elseif (-not (Test-Path -LiteralPath (Join-Path $file.DirectoryName $path))) { $broken += $detail }
             $checked++
         }
     }
     Assert-True ($checked -gt 0) 'No relative links were checked'
-    Assert-True ($broken.Count -eq 0) "Relative links: checked=$checked; broken=$($broken.Count); placeholders=$placeholders; $($broken -join '; ')"
-    return @{ Checked = $checked; Placeholders = $placeholders }
+    Assert-True ($broken.Count -eq 0) "Relative links: checked=$checked; broken=$($broken.Count); not-installed-section=$($notInstalled.Count); placeholders=$($placeholders.Count); $($broken -join '; ')"
+    return @{ Checked = $checked; Resolved = $checked - $notInstalled.Count; Broken = $broken.Count; NotInstalled = $notInstalled; Placeholders = $placeholders }
 }
 function Assert-ManifestHashes([string]$Project) {
     $manifest = Read-Json (Join-Path $Project '.ai-rules.json')
@@ -96,6 +124,8 @@ try {
     foreach ($name in @('Resolve-InstallerExistingPath', 'Get-InstallerRelativePath', 'Get-1cProjectInfo',
         'Get-1cFieldValue', 'Get-1cSynonymRu', 'Get-EnvFileValue', 'Read-DevEnvKeys', 'Convert-AgentsMdPaths',
         'Resolve-CanonicalArtifactLayouts', 'Get-AdapterForTool', 'Parse-SimpleYaml', 'Read-TextFile',
+        'ConvertFrom-AdapterYaml', 'Get-YamlIndent', 'Test-YamlBlank', 'Invoke-YamlBlock',
+        'Invoke-YamlBlockArray', 'ConvertFrom-YamlInlineValue', 'Split-YamlFlow', 'ConvertFrom-Scalar',
         'Invoke-CodexAgentTemplate', 'ConvertTo-TomlString', 'Get-RelativeLinkPath', 'Get-LegacyRelativeLinkPath')) {
         $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
         if ($function) { . ([scriptblock]::Create($function.Extent.Text)) }
@@ -288,23 +318,44 @@ Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -Requested
     foreach ($tool in @('cursor', 'claude-code', 'kimi', 'opencode')) {
         $relativeProject = Join-Path $Work "relative-$tool"
         [void][IO.Directory]::CreateDirectory($relativeProject)
-        # Kimi has no command channel; Cursor supplies that section in this combined case.
-        $selectedTools = if ($tool -eq 'kimi') { 'cursor,kimi' } else { $tool }
-        $null = Invoke-Installer $relativeProject @('init', '-Tools', $selectedTools)
-        $first = Assert-RelativeLinks $relativeProject
-        Assert-True ($first.Placeholders -ge 1) "Placeholder was changed for $tool"
+        $null = Invoke-Installer $relativeProject @('init', '-Tools', $tool)
+        $first = Assert-RelativeLinks -Project $relativeProject -Tool $tool
+        Assert-True ($first.Placeholders.Count -eq 1) "Placeholder was changed for $tool"
+        $expectedNotInstalled = if ($tool -eq 'kimi') { 2 } else { 0 }
+        Assert-True ($first.NotInstalled.Count -eq $expectedNotInstalled) "Unexpected uninstalled-section links for $tool"
+        $adapter = Get-AdapterForTool -Root $SourceRoot -Tool $tool
+        $copies = @()
+        foreach ($section in @('rules', 'agents', 'commands', 'skills')) {
+            if ($adapter.Contains($section) -and $adapter[$section].copyTo) { $copies += "$section=$($adapter[$section].copyTo)" }
+        }
+        Write-Host "ADAPTER $tool`: $($copies -join '; ')"
+        # Negative control: an installed section with a missing target must still fail.
+        $ruleFixture = [IO.Path]::GetFullPath((Join-Path $relativeProject $adapter.rules.copyTo.Replace('{name}', 'probe')))
+        Assert-True ($ruleFixture.StartsWith([IO.Path]::GetFullPath($relativeProject) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'Unsafe negative fixture path'
+        $ruleBytes = [IO.File]::ReadAllBytes($ruleFixture)
+        try {
+            Remove-Item -LiteralPath $ruleFixture
+            $refusedMissingTarget = $false
+            try { $null = Assert-RelativeLinks -Project $relativeProject -Tool $tool }
+            catch { $refusedMissingTarget = $_.Exception.Message -match 'broken=[1-9]' }
+            Assert-True $refusedMissingTarget "Missing installed rule was not reported as broken for $tool"
+        }
+        finally { [IO.File]::WriteAllBytes($ruleFixture, $ruleBytes) }
         $beforeUpdate = @{}
         foreach ($file in Get-ChildItem -LiteralPath $relativeProject -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
             $beforeUpdate[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
         }
         $null = Invoke-Installer $relativeProject @('update')
-        $second = Assert-RelativeLinks $relativeProject
-        Assert-True ($first.Checked -eq $second.Checked -and $first.Placeholders -eq $second.Placeholders) "Relative link census changed on repeat update for $tool"
+        $second = Assert-RelativeLinks -Project $relativeProject -Tool $tool
+        Assert-True ($first.Checked -eq $second.Checked -and $first.Placeholders.Count -eq $second.Placeholders.Count -and
+            ($first.NotInstalled -join "`n") -ceq ($second.NotInstalled -join "`n")) "Relative link census changed on repeat update for $tool"
         foreach ($path in $beforeUpdate.Keys) {
             Assert-True ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $beforeUpdate[$path]) "Repeated update changed $path"
         }
         Assert-ManifestHashes $relativeProject
-        Write-Host "LINKS $tool`: $($second.Checked) resolved; broken=0; placeholders=$($second.Placeholders); repeat update byte-identical"
+        Write-Host "LINKS $tool`: checked=$($second.Checked); resolved=$($second.Resolved); broken=$($second.Broken); not-installed-section=$($second.NotInstalled.Count); placeholders=$($second.Placeholders.Count); repeat update byte-identical"
+        foreach ($detail in $second.NotInstalled) { Write-Host "  NOT-INSTALLED-SECTION $tool`: $detail" }
+        foreach ($detail in $second.Placeholders) { Write-Host "  PLACEHOLDER $tool`: $detail" }
     }
     Pass 'Cross-section relative links use canonical adapter paths; placeholders and repeat updates are stable'
 
