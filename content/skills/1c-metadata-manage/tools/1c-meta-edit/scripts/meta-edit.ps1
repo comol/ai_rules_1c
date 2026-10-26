@@ -3338,7 +3338,7 @@ $script:validateExitCode = 0
 if (-not $NoValidate) {
 	Write-Host ""
 	Write-Host "--- Running meta-validate ---" -ForegroundColor DarkGray
-	& powershell.exe -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
+	& (Get-Process -Id $PID).Path -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
 	$script:validateExitCode = $LASTEXITCODE
 	if ($script:validateExitCode -ne 0) {
 		[Console]::Error.WriteLine("[ERROR] meta-validate завершился с кодом $($script:validateExitCode): изменение записано, но объект не проходит проверку. Разберите вывод выше перед загрузкой в базу.")
