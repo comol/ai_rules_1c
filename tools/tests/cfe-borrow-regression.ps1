@@ -117,7 +117,8 @@ function Invoke-Tool([string]$Script, [string[]]$ToolArgs, [string]$WorkDir) {
         foreach ($a in $ToolArgs) {
             if ($a -match '\s') { $psArgs += "`"$a`"" } else { $psArgs += $a }
         }
-        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs `
+        $psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
+        $proc = Start-Process -FilePath $psExe -ArgumentList $psArgs `
             -WorkingDirectory $WorkDir -NoNewWindow -Wait -PassThru `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         return [pscustomobject]@{
