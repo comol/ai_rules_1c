@@ -2302,12 +2302,17 @@ def _(work):
 
 @case("docs: the skill documents the Python runtime for the shipped commands only")
 def _(work):
-    path = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage", "SKILL.md")
-    with open(path, "rb") as handle:
-        text = handle.read().decode("utf-8-sig")
+    skill_dir = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage")
+    with open(os.path.join(skill_dir, "SKILL.md"), "rb") as handle:
+        skill_text = handle.read().decode("utf-8-sig")
+    assert_true(re.search(r"\[[^\]\r\n]+\]\(docs/runtime-selection\.md\)", skill_text) is not None,
+                "SKILL.md does not link to docs/runtime-selection.md")
+    with open(os.path.join(skill_dir, "docs", "runtime-selection.md"), "rb") as handle:
+        runtime_text = handle.read().decode("utf-8-sig")
     for stem in PORTED_COMMANDS:
-        assert_true(f"{stem}.py" in text,
-                    f"SKILL.md does not name the ported entry point {stem}.py")
+        assert_true(f"{stem}.py" in runtime_text,
+                    f"runtime-selection.md does not name the ported entry point {stem}.py")
+    text = skill_text + "\n" + runtime_text
     # The honest half: a tool with no Python peer must not be advertised with one.
     unported = sorted(
         entry for entry in os.listdir(TOOLS_DIR)
@@ -2322,7 +2327,7 @@ def _(work):
                 continue
             promised = name[:-4] + ".py"
             assert_true(promised not in text,
-                        f"SKILL.md promises {promised}, which does not exist under {entry}")
+                        f"runtime documentation promises {promised}, which does not exist under {entry}")
 
 
 @case("packaging: install ships Python ports and optional workflows, tracks them, and they run",
