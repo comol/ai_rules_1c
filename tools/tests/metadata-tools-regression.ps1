@@ -71,9 +71,13 @@ foreach ($required in @($MetaEdit, $MetaCompile, $RemoveForm,
 
 $script:Cases    = @()
 $script:Failures = @()
+$script:Skipped  = @()
+$WindowsHost = $env:OS -eq 'Windows_NT'
+$WindowsOnlyReason = if (-not $WindowsHost) { 'Requires Windows native sharing violations or cmd.exe junctions.' } else { '' }
+$UnixOnlyReason = if ($WindowsHost) { 'Unix symlink case; Windows containment is covered by the native junction case.' } else { '' }
 
-function Register-Case([string]$Name, [scriptblock]$Body) {
-    $script:Cases += [pscustomobject]@{ Name = $Name; Body = $Body }
+function Register-Case([string]$Name, [scriptblock]$Body, [string]$SkipReason = '') {
+    $script:Cases += [pscustomobject]@{ Name = $Name; Body = $Body; SkipReason = $SkipReason }
 }
 
 function Fail([string]$Message) { throw [System.Exception]::new($Message) }
@@ -146,6 +150,15 @@ function Invoke-Tool([string]$Script, [string[]]$ToolArgs, [string]$WorkDir) {
         $proc = Start-Process -FilePath $psExe -ArgumentList $psArgs `
             -WorkingDirectory $WorkDir -NoNewWindow -Wait -PassThru `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        if ($KeepWorkDir) {
+            # Outside fixture trees: evidence must not contaminate byte snapshots.
+            $script:ToolRunIndex++
+            $prefix = Join-Path $script:ToolEvidenceDir ('{0:d3}' -f $script:ToolRunIndex)
+            Copy-Item -LiteralPath $stdout -Destination "$prefix.stdout.log"
+            Copy-Item -LiteralPath $stderr -Destination "$prefix.stderr.log"
+            [pscustomobject]@{ Script=$Script; Arguments=$ToolArgs; Cwd=$WorkDir; ExitCode=$proc.ExitCode } |
+                ConvertTo-Json -Depth 3 | Set-Content -LiteralPath "$prefix.json" -Encoding UTF8
+        }
         return [pscustomobject]@{
             ExitCode = $proc.ExitCode
             StdOut   = (Get-Content -LiteralPath $stdout -Raw -Encoding UTF8)
@@ -1302,6 +1315,49 @@ Register-Case 'remove-form: a failed publish whose restore also fails keeps the 
     Assert-True (Test-Path -LiteralPath (Join-Path $src 'Obrabotka\Forms\MainForm.xml')) 'the descriptor was not put back'
     Assert-True (Test-Path -LiteralPath (Join-Path $src 'Obrabotka\Forms\MainForm\Ext\Form.xml')) 'the form directory was not put back'
     Assert-Equal $originalRoot (Get-FileHash -LiteralPath $rootXml -Algorithm SHA256).Hash 'the root XML changed although the publish failed'
+} -SkipReason $WindowsOnlyReason
+
+Register-Case 'remove-form: injected publish and restore failures keep recovery bytes' {
+    param($Work)
+    # Test-only cmdlet shadows: the production script and its rollback are unchanged.
+    # Unlike FileShare.Read, these two faults are deterministic on both hosts.
+    $src = Join-Path $Work 'src'
+    Copy-Fixture 'epf-with-form' $src
+    $before = Get-TreeSnapshot (Join-Path $src 'Obrabotka')
+    $rootXml = Join-Path $src 'Obrabotka.xml'
+    $originalRoot = (Get-FileHash -LiteralPath $rootXml -Algorithm SHA256).Hash
+    $driver = Join-Path $Work 'fault-driver.ps1'
+    [IO.File]::WriteAllText($driver, @'
+param([string]$Tool, [string]$SrcDir)
+$ErrorActionPreference = 'Stop'
+function Move-Item {
+    param($LiteralPath, $Destination, [switch]$Force)
+    if ((Split-Path $LiteralPath -Leaf) -eq 'root-new.xml') {
+        throw 'TEST_PUBLISH_FAILURE'
+    }
+    Microsoft.PowerShell.Management\Move-Item @PSBoundParameters
+}
+function Copy-Item {
+    param($LiteralPath, $Destination, [switch]$Force)
+    if ((Split-Path $LiteralPath -Leaf) -eq 'root-backup.xml') {
+        throw 'TEST_RESTORE_FAILURE'
+    }
+    Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
+}
+& $Tool -ObjectName Obrabotka -FormName MainForm -SrcDir $SrcDir -Force
+exit $LASTEXITCODE
+'@)
+    $run = Invoke-Tool $driver @('-Tool', $RemoveForm, '-SrcDir', $src) $Work
+    Assert-Equal 1 $run.ExitCode "injected rollback failure: $($run.StdErr)"
+    Assert-True ($run.StdErr -match 'TEST_PUBLISH_FAILURE' -and $run.StdErr -match 'TEST_RESTORE_FAILURE') `
+        "both fault sites must be reached: $($run.StdErr)"
+    $backup = Join-Path $src '.remove-form-quarantine/root-backup.xml'
+    Assert-True (Test-Path -LiteralPath $backup) 'the failed restore lost its recovery backup'
+    Assert-Equal $originalRoot (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash 'recovery backup bytes'
+    Assert-Equal $originalRoot (Get-FileHash -LiteralPath $rootXml -Algorithm SHA256).Hash 'unpublished root bytes'
+    Assert-True ($run.StdErr -match [regex]::Escape($backup) -and $run.StdErr -match [regex]::Escape($rootXml)) `
+        "recovery source and destination must be reported: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot (Join-Path $src 'Obrabotka')) 'restored form payloads'
 }
 
 Register-Case 'remove-form: an object directory reached through a junction is refused' {
@@ -1324,7 +1380,29 @@ Register-Case 'remove-form: an object directory reached through a junction is re
         '-SrcDir', $src, '-Force') $src
     Assert-Equal 2 $run.ExitCode "a junctioned object directory was not refused (stdout: $($run.StdOut) stderr: $($run.StdErr))"
     Assert-TreeIdentical $before (Get-TreeSnapshot $outside) 'files outside SrcDir behind a junction'
-}
+} -SkipReason $WindowsOnlyReason
+
+Register-Case 'remove-form: an object directory reached through a Unix symlink is refused' {
+    param($Work)
+    $src = Join-Path $Work 'src'
+    Copy-Fixture 'epf-with-form' $src
+    $outside = Join-Path $Work 'outside-object'
+    Move-Item -LiteralPath (Join-Path $src 'Obrabotka') -Destination $outside
+    $link = Join-Path $src 'Obrabotka'
+    New-Item -ItemType SymbolicLink -Path $link -Target $outside | Out-Null
+    $item = Get-Item -LiteralPath $link -Force
+    Assert-True (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'precondition: a real directory symlink'
+    $before = Get-TreeSnapshot $outside
+    $rootXml = Join-Path $src 'Obrabotka.xml'
+    $originalRoot = (Get-FileHash -LiteralPath $rootXml -Algorithm SHA256).Hash
+    $run = Invoke-Tool $RemoveForm @('-ObjectName', 'Obrabotka', '-FormName', 'MainForm',
+        '-SrcDir', $src, '-Force') $src
+    Assert-Equal 2 $run.ExitCode "symlink refusal (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    Assert-True ($run.StdErr -match [regex]::Escape($link)) 'refusal must identify the linked component'
+    Assert-TreeIdentical $before (Get-TreeSnapshot $outside) 'files outside SrcDir behind a symlink'
+    Assert-Equal $originalRoot (Get-FileHash -LiteralPath $rootXml -Algorithm SHA256).Hash 'root XML after symlink refusal'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $src '.remove-form-quarantine'))) 'refusal must precede the transaction'
+} -SkipReason $UnixOnlyReason
 
 # ------------------------------------------------- Invoke-1CEdit: preview wrapper
 #
@@ -1398,6 +1476,8 @@ Register-Case 'Invoke-1CEdit: -Preview restores the tree byte-for-byte (copy bac
         '-Root', $dump, '-Preview', '-Operation', 'add-attribute',
         '-Value', 'PreviewProbe: String', '-NoValidate') $dump
 
+    Assert-Equal 0 $run.ExitCode "copy preview failed (stderr: $($run.StdErr))"
+    Assert-True ($run.StdOut -match 'copy backend') 'the preview did not take the copy backend'
     Assert-True ($run.StdOut -match 'PreviewProbe') 'the diff did not show the attribute the run added'
     Assert-True ($run.StdOut -match 'rollback') 'the run did not report a rollback'
     Assert-DumpIdentical $before (Get-DumpFacts $dump) 'the preview left changes behind'
@@ -1839,6 +1919,32 @@ Register-Case 'support xml: skd-edit keeps compact tags without changing literal
     foreach ($literal in @('<![CDATA[literal <Text />]]>', '<!-- literal <Comment /> -->', '<?probe literal <PI /> ?>')) {
         Assert-True $after.Contains($literal) "XML literal changed: $literal"
     }
+}
+
+Register-Case 'cf-edit: the real validator runs and its failure exit propagates' {
+    param($Work)
+    $tool = Join-Path $ToolsDir '1c-cf-manage/scripts/cf-edit.ps1'
+    $validator = Join-Path $ToolsDir '1c-cf-manage/scripts/cf-validate.ps1'
+    $good = Join-Path $Work 'good'
+    Copy-Fixture 'config-dump' $good
+    $run = Invoke-Tool $tool @('-ConfigPath', $good, '-Operation', 'modify-property', '-Value', 'Comment=ValidationProbe') $Work
+    Assert-Equal 0 $run.ExitCode "cf-edit valid input: $($run.StdErr)"
+    Assert-True ($run.StdOut -match '--- Running cf-validate ---' -and $run.StdOut -match '0 errors,') `
+        "real validator result missing: $($run.StdOut)"
+    Assert-True ($run.StdOut -notmatch '\[SKIP\]') 'cf-edit skipped validation'
+
+    $bad = Join-Path $Work 'bad'
+    Copy-Fixture 'config-dump' $bad
+    $run = Invoke-Tool $tool @('-ConfigPath', $bad, '-Operation', 'modify-property', '-Value', 'Name=') $Work
+    Assert-True ($run.StdOut -match '\[ERROR\] 3\. Properties: Name is missing or empty') `
+        "the invalid input did not reach the validator: $($run.StdOut)"
+    $direct = Invoke-Tool $validator @('-ConfigPath', $bad) $Work
+    Assert-Equal 1 $direct.ExitCode 'direct validator rejects empty Name'
+    Assert-Equal $direct.ExitCode $run.ExitCode 'cf-edit must propagate the validator exit'
+
+    $optOut = Invoke-Tool $tool @('-ConfigPath', $bad, '-Operation', 'modify-property', '-Value', 'Comment=ExplicitOptOut', '-NoValidate') $Work
+    Assert-Equal 0 $optOut.ExitCode 'explicit NoValidate opt-out remains available'
+    Assert-True ($optOut.StdOut -notmatch '--- Running cf-validate ---') 'NoValidate unexpectedly ran the validator'
 }
 
 # ---------------------------------------------------------------- roles (role-compile / role-edit / role-validate)
@@ -2374,6 +2480,9 @@ Register-Case 'support guard: mxl-compile refuses a locked owner before creating
 
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ("1c-rules-regr-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
+$script:ToolRunIndex = 0
+$script:ToolEvidenceDir = Join-Path $root 'tool-output'
+if ($KeepWorkDir) { New-Item -ItemType Directory -Path $script:ToolEvidenceDir -Force | Out-Null }
 Write-Host "Work dir: $root" -ForegroundColor DarkGray
 Write-Host ''
 
@@ -2381,15 +2490,26 @@ $index = 0
 foreach ($case in $script:Cases) {
     if ($case.Name -notlike $Filter) { continue }
     $index++
+    if ($case.SkipReason) {
+        $script:Skipped += $case.Name
+        Write-Host "[SKIP] $($case.Name): $($case.SkipReason)" -ForegroundColor Yellow
+        continue
+    }
     $work = Join-Path $root ("case{0:d2}" -f $index)
     New-Item -ItemType Directory -Path $work -Force | Out-Null
+    $previousGitCeiling = $env:GIT_CEILING_DIRECTORIES
     try {
+        # Temp may be under this checkout. Do not discover that ancestor repository;
+        # repositories explicitly initialized below this case remain discoverable.
+        $env:GIT_CEILING_DIRECTORIES = $work
         & $case.Body $work
         Write-Host "[PASS] $($case.Name)" -ForegroundColor Green
     } catch {
         $script:Failures += "$($case.Name): $($_.Exception.Message)"
         Write-Host "[FAIL] $($case.Name)" -ForegroundColor Red
         Write-Host "       $($_.Exception.Message)" -ForegroundColor Red
+    } finally {
+        $env:GIT_CEILING_DIRECTORIES = $previousGitCeiling
     }
 }
 
@@ -2398,11 +2518,12 @@ if ($index -eq 0) {
     Write-Host "No case matched filter '$Filter'." -ForegroundColor Yellow
     exit 1
 }
+$passed = $index - $script:Failures.Count - $script:Skipped.Count
 if ($script:Failures.Count -eq 0) {
-    Write-Host "$index/$index passed." -ForegroundColor Green
+    Write-Host "$passed/$index passed, $($script:Skipped.Count) skipped, 0 failed." -ForegroundColor Green
     if (-not $KeepWorkDir) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     exit 0
 }
-Write-Host "$($index - $script:Failures.Count)/$index passed, $($script:Failures.Count) failed." -ForegroundColor Red
+Write-Host "$passed/$index passed, $($script:Skipped.Count) skipped, $($script:Failures.Count) failed." -ForegroundColor Red
 Write-Host "Work dir kept for inspection: $root" -ForegroundColor Yellow
 exit 1

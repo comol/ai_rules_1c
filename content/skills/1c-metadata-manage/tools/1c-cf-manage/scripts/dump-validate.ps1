@@ -105,7 +105,10 @@ function Test-ObjectFile([string]$File, [string]$Type, [string]$Name, [string]$K
     }
     if ($Type -eq 'Subsystem') {
         $script:ReferenceSources.Add([pscustomobject]@{ File=$File; Key=$Key; Node=$node })
-        Test-Composition $node ([System.IO.Path]::ChangeExtension($File, $null)) $Key $File
+        # PowerShell binds $null to an empty string here: ChangeExtension leaves a
+        # trailing dot, which Windows tolerates but Unix treats as a different path.
+        $directory = Join-Path (Split-Path $File -Parent) ([System.IO.Path]::GetFileNameWithoutExtension($File))
+        Test-Composition $node $directory $Key $File
     }
 }
 
