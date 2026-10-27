@@ -5497,13 +5497,18 @@ function Invoke-Update {
     # userModified on every update. The OpenSpec bundle has the same rule:
     # Invoke-OpenSpecArtifacts leaves a file it finds on disk without an entry
     # to the user, so a dropped entry froze the bundle after the first update.
+    # Adapter entry files (CLAUDE.md/QWEN.md/KODA.md) follow the same contract:
+    # Invoke-PlacePhase can refresh a pristine adapter entry only while its
+    # manifest record survives pruning; without it the existing file looks
+    # user-owned and is flagged userModified on every update.
     $newFiles = [ordered]@{}
     foreach ($k in $manifest.files.Keys) {
         # Per-server MCP ownership must survive pruning so update can replace
         # our servers while preserving pre-existing user servers with any id.
         if ($manifest.files[$k].userModified -or $k -eq $script:AgentsMdFileName -or
             $manifest.files[$k].Contains('managedServers') -or
-            ([string]$manifest.files[$k].source).StartsWith('content/openspec-bundle/')) { $newFiles[$k] = $manifest.files[$k] }
+            ([string]$manifest.files[$k].source).StartsWith('content/openspec-bundle/') -or
+            ([string]$manifest.files[$k].source).EndsWith('#entry')) { $newFiles[$k] = $manifest.files[$k] }
     }
     $manifest.files = $newFiles
 

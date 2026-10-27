@@ -435,6 +435,107 @@ Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -Requested
     }
     Pass 'Shared directory owner beats writer order; foreign existing trees are rejected'
 
+    # Adapter entry ownership: CLAUDE.md is written from adapters/claude-code.yaml#entry.
+    # A pristine entry must stay clean across init -> update; update pruning has to
+    # keep its manifest record so Invoke-PlacePhase can recognise and refresh it.
+    $entryCase = 'cursor,claude-code'
+    $entryProject = Join-Path $Work 'entry-clean'
+    [void][IO.Directory]::CreateDirectory($entryProject)
+    $null = Invoke-Installer $entryProject @('init', '-Tools', $entryCase)
+    $entryPath = Join-Path $entryProject 'CLAUDE.md'
+    $entryManifest = Read-Json (Join-Path $entryProject '.ai-rules.json')
+    Assert-True (Test-Path -LiteralPath $entryPath) 'Adapter entry file was not installed'
+    Assert-True ($entryManifest.files.'CLAUDE.md'.source -eq 'adapters/claude-code.yaml#entry') "Unexpected entry source: $($entryManifest.files.'CLAUDE.md'.source)"
+    Assert-True (-not $entryManifest.files.'CLAUDE.md'.userModified) 'Clean entry was marked userModified after init'
+    $entryBytes = [IO.File]::ReadAllBytes($entryPath)
+    $entryHashBefore = (Get-FileHash -LiteralPath $entryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-ManifestHashes $entryProject
+
+    $null = Invoke-Installer $entryProject @('update')
+    $entryManifest = Read-Json (Join-Path $entryProject '.ai-rules.json')
+    Assert-True (-not $entryManifest.files.'CLAUDE.md'.userModified) 'Clean entry became userModified after update'
+    Assert-True (([Convert]::ToBase64String([IO.File]::ReadAllBytes($entryPath))) -eq ([Convert]::ToBase64String($entryBytes))) 'Clean entry bytes changed on update'
+    foreach ($property in $entryManifest.files.PSObject.Properties) { Assert-True (-not $property.Value.userModified) "Clean entry fixture flagged userModified: $($property.Name)" }
+    Assert-ManifestHashes $entryProject
+    $entryHashAfter = (Get-FileHash -LiteralPath $entryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host "ENTRY clean: before=$entryHashBefore after=$entryHashAfter userModified=false manifest-hashes=ok"
+
+    $entrySnapshot = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $entryProject -Force -Recurse -File) {
+        if ($file.Name -eq '.ai-rules.json') { continue }
+        $entrySnapshot[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+    }
+    $null = Invoke-Installer $entryProject @('update')
+    foreach ($path in $entrySnapshot.Keys) {
+        Assert-True ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $entrySnapshot[$path]) "Repeated entry update changed $path"
+    }
+    $entryManifest = Read-Json (Join-Path $entryProject '.ai-rules.json')
+    Assert-True (-not $entryManifest.files.'CLAUDE.md'.userModified) 'Repeated update flagged the clean entry userModified'
+    Assert-ManifestHashes $entryProject
+    Pass 'Clean adapter entry keeps no userModified flag, stable bytes and manifest hashes through init and repeated updates'
+
+    # First install does not keep a pre-existing root instruction file in place:
+    # Invoke-FirstInstallRuleMigration renames it to CLAUDE.md.bak.md and inlines
+    # its text into USER-RULES.md, then installs the clean adapter entry stub.
+    $userEntryProject = Join-Path $Work 'entry-preexisting'
+    $userEntryText = "# Our own CLAUDE.md`nDo not replace.`n"
+    Write-Fixture (Join-Path $userEntryProject 'CLAUDE.md') $userEntryText
+    $null = Invoke-Installer $userEntryProject @('init', '-Tools', $entryCase)
+    $userEntryManifest = Read-Json (Join-Path $userEntryProject '.ai-rules.json')
+    $backupPath = Join-Path $userEntryProject 'CLAUDE.md.bak.md'
+    Assert-True (Test-Path -LiteralPath $backupPath) 'Pre-existing CLAUDE.md was not preserved as a migration backup'
+    Assert-True (([IO.File]::ReadAllText($backupPath)) -ceq $userEntryText) 'Migration backup does not hold the exact original CLAUDE.md text'
+    $userRulesText = [IO.File]::ReadAllText((Join-Path $userEntryProject 'USER-RULES.md'))
+    Assert-True ($userRulesText.Contains($userEntryText.TrimEnd())) 'USER-RULES.md does not contain the migrated CLAUDE.md text'
+    Assert-True ($userRulesText.Contains('Migrated from `CLAUDE.md`')) 'USER-RULES.md has no CLAUDE.md migration block'
+    $stubBytes = [IO.File]::ReadAllBytes((Join-Path $userEntryProject 'CLAUDE.md'))
+    Assert-True (([IO.File]::ReadAllText((Join-Path $userEntryProject 'CLAUDE.md'))).Contains('See @AGENTS.md')) 'Installed entry is not the adapter stub'
+    Assert-True (-not $userEntryManifest.files.'CLAUDE.md'.userModified) 'Migrated clean stub was marked userModified after init'
+    $null = Invoke-Installer $userEntryProject @('update')
+    $userEntryManifest = Read-Json (Join-Path $userEntryProject '.ai-rules.json')
+    Assert-True (([IO.File]::ReadAllText($backupPath)) -ceq $userEntryText) 'Update changed the migration backup'
+    Assert-True (([IO.File]::ReadAllText((Join-Path $userEntryProject 'USER-RULES.md'))).Contains($userEntryText.TrimEnd())) 'Update dropped the migrated text from USER-RULES.md'
+    Assert-True (([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $userEntryProject 'CLAUDE.md')))) -eq ([Convert]::ToBase64String($stubBytes))) 'Update changed the clean migrated stub'
+    Assert-True (-not $userEntryManifest.files.'CLAUDE.md'.userModified) 'Migrated stub lost its clean ownership on update'
+    Assert-ManifestHashes $userEntryProject
+    Write-Host ("ENTRY migrated: backup={0} stub={1} userRules=contains-original entry-userModified=false" -f
+        (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash.ToLowerInvariant(),
+        (Get-FileHash -LiteralPath (Join-Path $userEntryProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant())
+    Pass 'Pre-existing CLAUDE.md is migrated to a backup and USER-RULES.md; the installed entry stays clean through update'
+
+    $editedEntryProject = Join-Path $Work 'entry-edited'
+    [void][IO.Directory]::CreateDirectory($editedEntryProject)
+    $null = Invoke-Installer $editedEntryProject @('init', '-Tools', 'claude-code')
+    $editedEntryText = "# Edited installed entry`nKeep this.`n"
+    Write-Fixture (Join-Path $editedEntryProject 'CLAUDE.md') $editedEntryText
+    $null = Invoke-Installer $editedEntryProject @('update')
+    $editedEntryManifest = Read-Json (Join-Path $editedEntryProject '.ai-rules.json')
+    Assert-True (([IO.File]::ReadAllText((Join-Path $editedEntryProject 'CLAUDE.md'))) -ceq $editedEntryText) 'Update overwrote an edited entry'
+    Assert-True ($editedEntryManifest.files.'CLAUDE.md'.userModified) 'Edited entry was not preserved as user-owned'
+    Write-Host ("ENTRY edited: bytes={0} userModified=true" -f (Get-FileHash -LiteralPath (Join-Path $editedEntryProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant())
+    Pass 'Edited installed entry keeps its bytes and userModified flag through update'
+
+    $entryAdapterPath = Join-Path $SourceRoot 'adapters/claude-code.yaml'
+    $originalAdapter = [IO.File]::ReadAllBytes($entryAdapterPath)
+    $refreshProject = Join-Path $Work 'entry-template-refresh'
+    [void][IO.Directory]::CreateDirectory($refreshProject)
+    $null = Invoke-Installer $refreshProject @('init', '-Tools', 'claude-code')
+    $refreshHashBefore = (Get-FileHash -LiteralPath (Join-Path $refreshProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant()
+    try {
+        [IO.File]::WriteAllText($entryAdapterPath, ([IO.File]::ReadAllText($entryAdapterPath)).Replace(
+            'template: "See @AGENTS.md for project instructions.\n"',
+            'template: "See @AGENTS.md for project instructions.\nFixture refresh 20261027.\n"'), $Utf8)
+        $null = Invoke-Installer $refreshProject @('update')
+        $refreshManifest = Read-Json (Join-Path $refreshProject '.ai-rules.json')
+        Assert-True (([IO.File]::ReadAllText((Join-Path $refreshProject 'CLAUDE.md'))).Contains('Fixture refresh 20261027.')) 'Update did not refresh a clean entry from the changed template'
+        Assert-True (-not $refreshManifest.files.'CLAUDE.md'.userModified) 'Refreshed clean entry was flagged userModified'
+        Assert-ManifestHashes $refreshProject
+        Write-Host ("ENTRY refresh: before={0} after={1} userModified=false" -f $refreshHashBefore,
+            (Get-FileHash -LiteralPath (Join-Path $refreshProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant())
+    }
+    finally { [IO.File]::WriteAllBytes($entryAdapterPath, $originalAdapter) }
+    Pass 'Changed adapter entry template refreshes a clean installed entry without marking it user-owned'
+
     Write-Host "OK: $script:Passed installer path cases; real 8.3 paths checked: $script:ShortPathChecked; no network or infobase accessed."
 }
 finally {
