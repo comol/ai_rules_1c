@@ -1611,6 +1611,139 @@ Register-Case 'dump-validate: missing composition, invalid metadata root and uns
     Assert-DumpFinding $result 'dump-format-unsupported'
 }
 
+Register-Case 'db-update: -SessionTerminate lands right after /UpdateDBCfg (1cv8) and as --session-terminate= (ibcmd)' {
+    param($Work)
+    # A tiny console program stands in for 1cv8.exe / ibcmd.exe: it records its command
+    # line and writes the /DumpResult verdict, so only the argument order is under test.
+    $DbUpdate = Join-Path $ToolsDir '1c-db-ops\scripts\db-update.ps1'
+    $source = @'
+using System;
+using System.IO;
+public static class FakePlatform {
+    public static int Main(string[] a) {
+        string self = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(self), "captured-args.txt"), string.Join(" ", a));
+        for (int i = 0; i + 1 < a.Length; i++) {
+            if (a[i] == "/DumpResult") File.WriteAllText(a[i + 1], "0");
+        }
+        return 0;
+    }
+}
+'@
+    $binDir = Join-Path $Work 'bin'
+    New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+    $fake1cv8 = Join-Path $binDir '1cv8.exe'
+    Add-Type -TypeDefinition $source -OutputAssembly $fake1cv8 -OutputType ConsoleApplication
+    $fakeIbcmd = Join-Path $binDir 'ibcmd.exe'
+    Copy-Item -LiteralPath $fake1cv8 -Destination $fakeIbcmd
+    $ib = Join-Path $Work 'ib'
+    New-Item -ItemType Directory -Path $ib -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $ib '1Cv8.1CD'), 'x')
+    $captured = Join-Path $binDir 'captured-args.txt'
+
+    $run = Invoke-Tool $DbUpdate @('-V8Path', $fake1cv8, '-InfoBasePath', $ib, '-Dynamic', 'auto', '-SessionTerminate', 'force') $Work
+    Assert-Equal 0 $run.ExitCode "db-update 1cv8 (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    $line = [System.IO.File]::ReadAllText($captured)
+    Assert-True ($line -match '/UpdateDBCfg -Dynamic\+ -SessionTerminate force /Out ') "1cv8 command line: $line"
+
+    $run = Invoke-Tool $DbUpdate @('-V8Path', $fakeIbcmd, '-InfoBasePath', $ib, '-SessionTerminate', 'force') $Work
+    Assert-Equal 0 $run.ExitCode "db-update ibcmd (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    $line = [System.IO.File]::ReadAllText($captured)
+    Assert-True ($line -match 'config apply .*--session-terminate=force') "ibcmd command line: $line"
+
+    $run = Invoke-Tool $DbUpdate @('-V8Path', $fake1cv8, '-InfoBasePath', $ib, '-AdditionalV8Arguments:-SessionTerminate,force') $Work
+    Assert-True ($run.ExitCode -ne 0) 'a duplicate -SessionTerminate through the additional arguments was accepted'
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'use -SessionTerminate') "no hint to the new parameter: $($run.StdOut)"
+
+    $run = Invoke-Tool $DbUpdate @('-V8Path', $fake1cv8, '-InfoBasePath', $ib, '-SessionTerminate', 'maybe') $Work
+    Assert-True ($run.ExitCode -ne 0) 'an unknown -SessionTerminate mode was accepted'
+}
+
+Register-Case 'form-validate: external processor sources inside a configuration repo are EPF context' {
+    param($Work)
+    # <repo>\.ExternalDataProcessors\Obr\Forms\Main\Ext\Form.xml beside Obr.xml, with the
+    # repo's Configuration.xml further up: the form is external, not a config form.
+    $FormValidate = Join-Path $ToolsDir '1c-form-validate\scripts\form-validate.ps1'
+    Copy-Fixture 'config-dump' $Work "`n"
+    $epfRoot = Join-Path $Work '.ExternalDataProcessors'
+    $formXml = Join-Path $epfRoot 'Obr\Forms\Main\Ext\Form.xml'
+    New-Item -ItemType Directory -Path (Split-Path $formXml -Parent) -Force | Out-Null
+    $bom = New-Object System.Text.UTF8Encoding($true)
+    $descriptor = Join-Path $epfRoot 'Obr.xml'
+    $descriptorText = '<?xml version="1.0" encoding="UTF-8"?>' + "`n" +
+        '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">' + "`n" +
+        "`t" + '<ExternalDataProcessor uuid="55555555-5555-5555-5555-555555555555">' + "`n" +
+        "`t`t" + '<Properties><Name>Obr</Name></Properties>' + "`n" +
+        "`t`t" + '<ChildObjects><Form>Main</Form></ChildObjects>' + "`n" +
+        "`t" + '</ExternalDataProcessor>' + "`n" +
+        '</MetaDataObject>' + "`n"
+    [System.IO.File]::WriteAllText($descriptor, $descriptorText, $bom)
+    $formText = '<?xml version="1.0" encoding="UTF-8"?>' + "`n" +
+        '<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" version="2.17">' + "`n" +
+        "`t" + '<AutoCommandBar name="FormCommandBar" id="-1"/>' + "`n" +
+        "`t" + '<Attributes>' + "`n" +
+        "`t`t" + '<Attribute name="Object" id="1">' + "`n" +
+        "`t`t`t" + '<Type><v8:Type>cfg:ExternalDataProcessorObject.Obr</v8:Type></Type>' + "`n" +
+        "`t`t`t" + '<MainAttribute>true</MainAttribute>' + "`n" +
+        "`t`t" + '</Attribute>' + "`n" +
+        "`t" + '</Attributes>' + "`n" +
+        '</Form>' + "`n"
+    [System.IO.File]::WriteAllText($formXml, $formText, $bom)
+
+    $run = Invoke-Tool $FormValidate @('-FormPath', $formXml) $Work
+    $text = "$($run.StdOut)$($run.StdErr)"
+    Assert-Equal 0 $run.ExitCode "an external processor form inside a configuration repo was rejected: $text"
+    Assert-True ($text -notmatch 'configuration context') "false External* diagnostic: $text"
+
+    # Without the processor descriptor the folder is just a directory of the configuration:
+    # the same type is a real error again (the detection is by the root descriptor).
+    Remove-Item -LiteralPath $descriptor -Force
+    $run = Invoke-Tool $FormValidate @('-FormPath', $formXml) $Work
+    Assert-True ($run.ExitCode -ne 0) 'the External* type passed in configuration context'
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'External\* type in configuration context') 'no External* diagnostic in configuration context'
+}
+
+Register-Case 'mxl-decompile: an absolute -OutputPath is written, a relative one still resolves against the cwd' {
+    param($Work)
+    $MxlCompile = Join-Path $ToolsDir '1c-mxl-compile\scripts\mxl-compile.ps1'
+    $MxlDecompile = Join-Path $ToolsDir '1c-mxl-decompile\scripts\mxl-decompile.ps1'
+    $dsl = Join-Path $Work 'layout.json'
+    [System.IO.File]::WriteAllText($dsl, '{"columns":2,"defaultWidth":20,"areas":[{"name":"Header","rows":[{"cells":[{"col":1,"text":"Title"}]}]}]}', (New-Object System.Text.UTF8Encoding($false)))
+    $template = Join-Path $Work 'Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', $dsl, '-OutputPath', $template) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+
+    $absolute = Join-Path $Work 'abs.json'
+    $run = Invoke-Tool $MxlDecompile @('-TemplatePath', $template, '-OutputPath', $absolute) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-decompile with an absolute -OutputPath (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath $absolute) 'the absolute output file was not written'
+    Assert-True ((Get-FileFacts $absolute).Text -match '"Header"') 'the decompiled JSON lost the area'
+
+    $run = Invoke-Tool $MxlDecompile @('-TemplatePath', $template, '-OutputPath', 'rel.json') $Work
+    Assert-Equal 0 $run.ExitCode "mxl-decompile with a relative -OutputPath (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'rel.json')) 'the relative output file was not written beside the cwd'
+}
+
+Register-Case 'meta-validate: a turnover register has no RecordType, a balance register still needs it' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    Copy-Fixture 'turnover-register' $Work "`n"
+    $target = Join-Path $Work 'AccumulationRegisters\TurnReg.xml'
+
+    $run = Invoke-Tool $MetaValidate @('-ObjectPath', $target, '-Detailed') $Work
+    $text = "$($run.StdOut)$($run.StdErr)"
+    Assert-Equal 0 $run.ExitCode "a turnover register was rejected: $text"
+    Assert-True ($text -notmatch 'Missing StandardAttributes') "false Missing StandardAttributes warning: $text"
+
+    # The same file declared as a balance register lacks RecordType for real.
+    $bom = New-Object System.Text.UTF8Encoding($true)
+    $balance = (Get-FileFacts $target).Text -replace '<RegisterType>Turnovers</RegisterType>', '<RegisterType>Balance</RegisterType>'
+    [System.IO.File]::WriteAllText($target, $balance, $bom)
+    $run = Invoke-Tool $MetaValidate @('-ObjectPath', $target, '-Detailed') $Work
+    $text = "$($run.StdOut)$($run.StdErr)"
+    Assert-True ($text -match 'Missing StandardAttributes: RecordType') "a balance register without RecordType was not warned about: $text"
+}
+
 # ---------------------------------------------------------------- run
 
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ("1c-rules-regr-" + [guid]::NewGuid().ToString('N').Substring(0, 8))

@@ -121,6 +121,10 @@ An extension is the **default answer** when a typical object on vendor support n
 
 ## db-manage.md
 
+### Local fix `2026-10-23` — `db-update -SessionTerminate`
+
+`db-update` v1.14 → **v1.15**: the script could not end open sessions. `-AdditionalV8Arguments '-SessionTerminate','force'` lands at the end of the command line, after `/Out` and `/DumpResult`, where the platform ignores it, so the update failed with the exclusive-lock error whenever any session was open. New `-SessionTerminate disable|prompt|force`: for `1cv8` it is emitted right after `/UpdateDBCfg` (`/UpdateDBCfg -Dynamic+ -SessionTerminate force`, the form `/update1cbase` and `/deploy-and-test` use), for `ibcmd` as `--session-terminate=<mode>` (the `config apply` key `/deploy-and-test` uses). The key is also in the owned-key lists, so passing it through the additional-argument parameters is refused with a hint to the new parameter. `/update1cbase` Step 3b still runs Designer directly and is unchanged. Pinned by `tools/tests/metadata-tools-regression.ps1` (a stub platform executable records the command line).
+
 ### Local fix `2026-10-20` — `-Dynamic` takes `auto` / `disable`
 
 `db-update` v1.13 → **v1.14** (support ticket 7557c7cf): through `powershell.exe -File` a lone `-Dynamic "-"` never reaches the script — Windows PowerShell 5.1 exits with a non-zero code and no output, so the agent saw a silent failure instead of `/UpdateDBCfg -Dynamic-`. `-Dynamic` now also accepts `auto` and `disable` (the ibcmd spellings), mapped to `+` / `-`; `+` / `-` keep working in-process, and `-Dynamic:-` works through `-File` as well. Checked on a throwaway 8.3.27.2130 file base: `-File … -Dynamic disable` → `-Dynamic-`, `auto` → `-Dynamic+`, both exit 0.
@@ -166,6 +170,10 @@ The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refre
 - The same script handles `erf-validate` — upstream `erf-validate` is a thin pass-through to `epf-validate.ps1`, the script auto-detects `ExternalReport` vs `ExternalDataProcessor` from the root XML element. No separate `erf-validate.ps1` is shipped.
 
 ## form-manage.md
+
+### Local fix `2026-10-23` — external processor forms inside a configuration repo
+
+`form-validate` v1.10 → **v1.11**: external data processor / report sources stored inside a configuration dump repo (`<repo>/.ExternalDataProcessors/<Name>/Forms/<Form>/Ext/Form.xml` beside `<repo>/.ExternalDataProcessors/<Name>.xml`) were read as configuration context, because the upward walk reached the repo's `Configuration.xml`; Check 12 then reported `External* type in configuration context` for the legitimate `cfg:ExternalDataProcessorObject.<Name>`. The walk now first tests each directory as an object folder whose root descriptor `<parent>/<Name>.xml` is an `ExternalDataProcessor` / `ExternalReport` and stops there as EPF/ERF context (Check 1 has no configuration version to compare in that case, as for an EPF outside any repo). Configuration context is detected exactly as before. Pinned by `tools/tests/metadata-tools-regression.ps1`.
 
 ### Local fix `2026-10-14` — input-field events and pass-through keys
 
@@ -259,6 +267,10 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 
 ## meta-manage.md
 
+### Local fix `2026-10-23` — turnover registers have no `RecordType`
+
+`meta-validate` (`.ps1` and `.py`) v1.13 → **v1.14**: Check 5 expected the standard attributes `Active, LineNumber, Recorder, Period, RecordType` for every `AccumulationRegister`, so a register with `<RegisterType>Turnovers</RegisterType>` — which has no `RecordType` — got a false warning `Missing StandardAttributes: RecordType`. For turnover registers `RecordType` is dropped from the expected list; a `RecordType` present on one is then reported as `Unexpected StandardAttribute`, which is correct. Balance registers are checked as before. Pinned by `tools/tests/metadata-tools-regression.ps1` and `tools/tests/python-ports-regression.py`.
+
 ### Local fix `2026-09-25` — versions, generated types, default forms, name clashes
 
 `meta-validate` v1.13, both runtimes with identical messages: object, form descriptor and `Form.xml` versions equal `Configuration.xml` (1e, 6e); every GeneratedType category is required and named exactly (2); `Default*Form` / `Auxiliary*Form` resolve to a declared form of the right role (6f); no `Description` / `Code` binding when the length is 0 (6g) and a warning when the default object form hides a mandatory `Description` nobody assigns (6h); case-insensitive name uniqueness shared by attributes, tabular sections, dimensions and resources (8); `Periodicity` and `DefaultRecordSetForm` forbidden in an information register (12); `cfg:Catalogs.X` is an error (16a). Over all 10 965 ERP objects none of the new error checks fires; 6h warns on 6 attached-file / exchange catalogs.
@@ -310,6 +322,10 @@ The PowerShell scripts under `tools/1c-meta-{compile,edit,info,remove,validate}/
 
 ## mxl-manage.md
 
+### Local fix `2026-10-23` — `mxl-decompile` absolute `-OutputPath`
+
+`mxl-decompile` v1.0 → **v1.1**: the output was always joined to the current directory, so an absolute `-OutputPath` became `<cwd>\E:\...` and the write failed with a «path format is not supported» error. A rooted path is now used as given, a relative one still resolves against the current directory (as in `mxl-compile`). Pinned by `tools/tests/metadata-tools-regression.ps1`.
+
 ### Upstream sync `2026-07-30`
 
 Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills): `mxl-compile` v1.1 → **v1.4**, `mxl-info` v1.0 → **v1.2**; `mxl-decompile` / `mxl-validate` unchanged. `mxl-compile` enforces the vendor support gate ([support-manage.md](support-manage.md)); `mxl-info` prints the support state of the layout's owner.
@@ -323,6 +339,10 @@ The PowerShell script `tools/1c-mxl-validate/scripts/mxl-validate.ps1` was refre
 The compile/decompile/info scripts (`mxl-compile`, `mxl-decompile`, `mxl-info`) were not refreshed — no significant upstream changes for them in this period.
 
 ## role-manage.md
+
+### Local fix `2026-10-23` — `role-compile` parameter name
+
+`role-manage.md` called `role-compile.ps1 -RolePath`, but the script parameter is `-JsonPath`, so the documented command failed with a PowerShell parameter error. The doc now uses `-JsonPath`, and `role-compile` v1.8 → **v1.9** accepts `-RolePath` as an alias of it, so commands written from the old doc keep working.
 
 ### Local fix `2026-10-14` — `role-validate` parameters, rights-only edits
 
@@ -414,6 +434,10 @@ The PowerShell scripts under `tools/1c-subsystem-manage/scripts/` were refreshed
 - Validators got the universal improvements described in `role-manage.md` → "Recent Additions" (one-liner output by default, `-Detailed`, folder path auto-resolution).
 
 ## template-manage.md
+
+### Local fix `2026-10-23` — `DataCompositionSchema` documented
+
+`template-manage.md` listed only HTML, Text, SpreadsheetDocument and BinaryData as `-TemplateType`, although `add-template.ps1` also accepts `DataCompositionSchema` (an empty schema with one local data source, and for a `Report` / `ExternalReport` it fills `MainDataCompositionSchema`). The type, the `-SetMainSKD` switch and the follow-up with `skd-compile` / `skd-validate` are now in the parameter list, the type table and the workflow. Docs only; the script is unchanged.
 
 ### Local fix `2026-09-13` — object XML paths
 
