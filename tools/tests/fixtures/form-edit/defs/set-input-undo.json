@@ -1,0 +1,10 @@
+{
+  "set": [
+    {
+      "element": "Номер",
+      "title": "Номер документа",
+      "choiceParameterLinks": [],
+      "off": [ "StartChoice", "OnChange" ]
+    }
+  ]
+}

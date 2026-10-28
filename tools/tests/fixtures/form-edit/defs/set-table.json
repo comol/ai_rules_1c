@@ -1,0 +1,10 @@
+{
+  "set": [
+    {
+      "element": "Товары",
+      "heightInTableRows": 3,
+      "visible": false,
+      "on": [ "AfterDeleteRow", { "event": "BeforeAddRow", "handler": "ТоварыПередДобавлением", "callType": "Before" } ]
+    }
+  ]
+}

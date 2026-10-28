@@ -1,0 +1,6 @@
+{
+  "attributes": [
+    { "name": "Контрагент", "type": "CatalogRef.Контрагенты", "save": true },
+    { "name": "ВторойОбъект", "type": "DocumentObject.Реализация" }
+  ]
+}

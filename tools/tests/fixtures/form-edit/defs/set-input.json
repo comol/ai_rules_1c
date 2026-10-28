@@ -1,0 +1,12 @@
+{
+  "set": [
+    {
+      "element": "Номер",
+      "choiceButton": true,
+      "clearButton": true,
+      "title": "Номер заказа",
+      "choiceParameterLinks": [ "Отбор.Организация=Объект.Организация" ],
+      "on": [ "StartChoice" ]
+    }
+  ]
+}

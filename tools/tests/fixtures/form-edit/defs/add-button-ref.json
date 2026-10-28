@@ -1,0 +1,4 @@
+{
+  "into": "ФормаКоманднаяПанель",
+  "elements": [ { "button": "ДобавитьТовар", "stdCommand": "Товары.Add", "path": "Items.Товары.CurrentData.Номенклатура" } ]
+}
