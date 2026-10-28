@@ -27,6 +27,10 @@
       9. ExcludedCommand was removed inside ChildItems, leaving an element (a
          table without Add / Copy) with an empty CommandSet in both parts
          (ticket 2b392369).
+     10. ChoiceParameterLinks and TypeLink kept a readable object path. The
+         platform rejects that path when the attribute is not borrowed
+         (GitHub issue 33). The borrowed form must carry the source-form link
+         code in both parts, and must not use the extension id 1000001.
 
     The fixtures under fixtures/cfe-borrow/ are materialized with CRLF and a
     UTF-8 BOM into a temp directory; no 1C platform or infobase is needed.
@@ -422,6 +426,175 @@ Register-Case 'format version: a short Cyrillic Configuration.xml does not throw
     $hasCatalog = $saved.Contains('<Catalog>Alpha</Catalog>')
     Assert-True $hasVersion 'format version was not read from the short Configuration.xml'
     Assert-True $hasCatalog 'borrow did not register the object'
+}
+
+# ---------------------------------------------------------------- 10. choice-parameter and type-link codes
+
+function Add-LinkProbe([string]$FormPath) {
+    $objekt = -join @(0x041E, 0x0431, 0x044A, 0x0435, 0x043A, 0x0442 | ForEach-Object { [char]$_ })
+    $text = Read-Text $FormPath
+    $lines = @(
+        "`t`t<InputField name=`"LinkProbe`" id=`"40`">",
+        "`t`t`t<ChoiceParameterLinks>",
+        "`t`t`t`t<xr:Link>",
+        "`t`t`t`t`t<xr:Name>Filter.Owner</xr:Name>",
+        "`t`t`t`t`t<xr:DataPath xsi:type=`"xs:string`">$objekt.Kontragent</xr:DataPath>",
+        "`t`t`t`t`t<xr:ValueChange>Clear</xr:ValueChange>",
+        "`t`t`t`t</xr:Link>",
+        "`t`t`t`t<xr:Link>",
+        "`t`t`t`t`t<xr:Name>Filter.Number</xr:Name>",
+        "`t`t`t`t`t<xr:DataPath xsi:type=`"xs:string`">$objekt.Number</xr:DataPath>",
+        "`t`t`t`t`t<xr:ValueChange>Clear</xr:ValueChange>",
+        "`t`t`t`t</xr:Link>",
+        "`t`t`t`t<xr:Link>",
+        "`t`t`t`t`t<xr:Name>Filter.Column</xr:Name>",
+        "`t`t`t`t`t<xr:DataPath xsi:type=`"xs:string`">$objekt.Tovary.Kolichestvo</xr:DataPath>",
+        "`t`t`t`t`t<xr:ValueChange>Clear</xr:ValueChange>",
+        "`t`t`t`t</xr:Link>",
+        "`t`t`t`t<xr:Link>",
+        "`t`t`t`t`t<xr:Name>Filter.Missing</xr:Name>",
+        "`t`t`t`t`t<xr:DataPath xsi:type=`"xs:string`">$objekt.MissingField</xr:DataPath>",
+        "`t`t`t`t`t<xr:ValueChange>Clear</xr:ValueChange>",
+        "`t`t`t`t</xr:Link>",
+        "`t`t`t`t<xr:Link>",
+        "`t`t`t`t`t<xr:Name>Filter.Extra</xr:Name>",
+        "`t`t`t`t`t<xr:DataPath xsi:type=`"xs:string`">Extra</xr:DataPath>",
+        "`t`t`t`t`t<xr:ValueChange>Clear</xr:ValueChange>",
+        "`t`t`t`t</xr:Link>",
+        "`t`t`t</ChoiceParameterLinks>",
+        "`t`t`t<TypeLink>",
+        "`t`t`t`t<xr:DataPath>$objekt.Summa</xr:DataPath>",
+        "`t`t`t`t<xr:LinkItem>0</xr:LinkItem>",
+        "`t`t`t</TypeLink>",
+        "`t`t`t<ContextMenu name=`"LinkProbeContext`" id=`"41`"/>",
+        "`t`t`t<ExtendedTooltip name=`"LinkProbeExt`" id=`"42`"/>",
+        "`t`t</InputField>",
+        "`t`t<Table name=`"Rows`" id=`"77`">",
+        "`t`t`t<DataPath>$objekt.Tovary</DataPath>",
+        "`t`t`t<ContextMenu name=`"RowsContext`" id=`"78`"/>",
+        "`t`t`t<AutoCommandBar name=`"RowsBar`" id=`"79`"/>",
+        "`t`t`t<ExtendedTooltip name=`"RowsExt`" id=`"80`"/>",
+        "`t`t`t<ChildItems>",
+        "`t`t`t`t<InputField name=`"RowsQty`" id=`"81`">",
+        "`t`t`t`t`t<TypeLink>",
+        "`t`t`t`t`t`t<xr:DataPath>Items.Rows.CurrentData.Kolichestvo</xr:DataPath>",
+        "`t`t`t`t`t`t<xr:LinkItem>0</xr:LinkItem>",
+        "`t`t`t`t`t</TypeLink>",
+        "`t`t`t`t`t<ContextMenu name=`"RowsQtyContext`" id=`"82`"/>",
+        "`t`t`t`t`t<ExtendedTooltip name=`"RowsQtyExt`" id=`"83`"/>",
+        "`t`t`t`t</InputField>",
+        "`t`t`t</ChildItems>",
+        "`t`t</Table>"
+    )
+    $probe = ($lines -join "`n") + "`n"
+    # The form-level close is the one immediately followed by Attributes. A bare
+    # "</ChildItems>" also matches the command bar's close, because that line
+    # merely has one more tab in front of the same suffix.
+    $marker = "`t</ChildItems>`n`t<Attributes>"
+    Assert-True $text.Contains($marker) 'fixture ChildItems/Attributes boundary not found'
+    $text = $text.Replace($marker, ($probe + $marker))
+    $extra = "`t`t<Attribute name=`"Extra`" id=`"9`">`n`t`t`t<Type><v8:Type>xs:string</v8:Type></Type>`n`t`t</Attribute>`n"
+    Assert-True $text.Contains("`t</Attributes>") 'fixture has no Attributes close tag'
+    $text = $text.Replace("`t</Attributes>", ($extra + "`t</Attributes>"))
+    $text = $text -replace "`n", "`r`n"
+    [System.IO.File]::WriteAllText($FormPath, $text, (New-Object System.Text.UTF8Encoding($true)))
+}
+
+function Get-NamedLinkPaths([string]$Xml, [string]$Name) {
+    $pattern = '(?s)<xr:Name>' + [regex]::Escape($Name) + '</xr:Name>\s*<xr:DataPath[^>]*>([^<]*)</xr:DataPath>'
+    return @([regex]::Matches($Xml, $pattern) | ForEach-Object { $_.Groups[1].Value })
+}
+
+function Assert-Link([string]$Xml, [string]$Name, [string]$Expected) {
+    $got = @(Get-NamedLinkPaths $Xml $Name)
+    Assert-Equal 2 $got.Count "link $Name copies (form and BaseForm)"
+    Assert-Equal $Expected $got[0] "link $Name in the form"
+    Assert-Equal $Expected $got[1] "link $Name in BaseForm"
+}
+
+function Get-TypeLinkPaths([string]$Xml) {
+    return @([regex]::Matches($Xml, '(?s)<TypeLink>\s*<xr:DataPath>([^<]*)</xr:DataPath>') | ForEach-Object { $_.Groups[1].Value })
+}
+
+function Assert-TypePathCount([string]$Xml, [string]$Path, [int]$Expected) {
+    $n = @((Get-TypeLinkPaths $Xml) | Where-Object { $_ -ceq $Path }).Count
+    Assert-Equal $Expected $n "TypeLink [$Path]"
+}
+
+function Get-MetaUuid($Xml, [string]$Name) {
+    $node = $Xml.Doc.SelectSingleNode("//*[local-name()='Properties']/*[local-name()='Name' and .='$Name']/parent::*/parent::*")
+    Assert-True ($null -ne $node) "source object has no $Name"
+    return $node.GetAttribute('uuid')
+}
+
+Register-Case 'form: choice and type links use the source-form code when the attribute is not borrowed' {
+    param($work)
+    $objekt = -join @(0x041E, 0x0431, 0x044A, 0x0435, 0x043A, 0x0442 | ForEach-Object { [char]$_ })
+    $srcObj = Get-Xml (Join-Path $FixturesDir 'base\Documents\Zakaz.xml')
+    $kontr = Get-MetaUuid $srcObj 'Kontragent'
+    $summa = Get-MetaUuid $srcObj 'Summa'
+    $tovary = Get-MetaUuid $srcObj 'Tovary'
+    $qty = Get-MetaUuid $srcObj 'Kolichestvo'
+    $srcForm = Get-Xml (Join-Path $FixturesDir 'base\Documents\Zakaz\Forms\DocumentForm\Ext\Form.xml')
+    $main = $srcForm.Doc.SelectSingleNode("//*[local-name()='Attribute'][*[local-name()='MainAttribute']='true']")
+    Assert-True ($null -ne $main) 'fixture form has no main attribute'
+    $mainId = $main.GetAttribute('id')
+    $readableOwner = "$objekt.Kontragent"
+    $readableSumma = "$objekt.Summa"
+    $readableColumn = "$objekt.Tovary.Kolichestvo"
+    $currentText = 'Items.Rows.CurrentData.Kolichestvo'
+    $currentCode = "77:$('02023637-7868-4a5f-8576-835a76e0c9ba')/0:$qty"
+    $ownerCode = "$mainId/0:$kontr"
+    $summaCode = "$mainId/0:$summa"
+    $columnCode = "$mainId/0:$tovary/0:$qty"
+    $numberCode = "$mainId/-2"
+
+    function Invoke-LinkedBorrow([string]$Dir, [string[]]$Extra) {
+        $ws = New-Workspace $Dir
+        Add-LinkProbe (Join-Path $ws.Base "$FormRel\Ext\Form.xml")
+        Invoke-Borrow $ws $FormObject $Extra | Out-Null
+        $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
+        Assert-True (-not $out.Contains('1000001/0:')) 'link code used the extension main-attribute id'
+        return $out
+    }
+
+    $plain = Invoke-LinkedBorrow (Join-Path $work 'plain') @()
+    Assert-Link $plain 'Filter.Owner' $ownerCode
+    Assert-Link $plain 'Filter.Number' $numberCode
+    Assert-Link $plain 'Filter.Column' $columnCode
+    Assert-Equal 0 @(Get-NamedLinkPaths $plain 'Filter.Missing').Count 'unresolved link was kept'
+    Assert-Link $plain 'Filter.Extra' '9'
+    Assert-TypePathCount $plain $summaCode 2
+    Assert-TypePathCount $plain $currentCode 2
+    Assert-Equal 0 @((Get-TypeLinkPaths $plain) | Where-Object { $_ -like 'Items.*' }).Count 'readable Items TypeLink left in the skeleton'
+
+    $only = Invoke-LinkedBorrow (Join-Path $work 'only') @('-BorrowMainAttribute', 'Only')
+    Assert-Link $only 'Filter.Owner' $mainId
+    Assert-Link $only 'Filter.Number' $mainId
+    Assert-Link $only 'Filter.Column' $mainId
+    Assert-Link $only 'Filter.Missing' $mainId
+    Assert-Link $only 'Filter.Extra' '9'
+    Assert-TypePathCount $only $mainId 2
+    Assert-TypePathCount $only $currentText 2
+
+    $formMode = Invoke-LinkedBorrow (Join-Path $work 'form') @('-BorrowMainAttribute', 'Form')
+    Assert-Link $formMode 'Filter.Owner' $readableOwner
+    Assert-Link $formMode 'Filter.Number' $mainId
+    Assert-Link $formMode 'Filter.Column' $readableColumn
+    Assert-Link $formMode 'Filter.Missing' $mainId
+    Assert-Link $formMode 'Filter.Extra' '9'
+    Assert-TypePathCount $formMode $mainId 2
+    Assert-TypePathCount $formMode $currentText 2
+    Assert-Equal 0 @((Get-TypeLinkPaths $formMode) | Where-Object { $_ -ceq $readableSumma }).Count 'unborrowed Summa stayed readable in Form mode'
+
+    $all = Invoke-LinkedBorrow (Join-Path $work 'all') @('-BorrowMainAttribute', 'All')
+    Assert-Link $all 'Filter.Owner' $readableOwner
+    Assert-Link $all 'Filter.Number' $mainId
+    Assert-Link $all 'Filter.Column' $readableColumn
+    Assert-Link $all 'Filter.Missing' $mainId
+    Assert-Link $all 'Filter.Extra' '9'
+    Assert-TypePathCount $all $readableSumma 2
+    Assert-TypePathCount $all $currentText 2
 }
 
 # ---------------------------------------------------------------- run

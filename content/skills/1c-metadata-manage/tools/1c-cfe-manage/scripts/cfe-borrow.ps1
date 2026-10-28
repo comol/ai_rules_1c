@@ -1,4 +1,4 @@
-﻿# cfe-borrow v1.11 — Borrow objects from configuration into extension (CFE)
+﻿# cfe-borrow v1.12 — Borrow objects from configuration into extension (CFE)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: BaseForm indents only between tags; a multi-line text keeps its bytes.
 # Local: Configurator 2.20 shapes — form InternalInfo PropertyState, CommandSet kept, no empty form module,
@@ -7,6 +7,8 @@
 #        Detect-FormatVersion uses the string length, not the file byte length.
 #        A style:X that is not borrowed and is not a platform style item is stripped.
 #        An element CommandSet keeps its ExcludedCommand list (no empty CommandSet).
+#        ChoiceParameterLinks and TypeLink DataPaths are rewritten to the source-form
+#        link code when the named attribute is not borrowed (the readable path fails to load).
 param(
 	[Parameter(Mandatory)][string]$ExtensionPath,
 	[Parameter(Mandatory)][string]$ConfigPath,
@@ -515,12 +517,253 @@ function Read-SourceFormUuid {
 	return $srcUuid
 }
 
+# --- 10b2. Choice-parameter and type-link paths ---
+# A ChoiceParameterLinks / TypeLink path is not a data binding: Strip-FormBindings leaves <xr:DataPath>.
+# The platform accepts the readable name only when that root is declared on the borrowed form.
+# Otherwise it rejects the load ("Неверный путь к полю"). The code grammar below is the upstream
+# encoder (oracle 8.3.27): the first segment is the SOURCE form attribute id (the extension renumbers
+# the borrowed main attribute to 1000001, and that id must not be written here); 0:<uuid> is a source
+# metadata attribute; -<k> is a standard field. An unmeasured path is removed — a wrong code loads
+# silently and the link simply does not work.
+$script:droppedLinks = @()
+$script:linkCurrentData = '02023637-7868-4a5f-8576-835a76e0c9ba'
+$script:linkAddColumn = '5bdad865-f2c5-434b-8041-ba4aad3b6687'
+$script:stdFieldCodes = @{
+	'Catalog' = @{ Code=-2; Description=-3; Parent=-4; Owner=-5; IsFolder=-6; DeletionMark=-7; Ref=-8; DataVersion=-9; Predefined=-10; PredefinedDataName=-13 }
+	'Document' = @{ Number=-2; Date=-3; DeletionMark=-4; Ref=-5; DataVersion=-6; Posted=-7; RegisterRecords=-8 }
+	'ChartOfCharacteristicTypes' = @{ Ref=-2; DataVersion=-3; DeletionMark=-4; Predefined=-5; Parent=-6; IsFolder=-7; Code=-8; Description=-9; ValueType=-11; PredefinedDataName=-14 }
+	'ChartOfAccounts' = @{ Ref=-2; DataVersion=-3; DeletionMark=-4; Predefined=-5; Parent=-6; Code=-7; Description=-8; Type=-10; OffBalance=-11; ExtDimensionTypes=-12; Order=-17; PredefinedDataName=-28 }
+	'ChartOfCalculationTypes' = @{ Code=-2; Description=-3; ActionPeriodIsBasic=-4; DeletionMark=-5; Ref=-6; DataVersion=-7; Predefined=-8; PredefinedDataName=-11; DisplacingCalculationTypes=-20; LeadingCalculationTypes=-30 }
+	'ExchangePlan' = @{ Code=-2; Description=-3; DeletionMark=-4; Ref=-6; DataVersion=-7; SentNo=-9; ReceivedNo=-10; ThisNode=-13; ExchangeDate=-14 }
+	'BusinessProcess' = @{ Number=-2; Date=-3; DeletionMark=-4; Ref=-5; DataVersion=-6; Completed=-7; HeadTask=-8; Started=-9 }
+	'Task' = @{ Number=-2; Date=-3; DeletionMark=-4; Ref=-5; DataVersion=-6; BusinessProcess=-7; RoutePoint=-8; Description=-9; Executed=-10 }
+	'InformationRegisterRecord' = @{ Period=-2; Recorder=-3; LineNumber=-4; Active=-5 }
+	'AccumulationRegisterRow' = @{ Period=-2; Recorder=-3; LineNumber=-4; Active=-5; RecordType=-9; SecondPeriod=-10; MinutePeriod=-11; HourPeriod=-12; DayPeriod=-13; WeekPeriod=-14; TenDaysPeriod=-15 }
+	'TabularSectionRow' = @{ LineNumber=-2 }
+}
+$script:mainAttrKinds = @{
+	'CatalogObject'='Catalog'; 'DocumentObject'='Document'; 'ChartOfCharacteristicTypesObject'='ChartOfCharacteristicTypes'
+	'ChartOfAccountsObject'='ChartOfAccounts'; 'ChartOfCalculationTypesObject'='ChartOfCalculationTypes'
+	'ExchangePlanObject'='ExchangePlan'; 'BusinessProcessObject'='BusinessProcess'; 'TaskObject'='Task'
+	'InformationRegisterRecordManager'='InformationRegisterRecord'; 'AccumulationRegisterRecordSet'='AccumulationRegisterRow'
+	'ConstantsSet'='ConstantsSet'
+}
+
+# Source attribute / tabular-section / "TabularSection.Column" name → uuid.
+function Get-SourceAttributeUuids {
+	param([string]$typeName, [string]$objName)
+
+	$result = @{}
+	$dirName = $childTypeDirMap[$typeName]
+	if (-not $dirName) { return $result }
+	$srcFile = Join-Path (Join-Path $cfgDir $dirName) "${objName}.xml"
+	if (-not (Test-Path $srcFile)) { return $result }
+
+	$doc = New-Object System.Xml.XmlDocument
+	$doc.PreserveWhitespace = $false
+	$doc.Load($srcFile)
+	$objEl = $null
+	foreach ($c in $doc.DocumentElement.ChildNodes) {
+		if ($c.NodeType -eq 'Element') { $objEl = $c; break }
+	}
+	if (-not $objEl) { return $result }
+	$childObjects = $objEl.SelectSingleNode("*[local-name()='ChildObjects']")
+	if (-not $childObjects) { return $result }
+	foreach ($child in $childObjects.ChildNodes) {
+		if ($child.NodeType -ne 'Element') { continue }
+		if ($child.LocalName -notin @('Attribute','TabularSection','Dimension','Resource')) { continue }
+		$uuid = $child.GetAttribute("uuid")
+		$nameNode = $child.SelectSingleNode("*[local-name()='Properties']/*[local-name()='Name']")
+		if (-not ($uuid -and $nameNode)) { continue }
+		$name = $nameNode.InnerText.Trim()
+		$result[$name] = $uuid
+		if ($child.LocalName -ne 'TabularSection') { continue }
+		foreach ($tsAttr in @($child.SelectNodes("*[local-name()='ChildObjects']/*[local-name()='Attribute']"))) {
+			$tsUuid = $tsAttr.GetAttribute("uuid")
+			$tsName = $tsAttr.SelectSingleNode("*[local-name()='Properties']/*[local-name()='Name']")
+			if ($tsUuid -and $tsName) { $result["$name.$($tsName.InnerText.Trim())"] = $tsUuid }
+		}
+	}
+	return $result
+}
+
+# Source form attribute name → its id. Link codes address that id, not the renumbered extension id.
+function Get-FormAttributeIds {
+	param($formEl)
+
+	$result = @{}
+	$attrs = $formEl.SelectSingleNode("*[local-name()='Attributes']")
+	if (-not $attrs) { return $result }
+	foreach ($a in $attrs.ChildNodes) {
+		if ($a.NodeType -ne 'Element' -or $a.LocalName -ne 'Attribute') { continue }
+		$nm = $a.GetAttribute("name"); $id = $a.GetAttribute("id")
+		if ($nm -and $id) { $result[$nm] = $id }
+	}
+	return $result
+}
+
+# Everything Resolve-LinkDataPath needs, taken from the SOURCE form and the source object.
+function Get-LinkContext {
+	param($formEl, [string]$mainName, [bool]$mainBorrowed, $borrowedNames, $attrUuids, $formAttrIds)
+
+	$cols = @{}; $addCols = @{}; $tables = @{}; $kind = $null
+	$attrs = $formEl.SelectSingleNode("*[local-name()='Attributes']")
+	if ($attrs) {
+		foreach ($a in $attrs.ChildNodes) {
+			if ($a.NodeType -ne 'Element' -or $a.LocalName -ne 'Attribute') { continue }
+			$nm = $a.GetAttribute("name")
+			$columns = $a.SelectSingleNode("*[local-name()='Columns']")
+			if ($columns) {
+				foreach ($c in $columns.ChildNodes) {
+					if ($c.NodeType -ne 'Element') { continue }
+					if ($c.LocalName -eq 'Column') {
+						$cols["$nm.$($c.GetAttribute('name'))"] = $c.GetAttribute('id')
+					} elseif ($c.LocalName -eq 'AdditionalColumns') {
+						$tblPath = $c.GetAttribute('table')
+						foreach ($ac in @($c.SelectNodes("*[local-name()='Column']"))) {
+							$addCols["$tblPath.$($ac.GetAttribute('name'))"] = $ac.GetAttribute('id')
+						}
+					}
+				}
+			}
+			if ($mainName -and $nm -ceq $mainName) {
+				$typeNode = $a.SelectSingleNode("*[local-name()='Type']/*[local-name()='Type']")
+				if ($typeNode) {
+					$tm = [regex]::Match($typeNode.InnerText.Trim(), '^(?:\w+:)?(\w+)(?:\.|$)')
+					if ($tm.Success -and $script:mainAttrKinds.ContainsKey($tm.Groups[1].Value)) { $kind = $script:mainAttrKinds[$tm.Groups[1].Value] }
+				}
+			}
+		}
+	}
+	$items = $formEl.SelectSingleNode("*[local-name()='ChildItems']")
+	if ($items) {
+		foreach ($t in @($items.SelectNodes(".//*[local-name()='Table']"))) {
+			$dp = $t.SelectSingleNode("*[local-name()='DataPath']")
+			if ($dp) { $tables[$t.GetAttribute('name')] = @{ Id = $t.GetAttribute('id'); Path = $dp.InnerText.Trim() } }
+		}
+	}
+	$mainId = if ($mainName -and $formAttrIds.ContainsKey($mainName)) { $formAttrIds[$mainName] } else { "1" }
+	return @{
+		MainName = $mainName; MainId = $mainId; MainBorrowed = $mainBorrowed; MainKind = $kind; BorrowedNames = $borrowedNames
+		AttrUuids = $attrUuids; FormAttrIds = $formAttrIds; FormAttrCols = $cols; AddCols = $addCols; Tables = $tables
+	}
+}
+
+# Readable path, source-form code, or $null (drop the link).
+function Resolve-LinkDataPath {
+	param([string]$path, $ctx)
+
+	if ($path -match '^-?\d') { return $path }
+	$main = $ctx.MainName
+
+	$cd = [regex]::Match($path, '^Items\.([^.]+)\.CurrentData\.([^.]+)$')
+	if ($cd.Success) {
+		$tbl = $ctx.Tables[$cd.Groups[1].Value]
+		$field = $cd.Groups[2].Value
+		if (-not $tbl) { return $null }
+		$tp = $tbl.Path
+		$prefix = "$($tbl.Id):$($script:linkCurrentData)"
+		if ($main -and ($tp -ceq $main -or $tp.StartsWith("$main.", [StringComparison]::Ordinal))) {
+			if ($ctx.MainBorrowed) { return $path }
+			if ($tp -ceq $main) {
+				if ($ctx.MainKind -ne 'AccumulationRegisterRow') { return $null }
+				if ($ctx.AttrUuids.ContainsKey($field)) { return "$prefix/0:$($ctx.AttrUuids[$field])" }
+				$code = $script:stdFieldCodes['AccumulationRegisterRow'][$field]
+				if ($code) { return "$prefix/$code" }
+				return $null
+			}
+			$ts = $tp.Substring($main.Length + 1)
+			if ($ts.Contains('.')) { return $null }
+			if ($ctx.AttrUuids.ContainsKey("$ts.$field")) { return "$prefix/0:$($ctx.AttrUuids["$ts.$field"])" }
+			if ($ctx.AddCols.ContainsKey("$tp.$field")) { return "$prefix/$($ctx.AddCols["$tp.$field"]):$($script:linkAddColumn)" }
+			$code = $script:stdFieldCodes['TabularSectionRow'][$field]
+			if ($code) { return "$prefix/$code" }
+			return $null
+		}
+		if ($ctx.FormAttrIds.ContainsKey($tp) -and $ctx.FormAttrCols.ContainsKey("$tp.$field")) {
+			return "$prefix/$($ctx.FormAttrCols["$tp.$field"])"
+		}
+		return $null
+	}
+
+	if ($main -and $path.StartsWith("$main.", [StringComparison]::Ordinal)) {
+		$rest = $path.Substring($main.Length + 1)
+		if ($ctx.MainBorrowed) {
+			# A borrowed metadata attribute stays readable. A standard field, or an attribute this
+			# mode did not borrow, becomes the source main-attribute id alone (not 1/0:<uuid>).
+			$borrowed = $null -eq $ctx.BorrowedNames -or $ctx.BorrowedNames.ContainsKey($rest.Split('.')[0])
+			if ($borrowed -and $ctx.AttrUuids.ContainsKey($rest)) { return $path }
+			return $ctx.MainId
+		}
+		if ($ctx.MainKind -eq 'ConstantsSet') { return $null }
+		$segs = $rest.Split('.')
+		if ($segs.Count -eq 1) {
+			if ($ctx.AttrUuids.ContainsKey($rest)) { return "$($ctx.MainId)/0:$($ctx.AttrUuids[$rest])" }
+			$codes = if ($ctx.MainKind) { $script:stdFieldCodes[$ctx.MainKind] } else { $null }
+			if ($codes -and $codes.ContainsKey($rest)) { return "$($ctx.MainId)/$($codes[$rest])" }
+			return $null
+		}
+		if ($segs.Count -eq 2 -and $ctx.AttrUuids.ContainsKey($segs[0]) -and $ctx.AttrUuids.ContainsKey($rest)) {
+			return "$($ctx.MainId)/0:$($ctx.AttrUuids[$segs[0]])/0:$($ctx.AttrUuids[$rest])"
+		}
+		return $null
+	}
+
+	$segs = $path.Split('.')
+	if ($ctx.FormAttrIds.ContainsKey($segs[0])) {
+		$attrId = $ctx.FormAttrIds[$segs[0]]
+		if ($segs.Count -eq 1) { return $attrId }
+		if ($segs.Count -eq 2 -and $ctx.FormAttrCols.ContainsKey($path)) { return "$attrId/$($ctx.FormAttrCols[$path])" }
+		return $null
+	}
+
+	if ($ctx.MainBorrowed) { return $path }
+	return $null
+}
+
+function Rewrite-LinkBlocks {
+	param([string]$xml, [string]$blockPattern, $ctx)
+
+	return [regex]::Replace($xml, $blockPattern, {
+		param($m)
+		$link = $m.Value
+		$dp = [regex]::Match($link, '<xr:DataPath[^>]*>([^<]+)</xr:DataPath>')
+		if (-not $dp.Success) { return $link }
+		$path = $dp.Groups[1].Value
+		$resolved = Resolve-LinkDataPath $path $ctx
+		if ($null -eq $resolved) {
+			$script:droppedLinks += $path
+			return ''
+		}
+		if ($resolved -ceq $path) { return $link }
+		return $link.Substring(0, $dp.Groups[1].Index) + $resolved + $link.Substring($dp.Groups[1].Index + $dp.Groups[1].Length)
+	})
+}
+
+function Rewrite-ChoiceParameterLinks {
+	param([string]$xml, $ctx)
+
+	if ($xml -notmatch '<ChoiceParameterLinks>') { return $xml }
+	$xml = Rewrite-LinkBlocks $xml '(?s)\s*<xr:Link>.*?</xr:Link>' $ctx
+	$xml = [regex]::Replace($xml, '(?s)\s*<ChoiceParameterLinks>\s*</ChoiceParameterLinks>', '')
+	return $xml
+}
+
+function Rewrite-TypeLinks {
+	param([string]$xml, $ctx)
+
+	if ($xml -notmatch '<TypeLink>') { return $xml }
+	return Rewrite-LinkBlocks $xml '(?s)\s*<TypeLink>.*?</TypeLink>' $ctx
+}
+
 # --- 10c. Helper: borrow a form ---
 # -BorrowMainAttr adds the main attribute Объект; -KeepObjektBindings keeps the Объект.* data paths
 # (Form / All borrow the attributes behind them). Without it every binding is stripped, identically
-# in the form and in BaseForm.
+# in the form and in BaseForm. -BorrowMainMode (Form / All / Only) tells the link encoder which
+# object attributes actually land in the extension: All keeps every named attribute readable,
+# Form keeps the names Collect-FormDataPaths borrows, Only keeps none.
 function Borrow-Form {
-	param([string]$typeName, [string]$objName, [string]$formName, [switch]$BorrowMainAttr, [switch]$KeepObjektBindings)
+	param([string]$typeName, [string]$objName, [string]$formName, [switch]$BorrowMainAttr, [switch]$KeepObjektBindings, [string]$BorrowMainMode = "")
 
 	$dirName = $childTypeDirMap[$typeName]
 	$enc = New-Object System.Text.UTF8Encoding($true)
@@ -624,6 +867,20 @@ function Borrow-Form {
 	# Get OuterXml and strip redundant namespace redeclarations (they're on root <Form>)
 	$nsStripPattern = '\s+xmlns(?::\w+)?="[^"]*"'
 
+	# Link paths are resolved against the source form once, then written into both copies.
+	$script:droppedLinks = @()
+	$srcMainEl = $srcFormEl.SelectSingleNode("*[local-name()='Attributes']/*[local-name()='Attribute'][*[local-name()='MainAttribute']='true']")
+	$srcMainName = if ($srcMainEl) { $srcMainEl.GetAttribute("name") } else { "" }
+	$mainBorrowed = [bool]($BorrowMainAttr -and $srcMainName)
+	$borrowedNames = $null
+	if ($mainBorrowed -and $BorrowMainMode -eq "Only") {
+		$borrowedNames = @{}
+	} elseif ($mainBorrowed -and $BorrowMainMode -eq "Form") {
+		# Same set Borrow-MainAttribute will adopt. A name outside it must not stay readable.
+		$borrowedNames = (Collect-FormDataPaths $srcFormXmlPath).FirstLevel
+	}
+	$linkCtx = Get-LinkContext $srcFormEl $srcMainName $mainBorrowed $borrowedNames (Get-SourceAttributeUuids $typeName $objName) (Get-FormAttributeIds $srcFormEl)
+
 	# AutoCommandBar: keep ChildItems (buttons with CommandName→0), Autofill→false
 	$autoCmdXml = ""
 	if ($srcAutoCmd) {
@@ -635,6 +892,7 @@ function Borrow-Form {
 		$autoCmdXml = [regex]::Replace($autoCmdXml, '\s*<ExcludedCommand>[^<]*</ExcludedCommand>', '')
 		# Strip data-binding tags whose root attribute isn't borrowed
 		$autoCmdXml = Strip-FormBindings $autoCmdXml ([bool]$KeepObjektBindings)
+		$autoCmdXml = Rewrite-ChoiceParameterLinks $autoCmdXml $linkCtx
 	}
 
 	# ChildItems: copy full tree, clean up base-config references
@@ -647,10 +905,11 @@ function Borrow-Form {
 		# Strip data-binding tags whose root attribute isn't borrowed
 		# (DataPath/TitleDataPath/FooterDataPath/HeaderDataPath/MultipleValue*/RowPicture*)
 		$childItemsXml = Strip-FormBindings $childItemsXml ([bool]$KeepObjektBindings)
+		$childItemsXml = Rewrite-ChoiceParameterLinks $childItemsXml $linkCtx
 		# An element CommandSet keeps its ExcludedCommand list: Configurator writes it in both parts
 		# of a borrowed form and drops an empty one on load.
-		# Strip TypeLink blocks with human-readable DataPath (Items.XXX — can't convert to UUID)
-		$childItemsXml = [regex]::Replace($childItemsXml, '(?s)\s*<TypeLink>\s*<xr:DataPath>Items\.[^<]*</xr:DataPath>.*?</TypeLink>', '')
+		# TypeLink is rewritten (Items.CurrentData included), not only deleted.
+		$childItemsXml = Rewrite-TypeLinks $childItemsXml $linkCtx
 		# Strip element-level Events (base form handlers not in extension)
 		$childItemsXml = [regex]::Replace($childItemsXml, '(?s)\s*<Events>.*?</Events>', '')
 
@@ -963,6 +1222,11 @@ function Borrow-Form {
 	$formXmlFile = Join-Path $formXmlDir "Form.xml"
 	[System.IO.File]::WriteAllText($formXmlFile, $formXmlSb.ToString(), $enc)
 	Info "  Created: $formXmlFile"
+	if ($script:droppedLinks.Count -gt 0) {
+		$uniq = @($script:droppedLinks | Sort-Object -Unique)
+		Warn "  Dropped $($uniq.Count) form link(s); the path does not resolve in the extension: $($uniq -join ', ')"
+		$script:droppedLinks = @()
+	}
 
 	# 6. Form module: Configurator writes no Module.bsl for a borrowed form until the module has code
 	# (cfe-patch-method creates it). An existing one is user code — re-borrow keeps it untouched.
@@ -2107,7 +2371,7 @@ foreach ($item in $items) {
 		# Borrow the form. Only: the main attribute without the cascade, so no Объект.* binding can stay.
 		$hasBMA = [bool]$BorrowMainAttribute
 		$cascadeBMA = $hasBMA -and $BorrowMainAttribute -ne "Only"
-		$formFiles = Borrow-Form $typeName $objName $formName -BorrowMainAttr:$hasBMA -KeepObjektBindings:$cascadeBMA
+		$formFiles = Borrow-Form $typeName $objName $formName -BorrowMainAttr:$hasBMA -KeepObjektBindings:$cascadeBMA -BorrowMainMode $BorrowMainAttribute
 		$script:borrowedFiles += $formFiles
 		$borrowedCount++
 

@@ -62,6 +62,10 @@ The PowerShell scripts under `tools/1c-cf-manage/scripts/` were refreshed from [
 
 ## cfe-manage.md
 
+### Local fix `2026-10-28` — choice-parameter and type-link paths
+
+`cfe-borrow` v1.11 → **v1.12** (GitHub issue 33, platform 8.3.27): a borrowed form kept readable `ChoiceParameterLinks` / `TypeLink` paths (`Объект.<Attribute>`, `Items.<Table>.CurrentData.<Field>`). The platform rejects the load with «Неверный путь к полю» when that attribute is not borrowed. The link encoder from upstream `cfe-borrow` is now applied to both the form and `BaseForm`. A borrowed attribute stays readable (`All`, or `Form` when the form references it). Anything else is written as the source form's link code: `<source main id>/0:<uuid>`, a standard-field code, or the source main-attribute id alone when the main attribute is borrowed but the target is not. The extension's own main-attribute id `1000001` is not used. A path that cannot be coded is removed, with a warning. The rest of the local borrow behaviour is unchanged. Pinned by `tools/tests/cfe-borrow-regression.ps1`.
+
 ### Local fix `2026-10-19` — an element `CommandSet` keeps its `ExcludedCommand` list
 
 `cfe-borrow` v1.10 → **v1.11** (support ticket 2b392369, an addition to 4e6f4e67): `Borrow-Form` removed every `ExcludedCommand` inside `ChildItems`, so an element whose base form excludes standard commands (a tabular-section table without `Add` / `Copy`) got an empty `<CommandSet></CommandSet>` in the form and in `BaseForm`. Configurator keeps the element's `CommandSet` with its `ExcludedCommand` list in both parts and drops an empty one on load, so the check dump after a partial load differed from the source directory. The element `CommandSet` is now copied as is. Pinned by `tools/tests/cfe-borrow-regression.ps1`.
