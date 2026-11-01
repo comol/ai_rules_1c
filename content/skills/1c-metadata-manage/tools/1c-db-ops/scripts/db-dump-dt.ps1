@@ -1,5 +1,10 @@
-﻿# db-dump-dt v1.11 — Dump 1C information base to DT file
+﻿# db-dump-dt v1.22 — Dump 1C information base to DT file
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
+#   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
+#   ibcmdargs, the .dev.env directory is a project root for relative infobase paths;
+#   /ConfigurationRepositoryP is masked like /P.
+#   Every Designer launch passes /DumpResult and fails on a non-zero or missing result (Get-DumpResultError).
 # NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
@@ -39,7 +44,7 @@
     .\db-dump-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -OutputFile "backup.dt"
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
     [Parameter(Mandatory=$false)]
     [string]$V8Path,
@@ -69,6 +74,11 @@ param(
     [string[]]$AdditionalIbcmdArguments = @()
 )
 
+# Необработанная ошибка (напр. привязка параметра) внутри try/finally без catch завершала
+# скрипт с кодом 0 — ложный успех без запуска платформы. Любая такая ошибка — код 1.
+# py-порт: необработанное исключение и так даёт код 1.
+trap { Write-Host "Error: $($_.Exception.Message) ($($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber))" -ForegroundColor Red; exit 1 }
+
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -88,12 +98,23 @@ $script:V8OwnedKeys = @(
     '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg',
     '/DumpExternalDataProcessorOrReportToFiles', '/LoadExternalDataProcessorOrReportFromFiles'
 )
+# Пакетные команды платформы. В одной командной строке DESIGNER выполняет ТОЛЬКО ПОСЛЕДНЮЮ,
+# остальные молча отбрасывает (проверено на 8.3.24: /LoadConfigFromFiles вместе с
+# /CheckCanApplyConfigurationExtensions завершились кодом 0 с пустым логом, и загрузка НЕ
+# состоялась). Такая команда в дополнительных аргументах подменяет собой операцию навыка, а навык
+# отчитывается успехом. Дополнительные аргументы — это опции, а не режимы.
+$script:V8BatchKeys = @(
+    '/CheckConfig', '/CheckModules', '/CheckCanApplyConfigurationExtensions',
+    '/DumpDBCfgList', '/DeleteCfg', '/UpdateCfg', '/CompareCfg', '/MergeCfg',
+    '/ManageCfgSupport', '/RollbackCfg', '/ConvertFiles'
+)
+
 $script:IbcmdOwnedKeys = @(
     '--db-path', '--data', '--out', '--file', '--load', '--restore',
     '--import', '--export', '--apply', '--force', '--create-database',
     '--user', '--password'
 )
-$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP')
+$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP', '/ConfigurationRepositoryP')
 $script:IbcmdSecretKeys = @('--password', '--token', '--db-pwd')
 
 function Test-ArgKeyMatch {
@@ -118,7 +139,7 @@ function Get-ProjectExtraArgs {
         $__devEnvArgs = @(Get-1CDevEnvArgs $__devEnvKey)
         if ($__devEnvArgs.Count -gt 0) { return $__devEnvArgs }
     }
-    $dir = (Get-Location).Path
+    $dir = (Get-Location).ProviderPath
     while ($dir) {
         $pf = Join-Path $dir ".v8-project.json"
         if (Test-Path $pf) {
@@ -145,6 +166,14 @@ function Assert-ExtraArgs {
         if ($Engine -eq 'ibcmd' -and $tok -notmatch '^-') {
             Write-Host "Error: '$tok' is a positional token — pass values as --key=value ($paramName cannot extend the ibcmd command)" -ForegroundColor Red
             exit 1
+        }
+        if ($Engine -ne 'ibcmd') {
+            foreach ($b in $script:V8BatchKeys) {
+                if (Test-ArgKeyMatch $tok $b) {
+                    Write-Host "Error: $b is a batch command; passed via $paramName it would replace the skill's own operation (a command line runs only its last batch command)" -ForegroundColor Red
+                    exit 1
+                }
+            }
         }
         foreach ($k in $owned) {
             if (Test-ArgKeyMatch $tok $k) {
@@ -220,6 +249,13 @@ function ConvertTo-CleanPath {
     if ($v.Length -ge 2 -and $v[0] -eq $v[-1] -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
         $v = $v.Substring(1, $v.Length - 2).Trim()
     }
+    # «C:x» — от текущего каталога диска C, своего у каждого процесса: смысл не угадать, почти
+    # всегда это опечатка в «C:\x». Отказ с подсказкой, а не путь «где-то» у платформы.
+    if ($v -match '^[A-Za-z]:(?![\\/])') {
+        $drive = $v.Substring(0, 2)
+        Write-Host "Error: $ParamName is relative to the current directory of drive $drive ($Value) - use $drive\$($v.Substring(2)) or a path without a drive" -ForegroundColor Red
+        exit 1
+    }
     if ($v.Length -gt 3 -and ($v[-1] -eq '\' -or $v[-1] -eq '/')) { $v = $v.Substring(0, $v.Length - 1) }
     if ($v.Contains('"')) {
         Write-Host "Error: $ParamName contains a quote character: $Value" -ForegroundColor Red
@@ -230,7 +266,51 @@ function ConvertTo-CleanPath {
 
 $V8Path = ConvertTo-CleanPath $V8Path '-V8Path'
 $InfoBasePath = ConvertTo-CleanPath $InfoBasePath '-InfoBasePath'
+function Resolve-InfoBasePath {
+    # Относительный путь к базе — от корня проекта (каталог .v8-project.json, вверх от рабочего
+    # каталога), как configSrc; без файла проекта — от рабочего каталога. Платформе уходит только
+    # абсолютный: ibcmd считает относительный --db-path от каталога --data, а он у навыков временный.
+    # Абсолютный — только с диском и разделителем или UNC: «\x» .NET считает корневым, а платформа
+    # разрешила бы его от своего каталога; «\x» берёт диск базового каталога. «C:x» отклоняет ещё
+    # ConvertTo-CleanPath. Хвостовые разделители срезаются, но корень («C:\») остаётся корнем.
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if ($Path -notmatch '^([A-Za-z]:[\\/]|[\\/]{2})') {
+        $cwd = (Get-Location).ProviderPath
+        $base = $cwd
+        $d = $cwd
+        for ($i = 0; $i -lt 20 -and $d; $i++) {
+            # 1c-rules: the project root is the nearest directory with .dev.env or .v8-project.json.
+            if ((Test-Path -LiteralPath (Join-Path $d ".dev.env")) -or (Test-Path -LiteralPath (Join-Path $d ".v8-project.json"))) { $base = $d; break }
+            $parent = [System.IO.Path]::GetDirectoryName($d)
+            if ($parent -eq $d) { break }
+            $d = $parent
+        }
+        $joined = if ($Path -match '^[\\/]') { [System.IO.Path]::GetPathRoot($base).TrimEnd('\', '/') + $Path }
+            else { [System.IO.Path]::Combine($base, $Path) }
+        $Path = [System.IO.Path]::GetFullPath($joined)
+    }
+    while ($Path.Length -gt 3 -and ($Path[-1] -eq '\' -or $Path[-1] -eq '/')) { $Path = $Path.Substring(0, $Path.Length - 1) }
+    return $Path
+}
+$InfoBasePath = Resolve-InfoBasePath $InfoBasePath
+function Resolve-WorkPath {
+    # Путь файла или каталога — от рабочего каталога. Платформе уходит только абсолютный: ibcmd
+    # отбрасывает ведущие «..» относительного пути и читает или пишет не там.
+    # Абсолютный — как в Resolve-InfoBasePath: диск с разделителем или UNC.
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if ($Path -notmatch '^([A-Za-z]:[\\/]|[\\/]{2})') {
+        $cwd = (Get-Location).ProviderPath
+        $joined = if ($Path -match '^[\\/]') { [System.IO.Path]::GetPathRoot($cwd).TrimEnd('\', '/') + $Path }
+            else { [System.IO.Path]::Combine($cwd, $Path) }
+        $Path = [System.IO.Path]::GetFullPath($joined)
+    }
+    while ($Path.Length -gt 3 -and ($Path[-1] -eq '\' -or $Path[-1] -eq '/')) { $Path = $Path.Substring(0, $Path.Length - 1) }
+    return $Path
+}
 $OutputFile = ConvertTo-CleanPath $OutputFile '-OutputFile'
+$OutputFile = Resolve-WorkPath $OutputFile
 
 function Assert-InfoBaseExists {
     # These skills work on a ready infobase. Saying so up front beats the platform's
@@ -245,17 +325,65 @@ function Assert-InfoBaseExists {
 
 Assert-InfoBaseExists $InfoBasePath
 
+# --- Запись базы в .v8-project.json ---
+# Модель не передаёт ни путь к платформе конкретной базы, ни реквизиты хранилища: скрипт
+# сопоставляет параметры соединения с записью в databases[] и берёт их оттуда. Тот же приём,
+# что в cf-edit.ps1 (сопоставление по configSrc).
+function Find-V8Project([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 20 -and $d; $i++) {
+		$pj = Join-Path $d ".v8-project.json"
+		if (Test-Path $pj) { return $pj }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+function Test-SamePath {
+    param([string]$A, [string]$B)
+    if (-not $A -or -not $B) { return $false }
+    try {
+        $na = [System.IO.Path]::GetFullPath($A).TrimEnd('\', '/')
+        $nb = [System.IO.Path]::GetFullPath($B).TrimEnd('\', '/')
+        return $na.Equals($nb, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+function Find-ProjectDatabase {
+    # Запись базы в реестре, соответствующая переданному соединению. $null, если не найдена.
+    $pf = Find-V8Project (Get-Location).ProviderPath
+    if (-not $pf) { return $null }
+    try { $proj = Get-Content $pf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    if (-not $proj.databases) { return $null }
+    foreach ($db in $proj.databases) {
+        if ($InfoBasePath -and $db.path) {
+            try { $dbPath = [System.IO.Path]::Combine((Split-Path $pf -Parent), $db.path) } catch { $dbPath = $null }
+            if ($dbPath -and (Test-SamePath $dbPath $InfoBasePath)) { return $db }
+        }
+        if ($InfoBaseServer -and $InfoBaseRef -and $db.server -and $db.ref) {
+            if ($db.server.Equals($InfoBaseServer, [System.StringComparison]::OrdinalIgnoreCase) -and
+                $db.ref.Equals($InfoBaseRef, [System.StringComparison]::OrdinalIgnoreCase)) { return $db }
+        }
+    }
+    return $null
+}
+
 # --- Resolve V8Path ---
 function Find-ProjectV8Path {
-    # 1c-rules: .dev.env is this project's single source of truth — it wins over
-    # .v8-project.json, which stays supported as the upstream fallback below.
+    # 1c-rules: -V8Path (caller) -> .dev.env PLATFORM_PATH -> v8path of the matching .v8-project.json
+    # database record -> root v8path -> auto-detect. .dev.env is this project's single source of
+    # truth; .v8-project.json stays supported as the upstream fallback below.
     $__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
     if (Test-Path $__devEnvHelper) {
         . $__devEnvHelper
         $__devEnvV8 = Get-1CDevEnvValue 'PLATFORM_PATH'
         if ($__devEnvV8) { return $__devEnvV8 }
     }
-    $dir = (Get-Location).Path
+    # v8path записи базы сильнее корневого: в одном проекте базы живут на разных версиях
+    # платформы, а версию формата выгрузки задаёт та платформа, которая выгружает.
+    $dbRec = Find-ProjectDatabase
+    if ($dbRec -and $dbRec.v8path) { return [string]$dbRec.v8path }
+    $dir = (Get-Location).ProviderPath
     while ($dir) {
         $pf = Join-Path $dir ".v8-project.json"
         if (Test-Path $pf) {
@@ -314,6 +442,165 @@ function ConvertFrom-PlatformBytes {
     }
 }
 
+function Initialize-PlatformProcess {
+    # Process.Start hands the child EVERY inheritable handle we hold, not only the pipes made
+    # for it, and PowerShell keeps copies of its own stdout among them. A process the platform
+    # leaves behind (crashpad_handler on 8.5) would then hold our caller's pipe open long after
+    # we exit, and the caller hangs. PlatformProcess starts the platform the way Python does:
+    # with an explicit list of the three handles it may inherit. Compiled once per run; if the
+    # compiler is unavailable, $false sends the caller back to Process.Start.
+    if ($null -ne $script:platformProcessReady) { return $script:platformProcessReady }
+    $script:platformProcessReady = $false
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+
+public static class PlatformProcess {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO {
+        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct SECURITY_ATTRIBUTES { public int nLength; public IntPtr lpSecurityDescriptor; public bool bInheritHandle; }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CreatePipe(out IntPtr read, out IntPtr write, ref SECURITY_ATTRIBUTES sa, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool UpdateProcThreadAttribute(IntPtr list, int flags, IntPtr attr, IntPtr value, IntPtr size, IntPtr prev, IntPtr retSize);
+    [DllImport("kernel32.dll")]
+    static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern int WaitForSingleObject(IntPtr h, int ms);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetExitCodeProcess(IntPtr h, out int code);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
+
+    const int HANDLE_FLAG_INHERIT = 1;
+    const int STARTF_USESTDHANDLES = 0x100;
+    const int EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+    const int CREATE_NO_WINDOW = 0x8000000;
+    static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = (IntPtr)0x20002;
+
+    // Runs "exe" arguments with stdin at EOF and both output pipes captured. Waits for the
+    // process itself, then gives the readers drainMs to collect what is already buffered.
+    public static int Run(string exe, string arguments, int drainMs, out byte[] stdout, out byte[] stderr) {
+        var sa = new SECURITY_ATTRIBUTES();
+        sa.nLength = Marshal.SizeOf(sa);
+        sa.bInheritHandle = true;
+        IntPtr inR = IntPtr.Zero, inW = IntPtr.Zero, outR = IntPtr.Zero, outW = IntPtr.Zero, errR = IntPtr.Zero, errW = IntPtr.Zero;
+        IntPtr attrs = IntPtr.Zero, handles = IntPtr.Zero;
+        bool attrsReady = false, started = false;
+        var pi = new PROCESS_INFORMATION();
+        try {
+            if (!CreatePipe(out inR, out inW, ref sa, 0) || !CreatePipe(out outR, out outW, ref sa, 0)
+                || !CreatePipe(out errR, out errW, ref sa, 0)) throw new Win32Exception();
+            // Our ends of the pipes stay with us
+            SetHandleInformation(inW, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(errR, HANDLE_FLAG_INHERIT, 0);
+
+            var size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            attrs = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(attrs, 1, 0, ref size)) throw new Win32Exception();
+            attrsReady = true;
+            handles = Marshal.AllocHGlobal(3 * IntPtr.Size);
+            Marshal.WriteIntPtr(handles, 0, inR);
+            Marshal.WriteIntPtr(handles, IntPtr.Size, outW);
+            Marshal.WriteIntPtr(handles, 2 * IntPtr.Size, errW);
+            if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles,
+                (IntPtr)(3 * IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+
+            var si = new STARTUPINFOEX();
+            si.StartupInfo.cb = Marshal.SizeOf(si);
+            si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            si.StartupInfo.hStdInput = inR;
+            si.StartupInfo.hStdOutput = outW;
+            si.StartupInfo.hStdError = errW;
+            si.lpAttributeList = attrs;
+            // Same command line as Process.Start builds: quoted program (left as is if already
+            // quoted), then the arguments
+            var program = exe.Length > 1 && exe[0] == '"' && exe[exe.Length - 1] == '"' ? exe : "\"" + exe + "\"";
+            var cmd = new StringBuilder(program + (string.IsNullOrEmpty(arguments) ? "" : " " + arguments));
+            if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, true,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, IntPtr.Zero, null, ref si, out pi)) {
+                // System messages for a bad executable carry a %1 placeholder for its name
+                var e = new Win32Exception();
+                throw new Win32Exception(e.NativeErrorCode, e.Message.Replace("%1", exe));
+            }
+            started = true;
+        } finally {
+            // The child's ends are its own now; closing stdin's write end gives it EOF
+            foreach (var h in new[] { inR, outW, errW, inW }) if (h != IntPtr.Zero) CloseHandle(h);
+            if (!started) {
+                if (outR != IntPtr.Zero) CloseHandle(outR);
+                if (errR != IntPtr.Zero) CloseHandle(errR);
+            }
+            if (attrsReady) DeleteProcThreadAttributeList(attrs);
+            if (attrs != IntPtr.Zero) Marshal.FreeHGlobal(attrs);
+            if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
+        }
+        CloseHandle(pi.hThread);
+
+        var outBuf = new MemoryStream();
+        var errBuf = new MemoryStream();
+        var readers = new[] { Drain(outR, outBuf), Drain(errR, errBuf) };
+        int code;
+        try {
+            WaitForSingleObject(pi.hProcess, -1);
+            if (!GetExitCodeProcess(pi.hProcess, out code)) throw new Win32Exception();
+        } finally {
+            CloseHandle(pi.hProcess);
+        }
+        var deadline = DateTime.UtcNow.AddMilliseconds(drainMs);
+        foreach (var t in readers) t.Join(Math.Max(0, (int)(deadline - DateTime.UtcNow).TotalMilliseconds));
+        lock (outBuf) stdout = outBuf.ToArray();
+        lock (errBuf) stderr = errBuf.ToArray();
+        return code;
+    }
+
+    // Reads in chunks: a held pipe never reaches EOF, so whatever arrived must already be in buf
+    static Thread Drain(IntPtr handle, MemoryStream buf) {
+        var t = new Thread(() => {
+            try {
+                using (var fs = new FileStream(new SafeFileHandle(handle, true), FileAccess.Read, 4096, false)) {
+                    var chunk = new byte[65536];
+                    int n;
+                    while ((n = fs.Read(chunk, 0, chunk.Length)) > 0) lock (buf) buf.Write(chunk, 0, n);
+                }
+            } catch (Exception) { }   // anything escaping a background thread kills powershell
+        });
+        t.IsBackground = true;
+        t.Start();
+        return t;
+    }
+}
+'@
+        $script:platformProcessReady = $true
+    } catch { }
+    return $script:platformProcessReady
+}
+
 function Invoke-PlatformProcess {
     # Run the platform non-interactively and capture its console output. A closed stdin pipe
     # (EOF) makes an auth prompt fast-fail instead of hanging; capturing keeps the child's
@@ -325,32 +612,47 @@ function Invoke-PlatformProcess {
     #   1cv8     — -PreQuoted: the caller already put quotes inside the token (File="C:\a b"),
     #              which is where 1C's own parser expects them; quoting again breaks the value.
     param([string]$Exe, [string[]]$ProcArgs, [switch]$PreQuoted)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $Exe
-    $psi.Arguments = if ($PreQuoted) {
+    $arguments = if ($PreQuoted) {
         $ProcArgs -join ' '
     } else {
         ($ProcArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
     }
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $p.StandardInput.Close()
-    # stderr is drained in parallel: reading the streams one after another deadlocks
-    # as soon as the other one fills its pipe buffer.
-    $errMs = New-Object System.IO.MemoryStream
-    $errTask = $p.StandardError.BaseStream.CopyToAsync($errMs)
-    $outMs = New-Object System.IO.MemoryStream
-    $p.StandardOutput.BaseStream.CopyTo($outMs)
-    $errTask.Wait()
-    $p.WaitForExit()
-    $out = ConvertFrom-PlatformBytes $outMs.ToArray()
-    $err = ConvertFrom-PlatformBytes $errMs.ToArray()
+    # Wait for the process, not for EOF: a child it leaves behind (crashpad_handler on 8.5)
+    # inherits the pipes and keeps them open. By the time the platform exits, what it wrote
+    # is already buffered and drains at once; the 1 s only covers a held pipe.
+    if (Initialize-PlatformProcess) {
+        $outBytes = $null
+        $errBytes = $null
+        $code = [PlatformProcess]::Run($Exe, $arguments, 1000, [ref]$outBytes, [ref]$errBytes)
+    } else {
+        # No compiler: Process.Start leaks our handles to the platform, but we still never
+        # hang on a held pipe ourselves.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Exe
+        $psi.Arguments = $arguments
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $p.StandardInput.Close()
+        # Both streams are drained in parallel: reading them one after another deadlocks
+        # as soon as the other one fills its pipe buffer.
+        $errMs = New-Object System.IO.MemoryStream
+        $errTask = $p.StandardError.BaseStream.CopyToAsync($errMs)
+        $outMs = New-Object System.IO.MemoryStream
+        $outTask = $p.StandardOutput.BaseStream.CopyToAsync($outMs)
+        $p.WaitForExit()
+        [void][System.Threading.Tasks.Task]::WaitAll(@($outTask, $errTask), 1000)
+        $outBytes = $outMs.ToArray()
+        $errBytes = $errMs.ToArray()
+        $code = $p.ExitCode
+    }
+    $out = ConvertFrom-PlatformBytes $outBytes
+    $err = ConvertFrom-PlatformBytes $errBytes
     if ($err) { $out += $err }
-    return [pscustomobject]@{ Output = $out; ExitCode = $p.ExitCode }
+    return [pscustomobject]@{ Output = $out; ExitCode = $code }
 }
 
 function Write-PlatformOutput {
@@ -367,6 +669,22 @@ function Write-PlatformOutput {
     Write-Host "--- Вывод платформы ---"
     Write-Host $t
     Write-Host "--- End ---"
+}
+
+# 1c-rules: batch verdict. /DumpResult receives the result of the batch command (0 = success).
+# Read it before trusting exit code 0: a batch command can fail while 1cv8 exits 0, and a missing
+# file means the command never completed (content/rules/designer-batch-checks.md -> The verdict is
+# three signals). Returns '' on success, otherwise the reason to report.
+function Get-DumpResultError {
+    param([string]$ResultFile)
+    $code = ''
+    if ($ResultFile -and (Test-Path -LiteralPath $ResultFile)) {
+        $text = Get-Content -LiteralPath $ResultFile -Raw -ErrorAction SilentlyContinue
+        if ($text) { $code = ($text -replace '[^\d\-]', '') }
+    }
+    if ($code -eq '0') { return '' }
+    if ($code) { return "batch result $code reported by /DumpResult (0 = success)" }
+    return "/DumpResult wrote no result - the batch command did not complete"
 }
 
 
@@ -401,7 +719,7 @@ if ($outDir -and -not (Test-Path $outDir)) {
 }
 
 # --- Temp dir ---
-$tempDir = Join-Path $env:TEMP "db_dump_dt_$(Get-Random)"
+$tempDir = Join-Path ([IO.Path]::GetTempPath()) "db_dump_dt_$(Get-Random)"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
 try {
@@ -450,6 +768,7 @@ try {
     # --- Output ---
     $outFile = Join-Path $tempDir "dump_dt_log.txt"
     $arguments += "/Out", "`"$outFile`""
+    # 1c-rules: /DumpResult beside /Out - the batch verdict, read right after the launch.
     $resultFile = Join-Path $tempDir "batch_result.txt"
     $arguments += "/DumpResult", "`"$resultFile`""
     $arguments += "/DisableStartupDialogs"
@@ -459,24 +778,9 @@ try {
     Write-Host "Running: 1cv8.exe $(Protect-Secrets ((Format-ArgsForDisplay $arguments $engine) -join ' ') @($Password, $UserName))"
     $__v8 = Invoke-PlatformProcess $V8Path $arguments -PreQuoted
     $exitCode = $__v8.ExitCode
-
-    # The platform's own batch verdict: /DumpResult writes 0 on success. Read it before
-    # trusting the exit code - a batch command can fail while 1cv8 exits 0 (canon:
-    # content/rules/designer-batch-checks.md -> The verdict is three signals).
     if ($exitCode -eq 0) {
-        $dumpCode = ''
-        if (Test-Path -LiteralPath $resultFile) {
-            $dumpText = Get-Content -LiteralPath $resultFile -Raw -ErrorAction SilentlyContinue
-            if ($dumpText) { $dumpCode = ($dumpText -replace '[^\d\-]', '') }
-        }
-        if ($dumpCode -ne '0') {
-            if ($dumpCode) {
-                Write-Host "[error] batch result $dumpCode reported by /DumpResult (0 = success)" -ForegroundColor Red
-            } else {
-                Write-Host "[error] /DumpResult wrote no result - the batch command did not complete" -ForegroundColor Red
-            }
-            $exitCode = 1
-        }
+        $__dumpError = Get-DumpResultError $resultFile
+        if ($__dumpError) { Write-Host "[error] $__dumpError" -ForegroundColor Red; $exitCode = 1 }
     }
 
     # --- Result ---
@@ -504,7 +808,7 @@ try {
     exit $exitCode
 
 } finally {
-    if (Test-Path $tempDir) {
+    if ($tempDir -and (Test-Path $tempDir)) {
         Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
