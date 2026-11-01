@@ -37,7 +37,7 @@ Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it i
 |-----------|:--------:|---------|-------------|
 | ObjectPath | yes | — | Path to the object XML file (e.g. `Documents/Doc.xml`) or directory; for EPF/ERF — path to the processor/report root XML (`src/MyProcessor.xml` or its directory) |
 | FormName | yes | — | Form name — a 1C identifier (Latin / Cyrillic letters, digits, underscore, not starting with a digit); anything else, including path separators, is refused with exit 2 before any file is written |
-| Purpose | no | Object | Purpose: `Object`, `List`, `Choice`, `Record`, `Folder` |
+| Purpose | no | primary form of the kind | Purpose — see the table below. Empty = the kind's primary form: object form of a catalog / document, record form of an information register, list form of a journal or an accumulation register |
 | Synonym | no | = FormName | Form synonym |
 | --set-default | no | auto | Set as default form (auto for the first form of that purpose) |
 
@@ -46,16 +46,35 @@ Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it i
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1 -ObjectPath "<ObjectPath>" -FormName "<FormName>" [-Purpose "<Purpose>"] [-Synonym "<Synonym>"] [-SetDefault]
 ```
 
-The script auto-detects the format version of `Form.xml` from the nearest `Configuration.xml` (8.3.27+, 8.5).
+The format version of `Form.xml` comes from the object's own root XML (or the nearest `Configuration.xml` / external-processor root); `xmlns:dcssch` in the form header follows the configuration's compatibility mode (declared always from 8.3.19, otherwise only when used).
 
 #### Purpose — Form Assignment
 
-| Purpose | Allowed Object Types | Main Attribute | DefaultForm Property |
-|---------|---------------------|---------------|---------------------|
-| Object | Document, Catalog, DataProcessor, Report, ChartOf*, ExchangePlan, BusinessProcess, Task | Object (type: *Object.Name) | DefaultObjectForm (DefaultForm for DataProcessor/Report) |
-| List | All except DataProcessor | List (DynamicList) | DefaultListForm |
-| Choice | Document, Catalog, ChartOf*, ExchangePlan, BusinessProcess, Task | List (DynamicList) | DefaultChoiceForm |
-| Record | InformationRegister | Запись (InformationRegisterRecordManager) | DefaultRecordForm |
+| Purpose | Form | Default slot set for the first form |
+|---------|------|-------------------------------------|
+| `Object` | object form (item, document, data processor, report) | `DefaultObjectForm` (`DefaultForm` for DataProcessor / Report / external) |
+| `Folder` | folder form | `DefaultFolderForm` |
+| `List` | list form (`Список`, DynamicList with `MainTable`) | `DefaultListForm` (`DefaultForm` for a document journal / filter criterion) |
+| `Choice` | choice form | `DefaultChoiceForm` |
+| `FolderChoice` | folder choice form | `DefaultFolderChoiceForm` |
+| `Record` | record form (`Запись`, `InformationRegisterRecordManager`) | `DefaultRecordForm` |
+| `RecordSet` | record-set form (`Набор`, `*RecordSet`) | none — the platform has no such slot |
+| `Save` / `Load` | settings storage save / load form | `DefaultSaveForm` / `DefaultLoadForm` |
+| `Custom` | arbitrary form, no main attribute | none |
+
+| Object kind | Purposes (primary first) |
+|-------------|--------------------------|
+| Catalog, ChartOfCharacteristicTypes | Object, Folder, List, Choice, FolderChoice, Custom |
+| Document, ChartOfAccounts, ChartOfCalculationTypes, ExchangePlan, BusinessProcess, Task | Object, List, Choice, Custom |
+| DataProcessor, Report, ExternalDataProcessor, ExternalReport | Object, Custom |
+| InformationRegister | Record, List, RecordSet, Custom |
+| AccumulationRegister, AccountingRegister, CalculationRegister | List, RecordSet, Custom |
+| DocumentJournal, FilterCriterion | List, Custom |
+| Enum | List, Choice, Custom |
+| SettingsStorage | Save, Load, Custom |
+| Table of an external data source (`ExternalDataSources/<Src>/Tables/<T>.xml`) | ObjectData: Object, List, Choice, Custom; NonobjectData: Record, List, Choice, Custom |
+
+A purpose the kind does not have is refused with the list of valid ones (an information register has no `Object` form — use `Record`). Russian names and `…Form` spellings (`ФормаСписка`, `ListForm`) are accepted as synonyms. A constant has no own forms — use a common form.
 
 #### What Gets Created
 
@@ -66,7 +85,7 @@ The script auto-detects the format version of `Form.xml` from the nearest `Confi
     └── Ext/
         ├── Form.xml                  # Form description (logform namespace)
         └── Form/
-            └── Module.bsl           # BSL module with 5 regions + OnCreateAtServer
+            └── Module.bsl           # BSL module: 5 empty regions
 ```
 
 #### What Gets Modified
@@ -78,12 +97,12 @@ The script auto-detects the format version of `Form.xml` from the nearest `Confi
 - FormType: Managed
 - UsePurposes: PlatformApplication, MobilePlatformApplication
 - AutoCommandBar with id=-1
-- "Object" attribute with MainAttribute=true
-- BSL module contains 5 regions: FormEventHandlers, FormItemEventHandlers, FormCommandHandlers, NotificationHandlers, PrivateProceduresAndFunctions
+- Main attribute per the purpose table (`Объект`, `Список`, `Запись`, `Набор`; none for `Custom`) with `MainAttribute=true`
+- BSL module (UTF-8 with BOM, CRLF) contains 5 empty regions: `ОбработчикиСобытийФормы`, `ОбработчикиСобытийЭлементовШапкиФормы`, `ОбработчикиКомандФормы`, `ОбработчикиОповещений`, `СлужебныеПроцедурыИФункции`; `form-compile` / `form-edit` later add handler stubs into them
 
 #### Supported Object Types
 
-Document, Catalog, DataProcessor, Report, InformationRegister, ChartOfAccounts, ChartOfCharacteristicTypes, ExchangePlan, BusinessProcess, Task
+Every kind of the purpose table above. The kind is the first element under `MetaDataObject`, not a name search.
 
 ---
 
@@ -92,7 +111,7 @@ Document, Catalog, DataProcessor, Report, InformationRegister, ChartOfAccounts, 
 Unified across configuration objects and EPF/ERF — pass the object name (or alias `ProcessorName` for backward compatibility).
 
 ```
-1c-form-scaffold remove <ObjectName> <FormName> [SrcDir] [-DryRun | -Force]
+1c-form-scaffold remove <ObjectName> <FormName> [SrcDir] [-DryRun | -Force] [-CleanReferences]
 ```
 
 | Parameter | Required | Default | Description |
@@ -102,6 +121,7 @@ Unified across configuration objects and EPF/ERF — pass the object name (or al
 | SrcDir | no | `src` | Source directory |
 | DryRun | no | off | Print the root XML and files that would change; do not mutate anything |
 | Force | required to delete | off | Confirm the reviewed removal plan and perform it |
+| CleanReferences | no | off | Also clear references to the form in **other** files of the configuration, in the same transaction. Without it such references stop the removal |
 
 **Commands (preview first, then execute):**
 ```powershell
@@ -109,7 +129,9 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1 -ObjectName "<ObjectName>" -FormName "<FormName>" [-SrcDir "<SrcDir>"] -Force
 ```
 
-The script refuses a real deletion without `-Force`. It parses and serializes the parent XML before mutating the source tree, then removes the registration before deleting the form files. After execution, run the form / metadata validator required by the main workflow.
+The script refuses a real deletion without `-Force`. It parses and serializes every XML it will change before mutating the source tree; the deletion and all rewrites are one transaction (renames into `.remove-form-quarantine`, rolled back as a whole on any failure). After execution, run the form / metadata validator required by the main workflow.
+
+**References from the rest of the configuration.** Before deleting, the script scans every `*.xml` under the configuration root (`-SrcDir` or one of its three parents with `Configuration.xml`; without one — only the object's own directory) for the form's **full reference** `<Kind>.<Object>.Form.<Name>`: `ChoiceForm` / `Default*Form` slots of other objects, `ChoiceForm` / `SettingsStorage` inside other forms, home-page items. The plan lists every hit (`reference: <file> <Tag>`). With such references, `-Force` alone exits **2** and changes nothing; `-Force -CleanReferences` clears them: an object slot becomes `<Tag/>`, the property is removed inside a `Form.xml`, a home-page `Item` is cut out. A same-named form of another object (`DocumentJournal.J.Form.ФормаСписка`) or a `CommonForm.<Name>` is never touched — the match is on the full reference, not on the `Form.<Name>` tail. Upstream's own `-Force` cleans references implicitly; here the deletion gate and the cleaning are two explicit switches.
 
 #### What Gets Removed
 
@@ -121,7 +143,8 @@ The script refuses a real deletion without `-Force`. It parses and serializes th
 #### What Gets Modified
 
 - `<SrcDir>/<ObjectName>.xml` — removes `<Form>` from `ChildObjects`
-- If the removed form was Default*Form — the corresponding default property is cleared
+- Every slot of the object that holds the form's full reference (`Default*Form`, `Auxiliary*Form`, an attribute's `ChoiceForm`) becomes `<Tag/>`
+- With `-CleanReferences` — the other files listed in the plan
 
 ---
 
@@ -149,6 +172,9 @@ The script refuses a real deletion without `-Force`. It parses and serializes th
 # Preview, then remove a form (works for both config objects and EPF/ERF)
 1c-form-scaffold remove MyProcessor OldForm -DryRun
 1c-form-scaffold remove MyProcessor OldForm -Force
+# A catalog form other objects still point at: review, then clear the references too
+1c-form-scaffold remove Товары ФормаВыбора src/cf/Catalogs -DryRun
+1c-form-scaffold remove Товары ФормаВыбора src/cf/Catalogs -Force -CleanReferences
 ```
 
 ---
@@ -192,17 +218,21 @@ The DSL — top-level structure, element keys, common properties, event names, p
 
 Only when `form-compile` reports an unknown key or rejects a construct — open the matching section of `tools/1c-form-compile/form-dsl-spec.md` (Russian upstream original: `## 4. Elements`, `## 5. Attributes`, `## 8. Система типов`, …), never the whole 126 KB file.
 
+### Handler stubs in `Module.bsl`
+
+After writing `Form.xml`, `form-compile` (and `form-edit`) appends an empty procedure to `<Form.xml dir>/Form/Module.bsl` for every bound handler — form and element events, command `action` — that the module does not declare yet. Directive and parameters come from the event catalog (commands: `&НаКлиенте`, `(Команда)`), the body is `// Вставить содержимое обработчика.`, the region follows the BSP standard (`ОбработчикиСобытийФормы`, `ОбработчикиСобытийЭлементовШапкиФормы`, `ОбработчикиСобытийЭлементовТаблицыФормы<Таблица>`, `ОбработчикиКомандФормы`; a missing region is created in standard order). An existing procedure is never changed; a module that is not UTF-8 is left alone with a `[WARN]`; a missing module is created from the form-add template only when `Form.xml` sits in an `Ext` directory. The output ends with `Handlers (<module>):` — `+` added, `=` already there (with line ranges), `?` not added and why. **There is no switch to turn this off**: expect the module to change and include it in the review (`Invoke-1CEdit.ps1 -Preview` restores both files).
+
 ### Verification
 
 `1c-form-validate <OutputPath>` (section 6) and `1c-form-info <OutputPath>` (section 5); MCP evidence set per `content/rules/tooling-playbooks.md`: `get_xsd_schema` / `verify_xml` with `object_type="Форма"`.
 
 ---
 
-## 4. Edit — Add Elements, Attributes, Commands
+## 4. Edit — Change an Existing Form
 
-Adds elements, attributes, and/or commands to an existing Form.xml. Automatically allocates IDs from the correct pool, generates companion elements (ContextMenu, ExtendedTooltip, etc.) and event handlers.
+Applies a JSON list of edits to an existing `Form.xml` and leaves everything else in the file as it was. Moved or changed elements keep their `id`, so handlers and module references keep working. Elements are written by the same emitters as `form-compile` (all its element keys, companions, enum spelling, child order), ids come from the form's own pools.
 
-Saving uses Configurator-style compact empty tags (`<Tag/>`) and retains the existing CRLF or LF line endings. Literal text in CDATA, comments and processing instructions is excluded from empty-tag normalization.
+Saving uses Configurator-style compact empty tags (`<Tag/>`) and keeps the file's BOM and CRLF / LF. Literal text in CDATA, comments and processing instructions is excluded from empty-tag normalization.
 
 ### Usage
 
@@ -213,7 +243,7 @@ Saving uses Configurator-style compact empty tags (`<Tag/>`) and retains the exi
 | Parameter | Required | Description |
 |-----------|:--------:|-------------|
 | FormPath | yes | Path to existing Form.xml |
-| JsonPath | yes | Path to JSON with additions |
+| JsonPath | yes | Path to the JSON with the edits (UTF-8, or UTF-16 with BOM; a cp1251 file is refused with the byte position instead of silently mangling Cyrillic) |
 
 ### Command
 
@@ -221,59 +251,97 @@ Saving uses Configurator-style compact empty tags (`<Tag/>`) and retains the exi
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-edit/scripts/form-edit.ps1 -FormPath "<path>" -JsonPath "<path>"
 ```
 
-### JSON Format
+### What can be edited
+
+| Key | Edit |
+|-----|------|
+| `elements` | List of element operations, applied in order (below) |
+| `attributes` | Add; `set` — change; `rename` + `to` — rename; `remove` — delete. A column by path `Table.Column` (or `Объект.ТЧ.Column` for a form-side column of a tabular section) |
+| `commands` | Add, `set`, `rename`, `remove` |
+| `parameters` | Form parameters: add, `set`, `rename`, `remove` |
+| `title` | Form title (string or `{ru, en}`); `null` removes it |
+| `properties` | Form properties, `{ "windowOpeningMode": "LockOwnerWindow" }`; `null` removes one |
+| `events` | Form event handlers, `{ "OnOpen": "ПриОткрытии" }`; `null` value = conventional name |
+| `excludedCommands` | Exclude standard commands `["Copy"]`; bring back `{ "remove": ["Copy"] }` |
+| `conditionalAppearance` | Add conditional appearance rules |
+| `commandInterface` | Add commands to the form's command interface |
+
+All keys are optional and combine freely. Take names from `1c-form-info`.
+
+#### Element operations
+
+| Key | Operation |
+|-----|-----------|
+| element type (`input`, `group`, `table`, …) | Add a new element — same keys as in `form-compile` |
+| `move` | Move a name or a list of names (kept together, in that order) with their content; a position is required |
+| `set` | Change properties of a name or a list of names; `null` resets a property; a string `title` changes the Russian text only; `group` changes a group's orientation; `events` adds handlers. Name, element type, data path and a button's command are not changed by `set` — remove and add again |
+| `remove` | Delete a name or a list; a group / page / table with its content. Refused while `Module.bsl` still references what is being removed |
+| `autoCmdBar` | Properties of the form command bar: `{ "autoCmdBar": "ФормаКоманднаяПанель", "autofill": false }`, `horizontalAlign` |
+
+| Position keys | Where |
+|---------------|-------|
+| `after: "X"` / `before: "X"` | Next to X, in X's group |
+| `into: "G"` | At the end of group / page / table / command bar G |
+| `into: "G", first: true` | At the start of G |
+
+A new element without a position goes to the end of the form; the next one without a position follows it.
 
 ```json
 {
-  "into": "HeaderGroup",
-  "after": "Contractor",
-  "elements": [
-    { "input": "Warehouse", "path": "Object.Warehouse", "on": ["OnChange"] }
-  ],
   "attributes": [
-    { "name": "TotalAmount", "type": "decimal(15,2)" },
-    { "name": "LowerList", "type": "DynamicList", "settings": { "mainTable": "Catalog.Products" } }
+    { "name": "Срочно", "type": "boolean" },
+    { "name": "СписокТоваров", "type": "DynamicList", "settings": { "mainTable": "Catalog.Товары" } }
   ],
-  "commands": [
-    { "name": "Calculate", "action": "CalculateHandler" }
-  ]
+  "commands": [ { "name": "Пересчитать", "action": "ПересчитатьОбработка" } ],
+  "elements": [
+    { "group": "alwaysHorizontal", "name": "ГруппаОтгрузка", "after": "Контрагент" },
+    { "move": ["Склад", "Организация"], "into": "ГруппаОтгрузка" },
+    { "check": "Срочно", "path": "Срочно", "into": "ГруппаОтгрузка" },
+    { "button": "Пересчитать", "command": "Пересчитать", "into": "ФормаКоманднаяПанель" },
+    { "set": "Контрагент", "title": "Покупатель", "events": { "OnChange": null } },
+    { "remove": "Комментарий" }
+  ],
+  "events": { "OnOpen": null }
 }
 ```
 
-#### Element Positioning
+#### Attributes, commands, parameters: change and rename
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `into` | root ChildItems | Name of group/table/page to insert into |
-| `after` | at end | Name of element to insert after |
+- `set` takes the same keys as adding; `type` replaces the type as a whole. The kind of an attribute (table / value / dynamic list) and the main attribute's type are not changed. `settings` of a dynamic list changes only the parts given.
+- `{ "rename": "Данные", "to": "Строки", "renameInModule": true }` — data paths, conditional appearance and the command interface follow the new name; `renameInModule` also rewrites `Module.bsl`, without it the tool lists the module lines to fix. Element and handler names are not renamed.
+
+#### Extension forms
+
+A borrowed form (`<BaseForm>`) is detected automatically. Name the extension's own elements, attributes and commands with the extension prefix (`Расш1_…`) and give them a `title`. Every handler gets a call type `callType`: `Before`, `After` or `Override` (default `Before`, as the platform reads it); `events` / `actions` take `{ "handler": …, "callType": … }` or a list of them. An auto-named handler is `<prefix><Element><Suffix><Перед|После|Вместо>` — it never collides with the base form's procedure.
 
 #### Element keys, events, types
 
-Same DSL as `1c-form-compile` — element keys, `command` / `stdCommand`, event names and attribute types are in [`form-compile-dsl.md`](form-compile-dsl.md); the companion elements each type receives (ContextMenu, ExtendedTooltip, AutoCommandBar, …) are listed in its *Auto-generation* section. Groups and tables support `children` / `columns` for nested elements.
+Same DSL as `1c-form-compile` — element keys, `command` / `stdCommand`, event names and attribute types are in [`form-compile-dsl.md`](form-compile-dsl.md); the companion elements each type receives are listed in its *Auto-generation* section. Unlike `form-compile`, an event outside the catalog is only a `[WARN]` here (upstream behaviour). Handler stubs for new bindings are appended to `Module.bsl` exactly as `form-compile` does (§3).
 
-A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.query`. Without a source the designer accepts the XML, but the form fails to open (`Основная таблица динамического списка задана неверно`). `form-edit` refuses that JSON before writing; `form-validate` reports the same gap on an existing form. The `settings` keys are the ones in [`form-compile-dsl.md`](form-compile-dsl.md) (`mainTable`, `query`, `manualQuery`, `dynamicDataRead`). `form-edit` emits those four; filters / order / conditional appearance stay with `form-compile`.
+A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.query` (local rule). Without a source the designer accepts the XML, but the form fails to open (`не задан ни текст запроса, ни основная таблица`). `form-edit` refuses that JSON before writing; `form-validate` reports the same gap on an existing form. All `settings` keys of `form-compile` are accepted (filters, order, conditional appearance, fields, parameters).
 
 ### Output
 
 ```
-=== form-edit: FormName ===
+=== form-edit: ФормаДокумента ===
 
-Added elements (into HeaderGroup, after Contractor):
-  + [Input] Warehouse -> Object.Warehouse {OnChange}
-
+Added elements:
+  + [CheckBoxField] Пометка -> Пометка {OnChange} → ГруппаНомерДата, после Номер
+Form events:
+  + event OnOpen -> ПриОткрытии
 Added attributes:
-  + TotalAmount: decimal(15,2) (id=12)
+  + Пометка: boolean (id=61)
 
----
-Total: 1 element(s) (+2 companions), 1 attribute(s)
-Run 1c-form-validate to verify.
+Handlers (…/Ext/Form/Module.bsl):
+  + ПриОткрытии — added, lines 3-6
+  + ПометкаПриИзменении — added, lines 12-15
 ```
 
 ### When to Use
 
-- **After `1c-form-compile`**: add elements not included in the original JSON
-- **Modifying existing forms**: add a field, attribute, or command to a form from configuration
-- **Batch additions**: one JSON can contain elements + attributes + commands
+- **After `1c-form-compile`**: add, move or change elements without regenerating the form
+- **Modifying existing forms**: vendor-shaped forms keep everything not named in the JSON
+- **Batch edits**: one JSON can combine elements, attributes, commands, parameters and form properties
 
 ---
 
@@ -295,6 +363,7 @@ Reads a Form.xml of a managed form and outputs a compact summary: element tree, 
 | `Expand` | no | — | Page names to expand: list of names, single name, or `*` for all |
 | `Limit` | no | `150` | Max output lines (overflow protection) |
 | `Offset` | no | `0` | Skip N lines (for pagination) |
+| `Handlers` | no | off | Switch. Shows each bound handler (form and element events, command actions) with its line range in `Ext/Form/Module.bsl`; a handler missing from the module is marked |
 
 ### Command
 
@@ -307,6 +376,11 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scr
 
 # Expand all pages
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -Path "<path>" -Expand "*"
+```
+
+Handlers with their module lines (before editing the module):
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1 -Path "<path>" -Handlers
 ```
 
 With pagination:
@@ -472,6 +546,7 @@ Checks Form.xml of a managed form for structural errors: ID uniqueness, companio
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
 | FormPath | yes | — | Path to Form.xml file |
+| Detailed | no | off | Print every check, not only problems |
 | MaxErrors | no | 30 | Stop after N errors |
 
 ### Command
@@ -482,47 +557,50 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-validate
 
 ### Checks Performed
 
+The structural checks (upstream 1–11) run first and print no number; from 12 on every `[ERROR]` / `[WARN]` line starts with its check number. Numbers up to 27 are upstream's; 28 and 29 are local and come after upstream's last number, so an upstream refresh does not renumber them.
+
 | # | Check | Severity |
 |---|-------|----------|
-| 1 | Root element `<Form>`; `version` equals `Configuration.xml` when one is found above the form (else 2.17 / 2.20 expected) | ERROR / WARN |
-| 2 | `<AutoCommandBar>` present, id="-1" | ERROR |
-| 3 | Element ID uniqueness (separate pool) | ERROR |
-| 4 | Attribute ID uniqueness (separate pool) | ERROR |
-| 5 | Command ID uniqueness (separate pool) | ERROR |
-| 6 | Companion elements (ContextMenu, ExtendedTooltip, etc.) | ERROR |
-| 7 | DataPath → references existing attribute | ERROR |
-| 8 | Button CommandName → references existing command | ERROR |
-| 9 | Events have non-empty handler names | ERROR |
-| 10 | Commands have Action (handler) | ERROR |
-| 11 | No more than one MainAttribute | ERROR |
-| 12 | Type values — known namespaces and `cfg:` prefixes; `cfg:Catalogs.X` (export folder name) is an error | ERROR / WARN |
-| 12b | A default / auxiliary object, folder or record form of a catalog, document, chart, exchange plan, business process, task or information register has a main attribute of its owner's own type (`<Kind>Object.<Name>`, `InformationRegisterRecordManager.<Name>`); no `Description` / `Code` binding when the owner's length is 0 | ERROR |
-| 13 | Handlers in `Ext/Form/Module.bsl` — every event handler and command `Action` declared exactly once (duplicate = error); missing handler, missing directive, wrong context (`*AtServer` event on a client procedure, client event or command on a server one), more mandatory parameters than the platform passes — warnings | ERROR / WARN |
-| 14 | `РеквизитФормыВЗначение` / `ЗначениеВРеквизитФормы` only in `&НаСервере` (a procedure without a directive is server-side) | ERROR |
+| — | Root element `<Form>`; `version` well-formed and inside the tested range 2.17–2.21 | ERROR / WARN |
+| — | `<AutoCommandBar>` present (id other than `-1` is a warning — vendor forms have it) | ERROR / WARN |
+| — | Element / attribute / column / command / parameter id and name uniqueness (separate pools); a DynamicList attribute without `MainTable` and `QueryText` (local) | ERROR |
+| — | Companion elements (ContextMenu, ExtendedTooltip, …) | ERROR |
+| — | `DataPath` and other bindings reach an existing attribute (`Items.<Table>.CurrentData.*` resolved; base-form paths of a borrowed form included) | ERROR / WARN |
+| — | Button `CommandName` references an existing command | ERROR |
+| — | Events have non-empty handler names | ERROR |
+| — | A command without `Action` (assigned at runtime in vendor forms) | WARN |
+| — | At most one `MainAttribute`; multilingual `Title` | ERROR |
+| — | Extension form: `BaseForm` version, valid `callType`, extension ids ≥ 1000000 | ERROR / WARN |
+| 12 | Type values — known namespaces and `cfg:` prefixes; `cfg:Catalogs.X` (export folder name, local) and `External*` types in a configuration are errors | ERROR / WARN |
+| 13 | Namespace prefixes used in types and `xsi:type` are declared in the file | ERROR |
+| 14 | Format version equals the form descriptor `Forms/<Name>.xml` (and the `<BaseForm version>` stamp of a borrowed form); differing from the rest of the dump is only a warning | ERROR / WARN |
+| 15 | Enum property values in the platform spelling (wrong case, a button's `TextPicture` / a command's `PictureAndText` are errors; old names are warnings) | ERROR / WARN |
+| 16 | Element property order as the platform writes it | WARN |
+| 17 | Dynamic-list `Field` / `CalculatedField` / `Parameter` under compatibility mode below 8.3.19 | WARN |
+| 18 | Element tag known for the format version | ERROR / WARN |
+| 19 | Companions match the element type | ERROR |
+| 20 | Properties belong to the element type | ERROR / WARN |
+| 21 | Element allowed in its container | WARN |
+| 22 | `Ext/Form/Module.bsl`: every bound handler and command action exists (missing = error); declared once (duplicate = error, local); compilation directive present and matching the event, no more mandatory parameters than the platform passes (warnings, local); procedures bound nowhere and not referenced (warning) | ERROR / WARN |
+| 23 | `AdditionSource` of search / view-status / search-control additions points at the right item | ERROR / WARN |
+| 24 | A module variable named like a form attribute | ERROR |
+| 25 | Conditional appearance fields exist | WARN |
+| 26 | `Enum.X.EnumValue.Y` design-time values (the platform never matches them) | ERROR |
+| 27 | `web:` / `win:` colors from the platform palette | ERROR |
+| 28 | (local, was 12b) A default / auxiliary object, folder or record form of a catalog, document, chart, exchange plan, business process, task or information register has a main attribute of its owner's own type; no `Description` / `Code` binding when the owner's length is 0 | ERROR |
+| 29 | (local, was 14) `РеквизитФормыВЗначение` / `ЗначениеВРеквизитФормы` only in `&НаСервере` (a procedure without a directive is server-side) | ERROR |
 
 ### Output
 
+Brief by default — only problems and the verdict:
+
 ```
-=== Validation: DocumentForm ===
-
-[OK]    Root element: Form version=2.17
-[OK]    AutoCommandBar: name='FormCommandBar', id=-1
-[OK]    Unique element IDs: 96 elements
-[OK]    Unique attribute IDs: 38 entries
-[OK]    Unique command IDs: 5 entries
-[OK]    Companion elements: 86 elements checked
-[OK]    DataPath references: 53 paths checked
-[OK]    Command references: 2 buttons checked
-[OK]    Event handlers: 41 events checked
-[OK]    Command actions: 5 commands checked
-[OK]    MainAttribute: 1 main attribute
-
----
-Total: 96 elements, 38 attributes, 5 commands
-All checks passed.
+=== Validation OK: Form.ФормаДокумента (29 checks) ===
 ```
 
-Return code: 0 = all checks passed, 1 = errors found.
+`-Detailed` prints every check (`[OK]    14. Format version: 2.20, matches the descriptor and the dump`, …) and the totals line.
+
+Return code: 0 = no errors (warnings allowed), 1 = errors found.
 
 ### When to Use
 

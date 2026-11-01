@@ -25,25 +25,33 @@ carries its downstream deltas in its own file header:
   any component of the chain is refused before the first mutation), a
   transactional mutation path whose quarantine is discarded only after every
   payload is verifiably back or the transaction has committed, and
-  byte-preserving `ChildObjects` editing. Upstream base: v1.4.
+  byte-preserving `ChildObjects` editing. From upstream (synced at `2e75b0f`,
+  v1.11) only the reference check of 93d9511a is taken — full-reference matching
+  (the old `Form.<Name>` tail match blanked other objects' and `CommonForm` slots)
+  and a scan of the rest of the configuration — plus case-insensitive parameter
+  names; cleaning foreign references is the separate `-CleanReferences` switch
+  inside the same transaction, where upstream's `-Force` does it implicitly.
 - `tools/1c-form-compile/scripts/form-compile.py` — Python runtime of
-  `form-compile`. Downstream deltas: one event normalizer for all three DSL
-  spellings (`events`, `on` + `handlers`, standalone `handlers`), an explicit
-  non-zero refusal when two spellings are given at once or an event name is
-  unknown, and the corrected suffixes `OnEditEnd` → `ПриОкончанииРедактирования`
-  (upstream spells the key `OnEndEdit`), `Selection` → `Выбор` (upstream
-  `ВыборСтроки`) and `DragEnd` → `ОкончаниеПеретаскивания` (upstream key `Drop`);
-  from-object document choice forms get `ChoiceMode`, the document item preset
-  writes `AutoTime` / `UsePostingMode` / `RepostOnWrite`, `Description` is bound
-  only when `DescriptionLength > 0`, form-property enum values are a closed set,
-  and a missing `Configuration.xml` is reported instead of assuming 2.17.
+  `form-compile`, synced at `2e75b0f` (v1.224). Downstream deltas: one event
+  normalizer for all three DSL spellings (`events`, `on` + `handlers`, standalone
+  `handlers`), an explicit non-zero refusal when two spellings are given at once,
+  when a `handlers` key is absent from `on`, or when the event name is in no
+  element's event catalog (upstream only warns); `.dev.env` support guard, fail
+  closed; from-object document choice forms get `ChoiceMode`, the document item
+  preset writes `AutoTime` / `UsePostingMode` / `RepostOnWrite`, `Description` is
+  bound only when `DescriptionLength > 0`, and a missing `Configuration.xml` is
+  reported instead of assuming 2.17. The handler suffixes (`OnEditEnd` →
+  `ПриОкончанииРедактирования`, `Selection` → `Выбор`, `DragEnd` →
+  `ОкончаниеПеретаскивания`) and the closed form-property enum sets are upstream's
+  since the event catalog (052ee035) and the XSD enum normalization (7c1a3318).
 - `tools/1c-form-scaffold/scripts/form-add.py` — Python runtime of `form-add`,
   the managed-form scaffolder. Downstream deltas: `.dev.env` support guard via
   `tools/_common/dev_env.py`, and XML escaping of the user-supplied `-FormName` /
   `-Synonym` in the generated descriptor (upstream interpolates them verbatim, so
   an ordinary `A & B` produced a descriptor no parser accepts); `-FormName` must be
-  a 1C identifier, and an information register's object form names its
-  `RecordManager` main attribute `Запись`.
+  a 1C identifier. Synced at `2e75b0f` (v1.34); the information register's record
+  form with main attribute `Запись` is upstream's now (`-Purpose Record`, the
+  register's primary form).
 - `tools/1c-meta-edit/scripts/meta-edit.py` — Python runtime of `meta-edit`.
   Downstream deltas: `add-form` is refused before any mutation and redirected to
   `form-add`, in every key spelling the dispatcher itself accepts and across the

@@ -1,12 +1,14 @@
-﻿# form-info v1.5 — Analyze 1C managed form structure
+﻿# form-info v1.14 — Analyze 1C managed form structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory=$true)]
+	[Parameter(Mandatory=$true, Position=0)]
 	[Alias('Path')]
 	[string]$FormPath,
 	[int]$Limit = 150,
 	[int]$Offset = 0,
-	[string]$Expand
+	[string]$Expand,
+	[switch]$Handlers
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +16,7 @@ $ErrorActionPreference = "Stop"
 
 # --- Resolve FormPath ---
 if (-not [System.IO.Path]::IsPathRooted($FormPath)) {
-	$FormPath = Join-Path (Get-Location).Path $FormPath
+	$FormPath = Join-Path (Get-Location).ProviderPath $FormPath
 }
 # A: Directory → Ext/Form.xml
 if (Test-Path $FormPath -PathType Container) {
@@ -45,7 +47,7 @@ if (-not (Test-Path $FormPath)) {
 
 $xmlDoc = New-Object System.Xml.XmlDocument
 $xmlDoc.PreserveWhitespace = $false
-$xmlDoc.Load((Resolve-Path $FormPath).Path)
+$xmlDoc.Load((Resolve-Path $FormPath).ProviderPath)
 
 $ns = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
 $ns.AddNamespace("d", "http://v8.1c.ru/8.3/xcf/logform")
@@ -62,6 +64,127 @@ $root = $xmlDoc.DocumentElement
 # --- Detect extension (BaseForm) ---
 $baseFormNode = $root.SelectSingleNode("d:BaseForm", $ns)
 $isExtension = ($baseFormNode -ne $null)
+
+# --- Обработчики: процедуры модуля формы (только с -Handlers) ---
+
+# Текст модуля формы; $null — модуль не в UTF-8 (с заменой символов имена процедур не найти — лучше сказать прямо)
+function Read-ModuleText([string]$path) {
+	try { return (New-Object System.Text.UTF8Encoding($false, $true)).GetString([System.IO.File]::ReadAllBytes($path)).TrimStart([char]0xFEFF) }
+	catch { return $null }
+}
+
+# Сканер BSL: строковые литералы (с "" и многострочными продолжениями «|») и комментарии // отделяются
+# от кода, номера строк сохраняются. Lines — строки текста; Code — они же без комментариев, литерал
+# заменён на ""; Mask — строки той же длины, литералы и комментарии — пробелами (позиции в маске —
+# позиции в тексте); Literals — @{ Line; Text; Prefix — код этой строки слева от литерала; Col — начало
+# текста литерала в строке, -1 у многострочного }.
+function Get-BslScan([string]$text) {
+	$lines = $text -replace "`r", "" -split "`n"
+	$code = New-Object System.Collections.ArrayList
+	$mask = New-Object System.Collections.ArrayList
+	$lits = New-Object System.Collections.ArrayList
+	$inStr = $false; $cur = $null; $curLine = 0; $curPrefix = ""; $curCol = -1
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$line = $lines[$i]
+		# строка без кавычек вне литерала — только отрезать комментарий (посимвольный разбор в PS медленный)
+		if (-not $inStr -and $line.IndexOf('"') -lt 0) {
+			$k = $line.IndexOf('//')
+			[void]$code.Add($(if ($k -ge 0) { $line.Substring(0, $k) } else { $line }))
+			[void]$mask.Add($(if ($k -ge 0) { $line.Substring(0, $k) + (' ' * ($line.Length - $k)) } else { $line }))
+			continue
+		}
+		$sb = New-Object System.Text.StringBuilder
+		$mk = $line.ToCharArray()
+		$j = 0
+		if ($inStr) {
+			# продолжение многострочного литерала: пробелы, затем «|»
+			while ($j -lt $line.Length -and ($line[$j] -eq ' ' -or $line[$j] -eq "`t")) { $j++ }
+			# строка «//…» между строками литерала — комментарий, литерал продолжается на следующей
+			if ($j + 1 -lt $line.Length -and $line[$j] -eq '/' -and $line[$j + 1] -eq '/') { [void]$code.Add(""); [void]$mask.Add(' ' * $line.Length); continue }
+			if ($j -lt $line.Length -and $line[$j] -eq '|') { $mk[$j] = ' '; $j++ }
+			$cur += "`n"
+			$curCol = -1
+		}
+		while ($j -lt $line.Length) {
+			$c = $line[$j]
+			if ($inStr) {
+				if ($c -eq '"') {
+					if ($j + 1 -lt $line.Length -and $line[$j + 1] -eq '"') { $cur += '"'; $mk[$j] = ' '; $mk[$j + 1] = ' '; $j += 2; continue }
+					$inStr = $false
+					[void]$lits.Add(@{ Line = $curLine; Text = $cur; Prefix = $curPrefix; Col = $curCol })
+					[void]$sb.Append('""')
+					$j++
+					continue
+				}
+				$cur += $c; $mk[$j] = ' '; $j++; continue
+			}
+			if ($c -eq '/' -and $j + 1 -lt $line.Length -and $line[$j + 1] -eq '/') { for ($q = $j; $q -lt $mk.Length; $q++) { $mk[$q] = ' ' }; break }
+			if ($c -eq '"') { $inStr = $true; $cur = ""; $curLine = $i + 1; $curPrefix = $sb.ToString(); $curCol = $j + 1; $j++; continue }
+			[void]$sb.Append($c); $j++
+		}
+		[void]$code.Add($sb.ToString())
+		[void]$mask.Add([string]::new($mk))
+	}
+	return @{ Lines = $lines; Code = $code.ToArray(); Mask = $mask.ToArray(); Literals = $lits.ToArray() }
+}
+
+# Процедуры и функции модуля (имя, первая и последняя строка; первая — с аннотациями над заголовком)
+# и области (имя, строки #Область и #КонецОбласти, вложенность). Строки нумеруются с 1.
+# Заголовок — только в начале строки: продолжение литерала («|…») и комментарий заголовком не станут.
+function Get-ModuleOutline([string[]]$lines) {
+	$procs = New-Object System.Collections.ArrayList
+	$regions = New-Object System.Collections.ArrayList
+	$open = New-Object System.Collections.ArrayList
+	$cur = $null
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$l = $lines[$i]
+		if ($null -ne $cur) {
+			# конец процедуры — в начале строки или после «;» (`Возврат Х;КонецФункции`)
+			if ($l -match '(^|;)\s*(КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)(?![\w])') { $cur.end = $i + 1; [void]$procs.Add($cur); $cur = $null }
+			continue
+		}
+		$m = [regex]::Match($l, '^\s*(?:(?:Асинх|Async)\s+)?(?:Процедура|Функция|Procedure|Function)\s+(\w+)\s*\(', 'IgnoreCase')
+		if ($m.Success) {
+			$s = $i
+			while ($s -gt 0 -and $lines[$s - 1] -match '^\s*&') { $s-- }
+			$cur = [pscustomobject]@{ name = $m.Groups[1].Value; start = $s + 1; end = $i + 1 }
+			continue
+		}
+		$m = [regex]::Match($l, '^\s*#(?:Область|Region)\s+(\S+)', 'IgnoreCase')
+		if ($m.Success) { [void]$open.Add([pscustomobject]@{ name = $m.Groups[1].Value; start = $i + 1; end = 0; depth = $open.Count }); continue }
+		if ($l -match '^\s*#(КонецОбласти|EndRegion)(?![\w])' -and $open.Count -gt 0) {
+			$r = $open[$open.Count - 1]; $open.RemoveAt($open.Count - 1)
+			$r.end = $i + 1; [void]$regions.Add($r)
+		}
+	}
+	return @{ procs = $procs; regions = $regions }
+}
+
+$script:modulePath = Join-Path (Split-Path (Resolve-Path $FormPath).ProviderPath -Parent) "Form\Module.bsl"
+$script:moduleProcs = $null
+$script:moduleNotUtf8 = $false
+if ($Handlers -and (Test-Path -LiteralPath $script:modulePath)) {
+	$moduleText = Read-ModuleText $script:modulePath
+	$script:moduleNotUtf8 = ($null -eq $moduleText)
+}
+if ($Handlers -and (Test-Path -LiteralPath $script:modulePath) -and -not $script:moduleNotUtf8) {
+	$bsl = Get-BslScan $moduleText
+	# @{} регистронезависим — как имена в BSL
+	$script:moduleProcs = @{}
+	foreach ($p in (Get-ModuleOutline $bsl.Code).procs) { if (-not $script:moduleProcs.ContainsKey($p.name)) { $script:moduleProcs[$p.name] = $p } }
+}
+
+# Где процедура обработчика: " (lines a-b)", " (not in module)" или "" — без -Handlers, без модуля,
+# у привязки формы расширения без callType (процедура исходной формы — в модуле конфигурации)
+# и у события с GUID-именем без процедуры (платформа такой обработчик не вызывает).
+function Get-HandlerSuffix([string]$handler, [string]$callType, [string]$eventName) {
+	if ($null -eq $script:moduleProcs -or -not $handler) { return "" }
+	if ($isExtension -and -not $callType) { return "" }
+	$p = $script:moduleProcs[$handler.Trim()]
+	if ($p) { return " (lines $($p.start)-$($p.end))" }
+	if ($eventName -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { return "" }
+	return " (not in module)"
+}
 
 # --- Helper: extract multilang text ---
 
@@ -170,8 +293,9 @@ function Get-EventsStr($node) {
 	foreach ($e in $eventsNode.SelectNodes("d:Event", $ns)) {
 		$eName = $e.GetAttribute("name")
 		$ct = $e.GetAttribute("callType")
-		if ($ct) { $evts += "$eName[$ct]" }
-		else { $evts += $eName }
+		$label = if ($ct) { "$eName[$ct]" } else { $eName }
+		if ($Handlers) { $label += ": $($e.InnerText.Trim())$(Get-HandlerSuffix $e.InnerText $ct $eName)" }
+		$evts += $label
 	}
 	if ($evts.Count -eq 0) { return "" }
 	return " {$($evts -join ', ')}"
@@ -200,7 +324,6 @@ $skipElements = @{
 	"SearchStringAddition" = $true
 	"ViewStatusAddition" = $true
 	"SearchControlAddition" = $true
-	"ColumnGroup" = $true
 }
 
 function Get-ElementTag($node) {
@@ -236,6 +359,9 @@ function Get-ElementTag($node) {
 		"Page" { return "[Page]" }
 		"Popup" { return "[Popup]" }
 		"ButtonGroup" { return "[BtnGroup]" }
+		"ColumnGroup" { return "[ColGroup]" }
+		"AutoCommandBar" { return "[CmdBar]" }
+		"ContextMenu" { return "[ContextMenu]" }
 		default { return "[$localName]" }
 	}
 }
@@ -258,17 +384,37 @@ function Count-SignificantChildren($childItemsNode) {
 $treeLines = [System.Collections.Generic.List[string]]::new()
 $script:hasCollapsed = $false
 
-function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
-	if (-not $childItemsNode) { return }
+# Командная панель и контекстное меню элемента — в дереве, только если в них есть своё:
+# кнопки, подменю или отключённое автозаполнение. Стандартные пустые не шумят.
+function Get-OwnPanels($node) {
+	$out = @()
+	foreach ($c in $node.ChildNodes) {
+		if ($c.NodeType -ne "Element" -or ($c.LocalName -ne "ContextMenu" -and $c.LocalName -ne "AutoCommandBar")) { continue }
+		$ci = $c.SelectSingleNode("d:ChildItems", $ns)
+		$af = $c.SelectSingleNode("d:Autofill", $ns)
+		if (((Count-SignificantChildren $ci) -gt 0) -or ($af -and $af.InnerText -eq "false")) { $out += $c }
+	}
+	return $out
+}
 
-	# Collect significant children
-	$children = @()
+function Get-SignificantChildren($childItemsNode) {
+	$out = @()
+	if (-not $childItemsNode) { return $out }
 	foreach ($child in $childItemsNode.ChildNodes) {
 		if ($child.NodeType -ne "Element") { continue }
 		if ($skipElements.ContainsKey($child.LocalName)) { continue }
-		$children += $child
+		$out += $child
 	}
+	return $out
+}
 
+function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
+	if (-not $childItemsNode) { return }
+	Build-TreeNodes @(Get-SignificantChildren $childItemsNode) $prefix
+}
+
+function Build-TreeNodes($children, [string]$prefix) {
+	$children = @($children)
 	for ($i = 0; $i -lt $children.Count; $i++) {
 		$child = $children[$i]
 		$last = ($i -eq $children.Count - 1)
@@ -279,6 +425,11 @@ function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
 		$name = $child.GetAttribute("name")
 		$flags = Get-Flags $child
 		$events = Get-EventsStr $child
+		$localName = $child.LocalName
+		if ($localName -eq "AutoCommandBar" -or $localName -eq "ContextMenu") {
+			$af = $child.SelectSingleNode("d:Autofill", $ns)
+			if ($af -and $af.InnerText -eq "false") { $flags += " [autofill:false]" }
+		}
 
 		# DataPath or CommandName
 		$binding = ""
@@ -291,6 +442,8 @@ function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
 				$cnVal = $cn.InnerText
 				if ($cnVal -match '^Form\.StandardCommand\.(.+)$') {
 					$binding = " -> $($Matches[1]) [std]"
+				} elseif ($cnVal -match '^Form\.Item\.(.+)\.StandardCommand\.(.+)$') {
+					$binding = " -> $($Matches[1]).$($Matches[2]) [std]"
 				} elseif ($cnVal -match '^Form\.Command\.(.+)$') {
 					$binding = " -> $($Matches[1]) [cmd]"
 				} else {
@@ -304,11 +457,20 @@ function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
 		$diffTitle = Test-TitleDiffers $child $name
 		if ($diffTitle) { $titleStr = " [title:$diffTitle]" }
 
-		$line = "$prefix$connector $tag $name$binding$flags$titleStr$events"
+		$panels = @(Get-OwnPanels $child)
+		# Панель таблицы с нестандартным именем — имя в строке таблицы (нужно для правки формы)
+		$panelStr = ""
+		if ($localName -eq "Table") {
+			$acb = $child.SelectSingleNode("d:AutoCommandBar", $ns)
+			if ($acb -and $acb.GetAttribute("name") -ne "${name}КоманднаяПанель" -and -not ($panels | Where-Object { $_.LocalName -eq "AutoCommandBar" })) {
+				$panelStr = " [cmdBar:$($acb.GetAttribute('name'))]"
+			}
+		}
+
+		$line = "$prefix$connector $tag $name$binding$flags$titleStr$panelStr$events"
 		$treeLines.Add($line)
 
 		# Recurse into containers (but not Page — show summary unless expanded)
-		$localName = $child.LocalName
 		if ($localName -eq "Page") {
 			$ci = $child.SelectSingleNode("d:ChildItems", $ns)
 			$pageName = $child.GetAttribute("name")
@@ -319,21 +481,25 @@ function Build-Tree($childItemsNode, [string]$prefix, [bool]$isLast) {
 			} else {
 				$cnt = Count-SignificantChildren $ci
 				$idx = $treeLines.Count - 1
-				$treeLines[$idx] = $treeLines[$idx] + " ($cnt items)"
+				# с -Handlers — сколько привязок внутри свёрнутой страницы: без счётчика их не заметить
+				$hc = if ($Handlers -and $ci) { $ci.SelectNodes(".//d:Event", $ns).Count } else { 0 }
+				$hcStr = if ($hc -gt 0) { ", $hc handlers" } else { "" }
+				$treeLines[$idx] = $treeLines[$idx] + " ($cnt items$hcStr)"
 				$script:hasCollapsed = $true
 			}
-		} elseif ($localName -in @("UsualGroup", "Pages", "Table", "CommandBar", "ButtonGroup", "Popup")) {
-			$ci = $child.SelectSingleNode("d:ChildItems", $ns)
-			if ($ci) {
-				Build-Tree $ci "$prefix$continuation" $last
+		} else {
+			$sub = @($panels)
+			if ($localName -in @("UsualGroup", "Pages", "Table", "CommandBar", "ButtonGroup", "Popup", "ColumnGroup", "AutoCommandBar", "ContextMenu")) {
+				$sub += @(Get-SignificantChildren ($child.SelectSingleNode("d:ChildItems", $ns)))
 			}
+			if ($sub.Count -gt 0) { Build-TreeNodes $sub "$prefix$continuation" }
 		}
 	}
 }
 
 # --- Determine form name and object from path ---
 
-$resolvedPath = (Resolve-Path $FormPath).Path
+$resolvedPath = (Resolve-Path $FormPath).ProviderPath
 $parts = $resolvedPath -split '[/\\]'
 
 $formName = ""
@@ -384,7 +550,7 @@ function Test-ExternalObjectRoot([string]$xmlPath) {
 }
 function Get-SupportStatusForPath([string]$targetPath) {
 	try {
-		$rp = (Resolve-Path $targetPath).Path
+		$rp = (Resolve-Path $targetPath).ProviderPath
 		$elemUuid = $null
 		$binPath = $null
 		# Reads the uuid of the first metadata element in an .xml file (or $null).
@@ -462,6 +628,7 @@ $header += " ==="
 $lines += $header
 $support = Get-SupportStatusForPath $FormPath
 if ($null -ne $support) { $lines += "Поддержка: $support" }
+if ($Handlers) { $lines += "Module: $(if (Test-Path -LiteralPath $script:modulePath) { $script:modulePath } else { 'none' })$(if ($script:moduleNotUtf8) { ' (not UTF-8 — line ranges unavailable)' })" }
 
 # --- Form properties (Title excluded — shown in header) ---
 
@@ -509,7 +676,7 @@ if ($formEvents -and $formEvents.HasChildNodes) {
 		$eHandler = $e.InnerText
 		$ct = $e.GetAttribute("callType")
 		$ctStr = if ($ct) { "[$ct]" } else { "" }
-		$lines += "  $eName${ctStr} -> $eHandler"
+		$lines += "  $eName${ctStr} -> $eHandler$(Get-HandlerSuffix $eHandler $ct $eName)"
 	}
 }
 
@@ -525,7 +692,8 @@ function Format-MainAcb($acbNode) {
 	$flags = @()
 	$flags += if ($autofill) { "autofill" } else { "no-autofill" }
 	if ($halignNode) { $flags += "align=$($halignNode.InnerText)" }
-	$header = "AutoCommandBar [$($flags -join ', ')]"
+	$acbName = $acbNode.GetAttribute("name")
+	$header = "AutoCommandBar $acbName [$($flags -join ', ')]"
 	$childItemsNode = $acbNode.SelectSingleNode("d:ChildItems", $ns)
 	$buttons = @()
 	if ($childItemsNode) {
@@ -547,7 +715,7 @@ function Format-MainAcb($acbNode) {
 	}
 	if ($buttons.Count -eq 0 -and $autofill -and -not $halignNode) {
 		# Default empty panel — terse one-liner
-		return @("AutoCommandBar [autofill]")
+		return @("AutoCommandBar $acbName [autofill]")
 	}
 	$result += $header
 	$result += $buttons
@@ -682,13 +850,13 @@ if ($cmdsNode) {
 			foreach ($a in $actions) {
 				$ct = $a.GetAttribute("callType")
 				$ctStr = if ($ct) { "[$ct]" } else { "" }
-				$actParts += "$($a.InnerText)$ctStr"
+				$actParts += "$($a.InnerText)$ctStr$(Get-HandlerSuffix $a.InnerText $ct 'Action')"
 			}
 			$actionStr = " -> $($actParts -join ', ')"
 		} elseif ($actions.Count -eq 1) {
 			$ct = $actions[0].GetAttribute("callType")
 			$ctStr = if ($ct) { "[$ct]" } else { "" }
-			$actionStr = " -> $($actions[0].InnerText)$ctStr"
+			$actionStr = " -> $($actions[0].InnerText)$ctStr$(Get-HandlerSuffix $actions[0].InnerText $ct 'Action')"
 		} else {
 			$actionStr = ""
 		}
@@ -711,11 +879,16 @@ if ($isExtension) {
 	$lines += "BaseForm: $bfStr"
 }
 
-# --- Expand hint ---
+# --- Hints ---
 
-if ($script:hasCollapsed) {
+$hints = @()
+if ($script:hasCollapsed) { $hints += "Hint: use -Expand <name> to expand a collapsed section, -Expand * for all" }
+if (-not $Handlers -and $null -ne $root.SelectSingleNode(".//d:Events/d:Event | d:Commands/d:Command/d:Action", $ns)) {
+	$hints += "Hint: use -Handlers to show handler names with their line ranges in Form/Module.bsl"
+}
+if ($hints.Count -gt 0) {
 	$lines += ""
-	$lines += "Hint: use -Expand <name> to expand a collapsed section, -Expand * for all"
+	$lines += $hints
 }
 
 # --- Truncation protection ---
@@ -736,6 +909,8 @@ if ($lines.Count -gt $Limit) {
 	$remaining = $totalLines - $Offset - $Limit
 	Write-Host ""
 	Write-Host "[TRUNCATED] Shown $Limit of $totalLines lines. Use -Offset $($Offset + $Limit) to continue."
+	# Подсказки стоят в конце вывода — при обрезке повторяем их здесь
+	foreach ($h in $hints) { Write-Host $h }
 } else {
 	foreach ($l in $lines) { Write-Host $l }
 }

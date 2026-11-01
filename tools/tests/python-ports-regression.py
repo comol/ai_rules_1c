@@ -1999,7 +1999,7 @@ def _(work):
 # ChoiceMode and a document form the posting defaults, binds Description only when
 # DescriptionLength > 0 and refuses enum values the platform does not have;
 # form-add refuses a non-identifier -FormName and names an information register's
-# object-form main attribute "Запись"; meta-validate rejects the shapes of checks
+# record-form main attribute "Запись"; meta-validate rejects the shapes of checks
 # 1e, 2, 6f, 6g, 8, 12 and 16a with the same diagnostics in both runtimes.
 
 MINIMAL_DOCUMENT = (
@@ -2120,17 +2120,25 @@ def assert_form_add_name_and_record(script, runner, work, label):
         assert_equal(2, run["exit_code"], f"{label}: -FormName {bad!r} exit code")
     assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused -FormName")
 
+    # Upstream 1.2x+: an information register has no object form; its primary
+    # (default) purpose is Record, and -Purpose Object is refused with the list.
     register = os.path.join(directory, "InformationRegisters", "TestRegister.xml")
     write_text(register, MINIMAL_REGISTER)
-    run = runner(script, ["-ObjectPath", register, "-FormName", "ObjectForm", "-Purpose", "Object"], directory)
-    assert_equal(0, run["exit_code"], f"{label}: register object form (stderr: {run['stderr'][-400:]})")
-    form = os.path.join(directory, "InformationRegisters", "TestRegister", "Forms", "ObjectForm", "Ext", "Form.xml")
+    run = runner(script, ["-ObjectPath", register, "-FormName", "RecordForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: register record form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "InformationRegisters", "TestRegister", "Forms", "RecordForm", "Ext", "Form.xml")
     names = [a.get("name") for a in ElementTree.parse(form).getroot().iter()
              if a.tag.rsplit("}", 1)[-1] == "Attribute"]
-    assert_equal([RECORD_NAME], names, f"{label}: register object-form main attribute")
+    assert_equal([RECORD_NAME], names, f"{label}: register record-form main attribute")
+    assert_true("<DefaultRecordForm>InformationRegister.TestRegister.Form.RecordForm</DefaultRecordForm>"
+                in file_facts(register)["text"], f"{label}: DefaultRecordForm was not set")
+    before = snapshot_tree(directory)
+    run = runner(script, ["-ObjectPath", register, "-FormName", "ObjectForm", "-Purpose", "Object"], directory)
+    assert_true(run["exit_code"] != 0, f"{label}: -Purpose Object was accepted for a register")
+    assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused -Purpose Object")
 
 
-@case("form-add: a non-identifier -FormName is refused, a register's object form uses Запись")
+@case("form-add: a non-identifier -FormName is refused, a register's record form uses Запись")
 def _(work):
     assert_form_add_name_and_record(FORM_ADD_PY, run_python_tool, work, "py")
 
@@ -2139,6 +2147,236 @@ def _(work):
       needs_powershell=True)
 def _(work):
     assert_form_add_name_and_record(FORM_ADD_PS1, run_powershell_tool, work, "ps")
+
+
+# ---------------------------------------------------------------- upstream sync 2026-11-01 (2e75b0f)
+#
+# Regressions for the upstream fixes the sync brought in, each run through both
+# runtimes: enum values in the platform spelling (7c1a3318, 14f1126b, afd863a4,
+# 24429b46), the platform child order of buttons and commands (bd0081c2), the
+# form kinds of a document journal / accumulation register (45353afc, 53fc16d2)
+# and the full-reference scan of remove-form (93d9511a) under the local
+# -CleanReferences switch.
+
+ENUM_ORDER_DSL = {
+    "title": "T",
+    "elements": [
+        {"input": "Field", "path": "Value", "horizontalAlign": "right"},
+        {"table": "Rows", "path": "Data", "selectionMode": "single", "columns": []},
+        {"button": "Run", "command": "Run", "representation": "textPicture", "title": "Run",
+         "picture": "StdPicture.Refresh", "defaultButton": True},
+    ],
+    "attributes": [{"name": "Value", "type": "string"},
+                   {"name": "Data", "type": "ValueTable", "columns": []}],
+    "commands": [{"name": "Run", "action": "RunHandler", "representation": "PictureAndText",
+                  "picture": "StdPicture.Refresh", "shortcut": "F5", "title": "Run"}],
+}
+
+# Platform order of the children the DSL above produces (the corpus order upstream
+# encodes in childTagOrder); a different order is refused with an XDTO exception.
+BUTTON_ORDER = ["Representation", "DefaultButton", "CommandName", "Picture", "Title"]
+COMMAND_ORDER = ["Title", "Shortcut", "Picture", "Action", "Representation"]
+
+
+def _local(el):
+    return el.tag.rsplit("}", 1)[-1]
+
+
+def _child_order(node, wanted):
+    return [_local(c) for c in node if _local(c) in wanted]
+
+
+def assert_enum_and_order(script, work, label):
+    runner = run_python_tool if script.endswith(".py") else run_powershell_tool
+    directory = os.path.join(work, "enum-order-" + label)
+    os.makedirs(directory, exist_ok=True)
+    source = os.path.join(directory, "in.json")
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump(ENUM_ORDER_DSL, handle, ensure_ascii=False)
+    out = os.path.join(directory, "ok", "Form.xml")
+    run = runner(script, ["-JsonPath", source, "-OutputPath", out], directory)
+    assert_equal(0, run["exit_code"], f"{label}: compile exit code (stderr: {run['stderr'][-400:]})")
+    root = ElementTree.parse(out).getroot()
+    by = {(_local(el), el.get("name")): el for el in root.iter() if el.get("name")}
+
+    def child_text(key, tag):
+        found = [c for c in by[key] if _local(c) == tag]
+        return (found[0].text or "").strip() if found else None
+
+    assert_equal("Right", child_text(("InputField", "Field"), "HorizontalAlign"), f"{label}: input HorizontalAlign")
+    assert_equal("SingleRow", child_text(("Table", "Rows"), "SelectionMode"), f"{label}: table SelectionMode")
+    assert_equal("PictureAndText", child_text(("Button", "Run"), "Representation"), f"{label}: button Representation")
+    assert_equal("TextPicture", child_text(("Command", "Run"), "Representation"), f"{label}: command Representation")
+    assert_equal(BUTTON_ORDER, _child_order(by[("Button", "Run")], BUTTON_ORDER), f"{label}: button child order")
+    assert_equal(COMMAND_ORDER, _child_order(by[("Command", "Run")], COMMAND_ORDER), f"{label}: command child order")
+
+    bad = json.loads(json.dumps(ENUM_ORDER_DSL))
+    bad["elements"][1]["selectionMode"] = "bogus"
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump(bad, handle, ensure_ascii=False)
+    refused = os.path.join(directory, "bad", "Form.xml")
+    run = runner(script, ["-JsonPath", source, "-OutputPath", refused], directory)
+    assert_true(run["exit_code"] != 0, f"{label}: selectionMode=bogus was accepted")
+    assert_true(not os.path.exists(refused), f"{label}: refused but still wrote {refused}")
+
+
+@case("form-compile: enum values in the platform spelling, button / command children in platform order")
+def _(work):
+    assert_enum_and_order(FORM_COMPILE_PY, work, "py")
+
+
+@case("form-compile enum / order parity: PowerShell writes the same values and order",
+      needs_powershell=True)
+def _(work):
+    assert_enum_and_order(FORM_COMPILE_PS1, work, "ps")
+
+
+MINIMAL_JOURNAL = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"'
+    ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17">\n'
+    '\t<DocumentJournal uuid="3b1e2d4c-5a6f-4b7e-8c9d-0e1f2a3b4c5d">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>TestJournal</Name>\n'
+    '\t\t\t<DefaultForm/>\n'
+    '\t\t\t<AuxiliaryForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</DocumentJournal>\n'
+    '</MetaDataObject>\n'
+)
+
+MINIMAL_ACCUMULATION = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"'
+    ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17">\n'
+    '\t<AccumulationRegister uuid="4c2f3e5d-6b7a-4c8f-9d0e-1f2a3b4c5d6e">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>TestAccum</Name>\n'
+    '\t\t\t<DefaultListForm/>\n'
+    '\t\t\t<AuxiliaryListForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</AccumulationRegister>\n'
+    '</MetaDataObject>\n'
+)
+
+
+def _main_attribute(form_xml):
+    root = ElementTree.parse(form_xml).getroot()
+    for attr in root.iter():
+        if _local(attr) != "Attribute":
+            continue
+        if any(_local(c) == "MainAttribute" and (c.text or "").strip() == "true" for c in attr):
+            types = [(t.text or "").strip() for t in attr.iter() if _local(t) == "Type" and len(t) == 0]
+            main_table = [(t.text or "").strip() for t in attr.iter() if _local(t) == "MainTable"]
+            return attr.get("name"), types, main_table
+    return None, [], []
+
+
+def assert_journal_and_accumulation(script, runner, work, label):
+    directory = os.path.join(work, "form-kinds-" + label)
+    copy_fixture("config-dump", directory)
+    journal = os.path.join(directory, "DocumentJournals", "TestJournal.xml")
+    write_text(journal, MINIMAL_JOURNAL)
+    run = runner(script, ["-ObjectPath", journal, "-FormName", "ListForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: journal form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "DocumentJournals", "TestJournal", "Forms", "ListForm", "Ext", "Form.xml")
+    name, types, main_table = _main_attribute(form)
+    assert_equal("Список", name, f"{label}: journal list-form main attribute")
+    assert_equal(["cfg:DynamicList"], types, f"{label}: journal main attribute type")
+    assert_equal(["DocumentJournal.TestJournal"], main_table, f"{label}: journal MainTable")
+    text = file_facts(journal)["text"]
+    assert_true("<DefaultForm>DocumentJournal.TestJournal.Form.ListForm</DefaultForm>" in text,
+                f"{label}: the journal's DefaultForm slot was not set")
+    assert_true("cfg:." not in file_facts(form)["text"], f"{label}: an object-less cfg: type was written")
+
+    accum = os.path.join(directory, "AccumulationRegisters", "TestAccum.xml")
+    write_text(accum, MINIMAL_ACCUMULATION)
+    run = runner(script, ["-ObjectPath", accum, "-FormName", "SetForm", "-Purpose", "RecordSet"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: record-set form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "AccumulationRegisters", "TestAccum", "Forms", "SetForm", "Ext", "Form.xml")
+    name, types, _ = _main_attribute(form)
+    assert_equal("Набор", name, f"{label}: record-set main attribute")
+    assert_equal(["cfg:AccumulationRegisterRecordSet.TestAccum"], types, f"{label}: record-set main attribute type")
+    text = file_facts(accum)["text"]
+    assert_true("<DefaultListForm/>" in text, f"{label}: a record-set form took the list-form slot")
+    assert_true("<Form>SetForm</Form>" in text, f"{label}: the record-set form is not registered")
+
+
+@case("form-add: a document journal gets its list form, an accumulation register a record-set form")
+def _(work):
+    assert_journal_and_accumulation(FORM_ADD_PY, run_python_tool, work, "py")
+
+
+@case("form-add form-kind parity: PowerShell writes the same journal and record-set forms",
+      needs_powershell=True)
+def _(work):
+    assert_journal_and_accumulation(FORM_ADD_PS1, run_powershell_tool, work, "ps")
+
+
+FOREIGN_CATALOG = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">\n'
+    '\t<Catalog uuid="5d3a4f6e-7c8b-4d9a-8e1f-2a3b4c5d6e7f">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>Other</Name>\n'
+    '\t\t\t<DefaultListForm>CommonForm.ListForm</DefaultListForm>\n'
+    '\t\t\t<DefaultChoiceForm>Catalog.TestCatalog.Form.ListForm</DefaultChoiceForm>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</Catalog>\n'
+    '</MetaDataObject>\n'
+)
+
+
+def assert_remove_form_foreign_references(script, runner, work, label):
+    directory = os.path.join(work, "foreign-" + label)
+    copy_fixture("config-dump", directory)
+    catalog = os.path.join(directory, "Catalogs", "TestCatalog.xml")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", catalog, "-FormName", "ListForm", "-Purpose", "List"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add (stderr: {run['stderr'][-300:]})")
+    # A same-named slot of the object itself that names ANOTHER form must survive:
+    # the old tail match on "Form.<Name>" blanked it.
+    edit_text(catalog, "<AuxiliaryListForm/>",
+              "<AuxiliaryListForm>DocumentJournal.J.Form.ListForm</AuxiliaryListForm>")
+    other = os.path.join(directory, "Catalogs", "Other.xml")
+    write_text(other, FOREIGN_CATALOG)
+    args = ["-ObjectName", "TestCatalog", "-FormName", "ListForm", "-SrcDir", os.path.join(directory, "Catalogs")]
+
+    dry = runner(script, args + ["-DryRun"], directory)
+    assert_equal(0, dry["exit_code"], f"{label}: -DryRun exit code (stderr: {dry['stderr'][-300:]})")
+    assert_true("Other.xml" in dry["stdout"] and "DefaultChoiceForm" in dry["stdout"],
+                f"{label}: the plan does not name the foreign reference:\n{dry['stdout']}")
+
+    before = snapshot_tree(directory)
+    blocked = runner(script, args + ["-Force"], directory)
+    assert_equal(2, blocked["exit_code"], f"{label}: -Force without -CleanReferences (stderr: {blocked['stderr'][-300:]})")
+    assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused removal")
+
+    run = runner(script, args + ["-Force", "-CleanReferences"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: -Force -CleanReferences (stderr: {run['stderr'][-300:]})")
+    other_text = file_facts(other)["text"]
+    assert_true("Catalog.TestCatalog.Form.ListForm" not in other_text, f"{label}: the foreign reference survived")
+    assert_true("<DefaultChoiceForm/>" in other_text, f"{label}: the foreign slot was not emptied as <Tag/>")
+    assert_true("<DefaultListForm>CommonForm.ListForm</DefaultListForm>" in other_text,
+                f"{label}: a CommonForm reference of the same name was blanked")
+    own = file_facts(catalog)["text"]
+    assert_true("<DefaultListForm/>" in own, f"{label}: the object's own slot was not cleared")
+    assert_true("<AuxiliaryListForm>DocumentJournal.J.Form.ListForm</AuxiliaryListForm>" in own,
+                f"{label}: another object's form of the same name was blanked")
+    assert_no_leftovers(directory, f"{label}: foreign-reference removal")
+
+
+@case("remove-form: references from other files block the removal; -CleanReferences clears exactly them")
+def _(work):
+    assert_remove_form_foreign_references(REMOVE_FORM_PY, run_python_tool, work, "py")
+
+
+@case("remove-form foreign-reference parity: PowerShell blocks and cleans the same references",
+      needs_powershell=True)
+def _(work):
+    assert_remove_form_foreign_references(REMOVE_FORM_PS1, run_powershell_tool, work, "ps")
 
 
 CLASH_ATTRIBUTE = (
@@ -2309,12 +2547,19 @@ def _(work):
 
 @case("docs: the skill documents the Python runtime for the shipped commands only")
 def _(work):
-    path = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage", "SKILL.md")
-    with open(path, "rb") as handle:
-        text = handle.read().decode("utf-8-sig")
+    # SKILL.md keeps only the routing line (709ecac moved the command table out of the
+    # always-loaded context); the table itself lives in docs/runtime-selection.md, which
+    # SKILL.md must link. Both texts together are what the agent reads.
+    skill_dir = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage")
+    with open(os.path.join(skill_dir, "SKILL.md"), "rb") as handle:
+        skill = handle.read().decode("utf-8-sig")
+    assert_true("docs/runtime-selection.md" in skill,
+                "SKILL.md no longer routes to docs/runtime-selection.md")
+    with open(os.path.join(skill_dir, "docs", "runtime-selection.md"), "rb") as handle:
+        text = skill + chr(10) + handle.read().decode("utf-8-sig")
     for stem in PORTED_COMMANDS:
         assert_true(f"{stem}.py" in text,
-                    f"SKILL.md does not name the ported entry point {stem}.py")
+                    f"neither SKILL.md nor docs/runtime-selection.md names the ported entry point {stem}.py")
     # The honest half: a tool with no Python peer must not be advertised with one.
     unported = sorted(
         entry for entry in os.listdir(TOOLS_DIR)
@@ -2329,7 +2574,7 @@ def _(work):
                 continue
             promised = name[:-4] + ".py"
             assert_true(promised not in text,
-                        f"SKILL.md promises {promised}, which does not exist under {entry}")
+                        f"the skill docs promise {promised}, which does not exist under {entry}")
 
 
 @case("packaging: install ships Python ports and optional workflows, tracks them, and they run",

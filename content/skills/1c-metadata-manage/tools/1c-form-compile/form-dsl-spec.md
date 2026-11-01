@@ -1,6 +1,6 @@
 # Form DSL Specification
 
-> Vendored verbatim from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (MIT), Russian original, upstream sync `2026-07-30`. Upstream slash-command names (`/form-compile`, `/meta-compile`, `/skd-compile`, `/xdto-*`, …) map to this skill's tools under `tools/1c-form-compile/scripts/` — invocation and paths are documented in the corresponding `docs/*-manage.md`.
+> Vendored verbatim from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (MIT), Russian original, upstream sync `2026-11-01` (`2e75b0f`). Upstream slash-command names (`/form-compile`, `/meta-compile`, `/skd-compile`, `/xdto-*`, …) map to this skill's tools under `tools/1c-form-compile/scripts/` — invocation and paths are documented in the corresponding `docs/*-manage.md`.
 
 Спецификация JSON-формата для `/form-compile` — компактного описания управляемых форм 1С:Предприятия 8.3.
 
@@ -57,8 +57,8 @@
 | `commandBarLocation` | `<CommandBarLocation>` | `Top`, `Bottom`, `None` |
 | `saveDataInSettings` | `<SaveDataInSettings>` | `UseList`, `Use`, `DontUse` |
 | `autoSaveDataInSettings` | `<AutoSaveDataInSettings>` | `Use`, `DontUse` |
-| `autoTime` | `<AutoTime>` | `CurrentOrLast`, `DontUse`, `CurrentOrFirst`, `First`, `Last` (перечисление `РежимАвтоВремя`). Другое значение — отказ компиляции |
-| `usePostingMode` | `<UsePostingMode>` | `Auto`, `Regular`, `RealTime` (перечисление `ИспользованиеРежимаПроведения`). Другое значение — отказ компиляции |
+| `autoTime` | `<AutoTime>` | `CurrentOrLast`, `DontUse`, `CurrentOrFirst`, `First`, `Last` (перечисление `РежимАвтоВремя`). Регистр исправляется молча, другое значение — отказ компиляции |
+| `usePostingMode` | `<UsePostingMode>` | `Auto`, `Regular`, `RealTime`, `Ask` (перечисление `ИспользованиеРежимаПроведения`). Регистр исправляется молча, другое значение — отказ компиляции |
 | `repostOnWrite` | `<RepostOnWrite>` | `true` / `false` |
 | `autoURL` | `<AutoURL>` | `true` / `false` |
 | `enabled` | `<Enabled>` | `true` / `false` — доступность всей формы (редкое; форма-уровень) |
@@ -105,23 +105,29 @@
 
 Ключ — имя события, значение — имя процедуры-обработчика. **Тот же формат `events` используется и на элементах** (§4.1) — единый способ описания событий во всём DSL.
 
-### Доступные события
+Значение — как у события элемента (§4.2): имя, `null` (имя по конвенции типовых — у события формы это сам
+русский вариант имени: `OnCreateAtServer` → `ПриСозданииНаСервере`), объект `{ handler, callType }` или массив
+таких объектов (форма расширения). У события, для которого конвенции нет, `null` — ошибка: имя нужно указать.
 
-| Событие | Описание |
-|---------|----------|
-| `OnCreateAtServer` | Создание формы на сервере |
-| `OnOpen` | Открытие формы |
-| `BeforeClose` | Перед закрытием |
-| `OnClose` | При закрытии |
-| `BeforeWrite` | Перед записью |
-| `BeforeWriteAtServer` | Перед записью на сервере |
-| `OnWriteAtServer` | При записи на сервере |
-| `AfterWriteAtServer` | После записи на сервере |
-| `AfterWrite` | После записи |
-| `OnReadAtServer` | При чтении объекта |
-| `NotificationProcessing` | Обработка оповещений |
-| `ChoiceProcessing` | Обработка выбора |
-| `FillCheckProcessingAtServer` | Проверка заполнения |
+### Частые события
+
+| Событие | Обработчик по конвенции |
+|---------|-------------------------|
+| `OnCreateAtServer` | `ПриСозданииНаСервере` |
+| `OnOpen` | `ПриОткрытии` |
+| `NotificationProcessing` | `ОбработкаОповещения` |
+| `BeforeClose` | `ПередЗакрытием` |
+| `OnClose` | `ПриЗакрытии` |
+| `OnReadAtServer` | `ПриЧтенииНаСервере` |
+| `BeforeWrite` | `ПередЗаписью` |
+| `BeforeWriteAtServer` | `ПередЗаписьюНаСервере` |
+| `OnWriteAtServer` | `ПриЗаписиНаСервере` |
+| `AfterWriteAtServer` | `ПослеЗаписиНаСервере` |
+| `AfterWrite` | `ПослеЗаписи` |
+| `FillCheckProcessingAtServer` | `ОбработкаПроверкиЗаполненияНаСервере` |
+| `ChoiceProcessing` | `ОбработкаВыбора` |
+| `OnLoadDataFromSettingsAtServer` | `ПриЗагрузкеДанныхИзНастроекНаСервере` |
+| `URLProcessing` | `ОбработкаНавигационнойСсылки` |
 
 ---
 
@@ -136,8 +142,8 @@
 | `name` | string | Имя элемента (по умолчанию — из значения ключа типа) |
 | `title` | string/object | Заголовок. **Нет ключа** → авто-вывод из имени (для page/popup/label и непривязанных полей/кнопок). **`""`** → подавить (заголовок не выводится). Строка → ru. Объект `{ "ru": "…", "en": "…" }` → мультиязычный (по `<v8:item>` на язык). Так же `tooltip`/`inputHint`/`title` команд/реквизитов/колонок |
 | `titleDataPath` | string | Путь данных динамического заголовка (`<TitleDataPath>`) — у Page/UsualGroup (напр. `Объект.Товары.RowsCount` в заголовке страницы). Парный к `footerDataPath` (путь данных подвала поля) |
-| `hidden` | bool | `true` → `<Visible>false</Visible>` |
-| `disabled` | bool | `true` → `<Enabled>false</Enabled>` |
+| `visible` | bool | `false` → `<Visible>false</Visible>`. Синоним `hidden: true` |
+| `enabled` | bool | `false` → `<Enabled>false</Enabled>`. Синоним `disabled: true` |
 | `readOnly` | bool | `true` → `<ReadOnly>true</ReadOnly>` |
 | `userVisible` | bool/object | Пользовательская видимость по ролям (`<UserVisible>`). См. §4.1c. Отсутствие = виден всем |
 | `commandBar` | object/array | Командная панель элемента (companion `<AutoCommandBar>`) с контентом. См. §4.1d |
@@ -162,7 +168,7 @@
 
 #### Русские синонимы ключей-свойств (прощающий ввод)
 
-Скалярные свойства элементов можно писать русскими именами 1С (как в Конфигураторе) — компилятор молча нормализует их в канонические англ. ключи. Сопоставление **регистро- и пробело-независимое** (`Пометка` = `пометка`, `Быстрый выбор` = `быстрыйВыбор`). Англ. ключ работает всегда; если заданы оба — побеждает англ. Поддержаны (в т.ч.): `Пометка`→`checked`, `Заголовок`→`title`, `Ширина`→`width`, `Высота`→`height`, `КнопкаВыбора`→`choiceButton`, `КнопкаОчистки`→`clearButton`, `КнопкаВыпадающегоСписка`→`dropListButton`, `КнопкаСписковогоВыбора`→`choiceListButton`, `БыстрыйВыбор`→`quickChoice`, `ФормаВыбора`→`choiceForm`, `ИсторияВыбораПриВводе`→`choiceHistoryOnInput`, `ВыборГруппИЭлементов`→`choiceFoldersAndItems`, `ФиксацияВТаблице`→`fixingInTable`, `ПутьКДаннымПодвала`→`footerDataPath`, `МногострочныйРежим`→`multiLine`, `РежимПароля`→`passwordMode`, `РасположениеЗаголовка`→`titleLocation`. (`Видимость`/`Доступность` НЕ синонимы — у нас `hidden`/`disabled` с обратной полярностью.) Оформление имеет свой набор рус. синонимов (§4.1e).
+Скалярные свойства элементов можно писать русскими именами 1С (как в Конфигураторе) — компилятор молча нормализует их в канонические англ. ключи. Сопоставление **регистро- и пробело-независимое** (`Пометка` = `пометка`, `Быстрый выбор` = `быстрыйВыбор`). Англ. ключ работает всегда; если заданы оба — побеждает англ. Поддержаны (в т.ч.): `Пометка`→`checked`, `Заголовок`→`title`, `Ширина`→`width`, `Высота`→`height`, `КнопкаВыбора`→`choiceButton`, `КнопкаОчистки`→`clearButton`, `КнопкаВыпадающегоСписка`→`dropListButton`, `КнопкаСписковогоВыбора`→`choiceListButton`, `БыстрыйВыбор`→`quickChoice`, `ФормаВыбора`→`choiceForm`, `ИсторияВыбораПриВводе`→`choiceHistoryOnInput`, `ВыборГруппИЭлементов`→`choiceFoldersAndItems`, `ФиксацияВТаблице`→`fixingInTable`, `ПутьКДаннымПодвала`→`footerDataPath`, `МногострочныйРежим`→`multiLine`, `РежимПароля`→`passwordMode`, `РасположениеЗаголовка`→`titleLocation`. (`Видимость`/`Доступность` — не синонимы.) Оформление имеет свой набор рус. синонимов (§4.1e).
 
 ### 4.1c. Доступ по ролям (`userVisible` / `view` / `edit` / `use`)
 
@@ -332,29 +338,50 @@ companion-панели с собственным контентом. Оба не
   "events": { "OnChange": null } }   // → обработчик КонтрагентПриИзменении
 ```
 
-Суффиксы для авто-имени:
+Суффиксы — по конвенции типовых конфигураций и зависят от вида элемента (`Selection` таблицы → `Выбор`,
+`Tuning` поля ввода → `Регулирование`). Событие, для которого конвенции нет, получает имя
+`<ИмяЭлемента><ИмяСобытия>`. Частые:
 
-| Событие | Суффикс |
-|---------|---------|
-| `OnChange` | `ПриИзменении` |
-| `StartChoice` | `НачалоВыбора` |
-| `ChoiceProcessing` | `ОбработкаВыбора` |
-| `AutoComplete` | `АвтоПодбор` |
-| `Clearing` | `Очистка` |
-| `Opening` | `Открытие` |
-| `Click` | `Нажатие` |
-| `OnActivateRow` | `ПриАктивизацииСтроки` |
-| `BeforeAddRow` | `ПередНачаломДобавления` |
-| `BeforeDeleteRow` | `ПередУдалением` |
-| `BeforeRowChange` | `ПередНачаломИзменения` |
-| `OnStartEdit` | `ПриНачалеРедактирования` |
-| `OnEditEnd` | `ПриОкончанииРедактирования` |
-| `Selection` | `Выбор` |
-| `DragEnd` | `ОкончаниеПеретаскивания` |
-| `OnCurrentPageChange` | `ПриСменеСтраницы` |
-| `TextEditEnd` | `ОкончаниеВводаТекста` |
-| `Tuning` | `Регулирование` |
-| `StartListChoice` | `НачалоВыбораИзСписка` |
+| Элемент | Событие → суффикс |
+|---------|-------------------|
+| поле ввода | `OnChange` → `ПриИзменении`, `StartChoice` → `НачалоВыбора`, `ChoiceProcessing` → `ОбработкаВыбора`, `Clearing` → `Очистка`, `AutoComplete` → `АвтоПодбор`, `TextEditEnd` → `ОкончаниеВводаТекста`, `Opening` → `Открытие`, `Tuning` → `Регулирование`, `Creating` → `Создание` |
+| таблица | `Selection` → `Выбор`, `OnActivateRow` → `ПриАктивизацииСтроки`, `BeforeAddRow` → `ПередНачаломДобавления`, `BeforeDeleteRow` → `ПередУдалением`, `AfterDeleteRow` → `ПослеУдаления`, `OnStartEdit` → `ПриНачалеРедактирования`, `OnEditEnd` → `ПриОкончанииРедактирования`, `BeforeRowChange` → `ПередНачаломИзменения`, `OnChange` → `ПриИзменении`, `DragEnd` → `ОкончаниеПеретаскивания` |
+| надпись, картинка | `Click` → `Нажатие`, `URLProcessing` → `ОбработкаНавигационнойСсылки` |
+| страницы | `OnCurrentPageChange` → `ПриСменеСтраницы` |
+| табличный документ | `Selection` → `Выбор`, `OnActivate` → `ПриАктивизации`, `DetailProcessing` → `ОбработкаРасшифровки` |
+
+Событие сверяется с перечнем событий вида элемента. Предупреждение (`[WARN]`) выдаётся, если события у такого
+элемента нет (у кнопки и страницы событий нет вовсе), если оно появилось в более новой платформе, чем формат
+формы (`OnHover` таблицы и `Click` обычной группы — с 8.5), или если оно есть только у таблицы динамического
+списка (`OnGetDataAtServer`, `URLGetProcessing`, события пользовательских настроек). Такое событие
+платформа при загрузке отбрасывает.
+
+#### Заготовки обработчиков в модуле
+
+form-compile и form-edit дописывают в модуль формы (`<каталог Form.xml>/Form/Module.bsl`) процедуры для
+привязанных обработчиков — событий формы и элементов, `action` команд, — которых в модуле ещё нет (имя
+сравнивается без учёта регистра). Существующая процедура не меняется, даже если её сигнатура другая.
+
+- **Сигнатура**: директива и параметры — из каталога событий (по корпусу типовых); у команды — `&НаКлиенте`,
+  `(Команда)`. Тело — `// Вставить содержимое обработчика.`, как у Конфигуратора. Для события вне каталога
+  заготовка не создаётся.
+- **Область** (стандарт БСП):
+
+  | Привязка | Область |
+  |----------|---------|
+  | событие формы | `ОбработчикиСобытийФормы` |
+  | элемент вне таблицы | `ОбработчикиСобытийЭлементовШапкиФормы` |
+  | таблица и элементы внутри неё | `ОбработчикиСобытийЭлементовТаблицыФормы<ИмяТаблицы>` |
+  | команда | `ОбработчикиКомандФормы` |
+
+  Если в модуле есть общая `ОбработчикиСобытийЭлементовФормы`, а «шапки» нет, обработчики всех элементов идут
+  в неё. Нет нужной области — она создаётся по порядку: `ОписаниеПеременных`, `ОбработчикиСобытийФормы`,
+  «шапка», табличные, `ОбработчикиКомандФормы`, `ОбработчикиОповещений`, `СлужебныеПроцедурыИФункции`. В модуле
+  без областей процедуры дописываются в конец.
+- **Нет модуля**: создаётся из шаблона form-add (UTF-8 с BOM, CRLF), если Form.xml лежит в каталоге `Ext`;
+  иначе — предупреждение, заготовки не создаются.
+- **Вывод**: блок `Handlers (<путь к модулю>):` — по строке на процедуру в порядке модуля: `+` добавлена,
+  `=` уже была, обе с диапазоном строк; `?` — не добавлена, с причиной.
 
 > **Legacy-формат (принимается, но устарел).** Ранее события элемента задавались парой
 > `on` (массив имён событий) + `handlers` (переопределение имён): `{ "on": ["OnChange"], "handlers": { … } }`.
@@ -366,8 +393,9 @@ companion-панели с собственным контентом. Оба не
 >
 > Молчаливого выбора «одного из двух» нет — это отказ (exit `1`, файл не пишется):
 > `events` вместе с `on`/`handlers`; ключ в `handlers`, которого нет в `on`;
-> неизвестное имя события. Имя `OnEndEdit` — не событие платформы: нужное имя
-> `OnEditEnd`, автоимя обработчика — `ПриОкончанииРедактирования`.
+> имя события, которого нет ни у одного элемента в каталоге событий платформы (опечатка
+> вроде `OnEndEdit` вместо `OnEditEnd` или устаревшее `Drop`). Событие, которое есть у
+> других элементов, но не у этого, — только `[WARN]`, как в апстриме.
 
 ### 4.3. Типы элементов
 
@@ -385,7 +413,7 @@ companion-панели с собственным контентом. Оба не
 | `collapsedTitle` | string/object | Заголовок свёрнутого представления (`<CollapsedRepresentationTitle>`), мультиязычный текст |
 | `format` | string/object | Формат значения динамического заголовка (`<Format>`, мультиязычный) — парный к `titleDataPath` (доступен и у `page`). Напр. `{ "ru": "БЛ=; БИ=*", "en": "BF=; BT=*" }` для булева пути |
 | `children` | array | Вложенные элементы |
-| `showTitle` | bool | Показывать заголовок группы |
+| `showTitle` | bool | Показывать заголовок группы. Без ключа: у обычной группы показан, если задан `title` или `titleDataPath`, иначе скрыт (`<ShowTitle>false`); у `collapsible`/`popup` — показан (умолчание платформы, тег не пишется) |
 | `representation` | string | `none`, `normal`, `weak`, `strong` |
 | `currentRowUse` | string | Использование текущей строки группы (`<CurrentRowUse>`: `DontUse`/`Use`/…) — редкое |
 | `united` | bool | Объединение |
@@ -787,7 +815,7 @@ Pages поддерживает `pagesRepresentation`: `None`, `TabsOnTop`, `Tabs
 | `buttonGroup` | string | Имя элемента |
 | `title` | string/object | Заголовок группы |
 | `commandSource` | string | Источник команд группы (`<CommandSource>`): `Form`, `FormCommandPanelGlobalCommands`, `Item.<ИмяЭлемента>`. Также у `cmdBar` и `popup`. Эмитится «как есть» |
-| `representation` | string | `Auto`, `Picture`, `Text`, `PictureAndText` |
+| `representation` | string | `Auto`, `Usual`, `Compact` |
 | `children` | array | Кнопки (`button`) внутри группы |
 
 #### Спец-поля «документ/датчик»
@@ -1130,7 +1158,7 @@ Shorthand: `"Имя [Заголовок]: тип = Выражение #noField #
 | `modifiesSavedData` | bool | Команда изменяет сохраняемые данные (`<ModifiesSavedData>`); эмитится только `true` |
 | `shortcut` | string | Клавиатурное сочетание |
 | `picture` | string \| object | Ссылка на картинку (`StdPicture.Name`; `abs:X` → `<xr:Abs>`). Скаляр ИЛИ объект `{src, loadTransparent?, transparentPixel?}` (как у `button`, §«button») |
-| `representation` | string | `Auto`, `Picture`, `Text`, `PictureAndText` |
+| `representation` | string | `Auto`, `Picture`, `Text`, `TextPicture` (перечисление команды; у кнопки — `PictureAndText`) |
 
 ---
 
