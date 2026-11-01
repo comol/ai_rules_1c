@@ -16,6 +16,7 @@ Authoring test files and running a browser are separate operations. The skill ca
 - Use an authorized dev/test infobase with the current feature loaded. Resolve the main configuration / extension and source-to-target match through `content/rules/extension-workspace.md`. Missing runtime prerequisites leave execution unverified; useful local authoring may continue.
 - Interactive discovery uses `content/rules/ui-testing-tools.md` and `content/rules/web-client-driving.md`. A saved suite uses its verified runner and the applicable `TOOL_BROWSER` / driver policies. Do not use it to bypass an `off` or unavailable `required` provider. A reusable Playwright runner does not require replacing a project's interactive driver.
 - Read connection values from the project's `.dev.env` through an existing loader or explicit runtime environment mapping. Never copy URLs from another project or embed credentials / saved authentication state in a committed test.
+- A suite that brings up its own stand — contexts as roles, a reference `.dt` with a manifest and delta load, a `down` step that frees licences — follows [regression-stand.md](docs/regression-stand.md).
 
 ## Build the smallest useful suite
 

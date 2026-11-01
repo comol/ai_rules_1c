@@ -40,6 +40,10 @@ Then run the `/update1cbase` procedure (`content/commands/update1cbase.md` — s
 
 The retry loop (log-first, PID-scoped Configurator termination, fix-before-retry, 3 attempts) applies as written there. A `.dt` loaded in Step 1 already has its DB configuration in sync — the load in this step still runs, because the point of the command is to bring the base to the **git** state, which may be newer than the snapshot.
 
+**Delta from a manifest.** When the `.dt` of Step 1 has a manifest beside it (`<dt>.manifest.json`, `content/skills/1c-ui-regression/docs/regression-stand.md`), its `sourceCommit` is an ancestor of `HEAD` and the main source root has no uncommitted changes, the main pass may use `/update1cbase git` over `<sourceCommit>..HEAD` instead of `full`; any other case stays `full`. Extensions are still loaded in full afterwards — a configuration load can reset their binding.
+
+Extensions loaded from sources come up in safe mode, which silently disables their interception of object modules. When the checks that follow depend on it, set the properties per `content/rules/qa-testclient.md → Extensions under test: safe mode` and say so in the report.
+
 ## Step 3. Smoke check
 
 Mandatory: the three-signal verdict of the `/update1cbase` procedure for the last launch of every pass — `{RESULT_PATH}` = `0`, exit code `0`, and a log whose success phrases are classified before error stems (`content/rules/designer-batch-checks.md → The verdict is three signals`); a bare "contains `Ошибка`" test is not a verdict.

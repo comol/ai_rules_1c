@@ -49,6 +49,7 @@ Usage::
 
     python -B tools/tests/python-ports-regression.py
     python -B tools/tests/python-ports-regression.py --python-only
+    python -B tools/tests/python-ports-regression.py --strict
     python -B tools/tests/python-ports-regression.py --filter 'remove-form*'
     python -B tools/tests/python-ports-regression.py --keep-work-dir
 """
@@ -98,7 +99,24 @@ class CaseFailure(Exception):
 
 class CaseSkipped(Exception):
     """Raised when a case needs a runtime the machine does not have (e.g. a
-    PowerShell host on a bare Linux container). Reported, never fatal."""
+    PowerShell host on a bare Linux container). Reported, never fatal - except
+    under ``--strict`` for a missing PowerShell host, see below."""
+
+
+class PowerShellHostMissing(CaseSkipped):
+    """A case skipped because neither pwsh nor powershell.exe is on PATH.
+
+    Legitimate on the Linux job (which runs ``--python-only`` anyway); on the
+    Windows job it means the PowerShell parity and packaging gates silently did
+    not run, so ``--strict`` turns it into a failure."""
+
+
+POWERSHELL_HOST_MISSING = "no PowerShell host on PATH (pwsh / powershell.exe)"
+
+
+def is_powershell_host_skip(exc):
+    """Typed skip, or the message of a case that still raises the plain class."""
+    return isinstance(exc, PowerShellHostMissing) or str(exc).startswith("no PowerShell host")
 
 
 CASES: list[tuple[str, "callable", bool]] = []
@@ -219,7 +237,7 @@ def find_powershell_host():
 def run_powershell_tool(script, tool_args, work_dir):
     host = find_powershell_host()
     if not host:
-        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+        raise PowerShellHostMissing(POWERSHELL_HOST_MISSING)
     proc = subprocess.run(
         [host, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, *tool_args],
         cwd=work_dir,
@@ -1321,6 +1339,9 @@ def _(work):
     assert_true("windows-latest" in text, "the workflow lost its Windows PowerShell parity job")
     assert_true("--python-only" in text,
                 "the Linux job does not skip the PowerShell-bound cases (--python-only)")
+    assert_true('python-ports-regression.py" --strict' in text,
+                "the Windows job does not run the suite with --strict, so a missing "
+                "PowerShell host would skip the parity gates and still pass")
     assert_true("python -B" in text or "python3 -B" in text,
                 "the workflow runs Python without -B, so CI writes __pycache__ into the tree")
     assert_true("lxml" in text, "the workflow never installs the lxml dependency of the ports")
@@ -1346,7 +1367,7 @@ def _(work):
     that rots silently. Install into a clean project and check the real output."""
     host = find_powershell_host()
     if not host:
-        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+        raise PowerShellHostMissing(POWERSHELL_HOST_MISSING)
 
     project = os.path.join(work, "project")
     os.makedirs(project, exist_ok=True)
@@ -2472,7 +2493,7 @@ def _(work):
 def _(work):
     host = find_powershell_host()
     if not host:
-        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+        raise PowerShellHostMissing(POWERSHELL_HOST_MISSING)
     project = os.path.join(work, "project")
     os.makedirs(project, exist_ok=True)
     proc = subprocess.run(
@@ -2549,8 +2570,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--filter", default="*", help="Run only cases whose name matches this wildcard pattern.")
     parser.add_argument("--keep-work-dir", action="store_true", help="Do not delete the temp working directory.")
-    parser.add_argument("--python-only", action="store_true",
-                        help="Skip cases that need a PowerShell host (Linux CI job).")
+    host_mode = parser.add_mutually_exclusive_group()
+    host_mode.add_argument("--python-only", action="store_true",
+                           help="Skip cases that need a PowerShell host (Linux CI job).")
+    host_mode.add_argument("--strict", action="store_true",
+                           help="Fail a case that is skipped for a missing PowerShell host "
+                                "(Windows CI job: the parity gates must really run).")
     args = parser.parse_args()
 
     # Case names and failure messages carry Cyrillic 1C names; a redirected
@@ -2580,6 +2605,11 @@ def main():
             body(work)
             print(f"[PASS] {name}")
         except CaseSkipped as exc:
+            if args.strict and is_powershell_host_skip(exc):
+                failures.append(f"{name}: skipped under --strict: {exc}")
+                print(f"[FAIL] {name}")
+                print(f"       skipped under --strict: {exc}")
+                continue
             skipped.append(f"{name}: {exc}")
             print(f"[SKIP] {name} - {exc}")
         except Exception as exc:  # noqa: BLE001 - a case may fail in any way

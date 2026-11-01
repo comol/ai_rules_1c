@@ -42,6 +42,8 @@ A blocked run exits with code `1` and prints a diagnostic naming the state, the 
 
 `.dev.env` is looked up by walking up from the working directory, exactly like the rest of the toolkit. Upstream `cc-1c-skills` reads `editingAllowedCheck` from `.v8-project.json` instead; that path still works as a fallback for projects that have such a file, but **`.dev.env` wins** — it is this project's single source of truth ([db-manage.md](db-manage.md)).
 
+**Direct edits (optional hook, experimental).** The guard runs inside the tools, so an agent that writes the XML or a module of a locked object with its own `Edit` / `Write` is not stopped by it. In Claude Code with the `1c-rules` plugin, `SUPPORT_GUARD_HOOK=on` in `.dev.env` adds a `PreToolUse` hook that applies the same rule and the same `SUPPORT_GUARD` reaction to such edits of dump files (Node 18+; without Node it lets the edit through with a notice). It is off by default and absent on other hosts — there the tools' guard and this document are the protection. A refusal from the hook is answered exactly like one from a tool: an extension, or `support-edit`; never a write through another tool. Details: `plugins/1c-rules/README.md` in the ruleset source.
+
 ---
 
 ## Part 2: The Right Answer Is Usually an Extension

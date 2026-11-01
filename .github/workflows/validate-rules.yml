@@ -11,8 +11,10 @@ name: validate-rules
 # Jobs cover the content skills and both metadata-tool runtimes:
 #   content-skills (linux) — real DOCX output and offline Gemini model selection.
 #   validate (windows) — the ruleset validator, the PowerShell tool regressions,
-#     and the full Python suite including the PowerShell/Python parity and
-#     installer packaging gates, which need a PowerShell host.
+#     the full Python suite including the PowerShell/Python parity and
+#     installer packaging gates, which need a PowerShell host (--strict: a case
+#     skipped for a missing PowerShell host fails the job), and the opt-in
+#     support-guard hook of the Claude Code plugin against the PowerShell guard.
 #   python-ports (linux) — the safety contract of the Python ports on the
 #     platform they exist for. Runs with --python-only, so the PowerShell-bound
 #     cases are skipped rather than silently passing.
@@ -120,11 +122,21 @@ jobs:
       # -B keeps CI from writing __pycache__ into the checked-out tree.
       - name: Python port regressions (with PowerShell parity)
         shell: powershell
-        run: python -B "tools/tests/python-ports-regression.py"
+        run: python -B "tools/tests/python-ports-regression.py" --strict
 
       - name: Python web operation regressions (offline)
         shell: powershell
         run: python -B "tools/tests/web-python-regression.py"
+
+      # plugins/1c-rules/hooks: the Node hook and the PowerShell guard of the
+      # vendored tools must reach the same verdict on the same synthetic dumps.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Support-guard hook (Node hook vs PowerShell guard)
+        shell: powershell
+        run: .\tools\tests\support-guard-hook.ps1 -RequireNode
 
   python-ports:
     runs-on: ubuntu-latest

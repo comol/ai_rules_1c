@@ -73,7 +73,8 @@ Used by `/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test
 | `{MCP_QA_CLIENT_VISIBLE}` | Window of a 1C test client the agent starts for QA MCP checks | Defaulted | Empty / missing / invalid = visible; `false`, `0`, `no`, `off` = hidden desktop |
 | `{IBCMD_CONFIG}` | Path to standalone-server `config.yml` for `ibcmd`-based ops | Defaulted | Empty = fallback to Designer (per `.dev.env.example`) |
 | `{PLATFORM_ARGS}` / `{IBCMD_ARGS}` | Extra launch arguments (comma-separated) appended to every `1cv8.exe` / `ibcmd` run by the `1c-metadata-manage` `db-*` / `epf-*` tools | Defaulted | Empty = no extra arguments. **Never ask.** Arguments the tool owns itself (`/F`, `/S`, `/N`, `/P`, `/UpdateDBCfg`, `--db-path`, …) are rejected by the scripts — pass those as regular parameters |
-| `{SUPPORT_GUARD}` | Reaction of the vendor-support guard in the `1c-metadata-manage` mutating tools when the target is an object of a typical configuration "на замке": `deny` \| `warn` \| `off` | Defaulted | Empty = `deny` — the edit is refused with a diagnostic. **Never ask**; see the note below |
+| `{SUPPORT_GUARD}` | Reaction of the vendor-support guard (`1c-metadata-manage` tools, the hook below) to an object "на замке": `deny` \| `warn` \| `off` | Defaulted | Empty = `deny`. **Never ask**; see the note below |
+| `{SUPPORT_GUARD_HOOK}` | `on` = that guard also on direct `Edit` / `Write` of dump files (experimental Claude Code plugin hook) | Defaulted | Empty = off. **Never ask or set it yourself** |
 | `{NEW_OBJECT_POSITION}` | Where the creating tools of `1c-metadata-manage` put a new object inside `<ChildObjects>` of `Configuration.xml`: `end` \| `byName` | Defaulted | Empty = `end` — appended after the last object of the same kind, as Configurator does. **Never ask**; see the note below |
 | `{V8_XSD_PATH}` | Platform XSD dir for `skd-validate` (`content/skills/1c-metadata-manage/docs/skd-manage.md`); never commit it | Defaulted | Empty = `.v8-xsd` |
 | `{REPOSITORY_PATH}` | Configuration repository (хранилище) address — local path or `tcp://server/alias`. **Master switch of repository mode**: non-empty activates the `1c-repository-manage` skill and the lock-before-edit / commit-after-verify SDLC discipline | Defaulted (see the note below) | Empty = the configuration is not repository-bound; the skill and repository steps stay inactive. **Never ask up front**; ask once only when the user explicitly requests a repository operation and the value is missing |
@@ -99,15 +100,15 @@ A non-empty `REPOSITORY_PATH` is the project's explicit statement "we work with 
 
 #### `SUPPORT_GUARD` — editing a typical configuration on vendor support
 
-Every mutating tool of the `1c-metadata-manage` skill checks whether the target belongs to a configuration on vendor support (recognized by `Ext/ParentConfigurations.bin` next to `Configuration.xml`) and whether the object is locked. Direct edits of such objects silently break future vendor updates, so the default is a hard refusal — **a refusal is the correct outcome, not an obstacle to route around by hand-editing XML**.
+Every mutating tool of the `1c-metadata-manage` skill checks whether the target belongs to a configuration on vendor support (`Ext/ParentConfigurations.bin` next to `Configuration.xml`) and is locked. Editing such an object silently breaks vendor updates, so the default is a hard refusal — **a refusal is the correct outcome, not an obstacle to route around by hand-editing XML**.
 
 | Value | Meaning |
 |---|---|
-| `deny` (default / empty) | The edit is refused, exit code `1`, with the ready-made `support-edit` command for this exact case |
-| `warn` | Warning to stderr, the edit proceeds — for projects that knowingly work off-support |
+| `deny` (default / empty) | The edit is refused (exit code `1`) with the ready `support-edit` command |
+| `warn` | Warning to stderr, the edit proceeds (projects knowingly off-support) |
 | `off` | No check at all |
 
-The standard answer to a refusal is a change **in an extension** (`cfe-borrow` / `cfe-patch-method`); a deliberate support-state change is the skill's `support-edit` tool. Canon — `content/skills/1c-metadata-manage/docs/support-manage.md`.
+Answer a refusal with a change **in an extension** (`cfe-borrow` / `cfe-patch-method`); a deliberate support-state change is `support-edit`. Canon — `content/skills/1c-metadata-manage/docs/support-manage.md`.
 
 #### `NEW_OBJECT_POSITION` — placement of a new object in `Configuration.xml`
 
