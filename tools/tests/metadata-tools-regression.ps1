@@ -1470,6 +1470,101 @@ Register-Case 'support xml: skd-edit keeps compact tags without changing literal
     }
 }
 
+# ---------------------------------------------------------------- roles (role-compile / role-edit / role-validate)
+
+$RoleCompile  = Join-Path $ToolsDir '1c-role-compile\scripts\role-compile.ps1'
+$RoleEdit     = Join-Path $ToolsDir '1c-role-edit\scripts\role-edit.ps1'
+$RoleValidate = Join-Path $ToolsDir '1c-role-validate\scripts\role-validate.ps1'
+
+# A config-dump copy with one compiled role "RegrRole" (view rights on TestCatalog).
+function New-RoleFixture([string]$Work, [string]$ToolsRoot = $ToolsDir) {
+    $dump = Join-Path $Work 'dump'
+    Copy-Fixture 'config-dump' $dump "`n"
+    $json = Join-Path $Work 'role.json'
+    [IO.File]::WriteAllText($json, '{"name":"RegrRole","synonym":"Regression role","objects":["Catalog.TestCatalog: @view"]}', (New-Object Text.UTF8Encoding($false)))
+    $run = Invoke-Tool (Join-Path $ToolsRoot '1c-role-compile\scripts\role-compile.ps1') @('-JsonPath', $json, '-OutputDir', $dump) $Work
+    Assert-Equal 0 $run.ExitCode "role-compile (stderr: $($run.StdErr))"
+    return [pscustomobject]@{
+        Dump    = $dump
+        RoleXml = Join-Path $dump 'Roles\RegrRole.xml'
+        Rights  = Join-Path $dump 'Roles\RegrRole\Ext\Rights.xml'
+    }
+}
+
+function Get-RoleUuid([string]$RoleXml) {
+    $m = [regex]::Match((Get-FileFacts $RoleXml).Text, '<Role uuid="([0-9a-fA-F-]{36})"')
+    Assert-True $m.Success "no <Role uuid> in $RoleXml"
+    return $m.Groups[1].Value
+}
+
+Register-Case 'role-validate: a second positional argument is refused, not written over' {
+    param($Work)
+    $role = New-RoleFixture $Work
+    $hash = (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash
+    # Upstream before 83d63fac bound the second positional to -OutFile and replaced
+    # Roles/X.xml with the validation report.
+    $run = Invoke-Tool $RoleValidate @($role.Rights, $role.RoleXml) $Work
+    Assert-True ($run.ExitCode -ne 0) "two positional arguments were accepted (stdout: $($run.StdOut))"
+    Assert-Equal $hash (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash 'Roles/RegrRole.xml was overwritten'
+    Assert-True ((Get-FileFacts $role.RoleXml).Text -match '<Role uuid=') 'Roles/RegrRole.xml no longer holds the role'
+    $ok = Invoke-Tool $RoleValidate @($role.Rights) $Work
+    Assert-Equal 0 $ok.ExitCode "role-validate of the compiled role: $($ok.StdOut)"
+}
+
+Register-Case 'role-compile: rights on an Enum are refused before anything is written' {
+    param($Work)
+    $dump = Join-Path $Work 'dump'
+    Copy-Fixture 'config-dump' $dump "`n"
+    $before = Get-TreeSnapshot $dump
+    $json = Join-Path $Work 'bad-role.json'
+    [IO.File]::WriteAllText($json, '{"name":"RegrBadRole","objects":["Catalog.TestCatalog: @view","Enum.RegrProbe: Read"]}', (New-Object Text.UTF8Encoding($false)))
+    $run = Invoke-Tool $RoleCompile @('-JsonPath', $json, '-OutputDir', $dump) $Work
+    Assert-True ($run.ExitCode -ne 0) "rights on an Enum were compiled (stdout: $($run.StdOut))"
+    Assert-True ($run.StdErr -match 'Enum') "the refusal does not name the Enum entry: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $dump) 'refused role-compile'
+}
+
+Register-Case 'role-edit: add-rights keeps the role UUID and passes role-validate' {
+    param($Work)
+    $role = New-RoleFixture $Work
+    $uuid = Get-RoleUuid $role.RoleXml
+    $roleHash = (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash
+    $rightsBefore = Get-FileFacts $role.Rights
+    $run = Invoke-Tool $RoleEdit @('-RolePath', (Split-Path $role.Rights -Parent | Split-Path -Parent), '-Operation', 'add-rights', '-Value', 'Catalog.TestCatalog: Insert') $Work
+    Assert-Equal 0 $run.ExitCode "role-edit (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    Assert-True ($run.StdOut -match 'Running role-validate') 'role-validate did not run after the edit'
+    Assert-Equal $uuid (Get-RoleUuid $role.RoleXml) 'role UUID'
+    Assert-Equal $roleHash (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash 'Roles/RegrRole.xml changed on a rights-only edit'
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($role.Rights)
+    $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+    $ns.AddNamespace('r', 'http://v8.1c.ru/8.2/roles')
+    $obj = $xml.SelectSingleNode("/r:Rights/r:object[r:name='Catalog.TestCatalog']", $ns)
+    Assert-True ($null -ne $obj) 'Catalog.TestCatalog entry lost'
+    foreach ($right in @('Read', 'View', 'InputByString', 'Insert')) {
+        Assert-Equal 'true' $obj.SelectSingleNode("r:right[r:name='$right']/r:value", $ns).InnerText "right $right"
+    }
+    $after = Get-FileFacts $role.Rights
+    Assert-Equal $rightsBefore.Bom $after.Bom 'Rights.xml BOM changed'
+    Assert-Equal ($rightsBefore.Crlf -gt 0) ($after.Crlf -gt 0) 'Rights.xml EOL style changed'
+    Assert-Equal 0 $after.LooseClose 'role-edit wrote <Tag /> instead of <Tag/>'
+    $check = Invoke-Tool $RoleValidate @('-RightsPath', $role.Rights) $Work
+    Assert-Equal 0 $check.ExitCode "role-validate after role-edit: $($check.StdOut)"
+}
+
+Register-Case 'role-edit: a missing role-validate is refused before the edit is written' {
+    param($Work)
+    $broken = New-BrokenToolTree $Work 'no-role-validator' { param($Root)
+        Remove-Item -LiteralPath (Join-Path $Root '1c-role-validate\scripts\role-validate.ps1') -Force
+    }
+    $role = New-RoleFixture $Work $broken
+    $before = Get-TreeSnapshot $role.Dump
+    $run = Invoke-Tool (Join-Path $broken '1c-role-edit\scripts\role-edit.ps1') @('-RolePath', $role.Rights, '-Operation', 'add-rights', '-Value', 'Catalog.TestCatalog: Insert') $Work
+    Assert-True ($run.ExitCode -ne 0) "a missing validator exited 0 (stdout: $($run.StdOut))"
+    Assert-True ($run.StdErr -match 'role-validate') "the refusal does not name the missing validator: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $role.Dump) 'role-edit with no validator available'
+}
+
 # ---------------------------------------------------------------- Complete dump integrity (read-only)
 
 function Write-DumpTestXml([string]$Path, [string]$Body) {
@@ -1609,6 +1704,120 @@ Register-Case 'dump-validate: missing composition, invalid metadata root and uns
     Assert-DumpFinding $result 'composition-missing'
     Assert-DumpFinding $result 'metadata-root-invalid' 'Language.Test'
     Assert-DumpFinding $result 'dump-format-unsupported'
+}
+
+# ---------------------------------------------------------------- SKD: XSD order, default variant, XSD directory
+
+$SkdCompile  = Join-Path $ToolsDir '1c-skd-compile\scripts\skd-compile.ps1'
+$SkdEdit     = Join-Path $ToolsDir '1c-skd-edit\scripts\skd-edit.ps1'
+$SkdValidate = Join-Path $ToolsDir '1c-skd-validate\scripts\skd-validate.ps1'
+$XsdFetch    = Join-Path $ToolsDir '1c-v8-xsd-fetch\scripts\v8-xsd-fetch.ps1'
+
+# Compiles a DCS definition (JSON text, ASCII with \u escapes) into $Work\<Tag>\Template.xml.
+function Invoke-SkdCompile([string]$Work, [string]$Tag, [string]$Json) {
+    $dir = Join-Path $Work $Tag
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $def = Join-Path $dir 'def.json'
+    [IO.File]::WriteAllText($def, $Json, (New-Object Text.UTF8Encoding($false)))
+    $out = Join-Path $dir 'Template.xml'
+    $run = Invoke-Tool $SkdCompile @('-DefinitionFile', $def, '-OutputPath', $out) $dir
+    Assert-Equal 0 $run.ExitCode "skd-compile: $($run.StdErr)"
+    return [pscustomobject]@{ Run = $run; Path = $out }
+}
+
+function Get-ChildElementNames($Node) {
+    return @($Node.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.LocalName })
+}
+
+$script:SkdDefinition = '{"dataSets":[{"name":"DS","query":"SELECT 1 AS A, 2 AS B","fields":["A: decimal(10,0)","B: decimal(10,0)"]}],' +
+    '"calculatedFields":[{"dataPath":"Total","expression":"A * 2","title":"Total","type":"decimal(15,2)","restrict":["noGroup","noField"],' +
+    '"appearance":{"\u0424\u043e\u0440\u043c\u0430\u0442":"\u0427\u0414\u0426=2"}}],"parameters":["P: decimal(10,0) = 1"],' +
+    '"settingsVariants":[{"name":"V","settings":{"selection":["A","Total"],"filter":["A = 1 @user"],"dataParameters":["P = 1 @user"],"structure":"details"}}]}'
+
+Register-Case 'skd-compile: a calculated field with type and format is emitted in XSD order' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'calc' $script:SkdDefinition
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($c.Path)
+    $cf = $xml.SelectSingleNode("//*[local-name()='calculatedField']")
+    Assert-True ($null -ne $cf) 'no calculatedField emitted'
+    # XSD CalculatedField: dataPath, expression, title, useRestriction, ..., appearance, availableValue, valueType.
+    Assert-Equal 'dataPath|expression|title|useRestriction|appearance|valueType' ((Get-ChildElementNames $cf) -join '|') 'calculatedField child order'
+    $flags = $cf.SelectSingleNode("*[local-name()='useRestriction']")
+    Assert-Equal 'field|group' ((Get-ChildElementNames $flags) -join '|') 'useRestriction flag order'
+}
+
+Register-Case 'skd-compile: without settingsVariants the default variant selects the declared fields' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'default' '{"dataSets":[{"name":"DS","query":"SELECT 1 AS A, 2 AS B","fields":["A","B #noField"]}]}'
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($c.Path)
+    $settings = $xml.SelectSingleNode("//*[local-name()='settingsVariant']/*[local-name()='settings']")
+    Assert-True ($null -ne $settings) 'no default variant'
+    $fields = @($settings.SelectNodes("*[local-name()='selection']/*[local-name()='item']/*[local-name()='field']") | ForEach-Object { $_.InnerText })
+    Assert-Equal 'A' ($fields -join '|') 'default selection (B is #noField)'
+    $group = $settings.SelectSingleNode("*[local-name()='item']")
+    Assert-True ($null -ne $group -and $group.GetAttribute('type', 'http://www.w3.org/2001/XMLSchema-instance') -eq 'dcsset:StructureItemGroup') 'default structure is not a detail-records group'
+    Assert-True ($null -eq $group.SelectSingleNode("*[local-name()='groupItems']")) 'detail records must have no groupItems'
+    Assert-True ($c.Run.StdOut -match '\[INFO\]') "no [INFO] hint about the built variant: $($c.Run.StdOut)"
+}
+
+Register-Case 'skd-edit: modify-filter and modify-dataParameter keep XSD order and replace every list value' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'edit' $script:SkdDefinition
+    foreach ($step in @(@('modify-filter', 'A = 2 @off'), @('modify-dataParameter', 'P = 5, 6, 7 @off'))) {
+        $run = Invoke-Tool $SkdEdit @('-TemplatePath', $c.Path, '-Operation', $step[0], '-Value', $step[1]) $work
+        Assert-Equal 0 $run.ExitCode "skd-edit $($step[0]): $($run.StdErr)"
+    }
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($c.Path)
+    $filter = $xml.SelectSingleNode("//*[local-name()='filter']/*[local-name()='item']")
+    Assert-Equal 'use|left|comparisonType|right|userSettingID' ((Get-ChildElementNames $filter) -join '|') 'filter item order'
+    $dp = $xml.SelectSingleNode("//*[local-name()='dataParameters']/*[local-name()='item']")
+    Assert-Equal 'use|parameter|value|value|value|userSettingID' ((Get-ChildElementNames $dp) -join '|') 'data parameter order with a list'
+    $types = @($dp.SelectNodes("*[local-name()='value']") | ForEach-Object { $_.GetAttribute('type', 'http://www.w3.org/2001/XMLSchema-instance') + '=' + $_.InnerText })
+    Assert-Equal 'xs:decimal=5|xs:decimal=6|xs:decimal=7' ($types -join '|') 'list values, one element each, typed by the schema parameter'
+    $run = Invoke-Tool $SkdEdit @('-TemplatePath', $c.Path, '-Operation', 'modify-dataParameter', '-Value', 'P = 8') $work
+    Assert-Equal 0 $run.ExitCode "skd-edit modify-dataParameter: $($run.StdErr)"
+    $xml.Load($c.Path)
+    $values = @($xml.SelectNodes("//*[local-name()='dataParameters']/*[local-name()='item']/*[local-name()='value']") | ForEach-Object { $_.InnerText })
+    Assert-Equal '8' ($values -join '|') 'every previous list value is removed'
+}
+
+Register-Case 'skd-validate: XSD directory from .dev.env V8_XSD_PATH, "XSD not checked" without schemas' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'tmp' $script:SkdDefinition
+    $tplDir = Join-Path $work 'src\Reports\R\Templates\T\Ext'
+    New-Item -ItemType Directory -Path $tplDir -Force | Out-Null
+    Copy-Item -LiteralPath $c.Path -Destination (Join-Path $tplDir 'Template.xml')
+    [IO.File]::WriteAllText((Join-Path $work 'src\Configuration.xml'), '<?xml version="1.0" encoding="UTF-8"?><MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.20"><Configuration/></MetaDataObject>', (New-Object Text.UTF8Encoding($true)))
+    $tpl = 'src\Reports\R\Templates\T'
+    Write-DevEnv $work "PREFIX=`n"
+    $run = Invoke-Tool $SkdValidate @('-TemplatePath', $tpl) $work
+    Assert-Equal 0 $run.ExitCode "skd-validate without schemas: $($run.StdOut)"
+    Assert-True ($run.StdOut.Contains("XSD not checked: no schemas in '$(Join-Path $work '.v8-xsd')'")) "default directory not reported: $($run.StdOut)"
+    # A permissive stand-in schema (not the platform XSD): enough to prove the directory is used.
+    $xsdDir = Join-Path $work 'xsd\2.20'
+    New-Item -ItemType Directory -Path $xsdDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $xsdDir 'dcs.xsd'), '<?xml version="1.0" encoding="UTF-8"?><xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://v8.1c.ru/8.1/data-composition-system/schema" elementFormDefault="qualified"><xs:complexType name="DataCompositionSchema"><xs:sequence><xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType></xs:schema>', (New-Object Text.UTF8Encoding($false)))
+    Write-DevEnv $work "V8_XSD_PATH=xsd`n"
+    $run = Invoke-Tool $SkdValidate @('-TemplatePath', $tpl, '-Detailed') $work
+    Assert-Equal 0 $run.ExitCode "skd-validate with schemas: $($run.StdOut)"
+    Assert-True ($run.StdOut -match 'XSD 2\.20: order, types and values OK') "the V8_XSD_PATH schemas were not used: $($run.StdOut)"
+    Assert-True (-not $run.StdOut.Contains('XSD not checked')) "XSD reported as not checked: $($run.StdOut)"
+}
+
+Register-Case 'v8-xsd-fetch: the target comes from .dev.env V8_XSD_PATH and is checked before any network call' {
+    param($work)
+    $blocked = Join-Path $work 'blocked'
+    [IO.File]::WriteAllText($blocked, 'x')
+    Write-DevEnv $work "V8_XSD_PATH=blocked`n"
+    $run = Invoke-Tool $XsdFetch @('-Versions', '2.20') $work
+    Assert-Equal 1 $run.ExitCode "v8-xsd-fetch on a file target: $($run.StdOut)"
+    Assert-True ($run.StdOut.Contains($blocked)) "the .dev.env target is not named: $($run.StdOut)"
+    $run = Invoke-Tool $XsdFetch @('-Versions', '2.x') $work
+    Assert-Equal 1 $run.ExitCode 'an invalid format version is refused'
+    Assert-True ($run.StdOut.Contains('2.x')) "the invalid version is not named: $($run.StdOut)"
 }
 
 # ---------------------------------------------------------------- run

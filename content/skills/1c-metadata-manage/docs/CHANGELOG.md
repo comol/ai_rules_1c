@@ -328,6 +328,22 @@ The compile/decompile/info scripts (`mxl-compile`, `mxl-decompile`, `mxl-info`) 
 
 ## role-manage.md
 
+### Upstream sync 2026-11-01 (2e75b0f)
+
+Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills): `role-compile` v1.8 → **v1.49**, `role-info` v1.2 → **v1.7**, `role-validate` v1.1 → **v1.10**; new tool **`role-edit` v1.11** (`tools/1c-role-edit/scripts/`).
+
+- **`role-edit`** edits an existing role in place (rights with cascade, deny, RLS rows by field list, templates, flags, synonym / comment, `@file` values, `-DefinitionFile` batches); the UUID and the other entries are kept. The `SKILL.md → Hard rule` exception for hand-editing `Rights.xml` is withdrawn; `metadata-xml-workarounds.md` follows.
+- **Services:** `HTTPService.X: Use` (and `WebService` / `IntegrationService`) is expanded to one entry per URL-template method / operation / channel from the service metadata; a right on the service root is an error in `role-validate` (the routes answered 403). The old docs taught the root form.
+- **Warnings became errors:** a type without rights (`Enum`, `CommonModule`, …), an unknown type or right, an impossible nested kind — `role-compile` refuses before writing (all reasons at once, exit 1), `role-validate` exits 1. A rights block on an enum made the configuration hang on load.
+- **Platform shape:** rights closure (`Edit` → `Read`, `Update`, `View`, …), the platform order of `<right>` and `<object>` nodes, values equal to the role default not stored from format 2.19.
+- `role-compile`: RLS condition and template body from `@file`; format version from `Configuration.xml` measured in characters (fae22435).
+- `role-validate`: `PositionalBinding=$false` — a second positional argument no longer binds to `-OutFile` and overwrites e.g. `Roles/X.xml` with the report (83d63fac); the `Rights.xml` version must equal `Roles/<Name>.xml` (error), a role version different from the dump is a warning; `-MaxErrors` really stops; messages in English.
+- Docs: the compile section named `-RolePath` — the parameter is `-JsonPath`. Rights tables replaced with upstream's; `dsl-reference.md` re-vendored from `2e75b0f`.
+
+Local deltas re-applied: support guard from `.dev.env` `SUPPORT_GUARD`, fail-closed on an unreadable support state, stderr notice on other guard errors (`role-compile`, `role-edit`); `role-compile` registration position from `.dev.env` `NEW_OBJECT_POSITION` (as `cf-edit`). Deviations in `role-edit`: the sibling validator is `..\..\1c-role-validate\scripts\role-validate.ps1`, its absence is refused before the edit (upstream skipped it silently) and its exit code is the run's result (upstream ignored it); the compact-tag pass keeps processing instructions verbatim, as in `skd-edit` / `cf-edit`. The rights tables of `role-edit` and `role-compile` are identical. No Python port is shipped.
+
+Platform check (8.3.27.2130, throwaway file infobase): a role made by `role-compile` and changed by `role-edit` (`add-rights` on two reports, `deny-rights` on an attribute) keeps its UUID, passes `role-validate`, loads with `/UpdateDBCfg` and dumps back byte-identical; `role-compile` refuses `Enum.X: Read` with exit 1.
+
 ### Local fix `2026-10-14` — `role-validate` parameters, rights-only edits
 
 The validate section described `-MetadataPath`, which `role-validate.ps1` does not have (the call failed with a PowerShell parameter error; support ticket d3372592): the metadata file is located from the `Rights.xml` path. The section now lists the real parameters (`-RightsPath` / `-Path`, `-OutFile`, `-Detailed`, `-MaxErrors`). The manual fallback for rights-only edits of an existing role contradicted `SKILL.md → Hard rule`; it is now one of its documented exceptions, because no tool edits a role in place.
@@ -345,6 +361,27 @@ The PowerShell scripts under `tools/1c-role-{compile,info,validate}/scripts/` we
 - **All 10 validators** (`role-validate`, `meta-validate`, `epf-validate`, `skd-validate`, `cf-validate`, `cfe-validate`, `form-validate`, `mxl-validate`, `subsystem-validate`, `interface-validate`) now emit a single one-liner by default; the full per-check trace is available via `-Detailed`. Each accepts a folder path as the primary file argument and resolves to the canonical XML file (e.g. `Roles/MyRole` → `Roles/MyRole/Ext/Rights.xml`). The universal `-Path` parameter is supported in addition to the legacy named parameters (`-RolePath`, `-FormPath`, `-TemplatePath`, `-ObjectPath`, …).
 
 ## skd-manage.md
+
+### Upstream sync 2026-11-01 (2e75b0f)
+
+Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills): `skd-compile` v1.109 → **v1.141**, `skd-edit` v1.30 → **v1.50**, `skd-decompile` v0.91 → **v0.108**, `skd-info` v1.8 → **v1.14**, `skd-validate` v1.2 → **v1.9**; new tool `v8-xsd-fetch` **v1.2** (`tools/1c-v8-xsd-fetch/`, PowerShell only, with `templates/README.md`). Full DSL spec re-vendored.
+
+- **XSD element order** (#101): calculated field `valueType` last, `useRestriction` flags in field/condition/group/order, `dataParameters` right after `filter`, grouping `filter` before `order` / `selection`, booleans as `true` / `false`. Before, the platform refused such a schema through XDTO ("Нарушен порядок следования значений свойств").
+- **`skd-edit` inserts at the XSD position** (#119): `modify-filter` / `modify-dataParameter` no longer append `use` / `value` after `userSettingID` (an XDTO load error); `modify-dataParameter` removes every old list value, not only the first.
+- **Value lists in `dataParameters`**: one `<dcscor:value>` per item instead of one glued `"A B C"` string; numbers take the schema parameter's type instead of `xs:string`; comma-separated shorthand lists in `skd-compile` and `skd-edit`.
+- **Default variant** (#115): without `settingsVariants` the variant "Основной" now selects the declared fields with detail records — it used to produce an empty report; `[INFO]` / `[WARN]` hints name what was built or what is missing. `skd-decompile` keeps that variant.
+- **`useRestriction` object form** of a data-set field is emitted (was ignored silently). `skd-info -Mode variant` prints `DataParams` again (`dcscor:item`). Decompile → compile keeps `autoFillFields` / `useQueryGroupIfPossible` (new DSL key) and the data-set `source`.
+- **`skd-validate` checks against the platform XSD** when schemas are present, with fix hints (`must come before <X>`, `duplicate`, `not allowed in <P>`); without schemas the summary says `XSD not checked: <reason>` instead of a bare OK. Boolean values are checked without schemas; a lower-case root is a warning.
+- Every script carries `[CmdletBinding(PositionalBinding=$false)]`.
+
+Local deltas re-applied: the `.dev.env` `SUPPORT_GUARD` support guard (fail-closed on an unreadable support state) in `skd-compile` / `skd-edit` — the only conflict was `Get-EditMode`, resolved as our `.dev.env` block plus upstream's `ProviderPath` lookup; `skd-edit`'s compact-tag pass keeps skipping processing instructions as well as CDATA and comments (upstream's 4c64b97c guards only the latter two).
+
+New local deltas:
+- **`V8_XSD_PATH`** in `.dev.env` (relative to the `.dev.env` directory) is the schema directory of both `skd-validate` and `v8-xsd-fetch`; without it — `.v8-project.json` `xsdPath`, then `.v8-xsd` next to `.dev.env`. The "XSD not checked" note names the directory it looked in.
+- **`v8-xsd-fetch` resolves the ref to a commit SHA** (`commits/<ref>`, media type `.sha`) before listing `git/trees/<commit>`; raw URLs and `source.json` carry that commit. Upstream took `sha` of `git/trees/<ref>`, documented as the tree SHA: today the API echoes the commit SHA there, so it works, but `raw.githubusercontent.com` answers 404 for a real tree SHA (checked 2026-11-01). A truncated tree listing is refused. `User-Agent` is set before every request — .NET Framework `WebClient` drops it after a request, and the API answers 403 without it.
+- **`v8-xsd-fetch` writes `.gitignore` (`*`)** into the schema directory: the schemas are 1C-Soft property and are never committed.
+
+Platform check (8.3.27.2130, throwaway file infobase): two reports built by `skd-compile` (calculated field with type and format, value lists of numbers and enum references in `dataParameters`, default variant) and edited by `skd-edit` (`modify-filter`, `modify-dataParameter`) pass `skd-validate` against the fetched 2.20 XSD, load with `/LoadConfigFromFiles` + `/UpdateDBCfg`, and dump back identical except a generated `dNp1` prefix.
 
 ### Upstream sync `2026-07-30`
 
