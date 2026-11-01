@@ -66,7 +66,7 @@ Never invent a parallel stack (PowerShell screenshot loops, custom OCR, ad-hoc v
 
 | Use Windows-MCP | Do not use Windows-MCP |
 |---|---|
-| OS, file and platform error dialogs outside the testing model | Driving 1C forms — QA MCP does that, and the thin client exposes no controls to UI Automation |
+| OS, file and platform error dialogs outside the testing model (the web client's native file dialog may be invisible to it: `web-client-driving.md → Login as another user, file choice`) | Driving 1C forms — QA MCP does that, and the thin client exposes no controls to UI Automation |
 | External Windows apps in the scenario | Routine checks of the **web** client at `INFOBASE_PUBLISH_URL` |
 | User explicitly requires desktop automation | "Because screenshots feel easier", or as a substitute for publishing the web client |
 

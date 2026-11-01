@@ -1,5 +1,5 @@
 ---
-description: "1C test client for QA MCP checks — start and stop (qa-testclient.ps1), visible or hidden window, screenshots, Windows-MCP, developer-licence trap, data confirmation through 1c-data-mcp"
+description: "1C test client for QA MCP checks — start and stop (qa-testclient.ps1), visible or hidden window, screenshots, Windows-MCP, developer-licence trap, extension safe mode, data confirmation through 1c-data-mcp"
 alwaysApply: false
 category: tooling
 ---
@@ -105,8 +105,12 @@ Windows outside the testing model — platform error dialogs it does not reach, 
 
 ## MCPQAClient extension
 
-- Needed for `ui_form_schema`, `qa_data_candidates` and `ui_open` through `ОткрытьФорму`; install it only in a test copy: `qa_install_client` (`platform`) or Designer in batch mode (`native`, `content/rules/designer-batch-checks.md`), then turn off its safe mode.
+- Needed for `ui_form_schema`, `qa_data_candidates` and `ui_open` through `ОткрытьФорму`; install it only in a test copy: `qa_install_client` (`platform`) or Designer in batch mode (`native`, `content/rules/designer-batch-checks.md`), then turn off its safe mode (next section).
 - `native`: after each `qa_start`, write `client_hook.pointer` from its answer into `%TEMP%\mcp_qa_client_spool.txt` on the test-client machine. The extension re-reads it every 5 s; `qa_status` then shows `client_hook.available: true`.
+
+## Extensions under test: safe mode
+
+Any extension loaded from sources (`LoadConfigFromFiles … -Extension`, `db-load-xml` / `db-load-git -Extension`) comes up in safe mode. In safe mode the platform refuses its interception of object modules **silently**: the check runs the base code and passes or fails for the wrong reason; only the event log names the cause («…подключено в безопасном режиме»). Before checking an extension that intercepts object or manager modules, read its properties with the `db-cfe-admin` tool (`list`) and turn safe mode off on the test copy (`set-properties -Name <extension> -SafeMode off`; `content/skills/1c-metadata-manage/docs/db-manage.md`). The change goes through `ibcmd` and needs exclusive access to the base: close clients and stop its web publication first. Every reload from sources resets it — check again.
 
 ## Confirming data through 1c-data-mcp
 

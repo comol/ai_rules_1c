@@ -1,5 +1,5 @@
 ---
-description: Driving the 1C web client in UI tests — accessibility snapshot, lists / grids / reports, field filling, dialogs, shortcuts, anti-loop discipline. Load after the `ui-testing-tools.md` preflight, before the first action on the web client.
+description: Driving the 1C web client in UI tests — snapshot, lists / grids / reports, field filling, dialogs, login as a user, file choice, anti-loop discipline. Load after the `ui-testing-tools.md` preflight, before the first action on the web client.
 alwaysApply: false
 category: tooling
 ---
@@ -102,7 +102,17 @@ UI automation degenerates into retry loops faster than any other work in this ru
 - **Report partial results.** "Found the list, could not find item X; the list contains A, B, C" is a useful result. Silent retrying is not.
 - Failures are documented with reproduction steps and evidence per `1c-tester` → "Test Report Format" — a blocked scenario is a reportable outcome, not a reason to keep grinding.
 
-## 10. Companion rules
+## 10. Login as another user, file choice, HTML fields
+
+Findings of upstream cc-1c-skills `web-test`, not re-measured in this ruleset; what nobody has checked is marked unverified.
+
+- **Another user without republishing** (measured upstream on 8.3.20–8.5.1). A plain navigation logs in the publication's `Usr=`. To log in as another user, submit a form from the page itself, so the session cookie lands in the browser (set the values through DOM properties, not markup): `POST <publication>/e1cib/start` with `Usr`, `Pwd` (may be empty) and `AuthFailHandling=error`. The request's user overrides the vrd's; launch parameters (`C=`, `L=`, …) survive only in that URL's query, not as form fields. Answer: `301` — logged in; `402` — wrong name or password; `412` — no right to the web client; `403`, or `400` with `reason` 9 — no free licence. The password comes from an environment variable, never from the chat or a committed file.
+- **File choice.** Two windows can answer a file button:
+  - the 1C «Выбор файлов» window is part of the page: its «выберите с диска» link opens the browser's file chooser — answer it with the driver's file-chooser / upload facility, then press the window's OK (`#fileSelectDialogOk`). Files only;
+  - with the file system extension attached, a native dialog (process `1CFileExtension*`, window `#32770`; folders too) opens outside the browser, out of the driver's reach. Upstream reports UI Automation does not see it from the desktop root. Windows-MCP lists elements through UI Automation, so its element list may miss it — unverified, and so is typing the full path into it and pressing Enter. If Windows-MCP shows the dialog, fill it there; otherwise hand the step to the person or report it unverified. Never write a Win32 helper for it. The report covers the web client only, not the thin client's dialogs.
+- **HTML document field** (`ПолеHTMLДокумента`) is an `iframe` holding the application's own page. It exists only after the field is first shown: open its page or expand its group first. Take the field on the active form only — an older instance of the form and a field under a modal window have frames too. Actions inside the frame surface no 1C errors: after one that calls the server, read the form's error dialog and messages before asserting. Whether `agent-browser` snapshots descend into such frames is unverified; a Playwright suite uses a frame locator.
+
+## 11. Companion rules
 
 | Concern | File |
 |---|---|
