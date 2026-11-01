@@ -13,7 +13,7 @@ This matters because editing a supported object directly is not a style question
 
 Every mutating tool of this skill checks the support state before touching anything:
 
-`cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
+`cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `role-edit`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
 
 All of them run the same decision. `xdto-compile` / `xdto-edit` used to refuse any configuration that merely had `Ext/ParentConfigurations.bin`; they now decide per object like the rest, so an XDTO package can be added wherever `meta-compile` may add a catalog. `remove-template` has no guard — check the owner's state yourself before removing a template from a typical configuration.
 

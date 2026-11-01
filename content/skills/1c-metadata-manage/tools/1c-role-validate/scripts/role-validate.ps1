@@ -1,7 +1,8 @@
-﻿# role-validate v1.1 — Validate 1C role structure
+﻿# role-validate v1.10 — Validate 1C role structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)]
+	[Parameter(Mandatory, Position=0)]
 	[Alias('Path')]
 	[string]$RightsPath,
 
@@ -60,7 +61,9 @@ $script:knownRights = @{
 	)
 	"AccumulationRegister" = @("Read","Update","View","Edit","TotalsControl")
 	"AccountingRegister" = @("Read","Update","View","Edit","TotalsControl")
-	"CalculationRegister" = @("Read","View")
+	"CalculationRegister" = @(
+		"Read","Update","View","Edit"
+	)
 	"Constant" = @(
 		"Read","Update","View","Edit",
 		"ReadDataHistory","ViewDataHistory","UpdateDataHistory",
@@ -68,14 +71,13 @@ $script:knownRights = @{
 		"EditDataHistoryVersionComment","SwitchToDataHistoryVersion"
 	)
 	"ChartOfAccounts" = @(
-		"Read","Insert","Update","Delete","View","Edit","InputByString",
-		"InteractiveInsert","InteractiveSetDeletionMark","InteractiveClearDeletionMark",
-		"InteractiveDelete",
-		"InteractiveDeletePredefinedData","InteractiveSetDeletionMarkPredefinedData",
-		"InteractiveClearDeletionMarkPredefinedData","InteractiveDeleteMarkedPredefinedData",
-		"ReadDataHistory","ReadDataHistoryOfMissingData",
-		"UpdateDataHistory","UpdateDataHistoryOfMissingData",
-		"UpdateDataHistorySettings","UpdateDataHistoryVersionComment"
+		"Read","Insert","Update","Delete"
+		"View","Edit","InputByString","InteractiveInsert"
+		"InteractiveSetDeletionMark","InteractiveClearDeletionMark","InteractiveDelete","InteractiveDeleteMarked"
+		"InteractiveDeletePredefinedData","InteractiveSetDeletionMarkPredefinedData","InteractiveClearDeletionMarkPredefinedData","InteractiveDeleteMarkedPredefinedData"
+		"ReadDataHistory","ReadDataHistoryOfMissingData","UpdateDataHistory","UpdateDataHistoryOfMissingData"
+		"UpdateDataHistorySettings","UpdateDataHistoryVersionComment","ViewDataHistory","EditDataHistoryVersionComment"
+		"SwitchToDataHistoryVersion"
 	)
 	"ChartOfCharacteristicTypes" = @(
 		"Read","Insert","Update","Delete","View","Edit","InputByString",
@@ -89,11 +91,13 @@ $script:knownRights = @{
 		"EditDataHistoryVersionComment","SwitchToDataHistoryVersion"
 	)
 	"ChartOfCalculationTypes" = @(
-		"Read","Insert","Update","Delete","View","Edit","InputByString",
-		"InteractiveInsert","InteractiveSetDeletionMark","InteractiveClearDeletionMark",
-		"InteractiveDelete",
-		"InteractiveDeletePredefinedData","InteractiveSetDeletionMarkPredefinedData",
-		"InteractiveClearDeletionMarkPredefinedData","InteractiveDeleteMarkedPredefinedData"
+		"Read","Insert","Update","Delete"
+		"View","Edit","InputByString","InteractiveInsert"
+		"InteractiveSetDeletionMark","InteractiveClearDeletionMark","InteractiveDelete","InteractiveDeleteMarked"
+		"InteractiveDeletePredefinedData","InteractiveSetDeletionMarkPredefinedData","InteractiveClearDeletionMarkPredefinedData","InteractiveDeleteMarkedPredefinedData"
+		"ReadDataHistory","ReadDataHistoryOfMissingData","UpdateDataHistory","UpdateDataHistoryOfMissingData"
+		"UpdateDataHistorySettings","UpdateDataHistoryVersionComment","ViewDataHistory","EditDataHistoryVersionComment"
+		"SwitchToDataHistoryVersion"
 	)
 	"ExchangePlan" = @(
 		"Read","Insert","Update","Delete","View","Edit","InputByString",
@@ -105,14 +109,20 @@ $script:knownRights = @{
 		"EditDataHistoryVersionComment","SwitchToDataHistoryVersion"
 	)
 	"BusinessProcess" = @(
-		"Read","Insert","Update","Delete","View","Edit","InputByString",
-		"Start","InteractiveInsert","InteractiveSetDeletionMark","InteractiveClearDeletionMark",
-		"InteractiveDelete","InteractiveActivate","InteractiveStart"
+		"Read","Insert","Update","Delete"
+		"View","Edit","InputByString","Start"
+		"InteractiveInsert","InteractiveSetDeletionMark","InteractiveClearDeletionMark","InteractiveDelete"
+		"InteractiveDeleteMarked","InteractiveActivate","InteractiveStart","ReadDataHistory"
+		"ReadDataHistoryOfMissingData","UpdateDataHistory","UpdateDataHistoryOfMissingData","UpdateDataHistorySettings"
+		"UpdateDataHistoryVersionComment","ViewDataHistory","EditDataHistoryVersionComment","SwitchToDataHistoryVersion"
 	)
 	"Task" = @(
-		"Read","Insert","Update","Delete","View","Edit","InputByString",
-		"Execute","InteractiveInsert","InteractiveSetDeletionMark","InteractiveClearDeletionMark",
-		"InteractiveDelete","InteractiveActivate","InteractiveExecute"
+		"Read","Insert","Update","Delete"
+		"View","Edit","InputByString","Execute"
+		"InteractiveInsert","InteractiveSetDeletionMark","InteractiveClearDeletionMark","InteractiveDelete"
+		"InteractiveDeleteMarked","InteractiveActivate","InteractiveExecute","ReadDataHistory"
+		"ReadDataHistoryOfMissingData","UpdateDataHistory","UpdateDataHistoryOfMissingData","UpdateDataHistorySettings"
+		"UpdateDataHistoryVersionComment","ViewDataHistory","EditDataHistoryVersionComment","SwitchToDataHistoryVersion"
 	)
 	"DataProcessor" = @("Use","View")
 	"Report" = @("Use","View")
@@ -127,11 +137,79 @@ $script:knownRights = @{
 	"IntegrationService" = @("Use")
 	"SessionParameter" = @("Get","Set")
 	"CommonAttribute" = @("View","Edit")
+	"ExternalDataSource" = @(
+		"Use","Administration","StandardAuthenticationChange",
+		"SessionStandardAuthenticationChange","SessionOSAuthenticationChange"
+	)
 }
 
-$script:nestedRights = @("View","Edit")
-$script:channelRights = @("Use")
-$script:commandRights = @("View")
+# Виды вложенности (предпоследний сегмент пути) → допустимые права. Списки сняты с корпуса
+# типовых конфигураций и с выгрузки роли, где права проставлены по всему дереву редактора:
+# догадкам тут не место — закрытый список превращает промах в ложный отказ.
+$script:nestedKindRights = @{
+	"Attribute"                  = @("View","Edit")
+	"StandardAttribute"          = @("View","Edit")
+	"TabularSection"             = @("View","Edit")
+	"StandardTabularSection"     = @("View","Edit")
+	"Dimension"                  = @("View","Edit")
+	"Resource"                   = @("View","Edit")
+	"AccountingFlag"             = @("View","Edit")
+	"ExtDimensionAccountingFlag" = @("View","Edit")
+	"AddressingAttribute"        = @("View","Edit")
+	"Field"                      = @("View","Edit")
+	"Command"                    = @("View")
+	"Subsystem"                  = @("View")
+	"Operation"                  = @("Use")
+	"Method"                     = @("Use")
+	"IntegrationServiceChannel"  = @("Use")
+	"Recalculation"              = @("Read","Update")
+	"Cube"                       = @("Read","View")
+	"DimensionTable"             = @("Read","View")
+	"Function"                   = @("Use","View")
+	"Table"                      = @(
+		"Read","Insert","Update","Delete","View","Edit","InputByString",
+		"InteractiveInsert","InteractiveDelete"
+	)
+}
+
+# Виды, существующие только у одного типа-родителя: без этой привязки
+# `Catalog.Товары.Field.Цена` прошёл бы как валидный вложенный объект.
+$script:kindOwners = @{
+	"Table"                     = "ExternalDataSource"
+	"Cube"                      = "ExternalDataSource"
+	"Function"                  = "ExternalDataSource"
+	"Field"                     = "ExternalDataSource"
+	"DimensionTable"            = "ExternalDataSource"
+	"Recalculation"             = "CalculationRegister"
+	"Operation"                 = "WebService"
+	"Method"                    = "HTTPService"
+	"IntegrationServiceChannel" = "IntegrationService"
+}
+
+# Подсказка формата для каждого вида сервиса: {0} подставляется как `Тип.Имя` из роли.
+$script:serviceLeafHints = @{
+	"WebService"         = "{0}.Operation.<Operation>"
+	"HTTPService"        = "{0}.URLTemplate.<Template>.Method.<Method>"
+	"IntegrationService" = "{0}.IntegrationServiceChannel.<Channel>"
+}
+
+# Один и тот же вид под разными родителями имеет разный набор: измерение регистра —
+# View + Edit, измерение куба внешнего источника — только View. Объединять нельзя,
+# объединение молча разрешило бы Edit там, где платформа его не даёт.
+$script:nestedKindRightsByType = @{
+	"ExternalDataSource" = @{
+		"Dimension" = @("View")
+		"Resource"  = @("View")
+	}
+}
+
+# Типы без прав в ролях (в дереве редактора ролей их нет). Таблица НЕ управляет поведением —
+# отказ даёт отсутствие типа в $knownRights; здесь только причина для сообщения.
+$script:noRightsTypes = @(
+	"Enum","CommonModule","DefinedType","CommonPicture","CommonTemplate","Language",
+	"FunctionalOption","FunctionalOptionsParameter","EventSubscription","ScheduledJob",
+	"StyleItem","Style","SettingsStorage","XDTOPackage","WSReference","DocumentNumerator"
+)
 
 # --- 2. Output helpers ---
 
@@ -179,6 +257,37 @@ function Is-NestedObject {
 	return ($name.Split(".").Count -ge 3)
 }
 
+# Вид вложенности — предпоследний сегмент: путь бывает и восьмисегментным
+# (ExternalDataSource.И.Cube.К.DimensionTable.Т.Field.П), считать от конца.
+function Get-NestedKind {
+	param([string]$name)
+	$parts = $name.Split(".")
+	if ($parts.Count -lt 3) { return $null }
+	return $parts[$parts.Count - 2]
+}
+
+function Get-NestedRights {
+	param([string]$objectType, [string]$kind)
+	if ($script:nestedKindRightsByType.ContainsKey($objectType) -and
+		$script:nestedKindRightsByType[$objectType].ContainsKey($kind)) {
+		return @($script:nestedKindRightsByType[$objectType][$kind])
+	}
+	if ($script:nestedKindRights.ContainsKey($kind)) { return @($script:nestedKindRights[$kind]) }
+	return $null
+}
+
+# Запрещённый тип и незнакомый тип — разные диагнозы: первый документирован, второй
+# скорее опечатка или пробел в таблице.
+function Format-TypeError {
+	param([string]$objName, [string]$objectType)
+	if ($script:noRightsTypes -contains $objectType) {
+		return "${objName}: type '$objectType' has no rights in roles — remove the block"
+	}
+	$similar = Find-Similar -needle $objectType -haystack @($script:knownRights.Keys)
+	$sug = if ($similar.Count -gt 0) { " Did you mean: $($similar -join ', ')?" } else { "" }
+	return "${objName}: unknown object type '$objectType'.$sug"
+}
+
 function Find-Similar {
 	param([string]$needle, [string[]]$haystack)
 	$result = @($haystack | Where-Object {
@@ -188,9 +297,64 @@ function Find-Similar {
 	return $result
 }
 
+# Штамп версии формата — атрибут version КОРНЕВОГО элемента файла. Копия общего эталона (семья
+# root_version, авторитет — meta-validate).
+function Get-RootVersion([string]$xmlPath) {
+	if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) { return $null }
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($xmlPath)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $len)
+	$m = [regex]::Match($head, '<[A-Za-z_][\w.:-]*(\s[^>]*)?/?>')
+	if (-not $m.Success) { return $null }
+	$v = [regex]::Match($m.Groups[1].Value, '(?:^|\s)version="([^"]*)"')
+	if ($v.Success) { return $v.Groups[1].Value }
+	return $null
+}
+
+# Корень автономной внешней обработки/отчёта. Копия общего эталона (семья is_external_root,
+# авторитет — cf-edit).
+function Test-ExternalObjectRoot([string]$xmlPath) {
+	if (-not (Test-Path $xmlPath)) { return $false }
+	try {
+		[xml]$mx = Get-Content -Path $xmlPath -Encoding UTF8
+		$el = $mx.DocumentElement.FirstChild
+		while ($el -and $el.NodeType -ne 'Element') { $el = $el.NextSibling }
+		if ($el) { return @('ExternalDataProcessor','ExternalReport') -contains $el.LocalName }
+	} catch {}
+	return $false
+}
+
+# Якорь выгрузки: корень автономной EPF/ERF либо Configuration.xml, ближайший вверх. Копия общего
+# эталона (семья find_dump_anchor, авторитет — meta-validate).
+function Find-DumpAnchor([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 15 -and $d; $i++) {
+		if (Test-ExternalObjectRoot "$d.xml") { return "$d.xml" }
+		$cfg = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfg) { return $cfg }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if (-not $parent -or $parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+# Владелец тела X/Ext/<файл>.xml — дескриптор X.xml рядом с каталогом X. Копия общего эталона
+# (семья ext_body_owner, авторитет — form-validate).
+function Get-ExtBodyOwner([string]$bodyPath) {
+	$extDir = [System.IO.Path]::GetDirectoryName($bodyPath)
+	if ([System.IO.Path]::GetFileName($extDir) -cne "Ext") { return $null }
+	$objDir = [System.IO.Path]::GetDirectoryName($extDir)
+	if (Test-Path -LiteralPath "$objDir.xml" -PathType Leaf) { return "$objDir.xml" }
+	$cfg = Join-Path $objDir "Configuration.xml"
+	if (Test-Path -LiteralPath $cfg -PathType Leaf) { return $cfg }
+	return $null
+}
+
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($RightsPath)) {
-	$RightsPath = Join-Path (Get-Location).Path $RightsPath
+	$RightsPath = Join-Path (Get-Location).ProviderPath $RightsPath
 }
 # A: Directory → Ext/Rights.xml
 if (Test-Path $RightsPath -PathType Container) {
@@ -212,7 +376,7 @@ if (-not (Test-Path $RightsPath)) {
 	$result = $script:output.ToString()
 	Write-Host $result
 	if ($OutFile) {
-		$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location) $OutFile }
+		$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location).ProviderPath $OutFile }
 		$outDir = [System.IO.Path]::GetDirectoryName($outPath)
 		if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 		$utf8Bom = New-Object System.Text.UTF8Encoding $true
@@ -223,7 +387,7 @@ if (-not (Test-Path $RightsPath)) {
 }
 
 # Auto-detect metadata: Roles/Name/Ext/Rights.xml → Roles/Name.xml
-$resolvedRights = (Resolve-Path $RightsPath).Path
+$resolvedRights = (Resolve-Path $RightsPath).ProviderPath
 $extDir = Split-Path $resolvedRights -Parent
 $roleDir = Split-Path $extDir -Parent
 $rolesDir = Split-Path $roleDir -Parent
@@ -239,7 +403,7 @@ try {
 	$result = $script:output.ToString()
 	Write-Host $result
 	if ($OutFile) {
-		$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location) $OutFile }
+		$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location).ProviderPath $OutFile }
 		$outDir = [System.IO.Path]::GetDirectoryName($outPath)
 		if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 		$utf8Bom = New-Object System.Text.UTF8Encoding $true
@@ -287,6 +451,7 @@ $rightCount = 0
 $rlsCount = 0
 
 foreach ($obj in $objects) {
+	if ($script:stopped) { break }
 	$objName = ""
 	foreach ($child in $obj.ChildNodes) {
 		if ($child.LocalName -eq "name") {
@@ -303,13 +468,27 @@ foreach ($obj in $objects) {
 	$objectType = Get-ObjectType $objName
 	$isNested = Is-NestedObject $objName
 
-	# Check object type is known
-	if (-not $isNested -and -not $script:knownRights.ContainsKey($objectType)) {
-		Report-Warn "${objName}: unknown object type '$objectType'"
+	# Тип проверяется ВСЕГДА, включая вложенные пути: раньше `Enum.Х.Attribute.Y` не проверялся
+	# вообще, потому что ветка «unknown» стояла под `-not $isNested`.
+	$nestedKind = if ($isNested) { Get-NestedKind $objName } else { $null }
+	$typeKnown = $script:knownRights.ContainsKey($objectType)
+	if (-not $typeKnown) {
+		Report-Error (Format-TypeError $objName $objectType)
+	} elseif ($isNested -and $script:kindOwners.ContainsKey($nestedKind) -and $objectType -ne $script:kindOwners[$nestedKind]) {
+		Report-Error "${objName}: kind '$nestedKind' exists only under $($script:kindOwners[$nestedKind])"
+	} elseif ($isNested -and $null -eq (Get-NestedRights $objectType $nestedKind)) {
+		Report-Error "${objName}: unknown nested kind '$nestedKind'"
+	} elseif (-not $isNested -and $script:serviceLeafHints.ContainsKey($objectType)) {
+		# Право на сервис целиком платформа игнорирует: проверяется лист (метод шаблона URL,
+		# операция, канал). Роль формально валидна и молча не работает — 403 на всех
+		# маршрутах, причина по симптому не читается. В Конфигураторе галки на корне сервиса
+		# нет вовсе, так что это недостижимое состояние, а не стилистика.
+		Report-Error "${objName}: a right on the whole service has no effect — grant rights on nested objects: $($script:serviceLeafHints[$objectType] -f $objName)"
 	}
 
 	# Check rights
 	foreach ($child in $obj.ChildNodes) {
+		if ($script:stopped) { break }
 		if ($child.LocalName -ne "right") { continue }
 
 		$rName = ""
@@ -345,40 +524,36 @@ foreach ($obj in $objects) {
 
 		$rightCount++
 
-		# Validate right name
-		if ($isNested) {
-			if ($objName -match '\.Command\.') {
-				if ($rName -notin $script:commandRights) {
-					Report-Warn "${objName}: '$rName' not valid for commands (only: View)"
-				}
-			} elseif ($objName -match '\.IntegrationServiceChannel\.') {
-				if ($rName -notin $script:channelRights) {
-					Report-Warn "${objName}: '$rName' not valid for channels (only: Use)"
-				}
-			} else {
-				if ($rName -notin $script:nestedRights) {
-					Report-Warn "${objName}: '$rName' not valid for nested objects (only: View, Edit)"
-				}
+		# Validate right name. Тип уже отвергнут выше — второй раз про него не пишем.
+		if (-not $typeKnown) {
+			# уже сообщено
+		} elseif ($isNested) {
+			$validNested = Get-NestedRights $objectType $nestedKind
+			if ($null -ne $validNested -and $rName -notin $validNested) {
+				Report-Error "${objName}: right '$rName' is not allowed for kind '$nestedKind' (allowed: $($validNested -join ', '))"
 			}
-		} elseif ($script:knownRights.ContainsKey($objectType)) {
+		} else {
 			$validRights = $script:knownRights[$objectType]
 			if ($rName -notin $validRights) {
 				$similar = Find-Similar -needle $rName -haystack $validRights
 				$sugStr = if ($similar.Count -gt 0) { " Did you mean: $($similar -join ', ')?" } else { "" }
-				Report-Warn "${objName}: unknown right '$rName'.$sugStr"
+				Report-Error "${objName}: right '$rName' does not exist for type '$objectType'.$sugStr"
 			}
 		}
 	}
 }
 
-Report-OK "$objCount objects, $rightCount rights"
-if ($rlsCount -gt 0) {
-	Report-OK "$rlsCount RLS restrictions"
+# После остановки счётчики частичные — сводку не печатаем, чтобы не выдавать её за полную.
+if (-not $script:stopped) {
+	Report-OK "$objCount objects, $rightCount rights"
+	if ($rlsCount -gt 0) {
+		Report-OK "$rlsCount RLS restrictions"
+	}
 }
 
 # 3e. Templates
 $templates = $root.GetElementsByTagName("restrictionTemplate", $rightsNs)
-if ($templates.Count -gt 0) {
+if (-not $script:stopped -and $templates.Count -gt 0) {
 	$tplNames = @()
 	foreach ($tpl in $templates) {
 		$tName = ""
@@ -403,7 +578,7 @@ if ($templates.Count -gt 0) {
 
 # --- 4. Validate metadata ---
 
-if (Test-Path $MetadataPath) {
+if (-not $script:stopped -and (Test-Path $MetadataPath)) {
 	Out-Line ""
 	try {
 		[xml]$metaXml = Get-Content -Path $MetadataPath -Encoding UTF8
@@ -437,6 +612,26 @@ if (Test-Path $MetadataPath) {
 	}
 }
 
+# --- 4b. Format version: Rights.xml — как у дескриптора роли; сверка с выгрузкой ---
+# Права и дескриптор роли платформа загружает только в одной версии формата: «Версия формата
+# загружаемого файла … отличается от версии формата ранее загруженных файлов». С остальной выгрузкой
+# роль может расходиться — платформа такое грузит, это лишь неоднородность выгрузки (типично после
+# мержа веток, выгруженных разными платформами).
+$rightsVer = $root.GetAttribute("version")
+if (-not $script:stopped -and $rightsVer) {
+	$ownerPath = Get-ExtBodyOwner $resolvedRights
+	$ownerVer = if ($ownerPath) { Get-RootVersion $ownerPath } else { $null }
+	$dumpAnchor = Find-DumpAnchor (Split-Path $resolvedRights -Parent)
+	$dumpVer = if ($dumpAnchor) { Get-RootVersion $dumpAnchor } else { $null }
+	if ($ownerVer -and $rightsVer -ne $ownerVer) {
+		Report-Error "Format version $rightsVer differs from the role descriptor $([System.IO.Path]::GetFileName($ownerPath)) ($ownerVer) — the platform refuses to load parts of one object in different formats"
+	} elseif ($dumpVer -and $rightsVer -ne $dumpVer) {
+		Report-Warn "Format version $rightsVer differs from the dump ($dumpVer) — the platform loads it, but the dump is no longer uniform (typical after merging branches dumped by different platforms)"
+	} elseif ($ownerVer -or $dumpVer) {
+		Report-OK "Format version: $rightsVer, matches the descriptor and the dump"
+	}
+}
+
 # --- 5. Check registration in Configuration.xml ---
 
 $configDir = Split-Path $rolesDir -Parent
@@ -454,7 +649,7 @@ if (Test-Path $MetadataPath) {
 	} catch { }
 }
 
-if (Test-Path $configXmlPath) {
+if (-not $script:stopped -and (Test-Path $configXmlPath)) {
 	Out-Line ""
 	try {
 		[xml]$cfgXml = Get-Content -Path $configXmlPath -Encoding UTF8
@@ -491,13 +686,14 @@ if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
 	$result = "=== Validation OK: Role.$inferredRoleName ($checks checks) ==="
 } else {
 	Out-Line ""
+	if ($script:stopped) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
 	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
 	$result = $script:output.ToString()
 }
 Write-Host $result
 
 if ($OutFile) {
-	$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location) $OutFile }
+	$outPath = if ([System.IO.Path]::IsPathRooted($OutFile)) { $OutFile } else { Join-Path (Get-Location).ProviderPath $OutFile }
 	$outDir = [System.IO.Path]::GetDirectoryName($outPath)
 	if (-not (Test-Path $outDir)) {
 		New-Item -ItemType Directory -Path $outDir -Force | Out-Null

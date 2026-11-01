@@ -2,48 +2,90 @@
 
 Подробная справка по JSON DSL для `/role-compile`. Компактное описание и workflow — в [`role-manage.md`](../../docs/role-manage.md).
 
-## Структура верхнего уровня
+## Какие объекты можно писать в `objects`
 
-```json
-{
-  "name": "ИмяРоли",
-  "synonym": "Отображаемое имя роли",
-  "comment": "",
-  "setForNewObjects": false,
-  "setForAttributesByDefault": true,
-  "independentRightsOfChildObjects": false,
-  "objects": [ ... ],
-  "templates": [ ... ]
-}
-```
+Права в роли имеют ровно 27 типов. Тип вне этого списка — ошибка компиляции: роль не
+создаётся, файлы не пишутся.
 
-- `name` — программное имя роли (обязательно)
-- `synonym` — отображаемое имя (по умолчанию = name)
-- `comment` — комментарий (по умолчанию пусто)
-- Глобальные флаги — по умолчанию `false`, `true`, `false`
+| Тип | Права |
+|-----|-------|
+| `Configuration` | Administration, DataAdministration, UpdateDataBaseConfiguration, ConfigurationExtensionsAdministration, ActiveUsers, EventLog, ExclusiveMode, ThinClient, ThickClient, WebClient, MobileClient, ExternalConnection, Automation, Output, SaveUserData, TechnicalSpecialistMode, InteractiveOpenExtDataProcessors, InteractiveOpenExtReports, AnalyticsSystemClient, CollaborationSystemInfoBaseRegistration, MainWindowModeNormal, MainWindowModeWorkplace, MainWindowModeEmbeddedWorkplace, MainWindowModeFullscreenWorkplace, MainWindowModeKiosk |
+| `Catalog`, `ChartOfCharacteristicTypes` | Read, Insert, Update, Delete, View, Edit, InputByString, Interactive* (Insert, SetDeletionMark, ClearDeletionMark, Delete, DeleteMarked), *PredefinedData, *DataHistory* |
+| `Document` | то же + Posting, UndoPosting, InteractivePosting, InteractivePostingRegular, InteractiveUndoPosting, InteractiveChangeOfPosted |
+| `ChartOfAccounts`, `ChartOfCalculationTypes`, `ExchangePlan` | Read, Insert, Update, Delete, View, Edit, InputByString, Interactive*, *DataHistory* |
+| `BusinessProcess` | Read, Insert, Update, Delete, View, Edit, InputByString, Start, InteractiveInsert, InteractiveSetDeletionMark, InteractiveClearDeletionMark, InteractiveDelete, InteractiveDeleteMarked, InteractiveActivate, InteractiveStart, *DataHistory* |
+| `Task` | то же, но вместо Start/InteractiveStart — Execute, InteractiveExecute |
+| `InformationRegister` | Read, Update, View, Edit, TotalsControl, *DataHistory* |
+| `AccumulationRegister`, `AccountingRegister` | Read, Update, View, Edit, TotalsControl |
+| `CalculationRegister` | Read, Update, View, Edit |
+| `Constant` | Read, Update, View, Edit, *DataHistory* |
+| `DocumentJournal` | Read, View |
+| `Sequence` | Read, Update |
+| `DataProcessor`, `Report` | Use, View |
+| `WebService`, `HTTPService`, `IntegrationService` | — права только на вложенных объектах, см. ниже |
+| `CommonForm`, `CommonCommand`, `Subsystem`, `FilterCriterion` | View |
+| `CommonAttribute` | View, Edit |
+| `SessionParameter` | Get, Set |
+| `ExternalDataSource` | Use, Administration, StandardAuthenticationChange, SessionStandardAuthenticationChange, SessionOSAuthenticationChange |
 
-## Объекты: два формата
+Полные списки прав по каждому типу — в коде навыка (`scripts/role-compile.ps1`,
+таблица `$knownRights`; та же таблица в `1c-role-edit/scripts/role-edit.ps1`); навык проверяет каждое имя права и отвергает несуществующее.
+
+### Вложенные объекты
+
+Путь длиннее двух сегментов задаёт права на часть объекта. Вид вложенности —
+предпоследний сегмент, он определяет набор прав.
+
+| Вид | Права |
+|-----|-------|
+| `Attribute`, `StandardAttribute`, `TabularSection`, `StandardTabularSection`, `Dimension`, `Resource`, `AccountingFlag`, `ExtDimensionAccountingFlag`, `AddressingAttribute` | View, Edit |
+| `Command`, вложенная `Subsystem` | View |
+| `Operation` (веб-сервис), `Method` (HTTP-сервис, под `URLTemplate`), `IntegrationServiceChannel` | Use |
+| `Recalculation` (регистр расчёта) | Read, Update |
+
+Виды `Operation`, `Method`, `IntegrationServiceChannel`, `Recalculation` и виды внешнего
+источника допустимы только у своего типа-родителя. Графы журнала документов
+(`DocumentJournal.Ж.Column.Г`) собственных прав не имеют.
+
+Примеры: `Catalog.Контрагенты.Attribute.ИНН: View, Edit`,
+`Document.Реализация.TabularSection.Товары.Attribute.Цена: View`,
+`WebService.Обмен.Operation.Загрузить: Use`,
+`HTTPService.API.URLTemplate.Файлы.Method.Получить: Use`.
+
+Сегмент после `Method.` — **имя объекта Method в дереве метаданных**, а не HTTP-глагол:
+встречаются и `Method.GET`, и `Method.Установить`, и `Method.СоздатьПодключение`.
+
+Про короткую запись `HTTPService.API: Use` — раздел «Services» в [`role-manage.md`](../../docs/role-manage.md).
+
+### Вложенные объекты внешнего источника данных
+
+Виды `Table`, `Cube`, `Function`, `Field`, `DimensionTable` бывают **только** под
+`ExternalDataSource`.
+
+| Путь | Права |
+|------|-------|
+| `ExternalDataSource.И.Table.Т` | Read, Insert, Update, Delete, View, Edit, InputByString, InteractiveInsert, InteractiveDelete |
+| `ExternalDataSource.И.Table.Т.Field.П` | View, Edit |
+| `ExternalDataSource.И.Cube.К` | Read, View |
+| `ExternalDataSource.И.Cube.К.Dimension.И`, `…Resource.Р` | View |
+| `ExternalDataSource.И.Cube.К.DimensionTable.Т` | Read, View |
+| `ExternalDataSource.И.Cube.К.DimensionTable.Т.Field.П` | View, Edit |
+| `ExternalDataSource.И.Function.Ф` | Use, View |
+| `…Table.Т.Command.К`, `…Cube.К.Command.К`, `…DimensionTable.Т.Command.К` | View |
+
+### Типы объектов без прав в ролях
+
+Права нельзя назначить на `Enum`, `CommonModule`, `DefinedType`, `CommonPicture`,
+`CommonTemplate`, `Language`, `FunctionalOption`, `FunctionalOptionsParameter`,
+`EventSubscription`, `ScheduledJob`, `StyleItem`, `Style`, `SettingsStorage`,
+`XDTOPackage`, `WSReference`, `DocumentNumerator` — в дереве редактора ролей этих типов нет.
+
+Попытка — ошибка компиляции. Права на перечисления особенно опасны: конфигурация с таким
+блоком не загружается в информационную базу, конфигуратор зависает без сообщений.
+
+## Формат записи объектов
 
 Массив `objects` принимает строки (shorthand) и объекты (полная форма).
-
-### Строковый shorthand
-
-```
-"ОбъектМетаданных: @пресет"
-"ОбъектМетаданных: Право1, Право2"
-```
-
-Примеры:
-```json
-"objects": [
-  "Catalog.Номенклатура: @view",
-  "Document.Реализация: @edit",
-  "InformationRegister.Цены: Read, Update",
-  "DataProcessor.Загрузка: @view"
-]
-```
-
-### Объектная форма (для RLS и переопределений)
 
 ```json
 {
@@ -57,6 +99,9 @@
 - `preset` — базовый набор прав (`"view"`, `"edit"`)
 - `rights` — переопределения: dict `{"Right": true/false}` или массив `["Right1", "Right2"]`
 - `rls` — RLS-ограничения: `{"ИмяПрава": "текст условия"}`
+
+Русские имена типов и прав тоже принимаются (`Справочник.Контрагенты: Чтение`), каноничная
+форма — английская.
 
 ## Пресеты — подробные таблицы
 
@@ -88,127 +133,8 @@
 | SessionParameter | Get, Set |
 | CommonAttribute | View, Edit |
 
-Для сервисов (WebService, HTTPService, IntegrationService) пресеты не определены — используй явные права: `"WebService.Имя: Use"`.
-
-Если пресет не определён для типа объекта — предупреждение с подсказкой доступных.
-
-## Русские синонимы
-
-Скрипт автоматически транслирует русские имена в английские. Можно смешивать: `"Справочник.Контрагенты: Чтение, View"` — работает.
-
-### Типы объектов
-
-| Русский | English |
-|---------|---------|
-| `Справочник` | Catalog |
-| `Документ` | Document |
-| `РегистрСведений` | InformationRegister |
-| `РегистрНакопления` | AccumulationRegister |
-| `РегистрБухгалтерии` | AccountingRegister |
-| `РегистрРасчета` | CalculationRegister |
-| `Константа` | Constant |
-| `ПланСчетов` | ChartOfAccounts |
-| `ПланВидовХарактеристик` | ChartOfCharacteristicTypes |
-| `ПланВидовРасчета` | ChartOfCalculationTypes |
-| `ПланОбмена` | ExchangePlan |
-| `БизнесПроцесс` | BusinessProcess |
-| `Задача` | Task |
-| `Обработка` | DataProcessor |
-| `Отчет` | Report |
-| `ОбщаяФорма` | CommonForm |
-| `ОбщаяКоманда` | CommonCommand |
-| `Подсистема` | Subsystem |
-| `КритерийОтбора` | FilterCriterion |
-| `ЖурналДокументов` | DocumentJournal |
-| `Последовательность` | Sequence |
-| `ВебСервис` | WebService |
-| `HTTPСервис` | HTTPService |
-| `СервисИнтеграции` | IntegrationService |
-| `ПараметрСеанса` | SessionParameter |
-| `ОбщийРеквизит` | CommonAttribute |
-| `Конфигурация` | Configuration |
-| `Перечисление` | Enum |
-
-### Вложенные типы
-
-| Русский | English |
-|---------|---------|
-| `Реквизит` | Attribute |
-| `СтандартныйРеквизит` | StandardAttribute |
-| `ТабличнаяЧасть` | TabularSection |
-| `Измерение` | Dimension |
-| `Ресурс` | Resource |
-| `Команда` | Command |
-| `РеквизитАдресации` | AddressingAttribute |
-
-### Права (основные)
-
-| Русский | English |
-|---------|---------|
-| `Чтение` | Read |
-| `Добавление` | Insert |
-| `Изменение` | Update |
-| `Удаление` | Delete |
-| `Просмотр` | View |
-| `Редактирование` | Edit |
-| `ВводПоСтроке` | InputByString |
-| `Проведение` | Posting |
-| `ОтменаПроведения` | UndoPosting |
-| `Использование` | Use |
-| `Получение` | Get |
-| `Установка` | Set |
-| `Старт` | Start |
-| `Выполнение` | Execute |
-| `УправлениеИтогами` | TotalsControl |
-
-### Права (интерактивные)
-
-| Русский | English |
-|---------|---------|
-| `ИнтерактивноеДобавление` | InteractiveInsert |
-| `ИнтерактивнаяПометкаУдаления` | InteractiveSetDeletionMark |
-| `ИнтерактивноеСнятиеПометкиУдаления` | InteractiveClearDeletionMark |
-| `ИнтерактивноеУдаление` | InteractiveDelete |
-| `ИнтерактивноеУдалениеПомеченных` | InteractiveDeleteMarked |
-| `ИнтерактивноеПроведение` | InteractivePosting |
-| `ИнтерактивноеПроведениеНеоперативное` | InteractivePostingRegular |
-| `ИнтерактивнаяОтменаПроведения` | InteractiveUndoPosting |
-| `ИнтерактивноеИзменениеПроведенных` | InteractiveChangeOfPosted |
-| `ИнтерактивныйСтарт` | InteractiveStart |
-| `ИнтерактивнаяАктивация` | InteractiveActivate |
-| `ИнтерактивноеВыполнение` | InteractiveExecute |
-
-### Права (конфигурация)
-
-| Русский | English |
-|---------|---------|
-| `Администрирование` | Administration |
-| `АдминистрированиеДанных` | DataAdministration |
-| `ТонкийКлиент` | ThinClient |
-| `ТолстыйКлиент` | ThickClient |
-| `ВебКлиент` | WebClient |
-| `МобильныйКлиент` | MobileClient |
-| `ВнешнееСоединение` | ExternalConnection |
-| `Вывод` | Output |
-| `СохранениеДанныхПользователя` | SaveUserData |
-
-## Типы объектов без прав в ролях
-
-Следующие типы 1С **не могут** иметь права в ролях (не добавляются в `objects`):
-
-| Тип | Причина |
-|-----|---------|
-| Enum (Перечисление) | Права наследуются от конфигурации, явное назначение невозможно |
-| CommonModule (ОбщийМодуль) | Не имеет собственных прав в роли |
-| DefinedType (ОпределяемыйТип) | Тип данных, не объект прав |
-| CommonPicture (ОбщаяКартинка) | Ресурс, не объект прав |
-| CommonTemplate (ОбщийМакет) | Ресурс, не объект прав |
-| Language (Язык) | Конфигурационный элемент |
-| FunctionalOption (ФункциональнаяОпция) | Не объект прав |
-| FunctionalOptionsParameter | Не объект прав |
-| EventSubscription (ПодпискаНаСобытие) | Не объект прав |
-| ScheduledJob (РегламентноеЗадание) | Не объект прав |
-| StyleItem (ЭлементСтиля) | Ресурс оформления |
+Для сервисов (WebService, HTTPService, IntegrationService) и внешних источников данных
+пресеты не определены — задавай права явно: `"WebService.Обмен.Operation.Загрузить: Use"`.
 
 ## Шаблоны ограничений (RLS templates)
 
@@ -227,36 +153,7 @@
 
 ## Примеры
 
-### 1. Простая роль (только пресеты)
-
-```json
-{
-  "name": "ЧтениеНоменклатуры",
-  "synonym": "Чтение номенклатуры",
-  "objects": [
-    "Catalog.Номенклатура: @view",
-    "Catalog.Контрагенты: @view",
-    "DataProcessor.Загрузка: @view"
-  ]
-}
-```
-
-### 2. Роль для регламентного задания
-
-```json
-{
-  "name": "ОбновлениеЦен",
-  "synonym": "Обновление цен номенклатуры",
-  "objects": [
-    "Catalog.Номенклатура: Read",
-    "Catalog.Валюты: Read",
-    "InformationRegister.ЦеныНоменклатуры: Read, Update",
-    "Constant.ОсновнаяВалюта: Read"
-  ]
-}
-```
-
-### 3. Роль с RLS
+### Роль с RLS
 
 ```json
 {
@@ -281,22 +178,7 @@
 }
 ```
 
-### 4. Роль с русскими синонимами
-
-```json
-{
-  "name": "ПросмотрДанных",
-  "synonym": "Просмотр данных",
-  "objects": [
-    "Справочник.Контрагенты: @view",
-    "Документ.Реализация: Чтение, Просмотр",
-    "РегистрСведений.Цены: @edit",
-    "Обработка.ЗагрузкаДанных: @view"
-  ]
-}
-```
-
-### 5. Роль с переопределением прав из пресета
+### Роль с переопределением прав из пресета
 
 ```json
 {
@@ -308,6 +190,19 @@
       "preset": "edit",
       "rights": { "Delete": false }
     }
+  ]
+}
+```
+
+### Роль с правами на части объекта
+
+```json
+{
+  "name": "МенеджерБезЦен",
+  "synonym": "Менеджер без доступа к ценам",
+  "objects": [
+    "Catalog.Номенклатура: @view",
+    { "name": "Catalog.Номенклатура.Attribute.Цена", "rights": { "View": false, "Edit": false } }
   ]
 }
 ```
