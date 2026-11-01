@@ -54,6 +54,10 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-compile/
 - `events` — form event handlers (key: 1C event name, value: procedure name).
 - `excludedCommands` — excluded standard commands.
 
+**Key case.** In PowerShell every DSL key is case-insensitive (`"Name"` = `"name"`); the Python port matches that since upstream 57b0f95b (keys of the JSON input, presets and nested objects). Event names and enum **values** are a different matter — see below.
+
+**Enum values** (`horizontalAlign`, `selectionMode`, `representation`, `windowOpeningMode`, `autoTime`, `usePostingMode`, `titleLocation`, …) are checked against the platform XSD per element type and written in the platform spelling: case is fixed silently (`right` → `Right`), known synonyms are mapped (`selectionMode: "single"` → `SingleRow`; a button's `TextPicture` → `PictureAndText`, a command's `PictureAndText` → `TextPicture`), an unknown value is a refusal (exit 1, nothing written). A value equal to the platform default is not written, as the Configurator does not write it. Element and command children are emitted in the platform's own order (e.g. a button: `Representation`, `DefaultButton`, `CommandName`, `Picture`, `Title`; a command: `Title`, `Shortcut`, `Picture`, `Action`, `Representation`) — another order is refused by the loader with an XDTO exception.
+
 ### Elements (key picks the type)
 
 | DSL key        | XML element        | Key value |
@@ -85,7 +89,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-compile/
 | `visible: false` | Hide (synonym: `hidden: true`) |
 | `enabled: false` | Disable (synonym: `disabled: true`) |
 | `readOnly: true` | Read-only |
-| `events: {...}` | **Canonical.** Event → handler name: `{ "OnChange": "MyHandler" }`; `null` / `""` = auto-name |
+| `events: {...}` | **Canonical.** Event → handler name: `{ "OnChange": "MyHandler" }`; `null` / `""` = auto-name. In an extension form the value may be `{ "handler": …, "callType": "Before" \| "After" \| "Override" }` or a list of them |
 | `on: [...]` | Legacy. Events with auto-named handlers — accepted, equivalent to `events` with `null` values |
 | `handlers: {...}` | Legacy. Explicit handler names: `{ "OnChange": "MyHandler" }`; works **with or without** `on` |
 
@@ -104,29 +108,41 @@ Refusals (exit `1`, nothing written) — the compiler never picks one format and
 
 - `events` together with `on` and/or `handlers` on the same element;
 - a key in `handlers` that is not listed in `on` (that is the typo that used to make a handler disappear);
-- an event name outside the allowed list below.
+- an event name that no element of the platform has (not in the event catalog at all — `OnEndEdit` instead of `OnEditEnd`, the obsolete `Drop`). This refusal is local; upstream only warns.
 
-### Allowed Event Names
+### Event names — the event catalog
 
-Unknown event names are a **refusal**, not a warning: an event that does not exist on the platform is only discovered when the Configurator loads the form. Names are case-sensitive.
+Events are checked against the event catalog upstream generated from the vendor configurations (BP, ERP, UNF, UT — 28.5k forms) and from load tests on 8.3.24 / 8.3.27 / 8.5. Names are case-sensitive. Beyond the refusal above, `form-compile` writes the event and prints a `[WARN]` when the event exists in the catalog but not for this element (the platform drops it on load), when it appears only in a later platform than the form's format (`OnHover`, `OnSelectedRowsSetChange` of a table and `Click` of a usual group — 8.5 only), or when it exists only for a table bound to a dynamic list (`OnGetDataAtServer`, `URLGetProcessing`, the user-settings events). Elements without events (button, page, column group, command bar, popup) get a `[WARN]` for any event given.
 
-**Form** (`events`): `OnCreateAtServer`, `OnOpen`, `BeforeClose`, `OnClose`, `NotificationProcessing`, `ChoiceProcessing`, `OnReadAtServer`, `BeforeWriteAtServer`, `OnWriteAtServer`, `AfterWriteAtServer`, `BeforeWrite`, `AfterWrite`, `FillCheckProcessingAtServer`, `BeforeLoadDataFromSettingsAtServer`, `OnLoadDataFromSettingsAtServer`, `ExternalEvent`, `Opening`.
+**Form** (`events`): `OnCreateAtServer`, `OnOpen`, `BeforeClose`, `OnClose`, `NotificationProcessing`, `ChoiceProcessing`, `OnReadAtServer`, `BeforeWriteAtServer`, `OnWriteAtServer`, `AfterWriteAtServer`, `BeforeWrite`, `AfterWrite`, `FillCheckProcessingAtServer`, `BeforeLoadDataFromSettingsAtServer`, `OnLoadDataFromSettingsAtServer`, `OnSaveDataInSettingsAtServer`, `URLProcessing`, `ExternalEvent`, `OnReopen`, `NewWriteProcessing`, `NavigationProcessing`, and the report / settings `…AtServer` events. A form event outside the catalog needs an explicit handler name.
 
-**input**: `OnChange`, `StartChoice`, `StartListChoice`, `ChoiceProcessing`, `AutoComplete`, `TextEditEnd`, `Clearing`, `Creating`, `EditTextChange`, `Tuning`, `Opening`.
-
-**picField**: `OnChange`, `StartChoice`, `ChoiceProcessing`, `Click`, `Clearing`.
+**input**: `OnChange`, `StartChoice`, `StartListChoice`, `ChoiceProcessing`, `AutoComplete`, `TextEditEnd`, `Clearing`, `Opening`, `Creating`, `EditTextChange`, `Tuning`, `MultipleValueOpening`, `MultipleValueURLProcessing`, `MultipleValuesAdd`, `MultipleValuesDelete`.
 
 **check / radio**: `OnChange`.
 
-**table**: `OnStartEdit`, `OnEditEnd`, `OnChange`, `Selection`, `ValueChoice`, `BeforeAddRow`, `BeforeDeleteRow`, `AfterDeleteRow`, `BeforeRowChange`, `BeforeEditEnd`, `OnActivateRow`, `OnActivateCell`, `Drag`, `DragStart`, `DragCheck`, `DragEnd`.
+**table**: `Selection`, `OnActivateRow`, `OnActivateCell`, `OnActivateField`, `BeforeAddRow`, `BeforeDeleteRow`, `AfterDeleteRow`, `BeforeRowChange`, `OnStartEdit`, `OnEditEnd`, `BeforeEditEnd`, `OnChange`, `ChoiceProcessing`, `ValueChoice`, `BeforeExpand`, `BeforeCollapse`, `Drag`, `DragStart`, `DragCheck`, `DragEnd`, `OnCurrentParentChange`, `RefreshRequestProcessing`, `NewWriteProcessing`; dynamic-list tables only: `OnGetDataAtServer`, `URLGetProcessing`, `BeforeLoadUserSettingsAtServer`, `OnLoadUserSettingsAtServer`, `OnSaveUserSettingsAtServer`, `OnUpdateUserSettingSetAtServer`.
 
-**label / picture**: `Click`, `URLProcessing`.
+**label**: `Click`, `URLProcessing`. **labelField**: `Click`, `URLProcessing`, `OnChange`.
 
-**labelField**: `OnChange`, `StartChoice`, `ChoiceProcessing`, `Click`, `URLProcessing`, `Clearing`.
+**picture**: `Click`, `Drag`, `DragCheck`. **picField**: `Click`, `OnChange`, `Drag`, `DragCheck`.
 
-**button**: `Click`.
+**calendar**: `OnChange`, `Selection`, `OnActivateDate`, `OnPeriodOutput`. **pages**: `OnCurrentPageChange`.
 
-**pages**: `OnCurrentPageChange`.
+Spreadsheet, HTML, formatted / text document, chart, Gantt, planner, graphical schema and track-bar fields have their own sets — `form-dsl-spec.md` § 4.2.
+
+### Handler auto-names
+
+`null` / `""` / `on` without a name produce `<ElementName><Suffix>`; a form event gets the suffix alone (`ПриСозданииНаСервере`). The suffix comes from the catalog — it follows the vendor-configuration convention and depends on the element kind; an event without a convention gets `<ElementName><EventName>`. PowerShell and Python use the same table.
+
+| Element | Event → suffix |
+|---------|----------------|
+| input | `OnChange` → `ПриИзменении`, `StartChoice` → `НачалоВыбора`, `StartListChoice` → `НачалоВыбораИзСписка`, `ChoiceProcessing` → `ОбработкаВыбора`, `Clearing` → `Очистка`, `AutoComplete` → `АвтоПодбор`, `TextEditEnd` → `ОкончаниеВводаТекста`, `Opening` → `Открытие`, `Tuning` → `Регулирование`, `Creating` → `Создание`, `EditTextChange` → `ИзменениеТекстаРедактирования` |
+| table | `Selection` → `Выбор`, `OnActivateRow` → `ПриАктивизацииСтроки`, `BeforeAddRow` → `ПередНачаломДобавления`, `BeforeDeleteRow` → `ПередУдалением`, `AfterDeleteRow` → `ПослеУдаления`, `BeforeRowChange` → `ПередНачаломИзменения`, `OnStartEdit` → `ПриНачалеРедактирования`, `OnEditEnd` → `ПриОкончанииРедактирования`, `BeforeEditEnd` → `ПередОкончаниемРедактирования`, `OnChange` → `ПриИзменении`, `DragStart` → `НачалоПеретаскивания`, `DragCheck` → `ПроверкаПеретаскивания`, `Drag` → `Перетаскивание`, `DragEnd` → `ОкончаниеПеретаскивания`, `ValueChoice` → `ВыборЗначения` |
+| label, picture, labelField | `Click` → `Нажатие`, `URLProcessing` → `ОбработкаНавигационнойСсылки` |
+| pages | `OnCurrentPageChange` → `ПриСменеСтраницы` |
+| calendar | `Selection` → `Выбор`, `OnActivateDate` → `ПриАктивизацииДаты` |
+
+In an extension form (`<BaseForm>`) a handler with a `callType` is named `<NamePrefix><Element><Suffix><Перед|После|Вместо>` (the prefix is the extension's `NamePrefix`), so it never matches the base form's procedure.
 
 ### Input Field
 
@@ -201,7 +217,7 @@ The key value sets the orientation: `"horizontal"`, `"vertical"`, `"alwaysHorizo
 
 | Key | Description |
 |-----|-------------|
-| `showTitle: true` | Show the group title |
+| `showTitle` | Without the key a usual group shows its title only when `title` or `titleDataPath` is given, otherwise the title is hidden (`<ShowTitle>false`, as in 92 % of vendor usual groups) — upstream af28bbb8 / 36ae6195 / 5f9490b2 changed this default; a collapsible group keeps the platform default (shown). `showTitle: true` / `false` overrides |
 | `united: false` | Left edge of input fields aligns only inside this group (default `true` — alignment runs through neighbouring groups by the longest title) |
 | `collapsed: true` | Only for `"group": "collapsible"` — start collapsed |
 | `representation` | `"none"`, `"normal"`, `"weak"`, `"strong"` |
@@ -569,16 +585,17 @@ This works for: form `title`, element `title`, group titles, button titles, `rad
 
 - **Companion elements** — emitted automatically per element type, by `form-compile` and `form-edit` alike (`form-validate` check 6 expects them): `input` / `check` / `label` / `labelField` → `ContextMenu` + `ExtendedTooltip`; `group` / `pages` / `page` / `button` → `ExtendedTooltip`; `table` → `ContextMenu`, `AutoCommandBar`, `Search*`, `ViewStatus*`.
 - **Defaults aligned with real ERP/БП forms** — multi-line inputs are not auto-width-bounded by default; checkbox title is on the right; `autoTitle` is suppressed when `title` is set; objects with editable state save the input state (`Esc → confirm`).
-- **Event handlers** — `"on": ["OnChange"]` → `ОрганизацияПриИзменении`.
+- **Event handlers** — `"on": ["OnChange"]` → `ОрганизацияПриИзменении` (suffix table above).
+- **Handler stubs** — every bound handler / command action missing from `<Form.xml dir>/Form/Module.bsl` is appended there as an empty procedure with the catalog directive and parameters, in the standard BSP region; existing procedures are never changed. No switch turns it off — see `form-manage.md` §3.
 - **Namespaces** — all 17 namespace declarations.
 - **IDs** — sequential numbering, AutoCommandBar = id="-1".
-- **Format version** — auto-detected from the nearest `Configuration.xml` (8.3.27+, 8.5).
+- **Format version** — from the nearest `Configuration.xml` (or the external processor's own root); without one a `[WARN]` names the assumed 2.17 (local).
 - **Auto-titles** — attributes, commands, pages, popups and decorations without an explicit `title` get a title derived from the name (e.g. `НомерСчёта` → "Номер счёта").
 - **Unknown keys** — a warning is printed for unrecognized keys.
 
 ## Workflow
 
-1. **Compile** — `1c-form-compile` generates `Form.xml` and registers `<Form>` in the parent object's `ChildObjects` (when `OutputPath` follows the `.../TypePlural/ObjectName/Forms/FormName/Ext/Form.xml` convention).
+1. **Compile** — `1c-form-compile` generates `Form.xml`, appends handler stubs to `Module.bsl` and registers `<Form>` in the parent object's top-level `ChildObjects` (when `OutputPath` follows the `.../TypePlural/ObjectName/Forms/FormName/Ext/Form.xml` convention; the Python port no longer inserts into a tabular section's nested block — upstream 11602f8b).
 2. **Form metadata** (`<FormName>.xml`) and `Module.bsl` are created by `1c-form-add` (skill `form-manage.md` §2). Run `1c-form-add` first or after compile if metadata is missing — it will not overwrite an existing `Form.xml`.
 3. **Verify** — `1c-form-validate` and `1c-form-info` (sections 5–6 in `form-manage.md`).
 

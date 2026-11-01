@@ -742,8 +742,9 @@ Register-Case 'form-compile: a standalone handlers map produces the event, confl
 
 Register-Case 'form-validate: version, owner type, folder type, handlers and conversion context' {
     param($Work)
-    # form-validate v1.10 checks 1, 12, 12b, 13 and 14 on a form-add scaffold. BSL
-    # is written in English keywords so this file stays pure ASCII.
+    # form-validate v1.39 checks 12, 14, 22 (with the local declaration / directive /
+    # arity sub-checks), 28 (local, was 12b) and 29 (local, was 14) on a form-add
+    # scaffold. BSL is written in English keywords so this file stays pure ASCII.
     $FormValidate = Join-Path $ToolsDir '1c-form-validate\scripts\form-validate.ps1'
     Copy-Fixture 'config-dump' $Work "`n"
     $target = Join-Path $Work 'Catalogs\TestCatalog.xml'
@@ -770,27 +771,41 @@ Register-Case 'form-validate: version, owner type, folder type, handlers and con
     Assert-Equal 0 $ok.ExitCode "a matching handler was rejected: $($ok.Text)"
     Assert-True ($ok.Text -notmatch '\[WARN\]') "a matching handler was warned about: $($ok.Text)"
 
+    # Upstream severity since 1.3x: a binding without its procedure is an error (22).
     $missing = & $validate $withEvent "&AtClient`nProcedure Unrelated()`nEndProcedure`n"
-    Assert-Equal 0 $missing.ExitCode "a missing handler must stay a warning: $($missing.Text)"
-    Assert-True ($missing.Text -match '\[WARN\]\s+13\..*not found') "no warning for a missing handler: $($missing.Text)"
+    Assert-True ($missing.ExitCode -ne 0) "a missing handler was accepted: $($missing.Text)"
+    Assert-True ($missing.Text -match '\[ERROR\] 22\..*not found') "no error for a missing handler: $($missing.Text)"
+
+    $noDirective = & $validate $withEvent "Procedure OnOpenHandler(Cancel)`nEndProcedure`n"
+    Assert-Equal 0 $noDirective.ExitCode "a handler without a directive must stay a warning: $($noDirective.Text)"
+    Assert-True ($noDirective.Text -match '\[WARN\]\s+22\..*no compilation directive') "no warning for a missing directive: $($noDirective.Text)"
 
     $duplicate = & $validate $withEvent ($clientHandler + "`n" + $clientHandler)
     Assert-True ($duplicate.ExitCode -ne 0) "a duplicate handler was accepted: $($duplicate.Text)"
-    Assert-True ($duplicate.Text -match '\[ERROR\] 13\..*declared 2 times') "no error for a duplicate handler: $($duplicate.Text)"
+    Assert-True ($duplicate.Text -match '\[ERROR\] 22\..*declared 2 times') "no error for a duplicate handler: $($duplicate.Text)"
 
     $conversion = & $validate $withEvent ($clientHandler + "`n&AtClient`nProcedure Convert()`n`tValue = FormAttributeToValue(`"Object`");`nEndProcedure`n")
     Assert-True ($conversion.ExitCode -ne 0) "a client-side FormAttributeToValue was accepted: $($conversion.Text)"
-    Assert-True ($conversion.Text -match '\[ERROR\] 14\.') "no error for a client-side conversion: $($conversion.Text)"
+    Assert-True ($conversion.Text -match '\[ERROR\] 29\.') "no error for a client-side conversion: $($conversion.Text)"
     $serverConversion = & $validate $withEvent ($clientHandler + "`n&AtServer`nProcedure Convert()`n`tValue = FormAttributeToValue(`"Object`");`nEndProcedure`n")
     Assert-Equal 0 $serverConversion.ExitCode "a server-side FormAttributeToValue was rejected: $($serverConversion.Text)"
 
+    # Check 14 (upstream c943acef / b20276fa): the body must match its descriptor
+    # Forms/Main.xml; a pair that agrees but differs from the dump only warns.
     $version = & $validate ($pristineForm -replace 'version="2\.17"', 'version="2.20"') ''
-    Assert-True ($version.ExitCode -ne 0) "a Form.xml version different from Configuration.xml was accepted: $($version.Text)"
-    Assert-True ($version.Text -match 'differs from Configuration\.xml') "no version diagnostic: $($version.Text)"
+    Assert-True ($version.ExitCode -ne 0) "a Form.xml version different from its descriptor was accepted: $($version.Text)"
+    Assert-True ($version.Text -match '\[ERROR\] 14\..*differs from the form descriptor') "no version diagnostic: $($version.Text)"
+    $descriptor = Join-Path $formsDir 'Main.xml'
+    $pristineDescriptor = (Get-FileFacts $descriptor).Text
+    [System.IO.File]::WriteAllText($descriptor, ($pristineDescriptor -replace 'version="2\.17"', 'version="2.20"'), $bom)
+    $pair = & $validate ($pristineForm -replace 'version="2\.17"', 'version="2.20"') ''
+    [System.IO.File]::WriteAllText($descriptor, $pristineDescriptor, $bom)
+    Assert-Equal 0 $pair.ExitCode "a consistent 2.20 pair in a 2.17 dump was rejected: $($pair.Text)"
+    Assert-True ($pair.Text -match '\[WARN\]\s+14\..*differs from the dump') "no dump-uniformity warning: $($pair.Text)"
 
     $owner = & $validate ($pristineForm -replace 'cfg:CatalogObject\.TestCatalog', 'cfg:CatalogObject.OtherCatalog') ''
     Assert-True ($owner.ExitCode -ne 0) "the default object form with a foreign main attribute was accepted: $($owner.Text)"
-    Assert-True ($owner.Text -match '\[ERROR\] 12b\.') "no 12b diagnostic: $($owner.Text)"
+    Assert-True ($owner.Text -match '\[ERROR\] 28\.') "no 28 (owner) diagnostic: $($owner.Text)"
 
     $folder = & $validate ($pristineForm -replace '</Attributes>', "`t<Attribute name=`"Extra`" id=`"2`">`n`t`t`t<Type>`n`t`t`t`t<v8:Type>cfg:Catalogs.TestCatalog</v8:Type>`n`t`t`t</Type>`n`t`t</Attribute>`n`t</Attributes>") ''
     Assert-True ($folder.ExitCode -ne 0) "cfg:Catalogs.TestCatalog was accepted: $($folder.Text)"
@@ -801,6 +816,36 @@ Register-Case 'form-validate: version, owner type, folder type, handlers and con
     [System.IO.File]::WriteAllText($otherXml, ((Get-FileFacts $otherXml).Text -replace 'cfg:CatalogObject\.TestCatalog', 'cfg:CatalogObject.OtherCatalog'), $bom)
     $nonDefault = Invoke-Tool $FormValidate @('-FormPath', $otherXml) $Work
     Assert-Equal 0 $nonDefault.ExitCode "a non-default form with another main attribute was rejected: $($nonDefault.StdOut)"
+}
+
+Register-Case 'form-edit: a DynamicList attribute without a source is refused, with mainTable it is written' {
+    param($Work)
+    # Local delta of 2026-09-10 kept across the upstream 1.46 rewrite: the Designer
+    # loads a dynamic list with neither MainTable nor QueryText, the form then fails
+    # to open. form-edit refuses that JSON before writing anything.
+    $FormEdit = Join-Path $ToolsDir '1c-form-edit\scripts\form-edit.ps1'
+    Copy-Fixture 'config-dump' $Work "`n"
+    $target = Join-Path $Work 'Catalogs\TestCatalog.xml'
+    $run = Invoke-Tool $FormAdd @('-ObjectPath', $target, '-FormName', 'Main', '-Purpose', 'Object') $Work
+    Assert-Equal 0 $run.ExitCode "form-add (stderr: $($run.StdErr))"
+    $formXml = Join-Path $Work 'Catalogs\TestCatalog\Forms\Main\Ext\Form.xml'
+    $before = (Get-FileHash -LiteralPath $formXml -Algorithm SHA256).Hash
+    $noSource = Join-Path $Work 'no-source.json'
+    [System.IO.File]::WriteAllText($noSource, '{"attributes":[{"name":"Rows","type":"DynamicList"}]}', (New-Object System.Text.UTF8Encoding($false)))
+    $refused = Invoke-Tool $FormEdit @('-FormPath', $formXml, '-JsonPath', $noSource) $Work
+    Assert-True ($refused.ExitCode -ne 0) "a DynamicList without a source was accepted: $($refused.StdOut)"
+    Assert-True ("$($refused.StdOut)$($refused.StdErr)" -match 'mainTable or settings\.query') "no refusal message: $($refused.StdOut)$($refused.StdErr)"
+    Assert-Equal $before (Get-FileHash -LiteralPath $formXml -Algorithm SHA256).Hash 'Form.xml changed although the edit was refused'
+
+    $withSource = Join-Path $Work 'with-source.json'
+    [System.IO.File]::WriteAllText($withSource, '{"attributes":[{"name":"Rows","type":"DynamicList","settings":{"mainTable":"Catalog.TestCatalog"}}]}', (New-Object System.Text.UTF8Encoding($false)))
+    $ok = Invoke-Tool $FormEdit @('-FormPath', $formXml, '-JsonPath', $withSource) $Work
+    Assert-Equal 0 $ok.ExitCode "a DynamicList with mainTable was refused: $($ok.StdOut)$($ok.StdErr)"
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($formXml)
+    $main = $xml.SelectSingleNode("//*[local-name()='Attribute'][@name='Rows']/*[local-name()='Settings']/*[local-name()='MainTable']")
+    Assert-True ($null -ne $main) 'the DynamicList attribute has no Settings/MainTable'
+    Assert-Equal 'Catalog.TestCatalog' $main.InnerText.Trim() 'MainTable'
 }
 
 # ---------------------------------------------------------------- B. meta-compile

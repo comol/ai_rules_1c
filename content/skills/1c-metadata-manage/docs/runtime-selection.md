@@ -7,7 +7,7 @@ Each tool of this skill ships as a PowerShell script (`*.ps1`). Some tools addit
 | Tool directory | PowerShell | Python | Notes |
 |---|---|---|---|
 | `1c-form-scaffold/scripts/` | `form-add.ps1` | `form-add.py` | creates a managed form (scalar registration + descriptor + `Ext/Form.xml` + module) |
-| `1c-form-scaffold/scripts/` | `remove-form.ps1` | `remove-form.py` | `-DryRun` first, a real deletion needs `-Force` |
+| `1c-form-scaffold/scripts/` | `remove-form.ps1` | `remove-form.py` | `-DryRun` first, a real deletion needs `-Force`; references from other files need `-CleanReferences` too |
 | `1c-form-compile/scripts/` | `form-compile.ps1` | `form-compile.py` | form DSL → `Form.xml` |
 | `1c-meta-edit/scripts/` | `meta-edit.ps1` | `meta-edit.py` | `add-form` is refused in both runtimes — use `form-add` |
 | `1c-meta-validate/scripts/` | `meta-validate.ps1` | `meta-validate.py` | also the mandatory post-edit check `meta-edit` runs |
