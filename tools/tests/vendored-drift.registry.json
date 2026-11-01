@@ -133,9 +133,16 @@
     },
     {
       "function": "Detect-FormatVersion",
-      "authority": "1c-form-compile/scripts/form-compile.ps1",
-      "note": "upstream fix fae22435 (length in characters, not bytes) must reach every copy",
-      "localVariants": []
+      "authority": "1c-form-scaffold/scripts/form-add.ps1",
+      "note": "upstream fix fae22435 (length in characters, not bytes) must reach every copy Authority moved to form-add (upstream: form-compile) because our form-compile carries the WARN delta.",
+      "localVariants": [
+        {
+          "files": [
+            "1c-form-compile/scripts/form-compile.ps1"
+          ],
+          "reason": "local delta: a missing Configuration.xml prints a [WARN] instead of silently assuming 2.17 (docs/CHANGELOG.md, form-manage.md)"
+        }
+      ]
     },
     {
       "function": "Compare-MetadataNames",
@@ -187,36 +194,127 @@
     },
     {
       "function": "Report-Error",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-form-validate/scripts/form-validate.ps1",
+            "1c-mxl-validate/scripts/mxl-validate.ps1"
+          ],
+          "reason": "upstream variant \"streamed\": streamed output instead of buffered - these validators have no -OutFile"
+        }
+      ],
+      "authority": "1c-cf-manage/scripts/cf-validate.ps1"
     },
     {
       "function": "Report-OK",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-form-validate/scripts/form-validate.ps1",
+            "1c-mxl-validate/scripts/mxl-validate.ps1"
+          ],
+          "reason": "upstream variant \"streamed\": streamed output instead of buffered - these validators have no -OutFile"
+        }
+      ],
+      "authority": "1c-cf-manage/scripts/cf-validate.ps1"
     },
     {
       "function": "Report-Warn",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-form-validate/scripts/form-validate.ps1",
+            "1c-mxl-validate/scripts/mxl-validate.ps1"
+          ],
+          "reason": "upstream variant \"streamed\": streamed output instead of buffered - these validators have no -OutFile"
+        }
+      ],
+      "authority": "1c-cf-manage/scripts/cf-validate.ps1"
     },
     {
       "function": "Normalize-ChoiceValue",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-meta-compile/scripts/meta-compile.ps1"
+          ],
+          "reason": "upstream variant \"meta-compile\": own implementation for metadata-object properties (meta-*), not a copy of the form emitter"
+        },
+        {
+          "files": [
+            "1c-meta-edit/scripts/meta-edit.ps1"
+          ],
+          "reason": "upstream variant \"meta-edit\": in-place property edit, own implementation"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Parse-CalcShorthand",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        },
+        {
+          "files": [
+            "1c-skd-edit/scripts/skd-edit.ps1"
+          ],
+          "reason": "upstream variant \"skd-edit\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Parse-DataParamShorthand",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        },
+        {
+          "files": [
+            "1c-skd-edit/scripts/skd-edit.ps1"
+          ],
+          "reason": "upstream variant \"skd-edit\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Parse-FilterShorthand",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        },
+        {
+          "files": [
+            "1c-skd-edit/scripts/skd-edit.ps1"
+          ],
+          "reason": "upstream variant \"skd-edit\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-AppearanceValue",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-Button",
@@ -226,7 +324,15 @@
     {
       "function": "Emit-CalcFields",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-Calendar",
@@ -241,17 +347,41 @@
     {
       "function": "Emit-ChoiceParameterLinks",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-meta-compile/scripts/meta-compile.ps1"
+          ],
+          "reason": "upstream variant \"own\": own implementation for metadata-object properties (meta-*), not a copy of the form emitter"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-ChoiceParameters",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-meta-compile/scripts/meta-compile.ps1"
+          ],
+          "reason": "upstream variant \"own\": own implementation for metadata-object properties (meta-*), not a copy of the form emitter"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-CommandPicture",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-meta-compile/scripts/meta-compile.ps1"
+          ],
+          "reason": "upstream variant \"own\": own implementation for metadata-object properties (meta-*), not a copy of the form emitter"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-CommonFlags",
@@ -266,12 +396,28 @@
     {
       "function": "Emit-ConditionalAppearance",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-DataParameters",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-Element",
@@ -291,12 +437,28 @@
     {
       "function": "Emit-Filter",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-FilterItem",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-Group",
@@ -321,12 +483,29 @@
     {
       "function": "Emit-MLItems",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-meta-compile/scripts/meta-compile.ps1",
+            "1c-meta-edit/scripts/meta-edit.ps1"
+          ],
+          "reason": "upstream variant \"own\": own implementation for metadata-object properties (meta-*), not a copy of the form emitter"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-Order",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-Page",
@@ -341,7 +520,15 @@
     {
       "function": "Emit-Parameters",
       "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
-      "localVariants": []
+      "localVariants": [
+        {
+          "files": [
+            "1c-skd-compile/scripts/skd-compile.ps1"
+          ],
+          "reason": "upstream variant \"skd-compile\": own implementation outside forms"
+        }
+      ],
+      "authority": "1c-form-compile/scripts/form-compile.ps1"
     },
     {
       "function": "Emit-PictureDecoration",
@@ -380,7 +567,7 @@
     },
     {
       "function": "Emit-MLText",
-      "maxVariants": 5,
+      "maxVariants": 4,
       "note": "upstream ratchet (ps1 <= 4): different signatures per tool",
       "localVariants": []
     },

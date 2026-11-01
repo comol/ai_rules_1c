@@ -2,14 +2,18 @@
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: support guard reads .dev.env SUPPORT_GUARD first and fails closed on an unreadable
 # support state; new <ChildObjects> position from .dev.env NEW_OBJECT_POSITION (fallback
-# .v8-project.json newObjectPosition).
+# .v8-project.json newObjectPosition); an existing role is refused unless -Force (upstream
+# replaces it with a new uuid - existing roles are changed with role-edit).
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
 	[string]$JsonPath,
 
 	[Parameter(Mandatory)]
-	[string]$OutputDir
+	[string]$OutputDir,
+
+	# 1c-rules: replace an existing role deliberately (new uuid); otherwise refused.
+	[switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -187,6 +191,8 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 		$G = 0; $K = 0; $text = $null; $parseOk = $false
 		try {
 			$bytes = [System.IO.File]::ReadAllBytes($binPath)
+			# A state of 32 bytes or less is the empty container a configuration keeps when vendor support was removed completely (docs/1c-support-state-spec.md upstream: ~16 bytes) - nothing is on support, so it is not 'unreadable'.
+			if ($bytes.Length -le 32) { $parseOk = $true }
 			if ($bytes.Length -gt 32) {
 				$start = 0
 				if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
@@ -1666,6 +1672,12 @@ if ($leaf -eq "Roles") {
 
 # Metadata: Roles/RoleName.xml
 $metadataPath = Join-Path $rolesDir "$roleName.xml"
+# 1c-rules: a recompile writes a new uuid - the link to the infobase role and every reference
+# to it break. Existing roles are changed in place with role-edit; -Force replaces deliberately.
+if ((Test-Path -LiteralPath $metadataPath) -and -not $Force) {
+	[Console]::Error.WriteLine("[ERROR] Role '$roleName' already exists (Roles/$roleName.xml). Recompiling replaces it with a NEW uuid: the link to the infobase role and references to it break. Change an existing role with role-edit; pass -Force only to replace it deliberately.")
+	exit 1
+}
 if (-not (Test-Path $rolesDir)) {
 	New-Item -ItemType Directory -Path $rolesDir -Force | Out-Null
 }

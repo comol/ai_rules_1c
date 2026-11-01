@@ -293,6 +293,9 @@ def assert_edit_allowed(target_path, require):
         parse_ok = False
         try:
             data = open(bin_path, "rb").read()
+            # A state of 32 bytes or less is the empty container left when vendor support was removed completely - nothing is on support, not 'unreadable'.
+            if len(data) <= 32:
+                parse_ok = True
             if len(data) > 32:
                 if data[:3] == b"\xef\xbb\xbf":
                     data = data[3:]

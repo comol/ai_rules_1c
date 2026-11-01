@@ -8,7 +8,7 @@ and travels with every copy of this skill, including installed ones
 ## Nikolay-Shirokov/cc-1c-skills
 
 - Upstream: <https://github.com/Nikolay-Shirokov/cc-1c-skills>
-- Pinned commit: `ecd289fe11733028d87b55284ea9fb5feff8f513`
+- Pinned commit: `2e75b0f483eb020e9f09562d1a7be1982bc5ac6e`
 - Licence: MIT
 
 Vendored under `tools/`, with local modifications documented in each file's
@@ -99,7 +99,12 @@ Other tool commands remain PowerShell-only. The upstream pin above is not to be 
 `tools/tests/python-ports-regression.py` and re-recording the deltas here.
 
 - the PowerShell tool scripts under `tools/` synced from the same upstream
-  (per-tool versions and local changes: `docs/*.md`, section "Upstream sync").
+  (per-tool versions and local changes: `docs/CHANGELOG.md`, section "Upstream
+  sync 2026-11-01 (2e75b0f)"), including the tools first vendored at this pin:
+  `tools/1c-role-edit/` (`role-edit`), `tools/1c-db-ops/scripts/db-cfe-admin.ps1`
+  (`db-cfe-admin`) and `tools/1c-v8-xsd-fetch/` (`v8-xsd-fetch`). Copies of
+  shared functions across these scripts are held together by
+  `tools/tests/vendored-drift.ps1` in the ruleset source.
 
 Not part of this skill, listed for completeness: the ruleset source also
 carries a port of upstream `hooks/support-guard.mjs` for Claude Code

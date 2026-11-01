@@ -9,7 +9,7 @@ Create, edit in place, analyze, and validate 1C roles (metadata + Rights.xml) fo
 | Summary of a role | `role-info` (section 3) |
 | Check a role | `role-validate` (section 4) — `role-edit` runs it automatically |
 
-Never re-compile an existing role: `role-compile` issues a new UUID and rewrites `Rights.xml` whole.
+Never re-compile an existing role: `role-compile` issues a new UUID and rewrites `Rights.xml` whole. It refuses (exit 1, nothing written) when `Roles/<Name>.xml` already exists; `-Force` replaces the role deliberately (local gate, upstream overwrites).
 
 ---
 ## 1. Compile — Create Role

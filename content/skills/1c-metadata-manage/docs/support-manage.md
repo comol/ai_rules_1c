@@ -17,7 +17,7 @@ Every mutating tool of this skill checks the support state before touching anyth
 
 All of them run the same decision. `xdto-compile` / `xdto-edit` used to refuse any configuration that merely had `Ext/ParentConfigurations.bin`; they now decide per object like the rest, so an XDTO package can be added wherever `meta-compile` may add a catalog. `remove-template` has no guard — check the owner's state yourself before removing a template from a typical configuration.
 
-**Trigger.** The guard activates only when the configuration is genuinely on vendor support — i.e. `Ext/ParentConfigurations.bin` is present next to `Configuration.xml` (found by walking up from the target path). Own configurations, extensions and autonomous external objects (EPF/ERF) are never affected. A support-state file that exists but cannot be read or parsed gets the same `deny|warn|off` reaction (fail-closed — an unknown state may be a locked object); other guard errors (the state cannot even be located) degrade to *allow* with a stderr notice.
+**Trigger.** The guard activates only when the configuration is genuinely on vendor support — i.e. `Ext/ParentConfigurations.bin` is present next to `Configuration.xml` (found by walking up from the target path). Own configurations, extensions and autonomous external objects (EPF/ERF) are never affected; neither is a configuration whose support was removed completely — its `ParentConfigurations.bin` is the empty container of 32 bytes or less. A support-state file that exists but cannot be read or parsed gets the same `deny|warn|off` reaction (fail-closed — an unknown state may be a locked object); other guard errors (the state cannot even be located) degrade to *allow* with a stderr notice.
 
 **What is blocked:**
 

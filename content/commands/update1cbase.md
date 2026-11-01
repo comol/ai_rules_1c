@@ -95,6 +95,7 @@ Map `.dev.env` keys to Designer flags:
 | `IB_USER` when not empty | `/N '{IB_USER}'` |
 | `IB_PASSWORD` when not empty | `/P '{IB_PASSWORD}'` |
 | `EXTENSION_NAME` when not empty | `-Extension {EXTENSION_NAME}` |
+| `REPOSITORY_PATH` when not empty (main configuration passes) | `/ConfigurationRepositoryF '{REPOSITORY_PATH}' /ConfigurationRepositoryN '{REPOSITORY_USER}' /ConfigurationRepositoryP '{REPOSITORY_PASSWORD}'` — an infobase bound to a repository refuses every Designer operation without them («Соединение с хранилищем конфигурации не установлено»); never print the password |
 
 ```powershell
 & '{PLATFORM_PATH}\bin\1cv8.exe' DESIGNER `

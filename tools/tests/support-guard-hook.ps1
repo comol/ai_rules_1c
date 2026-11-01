@@ -280,15 +280,21 @@ Register-Case 'parity: capability off refuses every object; support removed (K=0
     [void](Assert-Parity $k0 'Catalogs\Locked.xml' 'allow')
 }
 
-Register-Case 'parity: an unreadable support state is fail-closed (32 bytes or less, bad header)' {
+Register-Case 'parity: support removed completely (32 bytes or less) allows; a bad header is fail-closed' {
     param($Work)
-    # The PowerShell guard treats a bin of 32 bytes or less as unparseable; the hook
-    # mirrors it. Upstream's spec calls a ~16-byte bin "support removed completely".
-    $tiny = New-Project (Join-Path $Work 'tiny') ([byte[]](0xEF, 0xBB, 0xBF) + [System.Text.Encoding]::ASCII.GetBytes('{6,0,0,0}'))
-    $hook = Assert-Parity $tiny 'Catalogs\Free.xml' 'deny'
-    Assert-True ($hook.Json.hookSpecificOutput.permissionDecisionReason -match 'ParentConfigurations\.bin') 'the unreadable-state refusal does not name the file'
+    # A bin of 32 bytes or less is the empty container a configuration keeps once vendor
+    # support was removed completely (upstream support-state spec: ~16 bytes) - both the
+    # PowerShell guard and the hook let the edit through.
+    # [byte[]] around the sum: byte[] + byte[] is object[] in PowerShell, and New-Project
+    # would write it as text ("239 187 191 ...", 43 bytes) instead of the 12-byte container.
+    $tinyBytes = [byte[]]([byte[]](0xEF, 0xBB, 0xBF) + [System.Text.Encoding]::ASCII.GetBytes('{6,0,0,0}'))
+    $tiny = New-Project (Join-Path $Work 'tiny') $tinyBytes
+    $tinyBin = Join-Path $tiny.Cf 'Ext\ParentConfigurations.bin'
+    Assert-True ((Get-Item -LiteralPath $tinyBin).Length -eq 12) "the tiny support state is not 12 bytes: $((Get-Item -LiteralPath $tinyBin).Length)"
+    [void](Assert-Parity $tiny 'Catalogs\Free.xml' 'allow')
     $bad = New-Project (Join-Path $Work 'bad') ('{7,0,1,' + ('x' * 64) + '}')
-    [void](Assert-Parity $bad 'Catalogs\Free.xml' 'deny')
+    $hook = Assert-Parity $bad 'Catalogs\Free.xml' 'deny'
+    Assert-True ($hook.Json.hookSpecificOutput.permissionDecisionReason -match 'ParentConfigurations\.bin') 'the unreadable-state refusal does not name the file'
 }
 
 Register-Case 'parity: an external data processor and a nested extension dump are never on support' {

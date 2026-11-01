@@ -84,6 +84,17 @@ jobs:
         shell: powershell
         run: .\tools\render-gate-evals.ps1 -OutDir "$env:RUNNER_TEMP\gate-evals"
 
+      # Vendored cc-1c-skills scripts copy shared functions into each other (support guard,
+      # platform launch, .dev.env helpers, form/meta emitters). Every copy of a registered
+      # family must match its authority unless the registry declares the variant and why;
+      # a function called at script top level must be declared above the call.
+      - name: Vendored copy drift and declaration order
+        shell: powershell
+        run: |
+          .\tools\tests\vendored-drift.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\tools\tests\vendored-drift.ps1
+
       # Behaviour regressions for the meta-edit / meta-compile tool scripts of the
       # 1c-metadata-manage skill. Same interpreter, no 1C platform needed: the cases
       # materialize their own fixtures and assert on the resulting bytes.

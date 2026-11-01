@@ -1120,6 +1120,25 @@ Register-Case 'support guard: .dev.env SUPPORT_GUARD=off still wins over the def
     Assert-True ((Get-FileFacts $target).Text -match '<Name>RegrFlag</Name>') 'edit was not applied with the guard off'
 }
 
+Register-Case 'support guard: support removed completely (tiny bin) allows; an unreadable bin stays fail-closed' {
+    param($Work)
+    Copy-Fixture 'on-support' $Work "`n"
+    $bin = Join-Path $Work 'Ext\ParentConfigurations.bin'
+    $target = Join-Path $Work 'Catalogs\Locked.xml'
+    # The empty container a configuration keeps once vendor support was removed completely.
+    [System.IO.File]::WriteAllBytes($bin, ([byte[]](0xEF, 0xBB, 0xBF) + [System.Text.Encoding]::ASCII.GetBytes('{6,0,0,0}')))
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag: Boolean', '-NoValidate') $Work
+    Assert-Equal 0 $run.ExitCode "support removed completely was refused (stderr: $($run.StdErr))"
+    Assert-True ((Get-FileFacts $target).Text -match '<Name>RegrFlag</Name>') 'edit was not applied once support was removed'
+
+    $before = [System.IO.File]::ReadAllBytes($target)
+    [System.IO.File]::WriteAllText($bin, ('{7,0,1,' + ('x' * 64) + '}'))
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag2: Boolean', '-NoValidate') $Work
+    Assert-True ($run.ExitCode -ne 0) 'an unparseable support state let the edit through'
+    Assert-True ($run.StdErr -match 'ParentConfigurations\.bin') "the refusal does not name the state file: $($run.StdErr)"
+    Assert-Equal ([System.Convert]::ToBase64String($before)) ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($target))) 'refused edit still touched the file'
+}
+
 Register-Case 'support guard: meta-compile still refuses to write into a locked dump' {
     param($Work)
     Copy-Fixture 'on-support' $Work "`n"
@@ -1860,6 +1879,21 @@ Register-Case 'role-validate: a second positional argument is refused, not writt
     Assert-True ((Get-FileFacts $role.RoleXml).Text -match '<Role uuid=') 'Roles/RegrRole.xml no longer holds the role'
     $ok = Invoke-Tool $RoleValidate @($role.Rights) $Work
     Assert-Equal 0 $ok.ExitCode "role-validate of the compiled role: $($ok.StdOut)"
+}
+
+Register-Case 'role-compile: an existing role is refused without -Force, its uuid kept' {
+    param($Work)
+    $role = New-RoleFixture $Work
+    $uuid = Get-RoleUuid $role.RoleXml
+    $before = Get-TreeSnapshot $role.Dump
+    $json = Join-Path $Work 'role.json'
+    $run = Invoke-Tool $RoleCompile @('-JsonPath', $json, '-OutputDir', $role.Dump) $Work
+    Assert-True ($run.ExitCode -ne 0) "a recompile of an existing role was accepted (stdout: $($run.StdOut))"
+    Assert-True ($run.StdErr -match 'role-edit') "the refusal does not point to role-edit: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $role.Dump) 'refused role-compile'
+    $forced = Invoke-Tool $RoleCompile @('-JsonPath', $json, '-OutputDir', $role.Dump, '-Force') $Work
+    Assert-Equal 0 $forced.ExitCode "role-compile -Force (stderr: $($forced.StdErr))"
+    Assert-True ((Get-RoleUuid $role.RoleXml) -ne $uuid) 'role-compile -Force kept the old uuid - the case no longer pins the replacement'
 }
 
 Register-Case 'role-compile: rights on an Enum are refused before anything is written' {

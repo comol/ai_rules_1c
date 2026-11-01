@@ -501,6 +501,8 @@ Local deltas re-applied: support guard from `.dev.env` `SUPPORT_GUARD`, fail-clo
 
 Platform check (8.3.27.2130, throwaway file infobase): a role made by `role-compile` and changed by `role-edit` (`add-rights` on two reports, `deny-rights` on an attribute) keeps its UUID, passes `role-validate`, loads with `/UpdateDBCfg` and dumps back byte-identical; `role-compile` refuses `Enum.X: Read` with exit 1.
 
+Local gate (same sync): `role-compile` refuses an existing `Roles/<Name>.xml` unless `-Force` (exit 1, nothing written) — a recompile gives the role a new uuid, as `meta-compile` does for objects; existing roles are changed with `role-edit`. Upstream overwrites. Regression case: refusal without `-Force`, replacement with it.
+
 ### Local fix `2026-10-14` — `role-validate` parameters, rights-only edits
 
 The validate section described `-MetadataPath`, which `role-validate.ps1` does not have (the call failed with a PowerShell parameter error; support ticket d3372592): the metadata file is located from the `Rights.xml` path. The section now lists the real parameters (`-RightsPath` / `-Path`, `-OutFile`, `-Detailed`, `-MaxErrors`). The manual fallback for rights-only edits of an existing role contradicted `SKILL.md → Hard rule`; it is now one of its documented exceptions, because no tool edits a role in place.
@@ -631,6 +633,8 @@ The PowerShell scripts under `tools/1c-subsystem-manage/scripts/` were refreshed
 - The shared guard resolves `configSrc` from the `.v8-project.json` directory (fallback path only).
 
 Local: `.dev.env` `SUPPORT_GUARD` wins in every copy, fail-closed on an unreadable bin. Regression case: `xdto-compile` on a K=0 configuration and on a locked one.
+
+Local fix (same sync): the fail-closed branch also caught a `ParentConfigurations.bin` of 32 bytes or less — the empty container a configuration keeps once vendor support was removed completely (upstream spec: ~16 bytes; the `*-info` tools already reported it as "removed") — and refused every edit of such a configuration. All 19 PowerShell copies of `Assert-EditAllowed`, the three Python copies and the Claude Code hook now treat it as "nothing on support"; an unparseable larger file stays fail-closed. Pinned by `metadata-tools-regression.ps1` (meta-edit on both shapes) and the hook parity test.
 
 ## template-manage.md
 

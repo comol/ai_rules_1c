@@ -11,8 +11,8 @@
 //     .v8-project.json is not read;
 //   - support state decoded exactly as Assert-EditAllowed of the vendored PowerShell tools:
 //     root uuid and external-object root from the first element child of the document element,
-//     and a present Ext/ParentConfigurations.bin that cannot be read or parsed (32 bytes or
-//     less included) gets the same reaction as a locked object (fail-closed);
+//     a present Ext/ParentConfigurations.bin of 32 bytes or less is "support removed completely"
+//     (allowed); one that cannot be read or parsed gets the reaction of a locked object (fail-closed);
 //   - only files of the dump are checked (Configuration.xml, ConfigDumpInfo.xml, Ext/ and the
 //     metadata collection folders of the configuration root), so notes next to a dump are free;
 //   - warn and every notice go to the user as systemMessage (stderr of exit 0 is not shown);
@@ -180,6 +180,8 @@ export function decideSupport(targetPath, require = 'editable') {
   let G = 0, K = 0, text = null, parsed = false;
   try {
     let data = readFileSync(binPath);
+    // 32 bytes or less: the empty container left when vendor support was removed completely.
+    if (data.length <= 32) parsed = true;
     if (data.length > 32) {
       if (data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf) data = data.subarray(3);
       text = data.toString('utf8');
