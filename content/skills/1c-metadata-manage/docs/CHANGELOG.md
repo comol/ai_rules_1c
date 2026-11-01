@@ -137,6 +137,36 @@ An extension is the **default answer** when a typical object on vendor support n
 
 ## db-manage.md
 
+### Upstream sync 2026-11-01 (2e75b0f)
+
+Scripts under `tools/1c-db-ops/scripts/` refreshed from upstream `2e75b0f`: `db-create` v1.10 → **v1.21**, `db-dump-cf` v1.12 → **v1.23**, `db-dump-dt` v1.11 → **v1.22**, `db-dump-xml` v1.14 → **v1.29**, `db-load-cf` v1.13 → **v1.25**, `db-load-dt` v1.12 → **v1.23**, `db-load-git` v1.18 → **v1.36**, `db-load-xml` v1.19 → **v1.38**, `db-run` v1.7 → **v1.16**, `db-update` v1.14 → **v1.28**; new **`db-cfe-admin` v1.8** (section 11). `install-files-update.ps1` is our own tool and was not touched.
+
+Behaviour changes:
+
+- **No false exit 0** (eb1796ef): a top-level `trap { …; exit 1 }` — an unhandled error inside `try/finally` used to end the script with code 0 and no platform run (reproduced on PS 5.1).
+- **No hang on 8.5** (ff894f29, 1c04962b, 3d54652b): the platform is started by a small C# `PlatformProcess` with an explicit inherited-handle list, so `crashpad_handler` cannot hold the caller's pipe; `Process.Start` fallback when `Add-Type` is blocked.
+- **Load mode from the list** (989f4c55): `db-load-xml -Files` / `-ListFile` without `-Mode` is a partial load on 1cv8 too (it was `Full` and replaced the whole configuration). `db-dump-xml -Objects` / new `-ObjectsFile` always means `Partial`; `Changes` is `-update` without `-force` (f98e7e9e), a first dump into an empty directory is `Full`, a dump without `ConfigDumpInfo.xml` is refused.
+- **`-AllExtensions` with a file list is refused** (647c633a) in `db-load-xml` / `db-load-git`.
+- **Silent rejections** (a024b7da): `Find-SilentRejections` (8 patterns, incl. «Для работы с конфигурацией необходима версия платформы не меньше») in `db-load-xml`, `db-load-git`, `db-update`; `db-load-git` reports deletions it cannot apply (80618f0b).
+- **Smuggled batch commands** (59438282): `V8BatchKeys` refuse `/CheckConfig`, `/DeleteCfg`, … in `PLATFORM_ARGS` / `-AdditionalV8Arguments`; `/ConfigurationRepositoryP` is a secret key in every copy.
+- **Repository credentials** (478e7489, 19d62afb): `db-load-xml`, `db-load-git`, `db-dump-xml`, `db-update`, `db-cfe-admin` pass `/ConfigurationRepositoryF/N/P`; three repository hints in the loaders.
+- **Relative paths** (8d9e6c46, c4429ba9, 593b58b0): only absolute paths reach the platform. `[CmdletBinding(PositionalBinding=$false)]` and `ProviderPath` everywhere.
+
+Local deltas re-applied (one variant of every shared function across the family, `db-*` / `epf-*` / `stub-db-create` / `db-cfe-admin`):
+
+- `.dev.env` first in `Get-ProjectExtraArgs`, `Find-ProjectV8Path` (order: `-V8Path` → `PLATFORM_PATH` → record `v8path` → root `v8path` → auto-detect) and the install-dir → `bin\1cv8.exe` substitution; the `.dev.env` directory is also a project root for relative infobase paths. New: `REPOSITORY_PATH` / `REPOSITORY_USER` / `REPOSITORY_PASSWORD` before the registry record (main configuration only; an extension repository stays registry-only). Passing them to an unbound infobase is harmless (8.3.27.2130).
+- `/DumpResult` on every Designer launch, now through one shared `Get-DumpResultError`, including the new launches: the applicability check, `db-cfe-admin`.
+- `db-update -Dynamic`: upstream's `on/off/yes/no/+/-` plus our `auto/disable`. Log failure lines raise the exit code (not only with `-StrictLog`): the 8 upstream patterns plus «Ошибка [при] обновлени… конфигурации базы данных».
+- Repository hints point at `1c-repository-manage` and `.dev.env` instead of upstream `/db-repo` / `.v8-project.json`.
+
+Deliberate deviations from upstream:
+
+- **Extension applicability check is opt-in** (`-ApplyCheck`; `.v8-project.json` `extensionApplyCheck: true` as fallback): `/update1cbase` Step 2c is the gate, so `db-load-*` / `db-update` do not add a second Designer pass by default. With `-ApplyCheck` a refusal exits 1.
+- **`db-cfe-admin`**: `-Extension` alias of `-Name`; `delete` / `set-properties` need `-Force`, `-DryRun` prints the plan, neither → exit 2. `/DeleteCfg -Extension ""` deleting the first extension was reproduced on 8.3.27.2130 and added to `designer-batch-checks.md → Never run these switches`.
+- Not ported: upstream `db-repo` (our `1c-repository-manage` owns repository operations), the Python ports of `db-*`, CRLF-only fixes.
+
+Pinned by `tools/tests/db-tools-regression.ps1` (fake `1cv8.exe`, no platform). Live on throwaway file bases in `%TEMP%`: 8.3.27.2130 — `db-create`, full and partial `db-load-xml`, `db-update`, `db-dump-xml` (`Changes`, `-Objects`), `db-load-git`, `db-cfe-admin list / check / delete`; 8.5.1.1522 — `db-create` + `db-dump-cf` through a pipe return at once (the hang itself did not reproduce: a `crashpad_handler` was already resident).
+
 ### Local fix `2026-10-20` — `-Dynamic` takes `auto` / `disable`
 
 `db-update` v1.13 → **v1.14** (support ticket 7557c7cf): through `powershell.exe -File` a lone `-Dynamic "-"` never reaches the script — Windows PowerShell 5.1 exits with a non-zero code and no output, so the agent saw a silent failure instead of `/UpdateDBCfg -Dynamic-`. `-Dynamic` now also accepts `auto` and `disable` (the ibcmd spellings), mapped to `+` / `-`; `+` / `-` keep working in-process, and `-Dynamic:-` works through `-File` as well. Checked on a throwaway 8.3.27.2130 file base: `-File … -Dynamic disable` → `-Dynamic-`, `auto` → `-Dynamic+`, both exit 0.
@@ -154,6 +184,18 @@ The PowerShell scripts under `tools/1c-db-ops/scripts/` were refreshed from [Nik
 - **db-list** — already fully described in Part 1 of this doc (registry of `.v8-project.json`). It is a no-script skill in upstream — the agent reads / writes the JSON directly. No script files were added under `tools/`.
 
 ## epf-manage.md
+
+### Upstream sync 2026-11-01 (2e75b0f)
+
+`epf-build` v1.12 → **v1.26**, `stub-db-create` v1.7 → **v1.17**, `epf-dump` v1.11 → **v1.22**, `epf-validate` v1.2 → **v1.12**, `epf-init` v1.1 → **v1.9**, `erf-init` v1.1 → **v1.9**.
+
+- **Source check before the build** (448f05ed, 06bdee3e, 63634466, e2c7f385): the processor is embedded into a stub configuration and `/CheckConfig` runs first; `-Checks`, `-Context`, `-ConfigSrc`. On by default as upstream; ~11 s against ~4–5 s with `-Checks off` for a minimal processor on 8.3.27.2130.
+- **`stub-db-create`** (beaa75c7, 614206bc): format version and compatibility mode come from the sources; logs live in the unique stub directory.
+- **`epf-validate`** (5d1b5cdf, fbcf65e1): `Command` in `ChildObjects` and `Ext/ManagerModule.bsl` are errors; check 11 — format version of stamped bodies.
+- **`epf-init` / `erf-init`** (974ca3aa, 3ef9e76f): synonym XML-escaped; `-FormatVersion`.
+- `trap`, `PlatformProcess` and the stub launched with `Start-Process -PassThru` + `WaitForExit` instead of `-Wait` (8.5 hang), as in the `db-manage.md` entry above.
+
+Local deltas re-applied: `.dev.env` first (as in `db-*`); `/DumpResult` on the build, the `/CheckConfig` pre-check and the stub's `/LoadConfigFromFiles` / `/UpdateDBCfg`; the stub runs under `pwsh` on PowerShell Core; the 2026-10-07 common-forms delta (`epf-validate` check 5, `stub-db-create` stubs — now stamped with the stub format version, `erf-init -BspForms`) — checked with the pre-check on: an `erf-init -BspForms` report builds on 8.3.27.2130. Deviation: common modules for the pre-check come from `.dev.env` `EXPORT_PATH` before the registry `configSrc`, and the printed check command line is masked.
 
 ### Local fix `2026-10-07` — common forms in external reports
 

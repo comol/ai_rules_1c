@@ -1,8 +1,11 @@
-﻿# epf-validate v1.2 — Validate 1C external data processor / report structure
+﻿# epf-validate v1.12 — Validate 1C external data processor / report structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (1c-rules): check 5 accepts CommonForm.<Name> in DefaultForm (a configuration common form,
+#   БСП reports; resolved by name in the build infobase) — Local fix 2026-10-07.
 # Works for both EPF (ExternalDataProcessor) and ERF (ExternalReport) — auto-detects
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)]
+	[Parameter(Mandatory, Position=0)]
 	[Alias('Path')]
 	[string]$ObjectPath,
 
@@ -19,7 +22,7 @@ $ErrorActionPreference = "Stop"
 # --- Resolve path ---
 
 if (-not [System.IO.Path]::IsPathRooted($ObjectPath)) {
-	$ObjectPath = Join-Path (Get-Location).Path $ObjectPath
+	$ObjectPath = Join-Path (Get-Location).ProviderPath $ObjectPath
 }
 
 if (Test-Path $ObjectPath -PathType Container) {
@@ -56,7 +59,7 @@ if (-not (Test-Path $ObjectPath)) {
 	exit 1
 }
 
-$resolvedPath = (Resolve-Path $ObjectPath).Path
+$resolvedPath = (Resolve-Path $ObjectPath).ProviderPath
 $srcDir = Split-Path $resolvedPath -Parent
 
 # --- Output infrastructure ---
@@ -99,6 +102,7 @@ $finalize = {
 		$result = "=== Validation OK: $shortType.$objName ($checks checks) ==="
 	} else {
 		Out-Line ""
+		if ($script:stopped -and $script:errors -ge $MaxErrors) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
 		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
 		$result = $script:output.ToString()
 	}
@@ -111,6 +115,34 @@ $finalize = {
 	}
 }
 
+# --- Format version ---
+# Проверенный диапазон версий формата выгрузки: 2.17 (8.3.24) … 2.21 (8.5). Полная лестница —
+# docs/1c-configuration-spec.md, «Лестница версий». Версию задаёт платформа ВЫГРУЗКИ, а не режим
+# совместимости конфигурации. Версии ниже 2.17 (платформы 8.3.23 и старше) существуют, но навыки
+# на них не проверялись — это предупреждение о непокрытии, а не о некорректности файла.
+$formatVerifiedMin = "2.17"
+$formatVerifiedMax = "2.21"
+# Версия формата как число: "2.20" → 220. Строковое сравнение неверно ("2.9" > "2.17").
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+# Штамп версии формата — атрибут version КОРНЕВОГО элемента файла. Копия общего эталона (семья
+# root_version, авторитет — meta-validate).
+function Get-RootVersion([string]$xmlPath) {
+	if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) { return $null }
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($xmlPath)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $len)
+	$m = [regex]::Match($head, '<[A-Za-z_][\w.:-]*(\s[^>]*)?/?>')
+	if (-not $m.Success) { return $null }
+	$v = [regex]::Match($m.Groups[1].Value, '(?:^|\s)version="([^"]*)"')
+	if ($v.Success) { return $v.Groups[1].Value }
+	return $null
+}
+
 # --- Reference tables ---
 
 $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
@@ -121,7 +153,8 @@ $classIds = @{
 	"ExternalReport"        = "e41aff26-25cf-4bb6-b6c1-3f478a75f374"
 }
 
-$allowedChildTypes = @("Attribute","TabularSection","Form","Template","Command")
+# Команд объекта у внешней обработки/отчёта нет: платформа выбрасывает их при сборке (#108).
+$allowedChildTypes = @("Attribute","TabularSection","Form","Template")
 
 # Expected order of child types in ChildObjects
 $childTypeOrder = @{
@@ -129,11 +162,10 @@ $childTypeOrder = @{
 	"TabularSection" = 1
 	"Form"           = 2
 	"Template"       = 3
-	"Command"        = 4
 }
 
 $validPropertyValues = @{
-	"FillChecking" = @("DontCheck","ShowError","ShowWarning")
+	"FillChecking" = @("DontCheck","ShowError")
 	"Indexing"     = @("DontIndex","Index","IndexWithAdditionalOrder")
 }
 
@@ -183,10 +215,15 @@ if ($root.NamespaceURI -ne $expectedNs) {
 }
 
 $version = $root.GetAttribute("version")
+$versionRank = Get-FormatRank $version
 if (-not $version) {
 	Report-Warn "1. Missing version attribute on MetaDataObject"
-} elseif ($version -ne "2.17" -and $version -ne "2.20" -and $version -ne "2.21") {
-	Report-Warn "1. Unusual version '$version' (expected 2.17, 2.20 or 2.21)"
+} elseif ($versionRank -eq 0) {
+	Report-Error "1. Malformed version '$version' (expected N.N)"
+} elseif ($versionRank -lt (Get-FormatRank $formatVerifiedMin)) {
+	Report-Warn "1. Format version '$version' is below the tested range $formatVerifiedMin-$formatVerifiedMax — skills were not verified on it"
+} elseif ($versionRank -gt (Get-FormatRank $formatVerifiedMax)) {
+	Report-Warn "1. Format version '$version' is above the tested range $formatVerifiedMin-$formatVerifiedMax — skills were not verified on it"
 }
 
 # Detect type: ExternalDataProcessor or ExternalReport
@@ -391,6 +428,11 @@ if ($childObjNode) {
 		if ($child.NodeType -ne 'Element') { continue }
 		$childTag = $child.LocalName
 
+		if ($childTag -eq "Command") {
+			Report-Error "4. ChildObjects: Command — external data processors/reports have no object commands; the platform drops it on build"
+			$check4Ok = $false
+			continue
+		}
 		if ($allowedChildTypes -notcontains $childTag) {
 			Report-Error "4. ChildObjects: disallowed element '$childTag'"
 			$check4Ok = $false
@@ -405,7 +447,7 @@ if ($childObjNode) {
 		# Check ordering
 		$thisOrder = $childTypeOrder[$childTag]
 		if ($thisOrder -lt $lastOrder -and $orderOk) {
-			Report-Warn "4. ChildObjects: '$childTag' appears after higher-order elements (expected: Attribute, TabularSection, Form, Template, Command)"
+			Report-Warn "4. ChildObjects: '$childTag' appears after higher-order elements (expected: Attribute, TabularSection, Form, Template)"
 			$orderOk = $false
 		}
 		$lastOrder = $thisOrder
@@ -650,14 +692,13 @@ if ($script:stopped) { & $finalize; exit 1 }
 
 $check8Ok = $true
 
-# Collect all names: attributes + tabular sections + forms + templates + commands
+# Collect all names: attributes + tabular sections + forms + templates
 $allNames = @{}
 
 if ($childObjNode) {
 	$nameKinds = @(
 		@{ XPath = "md:Attribute"; Kind = "Attribute" },
-		@{ XPath = "md:TabularSection"; Kind = "TabularSection" },
-		@{ XPath = "md:Command"; Kind = "Command" }
+		@{ XPath = "md:TabularSection"; Kind = "TabularSection" }
 	)
 
 	foreach ($nk in $nameKinds) {
@@ -762,6 +803,13 @@ if (Test-Path $objModule) {
 	$filesChecked++
 }
 
+# Модуля менеджера у внешней обработки/отчёта нет: платформа выбрасывает файл без сообщения.
+$mgrModule = Join-Path (Join-Path $objDir "Ext") "ManagerModule.bsl"
+if (Test-Path $mgrModule) {
+	Report-Error "9. Ext/ManagerModule.bsl — external data processors/reports have no manager module; the platform drops it silently"
+	$check9Ok = $false
+}
+
 if ($check9Ok) {
 	if ($filesChecked -gt 0) {
 		Report-OK "9. File existence: $filesChecked files verified"
@@ -833,6 +881,54 @@ if ($check10Ok) {
 		Report-OK "10. Form descriptors: $formsChecked checked"
 	} else {
 		Report-OK "10. Form descriptors: none to check"
+	}
+}
+
+# --- Check 11: версия формата согласована внутри объектов обработки; сверка с корнем ---
+# Корень обработки и его штампованные тела (Ext/Help.xml), дескриптор формы/макета и его тело платформа
+# загружает только в одной версии: «Версия формата загружаемого файла … отличается от версии формата
+# ранее загруженных файлов» — сборка отменяется. Форма или макет целиком в другой версии, чем корень,
+# собирается — это лишь неоднородность исходников (типично после мержа веток, выгруженных разными
+# платформами), поэтому такое расхождение только предупреждение.
+if ($version) {
+	$verObjDir = Join-Path $srcDir ([System.IO.Path]::GetFileNameWithoutExtension($resolvedPath))
+	$verDescriptors = @($resolvedPath)
+	foreach ($sub in @("Forms","Templates")) {
+		$subDir = Join-Path $verObjDir $sub
+		if (-not (Test-Path $subDir -PathType Container)) { continue }
+		$names = @(Get-ChildItem $subDir -Filter "*.xml" -File | ForEach-Object { $_.Name })
+		[Array]::Sort($names, [StringComparer]::Ordinal)
+		foreach ($n in $names) { $verDescriptors += (Join-Path $subDir $n) }
+	}
+	$verRel = { param($p) $p.Substring($srcDir.Length).TrimStart('\', '/') -replace '\\', '/' }
+	$verErrors = 0
+	$verBodiesOk = 0
+	$verOff = @()
+	foreach ($desc in $verDescriptors) {
+		if ($script:stopped) { break }
+		$descVer = if ($desc -eq $resolvedPath) { $version } else { Get-RootVersion $desc }
+		if (-not $descVer) { continue }
+		if ($desc -ne $resolvedPath -and $descVer -ne $version) { $verOff += "$(& $verRel $desc) $descVer" }
+		$extDir = Join-Path (Join-Path (Split-Path $desc) ([System.IO.Path]::GetFileNameWithoutExtension($desc))) "Ext"
+		if (-not (Test-Path $extDir -PathType Container)) { continue }
+		$bodyNames = @(Get-ChildItem $extDir -Filter "*.xml" -File | ForEach-Object { $_.Name })
+		[Array]::Sort($bodyNames, [StringComparer]::Ordinal)
+		foreach ($bn in $bodyNames) {
+			$body = Join-Path $extDir $bn
+			$bodyVer = Get-RootVersion $body
+			if (-not $bodyVer) { continue }
+			if ($bodyVer -eq $descVer) { $verBodiesOk++; continue }
+			$verErrors++
+			Report-Error "11. $(& $verRel $body) is stamped $bodyVer, its descriptor $(& $verRel $desc) $descVer — the platform refuses to load parts of one object in different formats"
+			if ($script:stopped) { break }
+		}
+	}
+	if ($verOff.Count -gt 0) {
+		$shown = ($verOff | Select-Object -First 5) -join ", "
+		if ($verOff.Count -gt 5) { $shown += ", … (+$($verOff.Count - 5))" }
+		Report-Warn "11. Format version differs from the processor root ($version): $shown — the platform builds it, but the sources are no longer uniform (typical after merging branches dumped by different platforms)"
+	} elseif ($verErrors -eq 0 -and $verBodiesOk -gt 0) {
+		Report-OK "11. Format version: $verBodiesOk stamped part(s) agree with their descriptors and the root"
 	}
 }
 

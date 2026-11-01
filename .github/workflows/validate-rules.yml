@@ -96,6 +96,12 @@ jobs:
         shell: powershell
         run: .\tools\tests\cfe-borrow-regression.ps1
 
+      # db-* / epf-* launch tools against a fake 1cv8.exe compiled by the suite: trap exit code,
+      # load-mode resolution, smuggled batch keys, repository credentials and masking, /DumpResult.
+      - name: Database tool regressions (fake platform)
+        shell: powershell
+        run: .\tools\tests\db-tools-regression.ps1
+
       # Marketplace wrapper: DryRun plans only, no network, no install.ps1 write.
       - name: Marketplace bootstrap
         shell: powershell

@@ -1,5 +1,9 @@
-﻿# db-run v1.7 — Launch 1C:Enterprise
+﻿# db-run v1.16 — Launch 1C:Enterprise
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
+#   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
+#   ibcmdargs, the .dev.env directory is a project root for relative infobase paths;
+#   /ConfigurationRepositoryP is masked like /P.
 # NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
@@ -52,7 +56,7 @@
     .\db-run.ps1 -InfoBasePath "C:\Bases\MyDB" -CParam "ЗапуститьОбновление"
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
     [Parameter(Mandatory=$false)]
     [string]$V8Path,
@@ -88,6 +92,11 @@ param(
     [string[]]$AdditionalIbcmdArguments = @()
 )
 
+# Необработанная ошибка (напр. привязка параметра) внутри try/finally без catch завершала
+# скрипт с кодом 0 — ложный успех без запуска платформы. Любая такая ошибка — код 1.
+# py-порт: необработанное исключение и так даёт код 1.
+trap { Write-Host "Error: $($_.Exception.Message) ($($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber))" -ForegroundColor Red; exit 1 }
+
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -107,12 +116,23 @@ $script:V8OwnedKeys = @(
     '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg',
     '/DumpExternalDataProcessorOrReportToFiles', '/LoadExternalDataProcessorOrReportFromFiles'
 )
+# Пакетные команды платформы. В одной командной строке DESIGNER выполняет ТОЛЬКО ПОСЛЕДНЮЮ,
+# остальные молча отбрасывает (проверено на 8.3.24: /LoadConfigFromFiles вместе с
+# /CheckCanApplyConfigurationExtensions завершились кодом 0 с пустым логом, и загрузка НЕ
+# состоялась). Такая команда в дополнительных аргументах подменяет собой операцию навыка, а навык
+# отчитывается успехом. Дополнительные аргументы — это опции, а не режимы.
+$script:V8BatchKeys = @(
+    '/CheckConfig', '/CheckModules', '/CheckCanApplyConfigurationExtensions',
+    '/DumpDBCfgList', '/DeleteCfg', '/UpdateCfg', '/CompareCfg', '/MergeCfg',
+    '/ManageCfgSupport', '/RollbackCfg', '/ConvertFiles'
+)
+
 $script:IbcmdOwnedKeys = @(
     '--db-path', '--data', '--out', '--file', '--load', '--restore',
     '--import', '--export', '--apply', '--force', '--create-database',
     '--user', '--password'
 )
-$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP')
+$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP', '/ConfigurationRepositoryP')
 $script:IbcmdSecretKeys = @('--password', '--token', '--db-pwd')
 
 function Test-ArgKeyMatch {
@@ -137,7 +157,7 @@ function Get-ProjectExtraArgs {
         $__devEnvArgs = @(Get-1CDevEnvArgs $__devEnvKey)
         if ($__devEnvArgs.Count -gt 0) { return $__devEnvArgs }
     }
-    $dir = (Get-Location).Path
+    $dir = (Get-Location).ProviderPath
     while ($dir) {
         $pf = Join-Path $dir ".v8-project.json"
         if (Test-Path $pf) {
@@ -164,6 +184,14 @@ function Assert-ExtraArgs {
         if ($Engine -eq 'ibcmd' -and $tok -notmatch '^-') {
             Write-Host "Error: '$tok' is a positional token — pass values as --key=value ($paramName cannot extend the ibcmd command)" -ForegroundColor Red
             exit 1
+        }
+        if ($Engine -ne 'ibcmd') {
+            foreach ($b in $script:V8BatchKeys) {
+                if (Test-ArgKeyMatch $tok $b) {
+                    Write-Host "Error: $b is a batch command; passed via $paramName it would replace the skill's own operation (a command line runs only its last batch command)" -ForegroundColor Red
+                    exit 1
+                }
+            }
         }
         foreach ($k in $owned) {
             if (Test-ArgKeyMatch $tok $k) {
@@ -239,6 +267,13 @@ function ConvertTo-CleanPath {
     if ($v.Length -ge 2 -and $v[0] -eq $v[-1] -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
         $v = $v.Substring(1, $v.Length - 2).Trim()
     }
+    # «C:x» — от текущего каталога диска C, своего у каждого процесса: смысл не угадать, почти
+    # всегда это опечатка в «C:\x». Отказ с подсказкой, а не путь «где-то» у платформы.
+    if ($v -match '^[A-Za-z]:(?![\\/])') {
+        $drive = $v.Substring(0, 2)
+        Write-Host "Error: $ParamName is relative to the current directory of drive $drive ($Value) - use $drive\$($v.Substring(2)) or a path without a drive" -ForegroundColor Red
+        exit 1
+    }
     if ($v.Length -gt 3 -and ($v[-1] -eq '\' -or $v[-1] -eq '/')) { $v = $v.Substring(0, $v.Length - 1) }
     if ($v.Contains('"')) {
         Write-Host "Error: $ParamName contains a quote character: $Value" -ForegroundColor Red
@@ -249,19 +284,95 @@ function ConvertTo-CleanPath {
 
 $V8Path = ConvertTo-CleanPath $V8Path '-V8Path'
 $InfoBasePath = ConvertTo-CleanPath $InfoBasePath '-InfoBasePath'
+function Resolve-InfoBasePath {
+    # Относительный путь к базе — от корня проекта (каталог .v8-project.json, вверх от рабочего
+    # каталога), как configSrc; без файла проекта — от рабочего каталога. Платформе уходит только
+    # абсолютный: ibcmd считает относительный --db-path от каталога --data, а он у навыков временный.
+    # Абсолютный — только с диском и разделителем или UNC: «\x» .NET считает корневым, а платформа
+    # разрешила бы его от своего каталога; «\x» берёт диск базового каталога. «C:x» отклоняет ещё
+    # ConvertTo-CleanPath. Хвостовые разделители срезаются, но корень («C:\») остаётся корнем.
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if ($Path -notmatch '^([A-Za-z]:[\\/]|[\\/]{2})') {
+        $cwd = (Get-Location).ProviderPath
+        $base = $cwd
+        $d = $cwd
+        for ($i = 0; $i -lt 20 -and $d; $i++) {
+            # 1c-rules: the project root is the nearest directory with .dev.env or .v8-project.json.
+            if ((Test-Path -LiteralPath (Join-Path $d ".dev.env")) -or (Test-Path -LiteralPath (Join-Path $d ".v8-project.json"))) { $base = $d; break }
+            $parent = [System.IO.Path]::GetDirectoryName($d)
+            if ($parent -eq $d) { break }
+            $d = $parent
+        }
+        $joined = if ($Path -match '^[\\/]') { [System.IO.Path]::GetPathRoot($base).TrimEnd('\', '/') + $Path }
+            else { [System.IO.Path]::Combine($base, $Path) }
+        $Path = [System.IO.Path]::GetFullPath($joined)
+    }
+    while ($Path.Length -gt 3 -and ($Path[-1] -eq '\' -or $Path[-1] -eq '/')) { $Path = $Path.Substring(0, $Path.Length - 1) }
+    return $Path
+}
+$InfoBasePath = Resolve-InfoBasePath $InfoBasePath
 $Execute = ConvertTo-CleanPath $Execute '-Execute'
+
+# --- Запись базы в .v8-project.json ---
+# Модель не передаёт ни путь к платформе конкретной базы, ни реквизиты хранилища: скрипт
+# сопоставляет параметры соединения с записью в databases[] и берёт их оттуда. Тот же приём,
+# что в cf-edit.ps1 (сопоставление по configSrc).
+function Find-V8Project([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 20 -and $d; $i++) {
+		$pj = Join-Path $d ".v8-project.json"
+		if (Test-Path $pj) { return $pj }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+function Test-SamePath {
+    param([string]$A, [string]$B)
+    if (-not $A -or -not $B) { return $false }
+    try {
+        $na = [System.IO.Path]::GetFullPath($A).TrimEnd('\', '/')
+        $nb = [System.IO.Path]::GetFullPath($B).TrimEnd('\', '/')
+        return $na.Equals($nb, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+function Find-ProjectDatabase {
+    # Запись базы в реестре, соответствующая переданному соединению. $null, если не найдена.
+    $pf = Find-V8Project (Get-Location).ProviderPath
+    if (-not $pf) { return $null }
+    try { $proj = Get-Content $pf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    if (-not $proj.databases) { return $null }
+    foreach ($db in $proj.databases) {
+        if ($InfoBasePath -and $db.path) {
+            try { $dbPath = [System.IO.Path]::Combine((Split-Path $pf -Parent), $db.path) } catch { $dbPath = $null }
+            if ($dbPath -and (Test-SamePath $dbPath $InfoBasePath)) { return $db }
+        }
+        if ($InfoBaseServer -and $InfoBaseRef -and $db.server -and $db.ref) {
+            if ($db.server.Equals($InfoBaseServer, [System.StringComparison]::OrdinalIgnoreCase) -and
+                $db.ref.Equals($InfoBaseRef, [System.StringComparison]::OrdinalIgnoreCase)) { return $db }
+        }
+    }
+    return $null
+}
 
 # --- Resolve V8Path ---
 function Find-ProjectV8Path {
-    # 1c-rules: .dev.env is this project's single source of truth — it wins over
-    # .v8-project.json, which stays supported as the upstream fallback below.
+    # 1c-rules: -V8Path (caller) -> .dev.env PLATFORM_PATH -> v8path of the matching .v8-project.json
+    # database record -> root v8path -> auto-detect. .dev.env is this project's single source of
+    # truth; .v8-project.json stays supported as the upstream fallback below.
     $__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
     if (Test-Path $__devEnvHelper) {
         . $__devEnvHelper
         $__devEnvV8 = Get-1CDevEnvValue 'PLATFORM_PATH'
         if ($__devEnvV8) { return $__devEnvV8 }
     }
-    $dir = (Get-Location).Path
+    # v8path записи базы сильнее корневого: в одном проекте базы живут на разных версиях
+    # платформы, а версию формата выгрузки задаёт та платформа, которая выгружает.
+    $dbRec = Find-ProjectDatabase
+    if ($dbRec -and $dbRec.v8path) { return [string]$dbRec.v8path }
+    $dir = (Get-Location).ProviderPath
     while ($dir) {
         $pf = Join-Path $dir ".v8-project.json"
         if (Test-Path $pf) {
