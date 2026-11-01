@@ -1,7 +1,8 @@
-﻿# interface-validate v1.1 — Validate 1C CommandInterface.xml structure
+﻿# interface-validate v1.7 — Validate 1C CommandInterface.xml structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)][Alias('Path')][string]$CIPath,
+	[Parameter(Mandatory, Position=0)][Alias('Path')][string]$CIPath,
 	[switch]$Detailed,
 	[int]$MaxErrors = 30,
 	[string]$OutFile
@@ -10,9 +11,64 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Штамп версии формата — атрибут version КОРНЕВОГО элемента файла. Копия общего эталона (семья
+# root_version, авторитет — meta-validate).
+function Get-RootVersion([string]$xmlPath) {
+	if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) { return $null }
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($xmlPath)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $len)
+	$m = [regex]::Match($head, '<[A-Za-z_][\w.:-]*(\s[^>]*)?/?>')
+	if (-not $m.Success) { return $null }
+	$v = [regex]::Match($m.Groups[1].Value, '(?:^|\s)version="([^"]*)"')
+	if ($v.Success) { return $v.Groups[1].Value }
+	return $null
+}
+
+# Корень автономной внешней обработки/отчёта. Копия общего эталона (семья is_external_root,
+# авторитет — cf-edit).
+function Test-ExternalObjectRoot([string]$xmlPath) {
+	if (-not (Test-Path $xmlPath)) { return $false }
+	try {
+		[xml]$mx = Get-Content -Path $xmlPath -Encoding UTF8
+		$el = $mx.DocumentElement.FirstChild
+		while ($el -and $el.NodeType -ne 'Element') { $el = $el.NextSibling }
+		if ($el) { return @('ExternalDataProcessor','ExternalReport') -contains $el.LocalName }
+	} catch {}
+	return $false
+}
+
+# Якорь выгрузки: корень автономной EPF/ERF либо Configuration.xml, ближайший вверх. Копия общего
+# эталона (семья find_dump_anchor, авторитет — meta-validate).
+function Find-DumpAnchor([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 15 -and $d; $i++) {
+		if (Test-ExternalObjectRoot "$d.xml") { return "$d.xml" }
+		$cfg = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfg) { return $cfg }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if (-not $parent -or $parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+# Владелец тела X/Ext/<файл>.xml — дескриптор X.xml рядом с каталогом X; у тел конфигурации —
+# Configuration.xml. Копия общего эталона (семья ext_body_owner, авторитет — form-validate).
+function Get-ExtBodyOwner([string]$bodyPath) {
+	$extDir = [System.IO.Path]::GetDirectoryName($bodyPath)
+	if ([System.IO.Path]::GetFileName($extDir) -cne "Ext") { return $null }
+	$objDir = [System.IO.Path]::GetDirectoryName($extDir)
+	if (Test-Path -LiteralPath "$objDir.xml" -PathType Leaf) { return "$objDir.xml" }
+	$cfg = Join-Path $objDir "Configuration.xml"
+	if (Test-Path -LiteralPath $cfg -PathType Leaf) { return $cfg }
+	return $null
+}
+
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($CIPath)) {
-	$CIPath = Join-Path (Get-Location).Path $CIPath
+	$CIPath = Join-Path (Get-Location).ProviderPath $CIPath
 }
 # A: Directory → Ext/CommandInterface.xml
 if (Test-Path $CIPath -PathType Container) {
@@ -30,7 +86,7 @@ if (-not (Test-Path $CIPath)) {
 	Write-Host "[ERROR] File not found: $CIPath"
 	exit 1
 }
-$resolvedPath = (Resolve-Path $CIPath).Path
+$resolvedPath = (Resolve-Path $CIPath).ProviderPath
 
 # --- Derive context name from path ---
 $contextName = ""
@@ -51,16 +107,21 @@ $script:output = New-Object System.Text.StringBuilder 8192
 $script:allCommandNames = @()
 
 function Out-Line([string]$msg) { $script:output.AppendLine($msg) | Out-Null }
-function Report-OK([string]$msg) {
+function Report-OK {
+	param([string]$msg)
 	$script:okCount++
 	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
-function Report-Error([string]$msg) {
+function Report-Error {
+	param([string]$msg)
 	$script:errors++
 	Out-Line "[ERROR] $msg"
-	if ($script:errors -ge $MaxErrors) { $script:stopped = $true }
+	if ($script:errors -ge $MaxErrors) {
+		$script:stopped = $true
+	}
 }
-function Report-Warn([string]$msg) {
+function Report-Warn {
+	param([string]$msg)
 	$script:warnings++
 	Out-Line "[WARN]  $msg"
 }
@@ -378,6 +439,26 @@ if (-not $script:stopped) {
 	}
 }
 
+# --- Check 14: версия формата — как у владельца (подсистемы или конфигурации); сверка с выгрузкой ---
+# Командный интерфейс и его владелец — дескриптор подсистемы или Configuration.xml — платформа
+# загружает только в одной версии формата: «Версия формата загружаемого файла … отличается от версии
+# формата ранее загруженных файлов». С остальной выгрузкой владелец может расходиться — платформа
+# такое грузит, это лишь неоднородность выгрузки (типично после мержа веток, выгруженных разными
+# платформами).
+if (-not $script:stopped -and $version) {
+	$ownerPath = Get-ExtBodyOwner $resolvedPath
+	$ownerVer = if ($ownerPath) { Get-RootVersion $ownerPath } else { $null }
+	$dumpAnchor = Find-DumpAnchor (Split-Path $resolvedPath -Parent)
+	$dumpVer = if ($dumpAnchor) { Get-RootVersion $dumpAnchor } else { $null }
+	if ($ownerVer -and $version -ne $ownerVer) {
+		Report-Error "14. Format version $version differs from its owner $([System.IO.Path]::GetFileName($ownerPath)) ($ownerVer) — the platform refuses to load parts of one object in different formats"
+	} elseif ($dumpVer -and $version -ne $dumpVer) {
+		Report-Warn "14. Format version $version differs from the dump ($dumpVer) — the platform loads it, but the dump is no longer uniform (typical after merging branches dumped by different platforms)"
+	} elseif ($ownerVer -or $dumpVer) {
+		Report-OK "14. Format version: $version, matches the owner and the dump"
+	}
+}
+
 # --- Finalize ---
 $checks = $script:okCount + $script:errors + $script:warnings
 
@@ -385,6 +466,7 @@ if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
 	$result = "=== Validation OK: CommandInterface ($contextName) ($checks checks) ==="
 } else {
 	Out-Line ""
+	if ($script:stopped -and $script:errors -ge $MaxErrors) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
 	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
 	$result = $script:output.ToString()
 }
@@ -393,7 +475,7 @@ Write-Host $result
 
 if ($OutFile) {
 	if (-not [System.IO.Path]::IsPathRooted($OutFile)) {
-		$OutFile = Join-Path (Get-Location).Path $OutFile
+		$OutFile = Join-Path (Get-Location).ProviderPath $OutFile
 	}
 	$utf8Bom = New-Object System.Text.UTF8Encoding($true)
 	[System.IO.File]::WriteAllText($OutFile, $result, $utf8Bom)

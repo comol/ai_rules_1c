@@ -1,5 +1,8 @@
-﻿# interface-edit v1.8 — Edit 1C CommandInterface.xml
+﻿# interface-edit v1.26 — Edit 1C CommandInterface.xml (+русские алиасы типов: формы с ё и без)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: .dev.env SUPPORT_GUARD first (fail-closed on an unreadable bin); interface-validate is the
+#   sibling in this scripts dir, a missing validator or its non-zero exit is the exit code.
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)][Alias('Path')][string]$CIPath,
 	[string]$DefinitionFile,
@@ -17,9 +20,82 @@ $ErrorActionPreference = "Stop"
 if ($DefinitionFile -and $Operation) { Write-Error "Cannot use both -DefinitionFile and -Operation"; exit 1 }
 if (-not $DefinitionFile -and -not $Operation) { Write-Error "Either -DefinitionFile or -Operation is required"; exit 1 }
 
+# --- Разбор пользовательского JSON ---
+# Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
+# идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
+# для полиморфного входа: у файла подсказка была бы наполнителем. -Inline печатает ещё и то,
+# что доехало: у файла такого вопроса нет — путь назван, позицию дал парсер, файл на диске.
+# Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
+# вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
+# и одиночный объект (issue #136).
+function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
+	try {
+		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
+		# тогда как py-порт падал. Проверяем сами, чтобы порты вели себя одинаково.
+		if ([string]::IsNullOrWhiteSpace($text)) { throw 'input is empty' }
+		# pwsh 7+ сам разворачивает массив верхнего уровня ([x] → x, [] → $null). Ключ -NoEnumerate
+		# появился там же: в 5.1 и pwsh 6 его нет, поэтому спрашиваем командлет, а не версию.
+		$cfj = @{}
+		$cfjKeys = (Get-Command ConvertFrom-Json).Parameters
+		if ($cfjKeys.ContainsKey('NoEnumerate')) { $cfj.NoEnumerate = $true }
+		# pwsh 7.5+ без -DateKind String превращает ISO-строки дат в DateTime, и в XML уходит формат
+		# локали; в 5.1 и pwsh до 7.5 ключа нет (5.1 даты и так не трогает).
+		if ($cfjKeys.ContainsKey('DateKind')) { $cfj.DateKind = 'String' }
+		$parsed = $text | ConvertFrom-Json @cfj
+	} catch {
+		$what = if ($expected) { "$source expects $expected" } else { "Invalid JSON in $source" }
+		if ($Inline) {
+			$got = ($text -replace '\s+', ' ').Trim()
+			$label = 'got'
+			if (-not $got) { $got = '(empty)' }
+			elseif ($got.Length -gt 60) { $label = 'got (first 60 chars)'; $got = $got.Substring(0, 60) }
+			$what = "${what}, ${label}: ${got}"
+		}
+		[Console]::Error.WriteLine("[ERROR] ${what} ($($_.Exception.Message))")
+		exit 1
+	}
+	return ,$parsed
+}
+
+# --- Чтение входного JSON-файла ---
+# Кодировку берём из BOM — это объявление самого файла, а не догадка. Без BOM ждём строгий UTF-8:
+# Get-Content -Encoding UTF8 на файле в cp1251 тихо меняет кириллицу на U+FFFD, JSON после этого
+# разбирается успешно, и в конфигурацию уезжает имя из «замен». Кодовую страницу не подбираем:
+# угаданное имя уйдёт в метаданные так же молча.
+function Read-JsonInputFile([string]$path) {
+	# Проверка здесь, а не по навыкам: часть навыков проверяла путь сама, часть — нет, и один и тот
+	# же промах давал то внятную строку, то дамп MethodInvocationException. Навыки со своей
+	# проверкой срабатывают раньше и сохраняют свой текст.
+	if (-not (Test-Path -LiteralPath $path)) {
+		[Console]::Error.WriteLine("[ERROR] File not found: $path")
+		exit 1
+	}
+	if (Test-Path -LiteralPath $path -PathType Container) {
+		[Console]::Error.WriteLine("[ERROR] Expected a JSON file, got a directory: $path")
+		exit 1
+	}
+	$bytes = [System.IO.File]::ReadAllBytes($path)
+	if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+		return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+		return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+		return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	try {
+		return (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes)
+	} catch {
+		$detail = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+		[Console]::Error.WriteLine("[ERROR] ${path} is not valid UTF-8: ${detail} - save the file as UTF-8, or add a BOM if it is UTF-16")
+		exit 1
+	}
+}
+
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($CIPath)) {
-	$CIPath = Join-Path (Get-Location).Path $CIPath
+	$CIPath = Join-Path (Get-Location).ProviderPath $CIPath
 }
 $resolvedPath = $CIPath
 
@@ -29,9 +105,8 @@ $resolvedPath = $CIPath
 # .dev.env SUPPORT_GUARD (deny|warn|off, default deny; .v8-project.json
 # editingAllowedCheck stays as the upstream fallback). Fail-closed on an
 # unreadable support state (bin exists but cannot be parsed — same reaction);
-# other guard errors degrade to allow with a stderr notice. Walk-up from
-# Subsystems/X/Ext/CommandInterface.xml reaches Subsystems/X.xml (owning
-# subsystem uuid).
+# other guard errors degrade to allow with a stderr notice. Walk-up from Subsystems/X/Ext/
+# CommandInterface.xml reaches Subsystems/X.xml (owning subsystem uuid).
 function Get-RootUuid([string]$xmlPath) {
 	if (-not (Test-Path $xmlPath)) { return $null }
 	try {
@@ -72,16 +147,20 @@ function Get-EditMode([string]$cfgDir) {
 		    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
 		    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
 		}
-		$pj = Find-V8Project (Get-Location).Path
-		if (-not $pj) { $pj = Find-V8Project $cfgDir }
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
 		if (-not $pj) { return 'deny' }
-		$proj = Get-Content -Raw $pj | ConvertFrom-Json
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		# configSrc — от каталога .v8-project.json, а не от рабочего каталога: иначе из подкаталога
+		# проекта база не сопоставляется и берётся правило проекта.
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
 		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
 		if ($proj.databases) {
 			foreach ($db in $proj.databases) {
 				if ($db.configSrc) {
-					$src = [System.IO.Path]::GetFullPath($db.configSrc).TrimEnd('\', '/')
-					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar)) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
 						if ($db.editingAllowedCheck) { return $db.editingAllowedCheck }
 					}
 				}
@@ -94,7 +173,7 @@ function Get-EditMode([string]$cfgDir) {
 function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	try {
 		$rp = $targetPath
-		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).Path } catch {}
+		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).ProviderPath } catch {}
 		# Autonomous external object (EPF/ERF): never part of a config on support (issue #39).
 		if (Test-ExternalObjectRoot $rp) { return }
 		$elemUuid = Get-RootUuid $rp
@@ -191,9 +270,20 @@ Assert-EditAllowed $CIPath 'editable'
 function Detect-FormatVersion([string]$dir) {
 	$d = $dir
 	while ($d) {
+		# Автономная внешняя обработка/отчёт: своего Configuration.xml у неё нет, версию несёт
+		# корень самой обработки. Без этого форма и макет внутри обработки 2.21 писались бы 2.17.
+		$extPath = "$d.xml"
+		if (Test-Path $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]' -and $extHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
 		$cfgPath = Join-Path $d "Configuration.xml"
 		if (Test-Path $cfgPath) {
-			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			$cfgText = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			# Длину среза берём по СТРОКЕ, а не по размеру файла: размер в БАЙТАХ, Substring считает
+			# СИМВОЛЫ, и на кириллице байт больше — короткий Configuration.xml ронял навык исключением.
+			$head = $cfgText.Substring(0, [Math]::Min(2000, $cfgText.Length))
 			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
 		}
 		$parent = Split-Path $d -Parent
@@ -228,14 +318,19 @@ if (-not (Test-Path $CIPath)) {
 </CommandInterface>
 "@
 		$utf8Bom = New-Object System.Text.UTF8Encoding($true)
-		[System.IO.File]::WriteAllText($CIPath, $emptyCI, $utf8Bom)
+		# Файл СОЗДАЁМ — пишем канон выгрузки: CRLF, без перевода строки в конце.
+		# (Правка существующего файла, наоборот, наследует его стиль — это делает
+		# основной путь сохранения ниже.) Нормализация нужна потому, что here-string
+		# берёт переводы строк из самого .ps1, а он в репозитории хранится с LF.
+		$emptyCI = ($emptyCI -replace "`r`n", "`n") -replace "`n", "`r`n"
+		[System.IO.File]::WriteAllText($CIPath, $emptyCI.TrimEnd("`r", "`n"), $utf8Bom)
 		Write-Host "[INFO] Created new CommandInterface.xml: $CIPath"
 	} else {
 		Write-Error "File not found: $CIPath (use -CreateIfMissing to create)"
 		exit 1
 	}
 }
-$resolvedPath = (Resolve-Path $CIPath).Path
+$resolvedPath = (Resolve-Path $CIPath).ProviderPath
 
 # --- Load XML ---
 $script:xmlDoc = New-Object System.Xml.XmlDocument
@@ -364,10 +459,10 @@ function Ensure-Section([string]$sectionName) {
 }
 
 # --- Parse value: string or JSON array ---
-function Parse-ValueList([string]$val) {
+function Parse-ValueList([string]$val, [string]$opName) {
 	$val = $val.Trim()
 	if ($val.StartsWith("[")) {
-		$arr = $val | ConvertFrom-Json
+		$arr = ConvertFrom-JsonInput $val "-Value for operation '$opName'" "a JSON array of command names" -Inline
 		$result = @(); foreach ($item in $arr) { $result += "$item" }
 		return ,$result
 	}
@@ -409,6 +504,10 @@ $script:typeNormMap = @{
 	"ПланОбмена"="ExchangePlan"; "ЖурналДокументов"="DocumentJournal"
 	"ОбщийМодуль"="CommonModule"; "ОбщаяКоманда"="CommonCommand"
 	"ОбщаяФорма"="CommonForm"; "Подсистема"="Subsystem"
+	"РегистрРасчёта"="CalculationRegister"; "РегистрРасчета"="CalculationRegister"
+	"ПланВидовРасчёта"="ChartOfCalculationTypes"; "ПланВидовРасчета"="ChartOfCalculationTypes"
+	"Роль"="Role"; "ОбщийМакет"="CommonTemplate"; "ЭлементСтиля"="StyleItem"
+	"ОбщийРеквизит"="CommonAttribute"; "ГруппаКоманд"="CommandGroup"
 	# Russian plural
 	"Справочники"="Catalog"; "Документы"="Document"; "Перечисления"="Enum"
 	"Константы"="Constant"; "Отчёты"="Report"; "Отчеты"="Report"; "Обработки"="DataProcessor"
@@ -418,6 +517,10 @@ $script:typeNormMap = @{
 	"БизнесПроцессы"="BusinessProcess"; "Задачи"="Task"
 	"ПланыОбмена"="ExchangePlan"; "ЖурналыДокументов"="DocumentJournal"
 	"Подсистемы"="Subsystem"
+	"РегистрыРасчёта"="CalculationRegister"; "РегистрыРасчета"="CalculationRegister"
+	"ПланыВидовРасчёта"="ChartOfCalculationTypes"; "ПланыВидовРасчета"="ChartOfCalculationTypes"
+	"Роли"="Role"; "ОбщиеМакеты"="CommonTemplate"; "ЭлементыСтиля"="StyleItem"
+	"ОбщиеРеквизиты"="CommonAttribute"; "ГруппыКоманд"="CommandGroup"
 }
 
 function Normalize-CmdName([string]$name) {
@@ -524,7 +627,7 @@ function Do-Show([string[]]$commands) {
 }
 
 function Do-Place([string]$jsonVal) {
-	$def = $jsonVal | ConvertFrom-Json
+	$def = ConvertFrom-JsonInput $jsonVal "-Value for operation 'place'" "a JSON object {command, group}" -Inline
 	$cmdName = Normalize-CmdName "$($def.command)"
 	$groupName = "$($def.group)"
 	if (-not $cmdName -or -not $groupName) { Write-Error "place requires {command, group}"; exit 1 }
@@ -557,7 +660,7 @@ function Do-Place([string]$jsonVal) {
 }
 
 function Do-Order([string]$jsonVal) {
-	$def = $jsonVal | ConvertFrom-Json
+	$def = ConvertFrom-JsonInput $jsonVal "-Value for operation 'order'" "a JSON object {group, commands:[...]}" -Inline
 	$groupName = "$($def.group)"
 	$commands = @($def.commands | ForEach-Object { Normalize-CmdName "$_" })
 	if (-not $groupName -or $commands.Count -eq 0) { Write-Error "order requires {group, commands:[...]}"; exit 1 }
@@ -595,7 +698,7 @@ function Do-Order([string]$jsonVal) {
 }
 
 function Do-SubsystemOrder([string]$jsonVal) {
-	$parsed = $jsonVal | ConvertFrom-Json
+	$parsed = ConvertFrom-JsonInput $jsonVal "-Value for operation 'subsystem-order'" "a JSON array of subsystem paths" -Inline
 	$subsystems = @(); foreach ($s in $parsed) { $subsystems += "$s" }
 	if ($subsystems.Count -eq 0) { Write-Error "subsystem-order requires array of subsystem paths"; exit 1 }
 
@@ -623,7 +726,7 @@ function Do-SubsystemOrder([string]$jsonVal) {
 }
 
 function Do-GroupOrder([string]$jsonVal) {
-	$parsed = $jsonVal | ConvertFrom-Json
+	$parsed = ConvertFrom-JsonInput $jsonVal "-Value for operation 'group-order'" "a JSON array of group names" -Inline
 	$groups = @(); foreach ($g in $parsed) { $groups += "$g" }
 	if ($groups.Count -eq 0) { Write-Error "group-order requires array of group names"; exit 1 }
 
@@ -654,10 +757,10 @@ function Do-GroupOrder([string]$jsonVal) {
 $operations = @()
 if ($DefinitionFile) {
 	if (-not [System.IO.Path]::IsPathRooted($DefinitionFile)) {
-		$DefinitionFile = Join-Path (Get-Location).Path $DefinitionFile
+		$DefinitionFile = Join-Path (Get-Location).ProviderPath $DefinitionFile
 	}
-	$jsonText = Get-Content -Raw -Encoding UTF8 $DefinitionFile
-	$ops = $jsonText | ConvertFrom-Json
+	$jsonText = Read-JsonInputFile $DefinitionFile
+	$ops = ConvertFrom-JsonInput $jsonText $DefinitionFile
 	if ($ops -is [System.Array]) {
 		foreach ($op in $ops) { $operations += $op }
 	} else {
@@ -674,8 +777,8 @@ foreach ($op in $operations) {
 	$opValue = if ($opValueRaw -is [string]) { $opValueRaw } else { $opValueRaw | ConvertTo-Json -Compress }
 
 	switch ($opName) {
-		"hide"            { Do-Hide (Parse-ValueList $opValue) }
-		"show"            { Do-Show (Parse-ValueList $opValue) }
+		"hide"            { Do-Hide (Parse-ValueList $opValue $opName) }
+		"show"            { Do-Show (Parse-ValueList $opValue $opName) }
 		"place"           { Do-Place $opValue }
 		"order"           { Do-Order $opValue }
 		"subsystem-order" { Do-SubsystemOrder $opValue }
@@ -700,10 +803,15 @@ $memStream.Close()
 $text = [System.Text.Encoding]::UTF8.GetString($bytes)
 if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
 $text = $text.Replace('encoding="utf-8"', 'encoding="UTF-8"')
+# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Внутри
+# CDATA/комментария ` />` может быть содержимым (там `>` не экранируется),
+# поэтому они идут первыми ветками альтернации и возвращаются как есть.
+$text = [regex]::Replace($text, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
 
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
-$text = [regex]::Replace($text, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
-$targetEol = if ([System.IO.File]::ReadAllText($resolvedPath) -match "`r`n") { "`r`n" } else { "`n" }
+# Целевой перевод строки: стиль файла-назначения — правка наследует его (#44/#46/#47),
+# новый файл получает канон выгрузки CRLF. Зеркало _detect_xml_style в py-порту.
+$targetEol = if ((Test-Path -LiteralPath $resolvedPath) -and ([System.IO.File]::ReadAllText($resolvedPath) -notmatch "`r`n")) { "`n" } else { "`r`n" }
 $text = ($text -replace "`r`n", "`n") -replace "`n", $targetEol
 [System.IO.File]::WriteAllText($resolvedPath, $text, $utf8Bom)
 Info "Saved: $resolvedPath"

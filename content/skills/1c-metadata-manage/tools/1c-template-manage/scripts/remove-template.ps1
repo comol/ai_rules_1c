@@ -1,7 +1,9 @@
-﻿# template-remove v1.3 — Remove template from 1C object
+﻿# template-remove v1.9 — Remove template from 1C object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
-# Local: preflight parse, atomic root-XML write and -DryRun / -Force safety gate
-# on top of upstream v1.3 (upstream v1.2→v1.3 carried no functional change).
+# Local: preflight parse, atomic root-XML write and -DryRun / -Force safety gate (refusal
+#   without -Force exits 2) on top of upstream v1.9; PositionalBinding=$false as in every other writing tool
+#   (upstream left this one out).
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
 	[Alias("ProcessorName")]
@@ -44,7 +46,7 @@ if (-not (Test-Path $templateMetaPath)) {
 $rootXmlFull = Resolve-Path $rootXmlPath
 $xmlDoc = New-Object System.Xml.XmlDocument
 $xmlDoc.PreserveWhitespace = $true
-$xmlDoc.Load($rootXmlFull.Path)
+$xmlDoc.Load($rootXmlFull.ProviderPath)
 
 $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
 $nsMgr.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
@@ -62,6 +64,10 @@ foreach ($node in $templateNodes) {
 			$parent.RemoveChild($prev) | Out-Null
 		}
 		$parent.RemoveChild($node) | Out-Null
+		# Опустевший контейнер: остаётся отступ-whitespace, и XmlWriter пишет пару
+		# <ChildObjects>\n\t\t</ChildObjects>. Платформа пишет только <ChildObjects/>
+		# (1394 самозакрывающихся на acc+erp, пустых пар ни в одной форме — 0).
+		if ($parent.SelectNodes("*").Count -eq 0) { $parent.IsEmpty = $true }
 		break
 	}
 }
@@ -77,6 +83,36 @@ if ($mainDCS -and $mainDCS.InnerText -match "Template\.$([regex]::Escape($Templa
 	Write-Host "[PLAN] Clear MainDataCompositionSchema"
 }
 
+# Serialize in memory now, so a serialization failure stops before anything is touched.
+$encBom = New-Object System.Text.UTF8Encoding($true)
+$settings = New-Object System.Xml.XmlWriterSettings
+$settings.Encoding = $encBom
+$settings.Indent = $false
+$settings.NewLineHandling = [System.Xml.NewLineHandling]::None
+
+# Через MemoryStream, а не прямо в файл: нужен шаг пост-обработки строки.
+$memStream = New-Object System.IO.MemoryStream
+$writer = [System.Xml.XmlWriter]::Create($memStream, $settings)
+try {
+	$xmlDoc.Save($writer)
+	$writer.Flush()
+}
+finally {
+	$writer.Close()
+}
+
+$xmlText = [System.Text.Encoding]::UTF8.GetString($memStream.ToArray())
+$memStream.Close()
+if ($xmlText.Length -gt 0 -and $xmlText[0] -eq [char]0xFEFF) { $xmlText = $xmlText.Substring(1) }
+$xmlText = $xmlText.Replace('encoding="utf-8"', 'encoding="UTF-8"')
+# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Внутри
+# CDATA/комментария/инструкции обработки ` />` может быть содержимым (там `>` не
+# экранируется), поэтому они идут первыми ветками альтернации и возвращаются как есть.
+$xmlText = [regex]::Replace($xmlText, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
+# Целевой перевод строки: стиль файла-назначения — правка наследует его (#44/#46/#47).
+$targetEol = if ([System.IO.File]::ReadAllText($rootXmlFull.ProviderPath) -notmatch "`r`n") { "`n" } else { "`r`n" }
+$xmlText = ($xmlText -replace "`r`n", "`n") -replace "`n", $targetEol
+
 # --- Safety gate ---
 
 Write-Host "Planned changes:"
@@ -89,28 +125,16 @@ if ($DryRun) {
 	exit 0
 }
 if (-not $Force) {
-	Write-Error "Removal requires explicit -Force. Run with -DryRun first to review the plan."
+	# stderr + exit 2 (the toolkit's refusal code): Write-Error under Stop would end the run with 1.
+	[Console]::Error.WriteLine("[ERROR] Removal requires explicit -Force. Run with -DryRun first to review the plan.")
 	exit 2
 }
 
-# Serialize to a temporary file first. If XML generation fails, the source tree
-# remains untouched. Commit the root registration change before deleting files.
-$encBom = New-Object System.Text.UTF8Encoding($true)
-$settings = New-Object System.Xml.XmlWriterSettings
-$settings.Encoding = $encBom
-$settings.Indent = $false
-
-$tempRootXml = $rootXmlFull.Path + ".remove-template.tmp"
-$stream = New-Object System.IO.FileStream($tempRootXml, [System.IO.FileMode]::Create)
-$writer = [System.Xml.XmlWriter]::Create($stream, $settings)
-try {
-	$xmlDoc.Save($writer)
-}
-finally {
-	$writer.Close()
-	$stream.Close()
-}
-Move-Item -Path $tempRootXml -Destination $rootXmlFull.Path -Force
+# Write a temporary file first and move it over the root XML: the registration
+# change is committed atomically before any template file is deleted.
+$tempRootXml = $rootXmlFull.ProviderPath + ".remove-template.tmp"
+[System.IO.File]::WriteAllText($tempRootXml, $xmlText, $encBom)
+Move-Item -LiteralPath $tempRootXml -Destination $rootXmlFull.ProviderPath -Force
 
 if (Test-Path $templateDir) {
 	Remove-Item -Path $templateDir -Recurse -Force

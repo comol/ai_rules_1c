@@ -15,6 +15,8 @@ Every mutating tool of this skill checks the support state before touching anyth
 
 `cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
 
+All of them run the same decision. `xdto-compile` / `xdto-edit` used to refuse any configuration that merely had `Ext/ParentConfigurations.bin`; they now decide per object like the rest, so an XDTO package can be added wherever `meta-compile` may add a catalog. `remove-template` has no guard — check the owner's state yourself before removing a template from a typical configuration.
+
 **Trigger.** The guard activates only when the configuration is genuinely on vendor support — i.e. `Ext/ParentConfigurations.bin` is present next to `Configuration.xml` (found by walking up from the target path). Own configurations, extensions and autonomous external objects (EPF/ERF) are never affected. A support-state file that exists but cannot be read or parsed gets the same `deny|warn|off` reaction (fail-closed — an unknown state may be a locked object); other guard errors (the state cannot even be located) degrade to *allow* with a stderr notice.
 
 **What is blocked:**
@@ -25,6 +27,8 @@ Every mutating tool of this skill checks the support state before touching anyth
 | Object is on support and locked ("на замке") | blocked — `locked` |
 | Deleting an object that is still on support (`meta-remove`) | blocked — `not-removed` |
 | Object is `editable` or off support | allowed |
+| Modification is on and no object is on support (bin header `{6,0,0,…}`) — nothing to protect | allowed |
+| New object (no descriptor yet) | decided by the configuration root's state |
 
 A blocked run exits with code `1` and prints a diagnostic naming the state, the recommended path (extension) and the exact `support-edit` command for this case.
 

@@ -78,6 +78,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-xdto-manage/s
 | `Comment` | no | Comment. Default: from `xs:appinfo` |
 | `Force` | no | Overwrite an existing package. Without it the tool refuses to clobber an assembled package |
 
+The package is stamped with the format version of `Configuration.xml` (2.17 only when there is none); 2.21 adds the `xmlns:pal` header. Registration in `Configuration.xml` is a one-line raw-text insertion placed by `NEW_OBJECT_POSITION` (`.dev.env`; default `end` of the `XDTOPackage` group, `byName` on request). `xdto-compile` and `xdto-edit` share the support guard of the other tools ([support-manage.md](support-manage.md)).
+
 The input is an ordinary XML schema — written the same way as for any other tool.
 
 ### Read the warnings
@@ -150,7 +152,7 @@ Path is `Type.Property`; the dot is safe because both are 1C identifiers. The pa
 
 `rename` changes the name in the metadata object, renames `<Name>.xml` and the `<Name>/` directory, and fixes the registration in `Configuration.xml`. `set-namespace` changes `targetNamespace`, all internal references to own types and `<Namespace>` of the metadata object — but packages **importing** the old namespace are deliberately left alone (for versioning they should keep pointing at the previous URI); the tool lists them so you can decide.
 
-`xdto-validate` runs automatically after the edit unless `-NoValidate` is passed.
+`xdto-validate` runs automatically after the edit unless `-NoValidate` is passed. Its non-zero exit — or a validator missing from the same `scripts` directory — is the exit code of `xdto-edit`; the edit itself is already written. `xdto-decompile` / `xdto-compile` must sit beside `xdto-edit`: without them structural operations are refused before any change.
 
 ---
 
