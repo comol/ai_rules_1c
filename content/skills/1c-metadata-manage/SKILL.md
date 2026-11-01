@@ -78,7 +78,7 @@ The subagent already knows how to read the skill docs, execute PowerShell script
 | Extensions (CFE) — create, borrow, diff, patch, validate | [cfe-manage.md](docs/cfe-manage.md) |
 | Vendor support state — "на замке", editability, off-support | [support-manage.md](docs/support-manage.md) |
 | XDTO packages — analyze, create from XSD, export, edit, validate | [xdto-manage.md](docs/xdto-manage.md) |
-| Databases — create, run, load, dump, DT backup | [db-manage.md](docs/db-manage.md) |
+| Databases — create, run, load, dump, DT backup, extensions in the infobase (list, check, properties, delete) | [db-manage.md](docs/db-manage.md) |
 | Subsystems — create, edit, analyze, validate | [subsystem-manage.md](docs/subsystem-manage.md) |
 | Command interface — edit, validate | [interface-manage.md](docs/interface-manage.md) |
 | Templates/layouts management — add, remove | [template-manage.md](docs/template-manage.md) |
