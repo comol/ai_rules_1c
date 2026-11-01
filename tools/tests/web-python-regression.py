@@ -89,6 +89,11 @@ class WebRegression(unittest.TestCase):
         self.assertEqual("/demo", root.get("base"))
         self.assertIn('Pwd="secret<&value";', root.get("ib"))
         self.assertIn(str(self.ib), root.get("ib"))
+        # Extension services are published on both service kinds: without the flag on <ws>
+        # a SOAP service of an extension answers 500, on <httpServices> an HTTP one 404.
+        ns = "{http://v8.1c.ru/8.2/virtual-resource-system}"
+        self.assertEqual("true", root.find(ns + "ws").get("publishExtensionsByDefault"))
+        self.assertEqual("true", root.find(ns + "httpServices").get("publishExtensionsByDefault"))
         self.assertEqual(0, self.publish()[0])
         self.assertEqual(text, self.conf.read_text(encoding="utf-8"))
         self.assertEqual(2, self.syntax.call_count)
@@ -341,6 +346,28 @@ class WebRegression(unittest.TestCase):
             root = ET.parse(self.apache / "publish/server/default.vrd").getroot()
             self.assertEqual('Srvr="explicit-server";Ref="explicit-db";Usr="cli-user";', root.get("ib"))
             self.assertEqual(2, self.run_tool("publish", "-AppName", "incomplete", "-InfoBaseServer", "server")[0])
+        finally:
+            os.chdir(previous)
+
+    def test_relative_infobase_path_is_anchored_at_dev_env_root(self):
+        previous = Path.cwd()
+        try:
+            os.chdir(self.base)
+            (self.base / ".dev.env").write_text("IB_USER=\n", encoding="utf-8")
+            child = self.base / "nested"
+            child.mkdir()
+            os.chdir(child)
+            code, output = self.run_tool("publish", "-WebExtension", str(self.module), "-AppName", "rel",
+                                         "-InfoBasePath", f' "{self.ib.name}{os.sep}" ')
+            self.assertEqual(0, code, output)
+            root = ET.parse(self.apache / "publish/rel/default.vrd").getroot()
+            self.assertIn(f'File="{self.ib}";', root.get("ib"))
+            before = self.snapshot()
+            for bad in ('C:base', f'{self.ib}"x'):
+                code, output = self.run_tool("publish", "-WebExtension", str(self.module), "-AppName", "bad",
+                                             "-InfoBasePath", bad)
+                self.assertEqual(2, code, output)
+            self.assertEqual(before, self.snapshot())
         finally:
             os.chdir(previous)
 

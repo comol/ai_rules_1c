@@ -1,0 +1,9 @@
+﻿# Object names the cases need; the runner is pure ASCII (see repo-ops-regression.ps1).
+catalog=Справочник.Номенклатура
+catalogEn=Catalog.Номенклатура
+form=Справочник.Номенклатура.Форма.ФормаЭлемента
+partner=Справочник.Контрагенты
+partnerAttr=Справочник.Контрагенты.Реквизит.Телефон
+partnerTs=Справочник.Контрагенты.ТабличнаяЧасть.Контакты
+missing=Справочник.Номенклатурра
+root=Конфигурация

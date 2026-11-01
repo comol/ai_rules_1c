@@ -80,9 +80,12 @@ publication layout rather than copied from upstream Python:
 - `tools/1c-web-ops/scripts/web-unpublish.py` — preview and guarded removal.
 - `tools/1c-web-ops/scripts/web_common.py` — shared local implementation:
   standalone Apache, loopback binding, no downloads, path/ownership checks and
-  rollback on failed publication updates. Runtime differences are documented
-  in `docs/web-manage.md`; offline checks are in
-  `tools/tests/web-python-regression.py` in the ruleset source.
+  rollback on failed publication updates; since 2026-11-01 it also publishes
+  extension web services (`<ws publishExtensionsByDefault>`) and anchors a
+  relative `-InfoBasePath` at the `.dev.env` root, as the PowerShell scripts do.
+  Runtime differences are documented in `docs/web-manage.md`; offline checks are
+  in `tools/tests/web-python-regression.py` (and, for the PowerShell scripts,
+  `tools/tests/web-ops-regression.ps1`) in the ruleset source.
 
 Other tool commands remain PowerShell-only. The upstream pin above is not to be advanced without re-running
 `tools/tests/python-ports-regression.py` and re-recording the deltas here.

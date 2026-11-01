@@ -603,6 +603,19 @@ Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikola
 
 ## web-manage.md
 
+### Upstream sync 2026-11-01 (2e75b0f)
+
+Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills): `web-publish` v1.4 → **v1.17**, `web-info` v1.0 → **v1.7**, `web-stop` v1.0 → **v1.4**, `web-unpublish` v1.0 → **v1.4**. The Python ports stay ours; only `web_common.py` changed.
+
+- **Extension SOAP services are published** (1eeea204): `publishExtensionsByDefault="true"` is now on `<ws>` too, in both runtimes; without it an extension's web service answered 500. The `<httpServices>` flag of the 2026-10-01 local fix stays.
+- **Republish right after `web-stop` works** (9ae792a9): the port check counts listening sockets only, so `TIME_WAIT` leftovers (owner PID 0) no longer read as "port busy by Idle".
+- **The bind address survives a republish** (933414f2, 68a2a11a): every `Listen` address of the managed block is kept, only the port changes; URLs follow the first address; stock `Listen` lines are commented whole. A PowerShell publication over a Python-made config no longer opens Apache on all interfaces.
+- **`web-info`** (fbf4d4f9, 88535a75, b8cbb011, 0d4933f1, 933414f2): OData is detected by `<standardOdata enable>`, `+ext` marks extension services, `Listen 127.0.0.1:port` parses as host + port, a TCP probe says whether the port answers, the log section shows only `error` and above (without `AH02538`) and names the log file.
+- **`-InfoBasePath` normalization** (8d9e6c46): quotes, whitespace and trailing separators are forgiven, `C:x` and inner quotes refused, a relative path is anchored at the project root; `ProviderPath` for UNC working directories (d7a66b63); `PositionalBinding=$false` in all four scripts (0a0322fa).
+- Local deltas re-applied: `.dev.env` `PLATFORM_PATH` first, install dir or `bin\` accepted (the per-database `v8path` of `.v8-project.json` comes after it); `<httpServices publishExtensionsByDefault>`; the `web-unpublish` `-DryRun` / `-Force` gate; the working-directory default `-ApachePath`, now also in `web-info` and `web-stop` (upstream's four-levels-up default pointed inside the skills directory in our layout).
+- New local fixes: `web-publish` XML-escapes `Usr` / `Pwd` / `File` / `Srvr` / `Ref` in `default.vrd` (a password with `&` produced an invalid descriptor) and refuses a quote or line break, as the Python port; the relative-path anchor is the `.dev.env` directory, not `.v8-project.json`; the `PidFile` / `ErrorLog` lines of the managed block survive a rewrite; `-AppName` is validated with the Python rule in `web-publish` and `web-unpublish` (no path segment reaches the recursive delete; `-All` and `-AppName` are exclusive); `web-info` masks `Pwd` and reads the effective `ErrorLog` (the managed block's, else the last directive); `web-stop` hints name our scripts. Python: a relative `-InfoBasePath` is anchored like `.dev.env` values, `C:x` refused.
+- Tests: `tools/tests/web-ops-regression.ps1` (new, PowerShell scripts end to end with a fake `httpd.exe`); `web-python-regression.py` pins the `<ws>` flag and the path anchor. Verified live on 8.3.27 (x86) with a Win32 Apache 2.4.69: Python publish on loopback → PowerShell republish over it (bind address, `PidFile`, `ErrorLog` kept; the 1C module answered with the escaped VRD) → `web-info` → `web-stop` → immediate republish → `web-unpublish -DryRun` / `-Force`.
+
 ### Local fix `2026-10-01` — extension HTTP services are published
 
 `web-publish` (both runtimes) writes `publishExtensionsByDefault="true"` on `httpServices` in `default.vrd`, as the platform's own publication does; without it the HTTP services of the infobase's extensions were not published.

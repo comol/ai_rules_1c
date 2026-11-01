@@ -6,9 +6,20 @@ One script drives every repository operation:
 powershell -NoProfile -File "skills/1c-repository-manage/tools/1c-repo-ops/scripts/repo-ops.ps1" -Operation <op> [parameters]
 ```
 
-Connection defaults come from `.dev.env` (`PLATFORM_PATH`, `INFOBASE_KIND`, `INFOBASE_PATH`, `IB_USER`, `IB_PASSWORD`, `REPOSITORY_PATH`, `REPOSITORY_USER`, `REPOSITORY_PASSWORD`); explicit script parameters override them. Repository operations always run through the Designer (`1cv8.exe`) — `ibcmd` has no repository mode, and the script refuses it.
+Connection defaults come from `.dev.env` (`PLATFORM_PATH`, `INFOBASE_KIND`, `INFOBASE_PATH`, `IB_USER`, `IB_PASSWORD`, `REPOSITORY_PATH`, `REPOSITORY_USER`, `REPOSITORY_PASSWORD`); explicit script parameters override them. A relative infobase path is anchored at the `.dev.env` directory. Repository operations always run through the Designer (`1cv8.exe`) — `ibcmd` has no repository mode, and the script refuses it.
 
-`-Objects` accepts a comma-separated string of exact metadata full names (Russian or English variants as used by the project): `"Справочник.Номенклатура,Документ.ЗаказКлиента"`. The script builds the temporary `-Objects` XML itself and deletes it afterwards.
+`-Objects` accepts a comma-separated string of exact metadata full names (Russian or English type names both work; the platform always answers in Russian): `"Справочник.Номенклатура,Документ.ЗаказКлиента"`. The script builds the temporary `-Objects` XML itself and deletes it afterwards. What to name:
+
+| You change | Name in `-Objects` |
+|---|---|
+| An attribute, tabular section, dimension, resource or module of an object | the object itself: `Справочник.Контрагенты` — a part is substituted with its owner automatically (with a `[note]`) |
+| An existing form, template or command | that object: `Справочник.Контрагенты.Форма.ФормаЭлемента` |
+| A new form, template or command | its owner; at commit name the new object too |
+| A new top-level object | the root alone: `Конфигурация` (the object does not exist yet, so it cannot be locked); at commit name the root and the new object |
+
+`-IncludeChildObjects` extends an entry to its forms, templates and commands; with the root it would be the whole configuration and is refused.
+
+`.dev.env` `INFOBASE_ROLE=prod` — `lock` / `update` / `commit` / `unlock` through the project infobase are refused before the platform starts ([repo-sdlc.md → Boundaries](repo-sdlc.md#boundaries)); `status` / `history` / `diff` / `dump` run.
 
 For an **extension repository** add `-Extension "<Name>"` (its own `REPOSITORY_PATH` — pass `-RepositoryPath` if it differs from the main one). Not applicable to `diff`.
 
@@ -48,13 +59,20 @@ Latest-version report (`/ConfigurationRepositoryReport -NBegin -1`). The cheapes
 
 `/ConfigurationRepositoryLock`. `-Revised` pre-updates the objects to the repository head before locking (recommended: locking a stale copy invites a merge at commit). `-IncludeChildObjects` extends the lock to subordinate objects — use when the plan touches forms/templates/commands of the object.
 
+The lock is **not atomic**, and the script reports per object:
+
+- `Locked by you now` — taken by this call.
+- `Locked by another user — NOT taken` with the holder — a conflict (Safety invariant 3): exit `1`. A `[partial]` line says the objects of the first list (and requested ones the platform did not mention) are held by you anyway.
+- `Already locked by you` — the platform prints nothing for objects you hold; exit `0`, no change.
+- `objects received from the repository` (with `-Revised`) — see [Received objects](#received-objects).
+
 ### update — refresh local copies from the repository
 
 ```powershell
 ... -Operation update -Objects "Справочник.Номенклатура" [-Version 135] [-Revised]
 ```
 
-`/ConfigurationRepositoryUpdateCfg -Objects …`. Omitted `-Version` = repository head. After an update that changed objects, the DB structure may need `/update1cbase` (see [repo-sdlc.md](repo-sdlc.md)).
+`/ConfigurationRepositoryUpdateCfg -Objects …`. Omitted `-Version` = repository head. After an update that changed objects, the DB structure may need `/update1cbase` (see [repo-sdlc.md](repo-sdlc.md)). `Nothing to receive` means the objects are current. A success without the repository operation block in the log is refused (exit `1`): it means the infobase is probably not bound, and on an unbound infobase this command replaces the whole configuration.
 
 ### commit — put changes into the repository
 
@@ -64,13 +82,15 @@ Latest-version report (`/ConfigurationRepositoryReport -NBegin -1`). The cheapes
 
 `/ConfigurationRepositoryCommit`. `-Comment` is mandatory (task reference + what changed; multi-line comments allowed — each line is passed separately). `-KeepLocked` keeps the lock after commit for continued work. Commit only objects that are verified (`verification-gates.md`) — a commit is visible to the whole team immediately.
 
+The output lists `Committed to the repository` and `Unchanged — not committed`; when nothing was committed it says that **no new version was created**. A failed commit gets a bare «Ошибка помещения изменений объектов в хранилище» from the platform, the same for every cause — the script prints the checklist (locked by you? held by someone else? commit right? repository moved?).
+
 ### unlock — release locks
 
 ```powershell
 ... -Operation unlock -Objects "Справочник.Номенклатура" [-IncludeChildObjects]
 ```
 
-`/ConfigurationRepositoryUnLock` without force releases **own** locks on unchanged objects. Releasing a lock while local changes exist loses nothing by itself, but leaves the local configuration diverged — run `diff` first when unsure.
+`/ConfigurationRepositoryUnLock` without force releases **own** locks on unchanged objects. Releasing a lock while local changes exist loses nothing by itself, but leaves the local configuration diverged — run `diff` first when unsure. «Объект не захвачен для редактирования» is reported as `Not locked by you — nothing to release (no-op)` with exit `0`. Objects with local changes refuse the whole call (exit `1`, the objects are named).
 
 ### dump — export a repository version to CF/CFE
 
@@ -81,6 +101,16 @@ Latest-version report (`/ConfigurationRepositoryReport -NBegin -1`). The cheapes
 `/ConfigurationRepositoryDumpCfg`. Extension `.cf` (main) / `.cfe` (extension repository with `-Extension`). Use for release builds from a fixed repository version instead of the local working copy.
 
 Unbind (`/ConfigurationRepositoryUnbindCfg`) is **not** an operation of this script and must not be composed ad-hoc while `REPOSITORY_PATH` is set — canon [SKILL.md → Safety invariant 5](../SKILL.md).
+
+### Received objects
+
+`lock -Revised`, `update` and `unlock -Force` silently bring newer versions into the infobase. The script then prints `[warning] … objects received from the repository`, saves the owner objects one per line to `%TEMP%\1c-repo-reports\received-<stamp>.txt` and prints the ready export command:
+
+```powershell
+powershell -NoProfile -File "<skills>/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1" -InfoBasePath "<ib>" -ConfigDir "<EXPORT_PATH>" -Mode Partial -ObjectsFile "<list>"
+```
+
+Run it (or the `/getconfigfiles` selected-object export with that list) **before** editing those files, and stop first if a file to refresh carries local edits ([repo-sdlc.md → Source files follow the infobase](repo-sdlc.md#source-files-follow-the-infobase)). A received root is not exportable by name — use the incremental `/loadfrom1cbase changes`.
 
 ## Force variants — user-approved maintenance only
 
@@ -94,8 +124,9 @@ Both halves of each gate are the user's decision: never edit `REPOSITORY_ALLOW_F
 
 ## Output contract
 
-- Success = exit `0` **and** no fatal line in the `/Out` log — the script scans the log and elevates hidden failures ("Ошибка работы с хранилищем конфигурации", "уже захвачен", "не захвачен", auth errors, …) to exit `1` even when the platform exits `0`.
-- Reports (`status`/`history`/`diff`) go to `%TEMP%\1c-repo-reports\<op>-<stamp>.txt` (override with `-ReportFile`); the console shows the first 16000 chars (`-MaxReportChars`) plus the file path — read the file for anything beyond the excerpt.
+- Success = exit `0` **and** `/DumpResult` `0` (a missing result file fails the run) **and** no fatal line in the `/Out` log **and**, for `lock` / `update` / `commit` / `unlock`, the per-object verdict above. The log scan elevates hidden failures («Ошибка работы с хранилищем конфигурации», «Соединение с хранилищем конфигурации не установлено», «Загруженный список объектов пуст», auth errors, …) to exit `1` even when the platform exits `0`; the per-object lines are read line by line instead of by substring, so an unlock no-op is not a failure and a partial lock is visible.
+- `Error: objects not found in the configuration` (the platform's «Объекты, отсутствующие в обеих конфигурациях») — a typo, an infobase behind the repository (`update` first), or a part of an object instead of its owner.
+- Reports (`status`/`history`/`diff`) go to `%TEMP%\1c-repo-reports\<op>-<stamp>.txt` (override with `-ReportFile`); the console shows the first 16000 chars (`-MaxReportChars`) plus the file path — read the file for anything beyond the excerpt. Object lists longer than 20 names are cut in the console and saved beside the reports.
 - Passwords never appear in the printed command line.
 - `-TimeoutSeconds N` kills a hung Designer after N seconds (default: no timeout).
 
@@ -105,11 +136,18 @@ Same iterative discipline as DB updates (`content/skills/1c-metadata-manage/docs
 
 | Log evidence | Cause | Action |
 |---|---|---|
-| `уже захвачен пользователем <X>` | Lock conflict | Report to the user; do **not** force-unlock |
-| `не захвачен` on commit | Committing objects that were never locked | `lock` the missing objects, re-commit |
-| Auth error (`Неправильное имя или пароль…`) | Wrong `REPOSITORY_USER`/`REPOSITORY_PASSWORD` or IB credentials | Re-ask the user once, per the `dev-standards-env.md` credential policy |
-| `Не удалось подключиться к хранилищу` | Wrong `REPOSITORY_PATH` / server down | Verify the address with the user |
+| `Locked by another user — NOT taken … held by <X>` («Объект захвачен для редактирования другим пользователем») | Lock conflict | Report to the user; do **not** force-unlock. Objects listed as locked by you stay yours |
+| `Not locked by you — lock them first` on commit, or the bare commit failure | Committing objects that were never locked | `lock` the missing objects, re-commit |
+| `[connection] credentials rejected` (`Неправильное имя или пароль…`) | Wrong `REPOSITORY_USER`/`REPOSITORY_PASSWORD` or IB credentials | Re-ask the user once, per the `dev-standards-env.md` credential policy |
+| `[connection] repository credentials missing` («Соединение с хранилищем конфигурации не установлено», `REPOSITORY_USER` empty) | The platform gives this message for missing credentials too | Ask the user for the repository user / password |
+| `[connection] repository server unreachable at <host>:<port>` (same message, `tcp://` address, user set) | Repository server down, wrong port (default 1542), server version ≠ platform | Verify the server and address with the user |
+| `Не удалось подключиться к хранилищу`, path not reachable | Wrong `REPOSITORY_PATH` / share unavailable | Verify the address with the user |
+| `/DumpResult was not written` / `reports <N>` | The batch run failed without saying so in the exit code | Read the log; see `content/rules/designer-batch-checks.md` |
 | Designer exits non-zero, empty log | Startup problem (license, another Configurator session holding the IB) | Close competing sessions; see `db-manage.md` session handling |
 | Timeout kill | Hung dialog / dead network | `status` first, then retry once with a larger `-TimeoutSeconds` |
 
 Two identical failures in a row = stop and report; never loop the same failing call.
+
+## Changes
+
+- **2026-11-01 — repo-ops v1.1.** Ported from upstream `db-repo` (cc-1c-skills 478e7489, 33633aaf, 3e816d3e, 1eb565b1, 1c74843c, 4a49eea4; the skill itself is not vendored — it binds / unbinds infobases and administers repositories, which Safety invariants 5–6 forbid): line-by-line verdict per object for `lock` / `update` / `commit` / `unlock` (partial lock, silent "already yours", unlock no-op, "no new version", unbound-infobase check on `update`); root-only lock; owner substitution; received objects saved with a ready `db-dump-xml -ObjectsFile` command; connection hints that tell an unreachable `tcp://` server from missing or rejected credentials. Local additions: `/DumpResult` and `/DisableStartupMessages` on every launch, the `INFOBASE_ROLE=prod` refusal enforced by the script, a relative infobase path anchored at `.dev.env`, `PositionalBinding=$false`, a `trap` against a false exit `0`, a bounded output drain (no hang when a child keeps the pipes open). `-Objects` on `status` / `history` / `dump` is now refused instead of ignored. Kept as before: the double `-Force` gate, no whole-configuration operations, `diff`, `-TimeoutSeconds`, the freshness check of [repo-sdlc.md](repo-sdlc.md). Offline tests: `tools/tests/repo-ops-regression.ps1` (fake platform, sample logs from the platform's message texts); not yet verified against a live repository.

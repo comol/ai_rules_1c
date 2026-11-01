@@ -1,6 +1,7 @@
-﻿# web-unpublish v1.0 — Remove 1C web publication
+﻿# web-unpublish v1.4 — Remove 1C web publication
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
-# Local: -DryRun / -Force safety gate and consolidated-layout project root.
+# Local: -DryRun / -Force safety gate; consolidated-layout project root; -AppName validated
+#        (no path segments reach Remove-Item); -All and -AppName are exclusive.
 <#
 .SYNOPSIS
     Удаление веб-публикации 1С из Apache
@@ -38,7 +39,7 @@
     .\web-unpublish.ps1 -AppName "bpdemo" -ApachePath "C:\tools\apache24" -Force
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
     [Parameter(Mandatory=$false)]
     [string]$AppName,
@@ -59,14 +60,30 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Resolve ApachePath ---
 if (-not $ApachePath) {
-    $projectRoot = (Get-Location).Path  # consolidated skill layout: project root = current working directory
+    $projectRoot = (Get-Location).ProviderPath  # consolidated skill layout: project root = current working directory
     $ApachePath = Join-Path $projectRoot "tools\apache24"
+}
+if (-not [System.IO.Path]::IsPathRooted($ApachePath)) {
+    $ApachePath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).ProviderPath $ApachePath))
 }
 
 # --- Validate params ---
 if (-not $All -and -not $AppName) {
     Write-Host "Error: укажите -AppName или -All" -ForegroundColor Red
     exit 1
+}
+if ($All -and $AppName) {
+    Write-Host "Error: укажите только -AppName или только -All" -ForegroundColor Red
+    exit 1
+}
+# Local: the name is joined under publish\ and removed recursively — '..', separators or
+# wildcards must never reach Remove-Item. Same rule as web-publish.
+if ($AppName) {
+    $AppName = $AppName.ToLower()
+    if ($AppName -notmatch '^[\w-]{1,64}$') {
+        Write-Host "Error: недопустимое имя публикации '$AppName' (буквы, цифры, '_' и '-')" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # --- Read httpd.conf ---
@@ -80,7 +97,7 @@ $confContent = [System.IO.File]::ReadAllText($confFile)
 
 # --- Helper: our httpd process ---
 $httpdExe = Join-Path (Join-Path $ApachePath "bin") "httpd.exe"
-$httpdExeNorm = (Resolve-Path $httpdExe -ErrorAction SilentlyContinue).Path
+$httpdExeNorm = (Resolve-Path $httpdExe -ErrorAction SilentlyContinue).ProviderPath
 function Get-OurHttpd {
     Get-Process httpd -ErrorAction SilentlyContinue | Where-Object {
         try { $_.Path -eq $httpdExeNorm } catch { $false }
@@ -96,7 +113,14 @@ if ($All) {
         exit 0
     }
     $appNames = @()
-    foreach ($m in $pubMatches) { $appNames += $m.Groups[1].Value }
+    foreach ($m in $pubMatches) {
+        $markerName = $m.Groups[1].Value
+        if ($markerName -notmatch '^[\w-]{1,64}$') {
+            Write-Host "Error: повреждённый маркер публикации в httpd.conf: '$markerName' — ничего не изменено" -ForegroundColor Red
+            exit 1
+        }
+        $appNames += $markerName
+    }
     Write-Host "Удаление всех публикаций: $($appNames -join ', ')" -ForegroundColor Cyan
 } else {
     $appNames = @($AppName)
