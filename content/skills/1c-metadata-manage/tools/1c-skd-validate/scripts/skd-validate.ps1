@@ -1,7 +1,10 @@
-﻿# skd-validate v1.2 — Validate 1C DCS structure
+﻿# skd-validate v1.9 — Validate 1C DCS structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: the XSD directory comes from .dev.env V8_XSD_PATH first (.v8-project.json xsdPath is the
+#   fallback, then .v8-xsd next to .dev.env); a missing directory is named in the "XSD not checked" note.
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)]
+	[Parameter(Mandatory, Position=0)]
 	[Alias('Path')]
 	[string]$TemplatePath,
 
@@ -18,7 +21,7 @@ $ErrorActionPreference = "Stop"
 # --- Resolve path ---
 
 if (-not [System.IO.Path]::IsPathRooted($TemplatePath)) {
-	$TemplatePath = Join-Path (Get-Location).Path $TemplatePath
+	$TemplatePath = Join-Path (Get-Location).ProviderPath $TemplatePath
 }
 # A: Directory → Ext/Template.xml
 if (Test-Path $TemplatePath -PathType Container) {
@@ -45,7 +48,7 @@ if (-not (Test-Path $TemplatePath)) {
 	exit 1
 }
 
-$resolvedPath = (Resolve-Path $TemplatePath).Path
+$resolvedPath = (Resolve-Path $TemplatePath).ProviderPath
 $fileName = [System.IO.Path]::GetFileName($resolvedPath)
 
 # --- Output infrastructure ---
@@ -54,6 +57,9 @@ $script:errors = 0
 $script:warnings = 0
 $script:okCount = 0
 $script:stopped = $false
+# Проверка, которая не выполнялась, — в итоговую строку: без этого «Validation OK» читается как
+# «проверено всё» (модель так и докладывала пользователю при нарушенном порядке)
+$script:xsdNote = $null
 $script:output = New-Object System.Text.StringBuilder 4096
 
 function Out-Line {
@@ -85,10 +91,13 @@ function Report-Warn {
 $finalize = {
 	$checks = $script:okCount + $script:errors + $script:warnings
 	if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
-		$result = "=== Validation OK: $fileName ($checks checks) ==="
+		$note = if ($script:xsdNote) { "; $($script:xsdNote)" } else { "" }
+		$result = "=== Validation OK: $fileName ($checks checks$note) ==="
 	} else {
 		Out-Line ""
-		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
+		$note = if ($script:xsdNote) { "; $($script:xsdNote)" } else { "" }
+		if ($script:stopped -and $script:errors -ge $MaxErrors) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
+		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks$note) ==="
 		$result = $script:output.ToString()
 	}
 	Write-Host $result
@@ -140,10 +149,15 @@ $root = $xmlDoc.DocumentElement
 
 # --- 3. Root element checks ---
 
-if ($root.LocalName -ne "DataCompositionSchema") {
-	Report-Error "Root element is '$($root.LocalName)', expected 'DataCompositionSchema'"
-} else {
+# Регистр значим: -ne его не различает, и корень со строчной пропускался молча. Строчную
+# (dataCompositionSchema — имя из XSD, так пишет сериализатор XDTO) платформа загружает, но
+# конфигуратор всегда пишет DataCompositionSchema — это предупреждение, не ошибка.
+if ($root.LocalName -ceq "DataCompositionSchema") {
 	Report-OK "Root element: DataCompositionSchema"
+} elseif ($root.LocalName -eq "DataCompositionSchema") {
+	Report-Warn "Root element is '$($root.LocalName)' — the platform loads it, but the Designer writes 'DataCompositionSchema'"
+} else {
+	Report-Error "Root element is '$($root.LocalName)', expected 'DataCompositionSchema'"
 }
 
 $expectedNs = "http://v8.1c.ru/8.1/data-composition-system/schema"
@@ -917,11 +931,445 @@ foreach ($vn in $valueNodes) {
 		} elseif (-not ($text -match '^[A-Za-zА-Яа-яЁё]+\.[A-Za-zА-Яа-яЁё0-9_]+')) {
 			Report-Warn "<value xsi:type=`"dcscor:DesignTimeValue`">$text</value> — doesn't look like a typical ref path"
 		}
+	} elseif ($xsiType -ceq 'xs:boolean' -and @('true', 'false', '1', '0') -cnotcontains $text.Trim()) {
+		# Платформа прощает True/False, чтение по схеме (XDTO) — нет
+		Report-Error "<value xsi:type=`"xs:boolean`">$text</value> — boolean must be true or false (lowercase)"
+		$vOk = $false
 	}
 }
 if ($vChecked -gt 0 -and $vOk) {
 	Report-OK "$vChecked <value> element(s) with xsi:type: content OK"
 }
+
+if ($script:stopped) { & $finalize; exit 1 }
+
+# --- 18. XSD (schemas of the platform, /v8-xsd-fetch) ---
+# Порядок элементов, типы и значения — по XSD платформы, если они есть в проекте. Нет схем —
+# нет проверки. Схемы XDTO совпадают с выгрузкой конфигуратора только в СКД, и то кроме
+# нескольких мест, которые платформа пишет иначе, — они отсекаются ниже (Test-XsdPlatformNoise).
+
+# Копия общего эталона (семья find_v8project, авторитет — cf-edit).
+function Find-V8Project([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 20 -and $d; $i++) {
+		$pj = Join-Path $d ".v8-project.json"
+		if (Test-Path $pj) { return $pj }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+# Штамп версии формата — атрибут version КОРНЕВОГО элемента файла. Именно корневого: в Form.xml
+# расширения ниже стоит <BaseForm version=…>. Читается только заголовок, без разбора файла.
+function Get-RootVersion([string]$xmlPath) {
+	if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) { return $null }
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($xmlPath)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $len)
+	$m = [regex]::Match($head, '<[A-Za-z_][\w.:-]*(\s[^>]*)?/?>')
+	if (-not $m.Success) { return $null }
+	$v = [regex]::Match($m.Groups[1].Value, '(?:^|\s)version="([^"]*)"')
+	if ($v.Success) { return $v.Groups[1].Value }
+	return $null
+}
+
+# Корень автономной внешней обработки/отчёта. Копия общего эталона (семья is_external_root,
+# авторитет — cf-edit).
+function Test-ExternalObjectRoot([string]$xmlPath) {
+	if (-not (Test-Path $xmlPath)) { return $false }
+	try {
+		[xml]$mx = Get-Content -Path $xmlPath -Encoding UTF8
+		$el = $mx.DocumentElement.FirstChild
+		while ($el -and $el.NodeType -ne 'Element') { $el = $el.NextSibling }
+		if ($el) { return @('ExternalDataProcessor','ExternalReport') -contains $el.LocalName }
+	} catch {}
+	return $false
+}
+
+# Якорь выгрузки, в чьём дереве лежит файл: корень автономной EPF/ERF либо Configuration.xml,
+# ближайший вверх. Корень обработки проверяется первым — иначе обработка, лежащая в дереве
+# конфигурации, сверялась бы с конфигурацией. Нет якоря — сверять не с чем.
+function Find-DumpAnchor([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 15 -and $d; $i++) {
+		if (Test-ExternalObjectRoot "$d.xml") { return "$d.xml" }
+		$cfg = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfg) { return $cfg }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if (-not $parent -or $parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+$xsdDcsNs = "http://v8.1c.ru/8.1/data-composition-system/schema"
+
+# targetNamespace схемы — из заголовка файла, без разбора
+function Get-XsdTargetNs([string]$path) {
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($path)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$m = [regex]::Match([System.Text.Encoding]::UTF8.GetString($buf, 0, $len), 'targetNamespace="([^"]*)"')
+	if ($m.Success) { return $m.Groups[1].Value }
+	return $null
+}
+
+# Каталог версии годится, если в нём есть схема СКД (в 2.10–2.11 её нет)
+function Test-XsdVersionDir([string]$dir) {
+	foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xsd -File -ErrorAction SilentlyContinue) {
+		if ((Get-XsdTargetNs $f.FullName) -ceq $xsdDcsNs) { return $true }
+	}
+	return $false
+}
+
+# Local: каталог схем — сначала ключ V8_XSD_PATH из .dev.env (относительный путь — от каталога
+# .dev.env); без ключа — xsdPath из .v8-project.json, как в апстриме (сначала от шаблона, потом от
+# текущего каталога); иначе .v8-xsd рядом с .dev.env, потом рядом с .v8-project.json. Нет ни
+# того, ни другого — нет схем. Тот же порядок скопирован в v8-xsd-fetch.
+function Get-XsdRootCandidate([string]$templateDir) {
+	$envDir = $null
+	$__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
+	if (Test-Path -LiteralPath $__devEnvHelper) {
+		. $__devEnvHelper
+		$envFile = Find-1CDevEnvFile
+		if ($envFile) {
+			$envDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($envFile))
+			$v = Get-1CDevEnvValue 'V8_XSD_PATH'
+			if ($v) {
+				$p = if ([System.IO.Path]::IsPathRooted($v)) { $v } else { Join-Path $envDir $v }
+				return [System.IO.Path]::GetFullPath($p)
+			}
+		}
+	}
+	$pj = Find-V8Project $templateDir
+	if (-not $pj) { $pj = Find-V8Project (Get-Location).ProviderPath }
+	$pjDir = if ($pj) { [System.IO.Path]::GetDirectoryName($pj) } else { $null }
+	if ($pj) {
+		try {
+			$cfg = Get-Content -LiteralPath $pj -Raw -Encoding UTF8 | ConvertFrom-Json
+			if ($cfg.xsdPath) {
+				$rel = "$($cfg.xsdPath)"
+				$p = if ([System.IO.Path]::IsPathRooted($rel)) { $rel } else { Join-Path $pjDir $rel }
+				return [System.IO.Path]::GetFullPath($p)
+			}
+		} catch {}
+	}
+	if ($envDir) { return (Join-Path $envDir ".v8-xsd") }
+	if ($pjDir) { return (Join-Path $pjDir ".v8-xsd") }
+	return $null
+}
+function Resolve-XsdRoot([string]$templateDir) {
+	$dir = Get-XsdRootCandidate $templateDir
+	if ($dir -and (Test-Path -LiteralPath $dir -PathType Container)) { return $dir }
+	return $null
+}
+
+# Места, которые платформа пишет не так, как описывает XSD, — сверено на всех схемах компоновки
+# выгрузок БП и УНФ. Правило — по месту (элемент, родитель, xsi:type), не по тексту: текст
+# зависит от движка и языка.
+function Test-XsdPlatformNoise($info) {
+	$e = $info.elem; $p = $info.parent
+	if (($p -ceq 'groupTemplate' -or $p -ceq 'groupHeaderTemplate') -and ($e -ceq 'templateType' -or $e -ceq 'groupName')) { return $true }
+	if ($p -ceq 'right' -and $e -ceq 'lastId') { return $true }
+	if ($p -ceq 'nestedSchema' -and $e -ceq 'schema') { return $true }
+	if ($info.xsiNs -ceq 'http://v8.1c.ru/8.2/data/chart') { return $true }
+	# Пустое выражение параметра макета платформа не пишет, схема требует
+	if ($e -ceq 'parameter' -and $info.xsiLocal -ceq 'ExpressionAreaTemplateParameter') { return $true }
+	return $false
+}
+
+# --- Подсказка по схеме: что именно исправить ---
+# Текст валидатора про порядок («недопустимый дочерний X, ожидается A, B») читается как «добавь A»,
+# а означает «X стоит слишком поздно». Поэтому для нарушений порядка строим свою подсказку: тип
+# родителя и порядок его детей берём из XSD, сравниваем с соседями нарушителя в документе. Обход
+# схемы — свой, по XSD-документам (не PSVI .NET): так подсказки портов совпадают.
+
+function Get-XsdModel([string]$dir) {
+	$m = @{
+		types = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+		elems = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+		orders = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+	}
+	foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xsd -File) {
+		$doc = New-Object System.Xml.XmlDocument
+		$doc.Load($f.FullName)
+		$tns = $doc.DocumentElement.GetAttribute("targetNamespace")
+		foreach ($n in $doc.DocumentElement.ChildNodes) {
+			if ($n.NodeType -ne 'Element' -or $n.NamespaceURI -cne 'http://www.w3.org/2001/XMLSchema') { continue }
+			$name = $n.GetAttribute("name")
+			if (-not $name) { continue }
+			if ($n.get_LocalName() -ceq 'complexType' -and -not $m.types.ContainsKey("$tns|$name")) { $m.types["$tns|$name"] = $n }
+			elseif ($n.get_LocalName() -ceq 'element' -and -not $m.elems.ContainsKey("$tns|$name")) { $m.elems["$tns|$name"] = $n }
+		}
+	}
+	return $m
+}
+
+# QName из атрибута схемы → "ns|имя" по пространствам имён узла XSD
+function Resolve-XsdQName($node, [string]$qn) {
+	if (-not $qn) { return $null }
+	$pp = $qn.Split(':')
+	$prefix = if ($pp.Count -gt 1) { $pp[0] } else { '' }
+	return "$($node.GetNamespaceOfPrefix($prefix))|$($pp[-1])"
+}
+
+# Дети типа по порядку: @{ name; type; maxOne }. База расширения — первой. Порядок не определён
+# (choice, all, any, group) или тип неизвестен — $null.
+function Get-XsdChildOrder($model, [string]$typeKey) {
+	if (-not $typeKey) { return $null }
+	# Список отдаём через «,»: иначе PS развернёт его — пустой станет $null, одиночный — самим элементом
+	if ($model.orders.ContainsKey($typeKey)) { $v = $model.orders[$typeKey]; if ($null -eq $v) { return $null }; return ,$v }
+	$model.orders[$typeKey] = $null   # защита от циклов
+	$ct = if ($model.types.ContainsKey($typeKey)) { $model.types[$typeKey] } else { $null }
+	if (-not $ct) { return $null }
+	$list = New-Object System.Collections.ArrayList
+	$holder = $ct
+	foreach ($c in $ct.ChildNodes) {
+		if ($c.NodeType -ne 'Element') { continue }
+		if ($c.get_LocalName() -ceq 'simpleContent') { $model.orders[$typeKey] = $list; return ,$list }
+		if ($c.get_LocalName() -ceq 'complexContent') {
+			$ext = $null
+			foreach ($x in $c.ChildNodes) { if ($x.NodeType -eq 'Element' -and $x.get_LocalName() -ceq 'extension') { $ext = $x } }
+			if (-not $ext) { return $null }
+			$baseKey = Resolve-XsdQName $ext $ext.GetAttribute("base")
+			$base = Get-XsdChildOrder $model $baseKey
+			# База известна, но порядок у неё не определён — не определён и здесь
+			if ($null -eq $base -and $model.types.ContainsKey($baseKey)) { return $null }
+			if ($base) { foreach ($b in $base) { [void]$list.Add($b) } }
+			$holder = $ext
+		}
+	}
+	foreach ($c in $holder.ChildNodes) {
+		if ($c.NodeType -ne 'Element') { continue }
+		$ln = $c.get_LocalName()
+		if ($ln -ceq 'sequence') { if (-not (Add-XsdSequence $model $c $list)) { return $null } }
+		elseif ($ln -ceq 'choice' -or $ln -ceq 'all' -or $ln -ceq 'group' -or $ln -ceq 'any') { return $null }
+	}
+	$model.orders[$typeKey] = $list
+	return ,$list
+}
+
+function Add-XsdSequence($model, $seq, $list) {
+	foreach ($c in $seq.ChildNodes) {
+		if ($c.NodeType -ne 'Element') { continue }
+		$ln = $c.get_LocalName()
+		if ($ln -ceq 'element') {
+			$ref = $c.GetAttribute("ref")
+			if ($ref) {
+				$rk = Resolve-XsdQName $c $ref
+				$ge = if ($model.elems.ContainsKey($rk)) { $model.elems[$rk] } else { $null }
+				$name = $rk.Split('|')[-1]
+				$type = if ($ge -and $ge.GetAttribute("type")) { Resolve-XsdQName $ge $ge.GetAttribute("type") } else { $null }
+			} else {
+				$name = $c.GetAttribute("name")
+				$type = if ($c.GetAttribute("type")) { Resolve-XsdQName $c $c.GetAttribute("type") } else { $null }
+			}
+			$mx = $c.GetAttribute("maxOccurs")
+			[void]$list.Add(@{ name = $name; type = $type; maxOne = (-not $mx -or $mx -ceq '1') })
+		} elseif ($ln -ceq 'sequence') {
+			if (-not (Add-XsdSequence $model $c $list)) { return $false }
+		} elseif ($ln -ceq 'annotation') {
+			continue
+		} else {
+			return $false
+		}
+	}
+	return $true
+}
+
+# Тип родителя нарушителя: спуск от корня по цепочке предков (@{ name; ns; xsiKey })
+function Resolve-XsdParentType($model, $ancestors) {
+	if ($ancestors.Count -eq 0) { return $null }
+	$root = $ancestors[0]
+	$rk = "$($root.ns)|$($root.name)"
+	if ($root.xsiKey) { $type = $root.xsiKey }
+	elseif ($model.elems.ContainsKey($rk) -and $model.elems[$rk].GetAttribute("type")) { $type = Resolve-XsdQName $model.elems[$rk] $model.elems[$rk].GetAttribute("type") }
+	elseif ($model.types.ContainsKey($rk)) { $type = $rk }
+	else { return $null }
+	for ($i = 1; $i -lt $ancestors.Count; $i++) {
+		$a = $ancestors[$i]
+		if ($a.xsiKey) { $type = $a.xsiKey; continue }
+		$order = Get-XsdChildOrder $model $type
+		if ($null -eq $order) { return $null }
+		$hit = $null
+		foreach ($o in $order) { if ($o.name -ceq $a.name) { $hit = $o; break } }
+		if (-not $hit -or -not $hit.type) { return $null }
+		$type = $hit.type
+	}
+	return $type
+}
+
+function Get-XsdOrderHint($model, $ancestors, [string]$name, $preceding) {
+	$pt = Resolve-XsdParentType $model $ancestors
+	$order = Get-XsdChildOrder $model $pt
+	if ($null -eq $order) { return $null }
+	$names = [string[]]@($order | ForEach-Object { $_.name })
+	$idx = [array]::IndexOf($names, $name)
+	if ($idx -lt 0) { return "not allowed in <$($ancestors[$ancestors.Count - 1].name)>" }
+	if ($order[$idx].maxOne -and ([string[]]@($preceding) -ccontains $name)) { return "duplicate — only one <$name> allowed" }
+	foreach ($sib in $preceding) {
+		if ([array]::IndexOf($names, [string]$sib) -gt $idx) { return "must come before <$sib>" }
+	}
+	return $null
+}
+
+# Текст валидатора без пространств имён: остаются имена и значения
+function Compress-XsdMessage([string]$m) {
+	$m = $m -replace '[\r\n]+', ' '
+	$m = $m -replace '\s(в пространстве имен|in namespace)\s"[^"]*"', ''
+	$m = $m -replace "\s(в пространстве имен|in namespace)\s'[^']*'", ''
+	$m = $m -replace '\{[^}]*\}', ''
+	$m = $m -replace '(["''])https?://[^"'']*:', '$1'
+	return $m.Trim()
+}
+
+function Invoke-XsdCheck {
+	$xsdRoot = Resolve-XsdRoot ([System.IO.Path]::GetDirectoryName($resolvedPath))
+	if (-not $xsdRoot) {
+		$cand = Get-XsdRootCandidate ([System.IO.Path]::GetDirectoryName($resolvedPath))
+		$where = if ($cand) { " in '$cand'" } else { "" }
+		$script:xsdNote = "XSD not checked: no schemas$where (v8-xsd-fetch)"
+		return
+	}
+	$anchor = Find-DumpAnchor ([System.IO.Path]::GetDirectoryName($resolvedPath))
+	$ver = if ($anchor) { Get-RootVersion $anchor } else { $null }
+	if (-not $ver -or (Get-FormatRank $ver) -eq 0) { $script:xsdNote = "XSD not checked: template outside a dump"; return }
+
+	# Точная версия — ошибки; ближайшая более новая — предупреждения; только старше — пропуск
+	$cands = @(Get-ChildItem -LiteralPath $xsdRoot -Directory |
+		Where-Object { $_.Name -match '^\d+\.\d+$' -and (Get-FormatRank $_.Name) -ge (Get-FormatRank $ver) } |
+		Sort-Object { Get-FormatRank $_.Name } |
+		Where-Object { Test-XsdVersionDir $_.FullName })
+	if ($cands.Count -eq 0) { Report-Warn "XSD: no schemas for format $ver in '$xsdRoot' — not checked"; return }
+	$useDir = $cands[0].FullName
+	$useVer = $cands[0].Name
+	$exact = ($useVer -eq $ver)
+
+	# Набор схем. У import нет schemaLocation — связь по namespace, поэтому в набор кладём все.
+	# Корень DataCompositionSchema в схеме объявлен как dataCompositionSchema (строчная) —
+	# дописываем элемент в саму схему СКД: вторую схему того же namespace без SourceUri
+	# XmlSchemaSet молча отбрасывает.
+	$schemas = @()
+	# Битый .xsd (например, недокачанный) — предупреждение, а не падение навыка
+	try {
+		foreach ($f in Get-ChildItem -LiteralPath $useDir -Filter *.xsd -File) {
+			$fs = [System.IO.File]::OpenRead($f.FullName)
+			try { $schemas += [System.Xml.Schema.XmlSchema]::Read($fs, $null) } finally { $fs.Dispose() }
+		}
+	} catch { Report-Warn "XSD: schemas in '$useDir' do not compile — not checked: $($_.Exception.Message)"; return }
+	$dcs = $schemas | Where-Object { $_.TargetNamespace -ceq $xsdDcsNs } | Select-Object -First 1
+	$hasRoot = $false
+	foreach ($it in $dcs.Items) {
+		if ($it -is [System.Xml.Schema.XmlSchemaElement] -and $it.Name -ceq 'DataCompositionSchema') { $hasRoot = $true }
+	}
+	if (-not $hasRoot) {
+		$el = New-Object System.Xml.Schema.XmlSchemaElement
+		$el.Name = 'DataCompositionSchema'
+		$el.SchemaTypeName = New-Object System.Xml.XmlQualifiedName('DataCompositionSchema', $xsdDcsNs)
+		[void]$dcs.Items.Add($el)
+	}
+	$set = New-Object System.Xml.Schema.XmlSchemaSet
+	$set.XmlResolver = $null
+	foreach ($sc in $schemas) { [void]$set.Add($sc) }
+	try { $set.Compile() } catch { Report-Warn "XSD: schemas in '$useDir' do not compile — not checked: $($_.Exception.Message)"; return }
+	$script:xsdModel = Get-XsdModel $useDir
+
+	# Своя цепочка открытых элементов: в обработчике нужен родитель нарушителя
+	$script:xsdStack = New-Object System.Collections.ArrayList
+	$script:xsdFound = 0
+	# Ошибку атрибута .NET сообщает, стоя на атрибуте: имени элемента-владельца в этот момент нет.
+	# Откладываем и выводим после Read(), когда читатель уже на элементе.
+	$script:xsdPending = New-Object System.Collections.ArrayList
+	$script:xsdTag = if ($exact) { "XSD $useVer" } else { "XSD $useVer (no schemas for $ver)" }
+	$script:xsdExact = $exact
+	$handler = {
+		param($sender, $e)
+		if ($script:stopped) { return }
+		$st = $script:xsdStack
+		if ($sender.NodeType -eq 'Attribute') {
+			[void]$script:xsdPending.Add(@{ line = $e.Exception.LineNumber; text = (Compress-XsdMessage $e.Message) })
+			return
+		}
+		if ($sender.NodeType -eq 'Element') {
+			$xt = $sender.GetAttribute("type", "http://www.w3.org/2001/XMLSchema-instance")
+			$info = @{ elem = $sender.LocalName; parent = $(if ($st.Count -gt 0) { $st[$st.Count - 1].name } else { '' }); xsiNs = ''; xsiLocal = '' }
+			if ($xt) {
+				$pp = $xt.Split(':')
+				$info.xsiLocal = $pp[-1]
+				if ($pp.Count -gt 1) { $info.xsiNs = "$($sender.LookupNamespace($pp[0]))" }
+			}
+		} else {
+			$top = if ($st.Count -gt 0) { $st[$st.Count - 1] } else { @{ name = ''; xsiNs = ''; xsiLocal = '' } }
+			$info = @{ elem = $top.name; parent = $(if ($st.Count -gt 1) { $st[$st.Count - 2].name } else { '' }); xsiNs = $top.xsiNs; xsiLocal = $top.xsiLocal }
+		}
+		if (Test-XsdPlatformNoise $info) { return }
+		# Недопустимое булево значение уже сообщила собственная проверка значений (раздел 17)
+		if ($info.elem -ceq 'value' -and $info.xsiNs -ceq 'http://www.w3.org/2001/XMLSchema' -and $info.xsiLocal -ceq 'boolean') { return }
+		$script:xsdFound++
+		$hint = $null
+		if ($sender.NodeType -eq 'Element') {
+			$prec = if ($st.Count -gt 0) { $st[$st.Count - 1].children } else { @() }
+			$hint = Get-XsdOrderHint $script:xsdModel $st $sender.LocalName $prec
+		}
+		$text = if ($hint) { $hint } else { Compress-XsdMessage $e.Message }
+		$msg = "$($script:xsdTag), line $($e.Exception.LineNumber): $($info.parent)/$($info.elem): $text"
+		if ($script:xsdExact) { Report-Error $msg } else { Report-Warn $msg }
+	}
+	$rs = New-Object System.Xml.XmlReaderSettings
+	$rs.ValidationType = 'Schema'
+	$rs.Schemas = $set
+	$rs.DtdProcessing = 'Prohibit'
+	$rs.add_ValidationEventHandler($handler)
+	$r = [System.Xml.XmlReader]::Create($resolvedPath, $rs)
+	try {
+		while ($r.Read()) {
+			if ($r.NodeType -eq 'Element') {
+				# Имя — в дети родителя (и у пустого элемента: он тоже сосед для подсказки)
+				if ($script:xsdStack.Count -gt 0) { [void]$script:xsdStack[$script:xsdStack.Count - 1].children.Add($r.LocalName) }
+				foreach ($pa in $script:xsdPending) {
+					if ($script:stopped) { break }
+					$xt = $r.GetAttribute("type", "http://www.w3.org/2001/XMLSchema-instance")
+					$info = @{ elem = $r.LocalName; parent = $(if ($script:xsdStack.Count -gt 0) { $script:xsdStack[$script:xsdStack.Count - 1].name } else { '' }); xsiNs = ''; xsiLocal = '' }
+					if ($xt) {
+						$pp = $xt.Split(':')
+						$info.xsiLocal = $pp[-1]
+						if ($pp.Count -gt 1) { $info.xsiNs = "$($r.LookupNamespace($pp[0]))" }
+					}
+					if (Test-XsdPlatformNoise $info) { continue }
+					$script:xsdFound++
+					$msg = "$($script:xsdTag), line $($pa.line): $($info.parent)/$($info.elem): $($pa.text)"
+					if ($script:xsdExact) { Report-Error $msg } else { Report-Warn $msg }
+				}
+				$script:xsdPending.Clear()
+				if ($script:stopped) { break }
+				if ($r.IsEmptyElement) { continue }
+				$xt = $r.GetAttribute("type", "http://www.w3.org/2001/XMLSchema-instance")
+				$entry = @{ name = $r.LocalName; ns = $r.NamespaceURI; xsiNs = ''; xsiLocal = ''; xsiKey = $null; children = New-Object System.Collections.ArrayList }
+				if ($xt) {
+					$pp = $xt.Split(':')
+					$entry.xsiLocal = $pp[-1]
+					$entry.xsiNs = if ($pp.Count -gt 1) { "$($r.LookupNamespace($pp[0]))" } else { "$($r.LookupNamespace(''))" }
+					$entry.xsiKey = "$($entry.xsiNs)|$($entry.xsiLocal)"
+				}
+				[void]$script:xsdStack.Add($entry)
+			} elseif ($r.NodeType -eq 'EndElement' -and $script:xsdStack.Count -gt 0) {
+				$script:xsdStack.RemoveAt($script:xsdStack.Count - 1)
+			}
+			if ($script:stopped) { break }
+		}
+	} finally { $r.Dispose() }
+	if ($script:xsdFound -eq 0) { Report-OK "$($script:xsdTag): order, types and values OK" }
+}
+
+Invoke-XsdCheck
 
 if ($script:stopped) { & $finalize; exit 1 }
 

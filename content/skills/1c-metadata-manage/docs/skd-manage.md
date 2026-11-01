@@ -1,6 +1,6 @@
-# 1C SKD Manage — Compile, Edit, Info, Validate
+# 1C SKD Manage — Compile, Edit, Info, Validate, Decompile
 
-Comprehensive Data Composition Schema (DCS/SKD) management: create from JSON, modify existing schemas, analyze structure, validate correctness.
+Comprehensive Data Composition Schema (DCS/SKD) management: create from JSON, modify existing schemas, analyze structure, validate correctness (including the platform XSD), decompile to a DSL draft.
 
 > The **complete JSON DSL grammar** for `skd-compile` — data sets, fields, resources, calculated fields, parameters, settings, filters, conditional appearance, nested schemas — is vendored verbatim as [`skd-dsl-spec.md`](../tools/1c-skd-compile/skd-dsl-spec.md) (Russian, upstream original). This document is the working guide; read the spec when a key is missing here or the compiler rejects a construct.
 
@@ -42,7 +42,7 @@ Full specification is embedded below.
 }
 ```
 
-Defaults: `dataSources` → auto `ИсточникДанных1/Local`; `settingsVariants` → auto "Основной" with details.
+Defaults: `dataSources` → auto `ИсточникДанных1/Local`. Without `settingsVariants` the compiler builds the variant "Основной" so the report shows data: `selection` = the declared fields of the data sets and the calculated fields (minus `#noField`, folders' Auto, disabled fields), `structure` = detail records; it prints an `[INFO]` line naming the chosen fields. A variant that has `selection` but no `structure` gets detail records. A `[WARN]` after the summary means the report will be empty or show only grouping columns — no fields declared, all excluded, or a `structure` without `selection`: add `settings.selection`. Keys given explicitly, even empty, are never touched.
 
 #### Data Sets
 
@@ -51,6 +51,12 @@ Type by key: `query` → DataSetQuery, `objectName` → DataSetObject, `items` �
 ```json
 { "name": "Продажи", "query": "ВЫБРАТЬ ...", "fields": [...] }
 ```
+
+Query data-set flags, both on by default — set them only when the task needs it:
+- `"autoFillFields": false` — the platform stops marking up the query: a field is available only if the query text marks it as `{ВЫБРАТЬ …}`, a filter reaches the query only where `{ГДЕ …}` (or a braced condition in virtual-table parameters) gives it a place, otherwise it applies to the query result.
+- `"useQueryGroupIfPossible": false` — no `СГРУППИРОВАТЬ ПО` added from the settings groupings: the query reads detail rows, the composition computes totals.
+
+**Field aliases.** When a data-set field's value differs from the same-named field of its source (a temp-table column, a virtual-table dimension), give it a different name — otherwise a settings filter is applied to the source field, not to the data-set field. An explicit `{ГДЕ}` fixes it only with `autoFillFields: false`.
 
 #### Fields — Shorthand
 
@@ -66,7 +72,9 @@ Types: `string`, `string(N)`, `decimal(D,F)`, `boolean`, `date`, `dateTime`, `Ca
 **Type synonyms** (Russian and alternatives): `число` = decimal, `строка` = string, `булево` = boolean, `дата` = date, `датаВремя` = dateTime, `СтандартныйПериод` = StandardPeriod, `СправочникСсылка.X` = CatalogRef.X, `ДокументСсылка.X` = DocumentRef.X, `int`/`number` = decimal, `bool` = boolean. Case-insensitive.
 
 Roles: `@dimension`, `@account`, `@balance`, `@period`.
-Restrictions: `#noField`, `#noFilter`, `#noGroup`, `#noOrder`.
+Restrictions: `#noField`, `#noFilter`, `#noGroup`, `#noOrder`. In the object form of a data-set or calculated field the same flags go in `restrict` or `useRestriction` — an object (`{ "field": true, "group": true }`), an array or a flag string. Object-form fields also take `availableValues` (`"value": null` = empty value).
+
+Element order inside every emitted node follows the platform XSD (calculated field: `title`, `useRestriction`, `appearance`, `availableValue`, `valueType` last); a schema in the wrong order is not read by XDTO ("Нарушен порядок следования значений свойств").
 
 #### Totals (shorthand)
 
@@ -129,6 +137,8 @@ Format: `"Field operator value @flags"`. Value `_` = empty (placeholder). Flags:
   }
 }]
 ```
+
+`dataParameters` items: `"Имя [= значение] @flags"`; several values separated by commas form a list (quote a value that contains a comma) — `"Статусы = Перечисление.СтатусыЗаказов.Новый, Перечисление.СтатусыЗаказов.ВРаботе @user"`; object form `{ "parameter": "Суммы", "value": [100, 200] }`. Each list item becomes its own `<dcscor:value>` (a single glued `"A B C"` string makes `В (&Параметр)` find nothing). Without `valueType` the value takes the type declared by the schema parameter, so numbers stay `xs:decimal`; references to predefined values become `dcscor:DesignTimeValue`. `"dataParameters": "auto"` lists every non-hidden parameter with a `userSettingID`; defaults (lists included) stay active, parameters without a default are switched off.
 
 ### Examples
 
@@ -224,7 +234,7 @@ Shorthand: `"Field operator value @flags"`. Flags: `@off`, `@user`, `@quickAcces
 
 #### add-dataParameter — Add Data Parameter to Variant
 
-Shorthand: `"Name [= value] @flags"`.
+Shorthand: `"Name [= value] @flags"`. Several values separated by commas form a list, one `<dcscor:value>` each (quote a value that contains a comma); predefined-value references are written as `dcscor:DesignTimeValue`.
 
 #### add-order — Add Sort Order
 
@@ -267,6 +277,8 @@ Shorthand: `"Field1 > Field2 > details"`. Replaces entire structure. Does not su
 Same shorthand as `add-field`. Finds by dataPath, merges properties.
 
 #### modify-filter / modify-dataParameter — Modify Existing Filter/Parameter
+
+Same shorthand as the `add-*` operation. `modify-dataParameter` replaces every previous value of a list; new values, `use`, `viewMode` and `userSettingID` are placed in schema order (`use`, `parameter`, `value`…, `viewMode`, `userSettingID`; a filter: `use`, `left`, `comparisonType`, `right`, `viewMode`, `userSettingID`). All `skd-edit` insertions — settings, structure, field roles — go to their XSD position, not to the end of the element: an element after `userSettingID` fails XDTO loading ("Проверка свойства 'value'").
 
 #### remove-* and clear-*
 
@@ -320,7 +332,7 @@ With mode specified:
 | `calculated` | Map: calculated field names | Expression + title + restrictions |
 | `resources` | Map: resource field names (`*` = group formulas) | Aggregation formulas by groupings |
 | `params` | Parameters table: type, value, visibility | — |
-| `variant` | Variant list | Grouping structure + filters + output |
+| `variant` | Variant list | Grouping structure + filters + `DataParams` (a list value as `[...]`) + output |
 | `templates` | Template binding map (field/group) | Template content: rows, cells, expressions |
 | `trace` | — | Full chain: data set → calculation → resource |
 | `full` | Full summary: overview + query + fields + resources + params + variant | — |
@@ -332,13 +344,14 @@ Detailed output examples for each mode are in `skills/1c-metadata-manage/tools/1
 ---
 ## 4. Validate — Check Correctness
 
-Checks structural correctness of a Template.xml Data Composition Schema. Detects format errors, broken references, duplicate names.
+Checks structural correctness of a Template.xml Data Composition Schema. Detects format errors, broken references, duplicate names; with the platform XSD schemas present, also element order, types and values.
 
 ### Parameters and Command
 
 | Parameter | Description |
 |-----------|-------------|
-| `TemplatePath` | Path to Template.xml or template directory (auto-resolves to `Ext/Template.xml`) |
+| `TemplatePath` (alias `Path`) | Path to Template.xml, template directory or template descriptor (auto-resolves to `Ext/Template.xml`) |
+| `Detailed` | Print every check, including passed ones |
 | `MaxErrors` | Max errors before stopping (default 20) |
 | `OutFile` | Write result to file |
 
@@ -362,6 +375,17 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-validate/
 | **GroupTemplates** | template references existing template, templateType valid |
 | **Variants** | Presence, name not empty, settings element present |
 | **Settings** | selection/filter/order reference known fields, comparisonType valid, structure items typed |
+| **Values** | `xs:boolean` only `true` / `false` / `1` / `0` (checked without schemas) |
+| **XSD** | Order, types and enum values against the platform XSD of the dump's format version (see below) |
+
+### XSD Check
+
+The template is checked against the XSD of its dump's format version — the `version` of the nearest `Configuration.xml` (or of the external report root) above it. Schema directory: `.dev.env` `V8_XSD_PATH` (relative to the `.dev.env` directory), else `.v8-project.json` `xsdPath`, else `.v8-xsd` next to `.dev.env` (`content/rules/dev-standards-env.md`). Fill it with `v8-xsd-fetch` (section 6).
+
+- **No schemas** — the summary ends with `XSD not checked: <reason>` (`no schemas in '<dir>'`, `template outside a dump`). That is not "everything checked": when the platform reports "Нарушен порядок следования значений свойств" or XDTO conversion errors, fetch the schemas and run again.
+- **Exact version** — violations are `[ERROR]`: `XSD <ver>, line N: <parent>/<element>: <hint>`. `must come before <X>` — move the element right before `<X>`, content unchanged; `duplicate` — delete the repeat; `not allowed in <P>` — the element does not belong there; otherwise the invalid value is named.
+- **Only a newer version present** — `[WARN]` with `(no schemas for <ver>)`: a pointer, not a verdict. No version ≥ the dump's — `[WARN] XSD: no schemas for format <ver>`.
+- A violation in a template that `skd-compile` / `skd-edit` has just written is a tool defect — report it to the user instead of hand-fixing the XML.
 
 ### Exit Codes
 
@@ -375,7 +399,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-validate/
 
 Reverse of `1c-skd-compile`: reads an existing `Template.xml` (DataCompositionSchema) and reconstructs the JSON DSL consumed by `1c-skd-compile`. Use it to capture an existing report's schema as editable DSL, diff two schemas, or bootstrap a new schema from a working sample.
 
-> **Draft (v0.90).** Round-trip is best-effort — complex hand-tuned schemas may not reproduce byte-for-byte. Always re-validate (`1c-skd-validate`) and visually compare (`1c-skd-info`) after a decompile → edit → compile cycle.
+> **The output is a draft, not a lossless representation.** Use it to scaffold a new report from a sample or for structural refactoring; for point edits of an existing report use `1c-skd-edit` (a decompile → compile cycle rewrites the whole template). The round-trip keeps the "Основной" variant (its `selection` / `structure` are always written, `[]` when absent), `autoFillFields` / `useQueryGroupIfPossible`, the data-set `source`, value lists and their types. A construct the DSL cannot express becomes a sentinel `__unsupported__` node — `skd-compile` refuses the JSON until each one is replaced or deleted; they are listed in `<basename>.warnings.md` next to `OutputPath`. Always re-validate (`1c-skd-validate`) and compare (`1c-skd-info`) after the cycle.
 
 ### Parameters and Command
 
@@ -388,13 +412,36 @@ Reverse of `1c-skd-compile`: reads an existing `Template.xml` (DataCompositionSc
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-decompile/scripts/skd-decompile.ps1 -TemplatePath "<Template.xml>" [-OutputPath "<schema.json>"]
 ```
 
-Fails fast (exit 2) when the root element is not `DataCompositionSchema` (e.g. a spreadsheet document — use `1c-mxl-decompile` instead).
+Fails fast (exit 2) when the root element is not `DataCompositionSchema` (e.g. a spreadsheet document — use `1c-mxl-decompile` instead); exit 3 on a construct it cannot take as a sample at all (picture cells, value storage, nested schemas) — use `1c-skd-edit` on such a report.
+
+---
+## 6. XSD Schemas — `v8-xsd-fetch`
+
+Downloads the platform XSD schemas of the dump format, by format version, into the project's schema directory (same resolution as section 4: `-OutPath`, else `V8_XSD_PATH`, else `.v8-project.json` `xsdPath`, else `.v8-xsd` next to `.dev.env`). `skd-validate` uses them; no platform install is needed.
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-v8-xsd-fetch/scripts/v8-xsd-fetch.ps1 -Versions "2.20"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `-Versions "<list>"` | Format versions, comma-separated. Without it — every available version (~600 KB each) |
+| `-List` | Show the available versions and which are present locally; downloads nothing |
+| `-OutPath <dir>` | Another schema directory — only when the user names one |
+| `-Ref <ref>` | Branch, tag or commit of the source repository (default `main`) |
+| `-Force` | Re-download files already present |
+
+- **Which version** — the `version` attribute of the dump's `Configuration.xml` root (e.g. `2.20`), not the platform release. Fetch the versions of the dumps the project works with.
+- **Source** — the third-party GitHub repository [yellow-hammer/namespace-forest](https://github.com/yellow-hammer/namespace-forest), `schemas/designer/<version>/`, through `api.github.com` and `raw.githubusercontent.com`. The ref is resolved to a commit first; `source.json` records repository, ref, commit and time per version.
+- **Licence** — the schemas are part of 1C:Enterprise 8, property of 1C-Soft LLC, under the 1C licence agreement. They are never committed: the tool writes `.gitignore` (`*`) into the schema directory; keep the directory in the project's `.gitignore` as well.
+- **Offline** — on a network error the tool exits `1` and names the target directory. Copy the `schemas/designer/<version>/` directories of the same repository by hand, or put schemas exported from your own platform there (`ФабрикаXDTO.ЭкспортСхемыXML`; file names do not matter, a schema is found by `targetNamespace`). The MCP `get_xsd_schema` tool answers single lookups without any download.
 
 ---
 ## Typical Workflow
 
 1. **Create new DCS**: `1c-skd-compile` from JSON → `1c-skd-validate` → `1c-skd-info` for visual summary
 2. **Modify existing DCS**: `1c-skd-edit` with operations → `1c-skd-validate` → `1c-skd-info`
+   - `XSD not checked` in the summary and an order / XDTO question at stake → `v8-xsd-fetch -Versions <dump version>` once per project, then validate again
 3. **Analyze structure**: `1c-skd-info` overview → `1c-skd-info -Mode trace -Name <field>` for field calculation chain → `1c-skd-info -Mode query -Name <dataset>` for query text → `1c-skd-info -Mode variant -Name <N>` for variant groupings and filters
 4. **Capture existing DCS as DSL**: `1c-skd-decompile` → edit the JSON → `1c-skd-compile` → `1c-skd-validate` (round-trip, draft)
 5. **MCP evidence set** (`content/rules/tooling-playbooks.md`): `get_xsd_schema` / `verify_xml` with `object_type="СКД"`

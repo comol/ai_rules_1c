@@ -1,5 +1,6 @@
-﻿# skd-decompile v0.91 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.108 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
 	[Alias('Path')]
@@ -9,6 +10,79 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# --- Разбор пользовательского JSON ---
+# Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
+# идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
+# для полиморфного входа: у файла подсказка была бы наполнителем. -Inline печатает ещё и то,
+# что доехало: у файла такого вопроса нет — путь назван, позицию дал парсер, файл на диске.
+# Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
+# вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
+# и одиночный объект (issue #136).
+function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
+	try {
+		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
+		# тогда как py-порт падал. Проверяем сами, чтобы порты вели себя одинаково.
+		if ([string]::IsNullOrWhiteSpace($text)) { throw 'input is empty' }
+		# pwsh 7+ сам разворачивает массив верхнего уровня ([x] → x, [] → $null). Ключ -NoEnumerate
+		# появился там же: в 5.1 и pwsh 6 его нет, поэтому спрашиваем командлет, а не версию.
+		$cfj = @{}
+		$cfjKeys = (Get-Command ConvertFrom-Json).Parameters
+		if ($cfjKeys.ContainsKey('NoEnumerate')) { $cfj.NoEnumerate = $true }
+		# pwsh 7.5+ без -DateKind String превращает ISO-строки дат в DateTime, и в XML уходит формат
+		# локали; в 5.1 и pwsh до 7.5 ключа нет (5.1 даты и так не трогает).
+		if ($cfjKeys.ContainsKey('DateKind')) { $cfj.DateKind = 'String' }
+		$parsed = $text | ConvertFrom-Json @cfj
+	} catch {
+		$what = if ($expected) { "$source expects $expected" } else { "Invalid JSON in $source" }
+		if ($Inline) {
+			$got = ($text -replace '\s+', ' ').Trim()
+			$label = 'got'
+			if (-not $got) { $got = '(empty)' }
+			elseif ($got.Length -gt 60) { $label = 'got (first 60 chars)'; $got = $got.Substring(0, 60) }
+			$what = "${what}, ${label}: ${got}"
+		}
+		[Console]::Error.WriteLine("[ERROR] ${what} ($($_.Exception.Message))")
+		exit 1
+	}
+	return ,$parsed
+}
+
+# --- Чтение входного JSON-файла ---
+# Кодировку берём из BOM — это объявление самого файла, а не догадка. Без BOM ждём строгий UTF-8:
+# Get-Content -Encoding UTF8 на файле в cp1251 тихо меняет кириллицу на U+FFFD, JSON после этого
+# разбирается успешно, и в конфигурацию уезжает имя из «замен». Кодовую страницу не подбираем:
+# угаданное имя уйдёт в метаданные так же молча.
+function Read-JsonInputFile([string]$path) {
+	# Проверка здесь, а не по навыкам: часть навыков проверяла путь сама, часть — нет, и один и тот
+	# же промах давал то внятную строку, то дамп MethodInvocationException. Навыки со своей
+	# проверкой срабатывают раньше и сохраняют свой текст.
+	if (-not (Test-Path -LiteralPath $path)) {
+		[Console]::Error.WriteLine("[ERROR] File not found: $path")
+		exit 1
+	}
+	if (Test-Path -LiteralPath $path -PathType Container) {
+		[Console]::Error.WriteLine("[ERROR] Expected a JSON file, got a directory: $path")
+		exit 1
+	}
+	$bytes = [System.IO.File]::ReadAllBytes($path)
+	if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+		return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+		return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+		return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	try {
+		return (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes)
+	} catch {
+		$detail = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+		[Console]::Error.WriteLine("[ERROR] ${path} is not valid UTF-8: ${detail} - save the file as UTF-8, or add a BOM if it is UTF-16")
+		exit 1
+	}
+}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- 0. Resolve and validate input ---
@@ -18,7 +92,7 @@ if (-not (Test-Path $TemplatePath)) {
 	exit 1
 }
 
-$TemplatePath = (Resolve-Path $TemplatePath).Path
+$TemplatePath = (Resolve-Path $TemplatePath).ProviderPath
 
 $xmlDoc = New-Object System.Xml.XmlDocument
 $xmlDoc.PreserveWhitespace = $false
@@ -535,6 +609,16 @@ function Read-InputParameters {
 					$cpl += $cplEntry
 				}
 				$entry['choiceParameterLinks'] = $cpl
+			} elseif ($vType -eq 'TypeLink') {
+				# Связь по типу: поле + номер элемента связи (оба необязательны)
+				$tl = [ordered]@{}
+				$tlField = Get-Text $val "dcscor:field"
+				$tlItem = Get-Text $val "dcscor:linkItem"
+				if ($tlField) { $tl['field'] = $tlField }
+				if ($tlItem) {
+					if ($tlItem -match '^-?\d+$') { $tl['linkItem'] = [int]$tlItem } else { $tl['linkItem'] = $tlItem }
+				}
+				$entry['typeLink'] = $tl
 			} elseif ($vType -eq 'LocalStringType') {
 				# Multilang dict {ru, en, ...}
 				$ml = Get-MLText $val
@@ -616,24 +700,7 @@ function Build-Field {
 	$avNodes = $fieldNode.SelectNodes("r:availableValue", $ns)
 	$availableValues = @()
 	foreach ($av in $avNodes) {
-		$avVN = $av.SelectSingleNode("r:value", $ns)
-		$avPN = $av.SelectSingleNode("r:presentation", $ns)
-		$avEntry = [ordered]@{}
-		if ($avVN) {
-			$avType = Get-LocalXsiType $avVN
-			$avText = $avVN.InnerText
-			if ($avType -eq 'boolean') { $avEntry['value'] = ($avText -eq 'true') }
-			elseif ($avType -eq 'decimal') {
-				if ($avText -match '^-?\d+$') { $avEntry['value'] = [int]$avText }
-				else { $avEntry['value'] = [double]$avText }
-			}
-			else { $avEntry['value'] = $avText }
-		}
-		if ($avPN) {
-			$avPres = Get-MLText $avPN
-			if ($avPres) { $avEntry['presentation'] = $avPres }
-		}
-		$availableValues += $avEntry
+		$availableValues += (ConvertTo-AvailableValueEntry $av)
 	}
 
 	# Можно ли роль положить в shorthand-строку?
@@ -690,10 +757,14 @@ function Build-CalcField {
 	$restrictTokens = Get-RestrictionTokens $cfNode.SelectSingleNode("r:useRestriction", $ns)
 	$appNode = $cfNode.SelectSingleNode("r:appearance", $ns)
 	$appearance = Get-AppearanceDict $appNode
+	$availableValues = @()
+	foreach ($av in $cfNode.SelectNodes("r:availableValue", $ns)) {
+		$availableValues += (ConvertTo-AvailableValueEntry $av)
+	}
 
 	# multilingual title (non-ru) → object form
 	$titleNeedsObject = ($title -is [System.Collections.IDictionary]) -or ($typeShort -is [array])
-	$needsObject = $appearance -or $titleNeedsObject
+	$needsObject = $appearance -or $titleNeedsObject -or ($availableValues.Count -gt 0)
 
 	if (-not $needsObject) {
 		# shorthand: "Name [Title]: type = expression #restrict"
@@ -711,6 +782,7 @@ function Build-CalcField {
 	if ($expression) { $obj['expression'] = $expression }
 	if ($restrictTokens) { $obj['restrict'] = ($restrictTokens | ForEach-Object { $_ -replace '^#','' }) }
 	if ($appearance) { $obj['appearance'] = $appearance }
+	if ($availableValues.Count -gt 0) { $obj['availableValues'] = $availableValues }
 	return $obj
 }
 
@@ -750,6 +822,93 @@ function Get-StandardPeriodVariant {
 	return $null
 }
 
+# Элемент списка значений (<value>/<dcscor:value>) → типизированное JSON-значение; xsi:nil → $null.
+function ConvertTo-ListItemValue {
+	param($vn)
+	if ($vn.GetAttribute("nil", $NS_XSI) -eq 'true') { return $null }
+	$vt = Get-LocalXsiType $vn
+	$vTxt = $vn.InnerText
+	if ($vt -eq 'boolean') { return ($vTxt -eq 'true') }
+	if ($vt -eq 'decimal') {
+		if ($vTxt -match '^-?\d{1,18}$') { return [long]$vTxt }
+		if ($vTxt -match '^-?\d+$') { return [decimal]$vTxt }
+		return [double]$vTxt
+	}
+	return $vTxt
+}
+
+# Списки значений равны поэлементно: тип JSON и текст (Ordinal).
+function Test-SameValueList {
+	param($a, $b)
+	if (-not ($a -is [array]) -or -not ($b -is [array]) -or $a.Count -ne $b.Count) { return $false }
+	for ($i = 0; $i -lt $a.Count; $i++) {
+		if ($null -eq $a[$i] -or $null -eq $b[$i]) {
+			if ($null -ne $a[$i] -or $null -ne $b[$i]) { return $false }
+			continue
+		}
+		if ($a[$i].GetType() -ne $b[$i].GetType()) { return $false }
+		if (-not [string]::Equals("$($a[$i])", "$($b[$i])", [StringComparison]::Ordinal)) { return $false }
+	}
+	return $true
+}
+
+# Варианты стандартного периода: краткая запись значения читает их как период, а не строку.
+# Копия в skd-compile, skd-edit и skd-decompile — держит check-inline-drift.
+function Get-StandardPeriodVariants {
+	return @("Custom","Today","ThisWeek","ThisTenDays","ThisMonth","ThisQuarter","ThisHalfYear","ThisYear","FromBeginningOfThisWeek","FromBeginningOfThisTenDays","FromBeginningOfThisMonth","FromBeginningOfThisQuarter","FromBeginningOfThisHalfYear","FromBeginningOfThisYear","Yesterday","LastWeek","LastTenDays","LastMonth","LastQuarter","LastHalfYear","LastYear","LastWeekTillSameWeekDay","LastTenDaysTillSameDayNumber","LastMonthTillSameDate","LastQuarterTillSameDate","LastHalfYearTillSameDate","LastYearTillSameDate","Tomorrow","NextWeek","NextTenDays","NextMonth","NextQuarter","NextHalfYear","NextYear","NextWeekTillSameWeekDay","NextTenDaysTillSameDayNumber","NextMonthTillSameDate","NextQuarterTillSameDate","NextHalfYearTillSameDate","NextYearTillSameDate","TillEndOfThisWeek","TillEndOfThisTenDays","TillEndOfThisMonth","TillEndOfThisQuarter","TillEndOfThisHalfYear","TillEndOfThisYear","Last7Days","Next7Days","Month")
+}
+
+# Значение-ссылка в краткой записи (Справочник.X.Y, Catalog.X.Y) — пишется как DesignTimeValue.
+# Копия в skd-compile, skd-edit и skd-decompile — держит check-inline-drift.
+function Test-RefValueLiteral([string]$s) {
+	return $s -match '^(Справочник|Перечисление|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена|Catalog|Enum|ChartOfAccounts|Document|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.'
+}
+
+# Слова, которые краткая запись compile читает не как строку: варианты стандартного периода,
+# булевы (регистр не важен — compile сравнивает без учёта регистра).
+$script:shorthandKeywords = @(Get-StandardPeriodVariants) + @("true","false")
+
+# Строку не передать краткой записью как есть: пробелы по краям, флаги (@), заголовок ([…]),
+# маркер пустого значения (_ / null).
+function Test-ShorthandUnsafe {
+	param([string]$s)
+	return ($s -ne $s.Trim() -or $s -match '[@\[\]]' -or $s -eq '_' -or $s.ToLowerInvariant() -eq 'null')
+}
+
+# Список значений → "a, b, 'c, d'" для краткой записи (compile разбирает через запятую,
+# элемент с запятой — в кавычках). $null — элемент так не выразить, нужна объектная форма.
+function Format-ValueListShorthand {
+	param($items)
+	$parts = @()
+	foreach ($it in $items) {
+		if ($it -is [string]) { $s = $it }
+		elseif ($it -is [int] -or $it -is [long] -or $it -is [decimal] -or $it -is [double]) { $s = "$it" }
+		else { return $null }
+		# Экспоненциальная запись числа у портов разная — только объектной формой
+		if ($s -eq '' -or (Test-ShorthandUnsafe $s) -or $s -match "['`"]" -or ($it -isnot [string] -and $s -match '[eE]')) { return $null }
+		if ($s.Contains(',')) { $s = "'$s'" }
+		$parts += $s
+	}
+	return ($parts -join ', ')
+}
+
+# Одиночное значение для краткой записи: с запятой — в кавычках (иначе compile разобьёт
+# его в список). $null — так не выразить: обрамлено кавычками, апостроф при запятой,
+# Test-ShorthandUnsafe; у строкового значения ещё и слово, которое краткая запись читает
+# как период/булево/дату/ссылку ($asString).
+function Format-ScalarShorthand {
+	param([string]$s, [bool]$asString = $false)
+	if ($s.Length -ge 2 -and ($s[0] -eq "'" -or $s[0] -eq '"') -and $s[-1] -eq $s[0]) { return $null }
+	if (Test-ShorthandUnsafe $s) { return $null }
+	if ($asString -and ($script:shorthandKeywords -contains $s -or $s -cmatch '^\d{4}-\d{2}-\d{2}T' -or
+		(Test-RefValueLiteral $s))) { return $null }
+	if ($s.Contains(',')) {
+		if ($s.Contains("'")) { return $null }
+		return "'$s'"
+	}
+	return $s
+}
+
 # Build parameter → shorthand or object form
 function Build-Parameter {
 	param($pNode, [string]$loc)
@@ -766,15 +925,7 @@ function Build-Parameter {
 	if ($valueNodes.Count -gt 1) {
 		# Multi-value (список значений по умолчанию для параметра-списка)
 		$valueArr = @()
-		foreach ($vn in $valueNodes) {
-			$vt = Get-LocalXsiType $vn
-			$vTxt = $vn.InnerText
-			if ($vt -eq 'boolean') { $valueArr += ($vTxt -eq 'true') }
-			elseif ($vt -eq 'decimal') {
-				if ($vTxt -match '^-?\d+$') { $valueArr += [int]$vTxt }
-				else { $valueArr += [double]$vTxt }
-			} else { $valueArr += $vTxt }
-		}
+		foreach ($vn in $valueNodes) { $valueArr += ConvertTo-ListItemValue $vn }
 		$valueDisplay = $valueArr
 	}
 	elseif ($valueNodes.Count -eq 1) {
@@ -823,21 +974,7 @@ function Build-Parameter {
 	$avNodes = $pNode.SelectNodes("r:availableValue", $ns)
 	$availableValues = @()
 	foreach ($av in $avNodes) {
-		$avValNode = $av.SelectSingleNode("r:value", $ns)
-		$avPresNode = $av.SelectSingleNode("r:presentation", $ns)
-		$avEntry = [ordered]@{}
-		if ($avValNode) {
-			$avType = Get-LocalXsiType $avValNode
-			$avText = $avValNode.InnerText
-			if ($avType -eq 'boolean') { $avEntry['value'] = ($avText -eq 'true') }
-			elseif ($avType -eq 'decimal') {
-				if ($avText -match '^-?\d+$') { $avEntry['value'] = [int]$avText }
-				else { $avEntry['value'] = [double]$avText }
-			}
-			else { $avEntry['value'] = $avText }
-		}
-		if ($avPresNode) { $avEntry['presentation'] = Get-MLText $avPresNode }
-		$availableValues += $avEntry
+		$availableValues += (ConvertTo-AvailableValueEntry $av $true)
 	}
 
 	$flags = @()
@@ -881,6 +1018,17 @@ function Render-Parameter {
 	# Object form needed if: availableValues, multilingual title, composite type,
 	# explicit denyIncomplete/use without @autoDates, useRestriction without autoDates, expression set
 	$needsObject = $false
+	# Список значений по умолчанию: в краткой записи — через запятую; элемент, который так
+	# не выразить, требует объектной формы (value — массив).
+	$valueShort = $valueDisplay
+	if ($valueDisplay -is [array]) {
+		$valueShort = Format-ValueListShorthand $valueDisplay
+		if ($null -eq $valueShort) { $needsObject = $true }
+	} elseif ($valueDisplay -is [string] -and $valueDisplay -ne '') {
+		# Тип в краткой записи параметра указан — значение пишется по нему, ключевые слова не мешают
+		$valueShort = Format-ScalarShorthand $valueDisplay
+		if ($null -eq $valueShort) { $needsObject = $true }
+	}
 	if ($p.availableValues -and $p.availableValues.Count -gt 0) { $needsObject = $true }
 	if ($p.inputParameters) { $needsObject = $true }
 	if ($titleNeedsObject) { $needsObject = $true }
@@ -910,7 +1058,7 @@ function Render-Parameter {
 		$s = $name
 		if ($title) { $s += " [$title]" }
 		if ($typeShort) { $s += ": $typeShort" }
-		if (-not $valueIsNil -and $null -ne $valueDisplay -and $valueDisplay -ne '') { $s += " = $valueDisplay" }
+		if (-not $valueIsNil -and $null -ne $valueShort -and $valueShort -ne '') { $s += " = $valueShort" }
 		if ($flags) { $s += ' ' + ($flags -join ' ') }
 		return $s
 	}
@@ -918,7 +1066,7 @@ function Render-Parameter {
 	$obj = [ordered]@{ name = $name }
 	if ($title) { $obj['title'] = $title }
 	if ($typeShort) { $obj['type'] = $typeShort }
-	if (-not $valueIsNil -and $null -ne $valueDisplay -and $valueDisplay -ne '') { $obj['value'] = $valueDisplay }
+	if (-not $valueIsNil -and $null -ne $valueDisplay -and ($valueDisplay -is [array] -or $valueDisplay -ne '')) { $obj['value'] = $valueDisplay }
 	if ($nilNeedsObject) { $obj['nilValue'] = $true }
 	if ($p.useAttr -and -not $p.autoDates) { $obj['use'] = $p.useAttr }
 	if ($p.denyIncomplete -and -not $p.autoDates) { $obj['denyIncompleteValues'] = $true }
@@ -1140,7 +1288,7 @@ function Load-UserStyles {
 	if (-not $dirPath) { return }
 	$stylesPath = Join-Path $dirPath 'skd-styles.json'
 	if (-not (Test-Path $stylesPath)) { return }
-	$raw = Get-Content -Raw -Encoding UTF8 $stylesPath | ConvertFrom-Json
+	$raw = ConvertFrom-JsonInput (Read-JsonInputFile $stylesPath) $stylesPath
 	$script:existingUserPresetsRaw = $raw
 	foreach ($prop in $raw.PSObject.Properties) {
 		# Compile-логика: data defaults → built-in if name match → user keys
@@ -1488,6 +1636,24 @@ $script:filterOpMap = @{
 	'Filled'='filled'; 'NotFilled'='notFilled'
 }
 
+# Значение Standard{Period,BeginningDate} → {variant[, date | startDate, endDate]} — форма, по которой
+# compile восстанавливает тип (date → SBD, BeginningOf* → SBD, иначе SP). Даты есть только у Custom.
+function ConvertTo-StandardPeriodObject($valNode) {
+	$obj = [ordered]@{ variant = (Get-Text $valNode "v8:variant") }
+	if ($obj.variant -ne 'Custom') { return $obj }
+	if ((Get-LocalXsiType $valNode) -eq 'StandardBeginningDate') {
+		$d = Get-Text $valNode "v8:date"
+		# date обязателен: без него Custom прочитается как StandardPeriod
+		$obj['date'] = if ($d) { $d } else { '0001-01-01T00:00:00' }
+	} else {
+		$sd = Get-Text $valNode "v8:startDate"
+		$ed = Get-Text $valNode "v8:endDate"
+		if ($sd) { $obj['startDate'] = $sd }
+		if ($ed) { $obj['endDate'] = $ed }
+	}
+	return $obj
+}
+
 # Render a filter value node to a shorthand-acceptable scalar string
 function Get-FilterValue {
 	param($valNode)
@@ -1495,11 +1661,72 @@ function Get-FilterValue {
 	$nil = $valNode.GetAttribute("nil", $NS_XSI)
 	if ($nil -eq 'true') { return '_' }
 	$vType = Get-LocalXsiType $valNode
+	if ($vType -eq 'StandardPeriod' -or $vType -eq 'StandardBeginningDate') { return ConvertTo-StandardPeriodObject $valNode }
 	if ($vType -eq 'DesignTimeValue') { return $valNode.InnerText }
 	if ($vType -eq 'LocalStringType') { return (Get-MLText $valNode) }
 	$txt = $valNode.InnerText
 	if (-not $txt) { return '_' }
 	return $txt
+}
+
+# xsi:type значения для valueType в DSL. Префикс, который compile объявляет в корне, — строкой
+# с этим префиксом; тип из другого пространства имён (d8p1:AccountType, d6p1:CatalogRef.X —
+# xmlns на самом узле) — {uri, name}: строкой его префикс в результате compile не объявлен.
+$script:compileRootPrefixes = @{
+	'http://www.w3.org/2001/XMLSchema' = 'xs'
+	'http://www.w3.org/2001/XMLSchema-instance' = 'xsi'
+	'http://v8.1c.ru/8.1/data/core' = 'v8'
+	'http://v8.1c.ru/8.1/data/ui' = 'v8ui'
+	'http://v8.1c.ru/8.1/data-composition-system/common' = 'dcscom'
+	'http://v8.1c.ru/8.1/data-composition-system/core' = 'dcscor'
+	'http://v8.1c.ru/8.1/data-composition-system/settings' = 'dcsset'
+}
+function Get-DslValueType($valNode) {
+	$raw = $valNode.GetAttribute("type", $NS_XSI)
+	if ($raw -notmatch '^([^:]+):(.+)$') { return $raw }
+	$pfx = $Matches[1]; $name = $Matches[2]
+	$uri = $valNode.GetNamespaceOfPrefix($pfx)
+	if (-not $uri) { return $raw }
+	$rootPfx = $script:compileRootPrefixes[$uri]
+	if ($rootPfx) { return "${rootPfx}:$name" }
+	return [ordered]@{ uri = $uri; name = $name }
+}
+
+# <availableValue> поля, вычисляемого поля или параметра → {value[, valueType][, presentation]}.
+# xsi:nil → value null; период — объектом {variant[, date | startDate, endDate]}. valueType —
+# только если compile вывел бы из значения другой тип: ссылку он узнаёт по литералу, дату (кроме
+# параметра) — по виду, остальное — xs:string; у параметра ""/"_"/"null" без valueType — пустое
+# значение его типа, поэтому такой строке valueType пишется всегда.
+function ConvertTo-AvailableValueEntry {
+	param($av, [bool]$isParam = $false)
+	$vn = $av.SelectSingleNode("r:value", $ns)
+	$pn = $av.SelectSingleNode("r:presentation", $ns)
+	$entry = [ordered]@{}
+	if ($vn) {
+		$vType = Get-LocalXsiType $vn
+		if ($vType -eq 'StandardPeriod' -or $vType -eq 'StandardBeginningDate') {
+			$entry['value'] = ConvertTo-StandardPeriodObject $vn
+		} else {
+			$val = ConvertTo-ListItemValue $vn
+			$entry['value'] = $val
+			if ($val -is [string]) {
+				$dt = Get-DslValueType $vn
+				$inferred = if (Test-RefValueLiteral $val) { 'dcscor:DesignTimeValue' }
+					elseif (-not $isParam -and $val -cmatch '^\d{4}-\d{2}-\d{2}T') { 'xs:dateTime' }
+					else { 'xs:string' }
+				$t = $val.Trim()
+				$looksEmpty = $isParam -and ($t -eq '' -or $t -eq '_' -or $t.ToLowerInvariant() -eq 'null')
+				if ($dt -and ($looksEmpty -or -not ($dt -is [string] -and [string]::Equals($dt, $inferred, [StringComparison]::Ordinal)))) {
+					$entry['valueType'] = $dt
+				}
+			}
+		}
+	}
+	if ($pn) {
+		$pres = Get-MLText $pn
+		if ($pres) { $entry['presentation'] = $pres }
+	}
+	return $entry
 }
 
 # Same as Get-FilterValue, но дополнительно возвращает xsi:type значения,
@@ -1514,6 +1741,10 @@ function Get-FilterValueWithType {
 	$vType = Get-LocalXsiType $valNode
 	if ($vType -eq 'LocalStringType') {
 		return @{ value = (Get-MLText $valNode); type = $rawType }
+	}
+	# Тип периода compile выводит из формы объекта — valueType не нужен
+	if ($vType -eq 'StandardPeriod' -or $vType -eq 'StandardBeginningDate') {
+		return @{ value = (ConvertTo-StandardPeriodObject $valNode); type = $null }
 	}
 	$txt = $valNode.InnerText
 	if (-not $txt) { return @{ value = '_'; type = $rawType } }
@@ -1583,9 +1814,14 @@ function Build-FilterItem {
 			# DesignTimeValue для значений вида "Перечисление.X.Y" / "Справочник.X.Y" /
 			# "ПланСчетов.X.Y" и т.п. также auto-detect-ится — не сохраняем.
 			$autoDetectsDTV = ($vt.type -eq 'dcscor:DesignTimeValue') -and `
-				("$($vt.value)" -match '^(Перечисление|Справочник|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена|Catalog|Enum|Document|ChartOfAccounts|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.')
-			if ($vt.type -and $vt.type -notmatch '^xs:' -and -not $autoDetectsDTV) {
-				$valueTypeAttr = $vt.type
+				(Test-RefValueLiteral "$($vt.value)")
+			# Строка, которую compile по виду прочитал бы иначе (ссылка, число, дата, true/false), —
+			# тип сохраняем явно, иначе круг меняет её тип
+			$strLooksTyped = ((Get-LocalXsiType $rn) -eq 'string') -and ($vt.value -is [string]) -and
+				((Test-RefValueLiteral $vt.value) -or $vt.value -match '^-?\d+(\.\d+)?$' -or
+				 $vt.value -cmatch '^\d{4}-\d{2}-\d{2}T' -or $vt.value -eq 'true' -or $vt.value -eq 'false')
+			if (($vt.type -and $vt.type -notmatch '^xs:' -and -not $autoDetectsDTV) -or $strLooksTyped) {
+				$valueTypeAttr = Get-DslValueType $rn
 			}
 		}
 	} elseif ($rightNodes.Count -gt 1) {
@@ -1603,12 +1839,14 @@ function Build-FilterItem {
 		# "Перечисление.*", но оригинал может хранить как xs:string).
 		# DesignTimeValue для значений-ref-литералов сам авто-detect-ится — не сохраняем.
 		$uniqTypes = @($rawTypes | Sort-Object -Unique)
-		if ($uniqTypes.Count -eq 1 -and $uniqTypes[0]) {
+		$firstLocal = Get-LocalXsiType $rightNodes[0]
+		$isPeriodList = $firstLocal -eq 'StandardPeriod' -or $firstLocal -eq 'StandardBeginningDate'
+		if ($uniqTypes.Count -eq 1 -and $uniqTypes[0] -and -not $isPeriodList) {
 			$autoDetectsDTV = ($uniqTypes[0] -eq 'dcscor:DesignTimeValue') -and `
 				($arr.Count -gt 0) -and `
-				(@($arr | Where-Object { "$_" -notmatch '^(Перечисление|Справочник|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена|Catalog|Enum|Document|ChartOfAccounts|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.' }).Count -eq 0)
+				(@($arr | Where-Object { -not (Test-RefValueLiteral "$_") }).Count -eq 0)
 			if (-not $autoDetectsDTV) {
-				$valueTypeAttr = $uniqTypes[0]
+				$valueTypeAttr = Get-DslValueType $rightNodes[0]
 			}
 		}
 	}
@@ -1639,15 +1877,20 @@ function Build-FilterItem {
 
 	# nullity ops have no value
 	$noValueOps = @('filled','notFilled')
+	# ...но если правая часть в XML всё же есть (платформа её хранит, смысла она не несёт) —
+	# сохраняем для раундтрипа
+	$keepNoOpRight = ($op -in $noValueOps) -and ($rightNodes.Count -gt 0) -and ($null -ne $value) -and ("$value" -ne '_')
 
 	# Переход в object form:
 	# - userSettingPresentation,
 	# - massivное value (multi-right или пустой ValueList),
 	# - явный valueType (например, dcscor:Field — field-to-field comparison),
-	# - presentation на item (multilang или просто текст)
-	if ($userPresNode -or $valueIsArrayFlag -or $valueTypeAttr -or $fiPres) {
+	# - presentation на item (multilang или просто текст),
+	# - значение-объект (период {variant, ...}; многоязычная строка — тоже, но compile её не восстанавливает) — краткой записью не выражается
+	$valueIsPeriod = $value -is [System.Collections.IDictionary]
+	if ($userPresNode -or $valueIsArrayFlag -or $valueTypeAttr -or $fiPres -or $valueIsPeriod -or $keepNoOpRight) {
 		$obj = [ordered]@{ field = $field; op = $op }
-		if ($op -notin $noValueOps -and $null -ne $value) {
+		if (($op -notin $noValueOps -or $keepNoOpRight) -and $null -ne $value) {
 			if ($valueIsArrayFlag) {
 				# Принудительный массив (для empty ValueList тоже)
 				$arrAsList = New-Object System.Collections.ArrayList
@@ -2040,6 +2283,12 @@ function Build-DataParameters {
 	if ($items.Count -eq 0) { return $null }
 	# Build a quick map name → top-level rawParam
 	$visibleTop = @{}
+	# Объявленный тип каждого параметра (и скрытого): краткая запись compile у строки/числа/булева
+	# оставляет слово-вариант строкой — период у такого параметра пишем объектом
+	$declPrim = @{}
+	foreach ($tp in $topParams) {
+		$declPrim[$tp.name] = ($tp.typeShort -is [string]) -and ($tp.typeShort -match '^(string|decimal|boolean)')
+	}
 	foreach ($tp in $topParams) {
 		if (-not $tp.hidden -and -not $script:autoDatesCompanions.ContainsKey($tp.name)) {
 			$visibleTop[$tp.name] = $tp
@@ -2063,9 +2312,34 @@ function Build-DataParameters {
 		$uspN = $it.SelectSingleNode("dcsset:userSettingPresentation", $ns)
 		if ($vmN -or $uspN) { $canAuto = $false }
 		$tp = $visibleTop[$pn]
+		# «auto» пишет имя как объявлено — при другом регистре свёртка потеряла бы написание
+		if ($tp -and -not [string]::Equals($tp.name, $pn, [StringComparison]::Ordinal)) { $canAuto = $false }
 		$flags = @()
 		if ($usid) { $flags += '@user' }
 		if ($use -eq 'false') { $flags += '@off' }
+		# Список значений: по <dcscor:value> на элемент. «auto» — только при поэлементном
+		# совпадении с умолчанием параметра; явно — объектная форма с полным xsi:type.
+		$valNodes = $it.SelectNodes("dcscor:value", $ns)
+		if ($valNodes.Count -gt 1) {
+			$vList = @()
+			foreach ($vn in $valNodes) { $vList += ConvertTo-ListItemValue $vn }
+			if (-not $tp -or -not (Test-SameValueList $tp.valueDisplay $vList)) { $canAuto = $false }
+			$obj = [ordered]@{ parameter = $pn; value = $vList }
+			$vTypes = @($valNodes | ForEach-Object { $_.GetAttribute('type', $NS_XSI) } | Where-Object { $_ } | Select-Object -Unique)
+			if ($vTypes.Count -eq 1 -and $vTypes[0]) {
+				$typedNode = @($valNodes | Where-Object { $_.GetAttribute('type', $NS_XSI) })[0]
+				$obj['valueType'] = Get-DslValueType $typedNode
+			}
+			if ($use -eq 'false') { $obj['use'] = $false }
+			if ($usid) { $obj['userSettingID'] = 'auto' }
+			if ($vmN) { $obj['viewMode'] = $vmN.InnerText }
+			if ($uspN) {
+				$uspV = Get-MLText $uspN
+				if ($uspV) { $obj['userSettingPresentation'] = $uspV }
+			}
+			$entries += $obj
+			continue
+		}
 		$vt = Get-LocalXsiType $valNode
 		$vDisplay = $null
 		$stdPeriodObj = $null
@@ -2083,20 +2357,16 @@ function Build-DataParameters {
 				$canAuto = $false
 			} elseif ($variant) {
 				$vDisplay = $variant
-				if ($vmN -or $uspN) {
+				if ($vmN -or $uspN -or $declPrim[$pn]) {
 					$stdPeriodObj = [ordered]@{ variant = $variant }
 				}
+				if ($declPrim[$pn]) { $canAuto = $false }
 			}
 		} elseif ($vt -eq 'StandardBeginningDate') {
 			# Shape inference в compile: {variant, date} → SBD, либо variant начинается с BeginningOf*.
-			$variant = Get-Text $valNode "v8:variant"
-			$d = Get-Text $valNode "v8:date"
-			$hasExplicitDate = $d -and $d -ne '0001-01-01T00:00:00'
-			if ($hasExplicitDate) {
-				$stdPeriodObj = [ordered]@{ variant = $variant; date = $d }
-				$canAuto = $false
-			} elseif ($variant) {
-				$stdPeriodObj = [ordered]@{ variant = $variant }
+			# У Custom date пишется всегда, даже нулевая: без него compile прочитает StandardPeriod.
+			if (Get-Text $valNode "v8:variant") {
+				$stdPeriodObj = ConvertTo-StandardPeriodObject $valNode
 				$canAuto = $false
 			}
 		} elseif ($vt -eq 'DesignTimeValue') {
@@ -2107,7 +2377,7 @@ function Build-DataParameters {
 			if ($valNode) { $vDisplay = $valNode.InnerText }
 		}
 		# Compare to top-level default
-		if ($tp -and $tp.valueDisplay -ne $vDisplay) { $canAuto = $false }
+		if ($tp -and ($tp.valueDisplay -is [array] -or $tp.valueDisplay -cne $vDisplay)) { $canAuto = $false }
 		if (-not $tp) { $canAuto = $false }   # extra param not in top-level
 		# Empty xs:string + use=false — оригинальный placeholder для disabled-параметра
 		# (используется для типа DateTime в settings; см. АнализПлановыхНачислений @1506).
@@ -2115,8 +2385,15 @@ function Build-DataParameters {
 		# вместо xsi:nil.
 		$isEmptyStringPlaceholder = ($vt -eq 'string') -and (-not $valNode.InnerText) -and ($use -eq 'false')
 		if ($isEmptyStringPlaceholder) { $canAuto = $false }
+		# Значение, которое краткая запись не выражает (кавычки по краям, апостроф при запятой)
+		$vShort = $vDisplay
+		$scalarNeedsObject = $false
+		if ($vDisplay -is [string] -and $vDisplay -ne '') {
+			$vShort = Format-ScalarShorthand $vDisplay ($vt -eq 'string')
+			if ($null -eq $vShort) { $scalarNeedsObject = $true }
+		}
 		# Object form требуется если есть viewMode / userSettingPresentation / StandardPeriod-с-датами / xs:string-placeholder
-		if ($stdPeriodObj -or $vmN -or $uspN -or $isEmptyStringPlaceholder) {
+		if ($stdPeriodObj -or $vmN -or $uspN -or $isEmptyStringPlaceholder -or $scalarNeedsObject) {
 			$obj = [ordered]@{ parameter = $pn }
 			if ($stdPeriodObj) {
 				$obj['value'] = $stdPeriodObj
@@ -2133,8 +2410,7 @@ function Build-DataParameters {
 				}
 				else { $obj['value'] = $vDisplay }
 				# Сохраняем полный xsi:type для bit-perfect эмиссии
-				$ta = $valNode.Attributes['xsi:type']
-				if ($ta) { $obj['valueType'] = $ta.Value }
+				if ($valNode.GetAttribute('type', $NS_XSI)) { $obj['valueType'] = Get-DslValueType $valNode }
 			}
 			if ($use -eq 'false') { $obj['use'] = $false }
 			if ($usid) { $obj['userSettingID'] = 'auto' }
@@ -2147,7 +2423,7 @@ function Build-DataParameters {
 		} else {
 			# Build shorthand entry
 			$s = $pn
-			if ($null -ne $vDisplay -and $vDisplay -ne '') { $s += " = $vDisplay" }
+			if ($null -ne $vShort -and $vShort -ne '') { $s += " = $vShort" }
 			if ($flags) { $s += ' ' + ($flags -join ' ') }
 			$entries += $s
 		}
@@ -2562,7 +2838,7 @@ $script:outputDir = $null
 $script:outputBasename = $null
 if ($OutputPath) {
 	if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
-		$OutputPath = Join-Path (Get-Location).Path $OutputPath
+		$OutputPath = Join-Path (Get-Location).ProviderPath $OutputPath
 	}
 	$script:outputDir = [System.IO.Path]::GetDirectoryName($OutputPath)
 	$script:outputBasename = [System.IO.Path]::GetFileNameWithoutExtension($OutputPath)
@@ -2594,6 +2870,10 @@ function Build-DataSet {
 		'DataSetQuery' {
 			$queryText = Get-Text $dsNode "r:query"
 			$ds['query'] = Maybe-ExternalizeQuery -queryText $queryText -datasetName $name
+			# Platform default is true (element omitted) — emit only false
+			foreach ($flag in @('autoFillFields', 'useQueryGroupIfPossible')) {
+				if ((Get-Text $dsNode "r:$flag") -ceq 'false') { $ds[$flag] = $false }
+			}
 		}
 		'DataSetObject' {
 			$ds['objectName'] = Get-Text $dsNode "r:objectName"
@@ -2645,7 +2925,7 @@ function Build-DataSet {
 	# dataSource attachment — omit if matches default (Union has no dataSource)
 	if ($xsiType -ne 'DataSetUnion') {
 		$dsSrc = Get-Text $dsNode "r:dataSource"
-		if ($emitDataSources -and $dsSrc) { $ds['dataSource'] = $dsSrc }
+		if ($emitDataSources -and $dsSrc) { $ds['source'] = $dsSrc }
 	}
 
 	return $ds
@@ -2724,9 +3004,9 @@ foreach ($p in $paramsRaw) {
 	$startMatch = $null
 	$endMatch = $null
 	foreach ($q in $paramsRaw) {
-		if ($q.name -eq $parentName) { continue }
-		if ($q.expression -eq $startExpr) { $startMatch = $q.name }
-		elseif ($q.expression -eq $endExpr) { $endMatch = $q.name }
+		if ($q.name -ceq $parentName) { continue }
+		if ($q.expression -ceq $startExpr) { $startMatch = $q.name }
+		elseif ($q.expression -ceq $endExpr) { $endMatch = $q.name }
 	}
 	# Fold ТОЛЬКО если companion-имена точно "НачалоПериода"/"КонецПериода" БЕЗ суффикса.
 	# Иначе compile (который генерирует именно эти имена + type=date + DateFractions=Date)
@@ -2738,7 +3018,8 @@ foreach ($p in $paramsRaw) {
 	$beginP = if ($startMatch) { $paramByName[$startMatch] } else { $null }
 	$endP   = if ($endMatch)   { $paramByName[$endMatch]   } else { $null }
 	$hasNotAField = ($beginP -and $beginP.notAField) -or ($endP -and $endP.notAField)
-	if ($startMatch -eq 'НачалоПериода' -and $endMatch -eq 'КонецПериода' -and -not $hasNotAField) {
+	# Сравнения — с учётом регистра: compile генерирует ровно эти имена и выражения
+	if ($startMatch -ceq 'НачалоПериода' -and $endMatch -ceq 'КонецПериода' -and -not $hasNotAField) {
 		$p['autoDates'] = $true
 		$removedNames[$startMatch] = $true
 		$removedNames[$endMatch] = $true
@@ -2919,7 +3200,10 @@ foreach ($sv in $svNodes) {
 	# selection (top-level)
 	$selTop = $settingsNode.SelectSingleNode("dcsset:selection", $ns)
 	$selItems = Build-Selection -selNode $selTop -loc "variant[$vi]/selection"
-	if ($selItems.Count -gt 0) { $settings['selection'] = $selItems }
+	# selection и structure варианта — всегда явные: без ключа compile достроит вариант сам (поля наборов,
+	# детальные записи), и пустой в XML вариант после круга начнёт выводить данные. [] = «нет».
+	# NB: прямое присваивание @() (не через if-выражение — там пустой массив схлопнется в $null).
+	if ($selItems.Count -gt 0) { $settings['selection'] = $selItems } else { $settings['selection'] = @() }
 	# Block-level viewMode/userSettingID: preserve exact presence (even Normal) for bit-perfect
 	$svm = Get-BlockVM $selTop
 	if ($null -ne $svm) { $settings['selectionViewMode'] = $svm }
@@ -2974,7 +3258,7 @@ foreach ($sv in $svNodes) {
 		$short = Try-StructureShorthand $structItems
 		if ($short) { $settings['structure'] = $short }
 		else        { $settings['structure'] = $structItems }
-	}
+	} else { $settings['structure'] = @() }
 
 	# <dcsset:itemsViewMode> on settings — preserve presence (even Normal)
 	$sivmNode = $settingsNode.SelectSingleNode("dcsset:itemsViewMode", $ns)
@@ -2992,17 +3276,10 @@ foreach ($sv in $svNodes) {
 		if ($apDict.Count -gt 0) { $settings['additionalProperties'] = $apDict }
 	}
 
-	# Skip pure-default variants: settings contains only "details" structure (or nothing) +
-	# name=Основной + no distinctive title.
-	$nonStructKeys = @($settings.Keys | Where-Object { $_ -ne 'structure' })
-	$structOnlyDetails = (-not $settings.Contains('structure')) -or ($settings['structure'] -eq 'details')
-	$isDefault = ($nonStructKeys.Count -eq 0) -and $structOnlyDetails -and ($vname -eq 'Основной') -and (-not $presentation -or $presentation -eq $vname)
-	if (-not $isDefault) {
-		$entry = [ordered]@{ name = $vname }
-		if ($presentation -and $presentation -ne $vname) { $entry['title'] = $presentation }
-		$entry['settings'] = $settings
-		$settingsVariants += $entry
-	}
+	$entry = [ordered]@{ name = $vname }
+	if ($presentation -and $presentation -ne $vname) { $entry['title'] = $presentation }
+	$entry['settings'] = $settings
+	$settingsVariants += $entry
 	$vi++
 }
 if ($settingsVariants.Count -gt 0) { $out['settingsVariants'] = $settingsVariants }
