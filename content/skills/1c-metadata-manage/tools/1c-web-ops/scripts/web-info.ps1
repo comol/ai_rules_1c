@@ -1,5 +1,8 @@
-﻿# web-info v1.0 — Apache & 1C publication status
+﻿# web-info v1.7 — Apache & 1C publication status
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: consolidated-layout default -ApachePath (working directory); the error log is the
+#        effective ErrorLog (global block first, then the last directive); Pwd is masked in
+#        the printed connection string.
 <#
 .SYNOPSIS
     Статус Apache и публикаций 1С
@@ -18,9 +21,9 @@
     .\web-info.ps1 -ApachePath "C:\tools\apache24"
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory=$false, Position=0)]
     [string]$ApachePath
 )
 
@@ -29,8 +32,11 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Resolve ApachePath ---
 if (-not $ApachePath) {
-    $projectRoot = (Get-Item $PSScriptRoot).Parent.Parent.Parent.Parent.FullName
+    $projectRoot = (Get-Location).ProviderPath  # consolidated skill layout: project root = current working directory
     $ApachePath = Join-Path $projectRoot "tools\apache24"
+}
+if (-not [System.IO.Path]::IsPathRooted($ApachePath)) {
+    $ApachePath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).ProviderPath $ApachePath))
 }
 
 # --- Check Apache installation ---
@@ -47,7 +53,7 @@ if (-not (Test-Path $httpdExe)) {
 }
 
 # --- Check process (only our Apache) ---
-$httpdExeNorm = (Resolve-Path $httpdExe -ErrorAction SilentlyContinue).Path
+$httpdExeNorm = (Resolve-Path $httpdExe -ErrorAction SilentlyContinue).ProviderPath
 $ourProc = Get-Process httpd -ErrorAction SilentlyContinue | Where-Object {
     try { $_.Path -eq $httpdExeNorm } catch { $false }
 }
@@ -77,12 +83,47 @@ if (-not (Test-Path $confFile)) {
 
 $confContent = [System.IO.File]::ReadAllText($confFile)
 
-# Extract port from global block
+# Extract Listen from global block (fallback — whole file): "Listen [host:]port [proto]"
 $port = "—"
-if ($confContent -match '(?m)^Listen\s+(\d+)') {
-    $port = $Matches[1]
+$listenHost = ""
+$listenScope = $confContent
+if ($confContent -match '(?s)# --- 1C: global ---(.*?)# --- End: global ---') {
+    $listenScope = $Matches[1]
 }
-Write-Host "Port:   $port"
+if ($listenScope -match '(?m)^[ \t]*Listen[ \t]+(?:(\[[^\]]+\]|[^\s:\[\]]+):)?(\d+)\b') {
+    $port = $Matches[2]
+    if ($Matches[1] -and @('0.0.0.0', '*', '[::]') -notcontains $Matches[1]) {
+        $listenHost = $Matches[1]
+    }
+}
+# Адрес привязки явный — по нему и URL, и проба; иначе все интерфейсы → localhost
+$urlHost = if ($listenHost) { $listenHost } else { "localhost" }
+$probeHost = if ($listenHost) { $listenHost.Trim('[', ']') } else { "127.0.0.1" }
+# Проверяем именно TCP-порт: запрос к публикации поднял бы сеанс 1С и занял лицензию
+$portState = ""
+if ($port -ne "—") {
+    # Конструктор по умолчанию — только IPv4: для IPv6-литерала нужно семейство адреса
+    $probeAddr = $null
+    if ([System.Net.IPAddress]::TryParse($probeHost, [ref]$probeAddr)) {
+        $client = New-Object System.Net.Sockets.TcpClient($probeAddr.AddressFamily)
+    } else {
+        $client = New-Object System.Net.Sockets.TcpClient
+    }
+    try {
+        $async = $client.BeginConnect($probeHost, [int]$port, $null, $null)
+        if ($async.AsyncWaitHandle.WaitOne(1000) -and $client.Connected) {
+            $portState = " (слушается)"
+        } else {
+            $portState = " (не отвечает)"
+        }
+    } catch {
+        $portState = " (не отвечает)"
+    } finally {
+        $client.Close()
+    }
+}
+$portLabel = if ($listenHost) { "${listenHost}:$port" } else { $port }
+Write-Host "Port:   $portLabel$portState"
 
 # Extract wsap24 path
 if ($confContent -match 'LoadModule\s+_1cws_module\s+"([^"]+)"') {
@@ -108,20 +149,33 @@ if ($pubMatches.Count -eq 0) {
         if (Test-Path $vrdPath) {
             $vrdContent = [System.IO.File]::ReadAllText($vrdPath)
             if ($vrdContent -match 'ib="([^"]*)"') {
-                $ibInfo = $Matches[1] -replace '&quot;','"'
+                $ibInfo = $Matches[1] -replace '&quot;','"' -replace '&lt;','<' -replace '&gt;','>' -replace '&#9;',"`t" -replace '&amp;','&'
+                # 1c-rules: the connection string can carry the embedded password — never print it
+                $ibInfo = $ibInfo -replace '(?i)(Pwd=)("[^"]*"|[^;]*)', '$1***'
             }
         }
 
         # Detect published services
         $svcTags = @()
         if (Test-Path $vrdPath) {
-            if ($vrdContent -match '<ws\s') { $svcTags += "WS" }
-            if ($vrdContent -match '<httpServices\s') { $svcTags += "HTTP" }
-            if ($vrdContent -match 'enableStandardOdata\s*=\s*"true"') { $svcTags += "OData" }
+            # "+ext" — publishExtensionsByDefault: сервисы расширений тоже опубликованы
+            if ($vrdContent -match '<ws\s[^>]*>') {
+                $wsTag = "WS"
+                if ($Matches[0] -match 'publishExtensionsByDefault\s*=\s*"true"') { $wsTag += "+ext" }
+                $svcTags += $wsTag
+            }
+            if ($vrdContent -match '<httpServices\s[^>]*>') {
+                $hsTag = "HTTP"
+                if ($Matches[0] -match 'publishExtensionsByDefault\s*=\s*"true"') { $hsTag += "+ext" }
+                $svcTags += $hsTag
+            }
+            # Актуальная форма — <standardOdata enable="true"/>; enableStandardOdata — до 8.3.9
+            if ($vrdContent -match '<standardOdata\s[^>]*enable\s*=\s*"true"' -or
+                $vrdContent -match 'enableStandardOdata\s*=\s*"true"') { $svcTags += "OData" }
         }
         $svcLabel = if ($svcTags.Count -gt 0) { "   [" + ($svcTags -join " ") + "]" } else { "" }
 
-        $url = "http://localhost:$port/$appName"
+        $url = "http://${urlHost}:$port/$appName"
         Write-Host "  $appName" -ForegroundColor White -NoNewline
         Write-Host "   $url" -ForegroundColor Gray -NoNewline
         Write-Host "   $ibInfo" -ForegroundColor DarkGray -NoNewline
@@ -133,15 +187,46 @@ if ($pubMatches.Count -eq 0) {
 Write-Host ""
 Write-Host "=== Последние ошибки ===" -ForegroundColor Cyan
 
-$errorLog = Join-Path (Join-Path $ApachePath "logs") "error.log"
-if (Test-Path $errorLog) {
-    $lines = Get-Content $errorLog -Tail 5 -ErrorAction SilentlyContinue
-    if ($lines -and $lines.Count -gt 0) {
+# Имя файла берём из httpd.conf: сборки Apache расходятся (error.log / error_log)
+# 1c-rules: действует последняя директива ErrorLog основного сервера; наш глобальный блок
+# (его пишет и Python-порт) стоит в конце файла, поэтому смотрим сначала в него.
+$errorLog = $null
+$errorLogPattern = '(?m)^[ \t]*ErrorLog[ \t]+"?([^"\r\n]+)"?'
+$errorLogMatch = $null
+if ($confContent -match '(?s)# --- 1C: global ---(.*?)# --- End: global ---') {
+    $errorLogMatch = [regex]::Matches($Matches[1], $errorLogPattern) | Select-Object -Last 1
+}
+if (-not $errorLogMatch) {
+    $errorLogMatch = [regex]::Matches($confContent, $errorLogPattern) | Select-Object -Last 1
+}
+if ($errorLogMatch) {
+    $logPath = $errorLogMatch.Groups[1].Value.Trim()
+    if ([System.IO.Path]::IsPathRooted($logPath)) {
+        $errorLog = $logPath
+    } else {
+        $errorLog = Join-Path $ApachePath ($logPath -replace '/','\')
+    }
+}
+if (-not $errorLog -or -not (Test-Path $errorLog)) {
+    $errorLog = @("error_log", "error.log") |
+        ForEach-Object { Join-Path (Join-Path $ApachePath "logs") $_ } |
+        Where-Object { Test-Path $_ } |
+        Select-Object -First 1
+}
+
+if ($errorLog -and (Test-Path $errorLog)) {
+    Write-Host "Журнал: $errorLog" -ForegroundColor DarkGray
+    # Только error и выше: warn забит штатным шумом winnt_accept, notice — строки старта.
+    # AH02538 — след нашего же рестарта (родитель убит), пишется как crit при каждой публикации
+    $lines = Get-Content $errorLog -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '\[[a-z_]+:(error|crit|alert|emerg)\]' -and $_ -notmatch 'AH02538' } |
+        Select-Object -Last 5
+    if ($lines) {
         foreach ($line in $lines) {
             Write-Host "  $line" -ForegroundColor DarkGray
         }
     } else {
-        Write-Host "(пусто)" -ForegroundColor Green
+        Write-Host "(ошибок нет)" -ForegroundColor Green
     }
 } else {
     Write-Host "(нет файла)" -ForegroundColor Green

@@ -31,8 +31,10 @@ following differences apply to Python:
 - Unset target and credential parameters come from `.dev.env`
   (`INFOBASE_KIND`, `INFOBASE_PATH`, `IB_USER`, `IB_PASSWORD`). Any explicit
   file/server target replaces the target defaults as a whole; explicit empty
-  credentials remain empty. Relative paths from `.dev.env` resolve against
-  that file's directory. Pass settings from a multi-base registry explicitly.
+  credentials remain empty. A relative infobase path — from `.dev.env` or from
+  `-InfoBasePath` — resolves against the `.dev.env` directory (the working
+  directory without one), the same rule as PowerShell. Pass settings from a
+  multi-base registry explicitly.
 - Use a dedicated Apache configuration without external `Include` directives.
   Python binds it to `127.0.0.1`, restricts the publication to local requests
   and retains unrelated configuration outside its managed blocks. It is a
@@ -65,8 +67,9 @@ python3 skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.py -Apa
 
 Use the skill's installed path prefix in place of `skills/` (see its path
 convention). Offline regression tests exercise files, refusal paths and mocked
-process operations; a real Apache/1C deployment still needs verification in the
-target environment. Optional reusable UI suites live in
+process operations (`tools/tests/web-python-regression.py`; the PowerShell
+scripts in `tools/tests/web-ops-regression.ps1` with a fake `httpd.exe`); a real
+Apache/1C deployment still needs verification in the target environment. Optional reusable UI suites live in
 `content/skills/1c-ui-regression/SKILL.md`, not in these publication scripts.
 
 ---
@@ -81,9 +84,13 @@ All operations resolve the target infobase from **`.dev.env`** in the project ro
 
 **Always pass through:**
 
-- `PLATFORM_PATH` → `-V8Path` (so we don't accidentally publish via the wrong platform version). The script also reads it from `.dev.env` itself when the flag is omitted.
+- `PLATFORM_PATH` → `-V8Path` (so we don't accidentally publish via the wrong platform version). The script also reads it from `.dev.env` itself when the flag is omitted; the install directory and its `bin\` are both accepted.
 - `IB_USER` / `IB_PASSWORD` → `-UserName` / `-Password` (when set).
-- `-ApachePath` — when the project bundles its own Apache (default: `tools\apache24` under the project root).
+- `-ApachePath` — when the project bundles its own Apache (default: `tools\apache24` under the working directory, for all four scripts).
+
+`-InfoBasePath` is normalized before it reaches `default.vrd`: surrounding whitespace / quotes and a trailing separator are dropped; a **relative** path is anchored at the project root — the directory of `.dev.env` (else `.v8-project.json`, else the working directory) — never at the platform's current directory; a drive-relative `C:x` or a quote inside the path is refused.
+
+`wsap24.dll` must match Apache's bitness: a 32-bit platform (`Program Files (x86)`) needs a Win32 Apache. The automatic download fetches the Win64 build — install a Win32 Apache under `-ApachePath` yourself for an x86 platform.
 
 If `.dev.env` has no infobase configured — stop and ask the user to fill `INFOBASE_PATH` rather than guessing.
 
@@ -91,19 +98,20 @@ If `.dev.env` has no infobase configured — stop and ask the user to fill `INFO
 
 ## 1. Web info — current state
 
-Reports whether Apache is running, which infobases are published and the last error from `error.log`.
+Reports whether Apache is running, which infobases are published and the latest errors of the Apache log.
 
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.ps1 [-ApachePath <path>]
 ```
 
-Default `-ApachePath` is `tools/apache24` relative to the project root.
+Default `-ApachePath` is `tools/apache24` relative to the working directory (the project root).
 
-Output should answer three questions:
+How to read the output:
 
-- Is the HTTP server process alive (PID, uptime, port)?
-- What publications exist (URL, infobase reference, application name)?
-- Last 5 lines of `error.log` if any errors are present.
+- `Status` — our `httpd.exe` processes (PIDs); `[WARN]` names a foreign Apache.
+- `Port: [host:]port (слушается | не отвечает)` — the `Listen` of the managed block (`Listen 127.0.0.1:19081` reads as host + port) and a 1-second TCP probe of that address. A live process with `не отвечает` means Apache did not come up (busy port, broken config). Publications themselves are not requested: a request starts a 1C session and takes a license.
+- One line per publication: URL (by the bind address, else `localhost`), the connection string with the password shown as `Pwd=***`, and service tags `WS` / `HTTP` (`+ext` = extension services published too) and `OData`.
+- `Журнал:` — the effective `ErrorLog` (the managed block's, else the last directive; builds differ between `error.log` and `error_log`). Only the last 5 lines of level `error` and above are printed; `AH02538` (trace of our own restart) is skipped. Read the file for anything else.
 
 ---
 
@@ -127,12 +135,18 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scrip
 | `-InfoBaseServer` | * | 1C cluster name (server-mode infobase). |
 | `-InfoBaseRef` | * | Infobase reference on the cluster. |
 | `-UserName` / `-Password` | no | Credentials embedded into `default.vrd`. |
-| `-AppName` | no | Publication name; defaults to the base directory name. |
+| `-AppName` | no | Publication name; defaults to the base directory name. Letters, digits, `_`, `-` (up to 64), lower-cased; anything else is refused. |
 | `-ApachePath` | no | Apache root, default `tools/apache24`. |
 | `-Port` | no | HTTP port, default `8081`. |
 | `-Manual` | no | Do not download a missing Apache; an already installed instance still follows normal publication/start behavior. |
 
 `*` — provide either `-InfoBasePath` **or** the pair `-InfoBaseServer` + `-InfoBaseRef`.
+
+**`default.vrd`.** The connection values (`File` / `Srvr` / `Ref` / `Usr` / `Pwd`) are XML-escaped, so a password with `&` or `<` is safe; a value containing a quote or a line break is refused before anything is written (the 1C connection string cannot carry it). `publishExtensionsByDefault="true"` is set on both `<ws>` and `<httpServices>`: without it an extension's SOAP service answers 500 and its HTTP service 404. The flag covers every extension applied to the infobase.
+
+**Bind address and the managed block.** The first publication comments out the stock `Listen` lines and writes `# --- 1C: global ---` with `Listen <Port>` — all interfaces. To keep the publication local, edit that block to `Listen 127.0.0.1:<port>` (and `Listen [::1]:<port>` if needed) or publish once with the Python port. Every later publication keeps all bind addresses of the block and its `PidFile` / `ErrorLog` lines, changes only the port and the module path, and prints URLs by the first address.
+
+**Port check.** Only a listening socket makes the port busy; the `TIME_WAIT` leftovers of an Apache just stopped by `web-stop` do not.
 
 **Idempotency.** Repeated invocation with the same `-AppName` replaces the publication. Use this to:
 
@@ -144,12 +158,12 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scrip
 - `-AppName bpdemo-ivanov` (rights of `Иванов`);
 - `-AppName bpdemo-admin` (admin).
 
-After success, report:
+After success, report the URLs the script prints (`<host>` is the bind address of the block, else `localhost`):
 
-- Web client URL: `http://localhost:<Port>/<AppName>`.
-- OData: `http://localhost:<Port>/<AppName>/odata/standard.odata`.
-- HTTP services: `http://localhost:<Port>/<AppName>/hs/<RootUrl>/...` — the configuration's and its extensions' (`publishExtensionsByDefault` in `default.vrd`).
-- Web services: `http://localhost:<Port>/<AppName>/ws/<Name>?wsdl`.
+- Web client URL: `http://<host>:<Port>/<AppName>`.
+- OData: `http://<host>:<Port>/<AppName>/odata/standard.odata`.
+- HTTP services: `http://<host>:<Port>/<AppName>/hs/<RootUrl>/...` — the configuration's and its extensions'.
+- Web services: `http://<host>:<Port>/<AppName>/ws/<Name>?wsdl` — the configuration's and its extensions'.
 
 ---
 
@@ -183,7 +197,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scrip
     [-ApachePath <path>] -Force
 ```
 
-Preview is mandatory in the workflow; the script refuses a real unpublish without `-Force`. Use `-All -DryRun` / `-All -Force` for all publications.
+Preview is mandatory in the workflow; the script refuses a real unpublish without `-Force` (exit `2`). Use `-All -DryRun` / `-All -Force` for all publications; `-All` and `-AppName` are exclusive. `-AppName` follows the publish naming rule, and a corrupted marker name in `httpd.conf` stops `-All` before any change, so no path segment ever reaches the recursive delete.
 
 ---
 

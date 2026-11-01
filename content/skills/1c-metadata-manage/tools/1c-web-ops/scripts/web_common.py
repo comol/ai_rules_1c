@@ -133,6 +133,27 @@ def project_settings():
     return result
 
 
+def infobase_path(value, root):
+    """Absolute file-infobase path; the same rules as web-publish.ps1.
+
+    Surrounding whitespace / quotes and a trailing separator are forgiven; a quote left
+    inside, or a drive-relative "C:x", is refused. A relative path is anchored at the
+    project root (the .dev.env directory, else the working directory), never at the
+    platform's own current directory.
+    """
+    text = value.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    require(not re.match(r"^[A-Za-z]:(?![\\/])", text),
+            f"Путь к базе относителен текущему каталогу диска ({value}); укажите полный путь")
+    require('"' not in text, "Путь к базе содержит кавычку")
+    require(bool(text), "Пустой путь к базе")
+    path = Path(text)
+    if not path.is_absolute():
+        path = Path(root) / path
+    return str(Path(os.path.abspath(path)))
+
+
 def fill_connection(args, settings):
     # Any explicitly supplied target excludes target defaults as a whole.
     if all(getattr(args, key) is None for key in ("InfoBasePath", "InfoBaseServer", "InfoBaseRef")):
@@ -140,12 +161,13 @@ def fill_connection(args, settings):
         require(kind in ("file", "server"), "INFOBASE_KIND должен быть file или server")
         value = settings.get("INFOBASE_PATH", "")
         if value and kind == "file":
-            path = Path(value)
-            args.InfoBasePath = str(path if path.is_absolute() else settings["root"] / path)
+            args.InfoBasePath = value
         elif value:
             parts = re.split(r"[/\\]", value)
             require(len(parts) == 2 and all(parts), "INFOBASE_PATH серверной базы: сервер/имяБазы")
             args.InfoBaseServer, args.InfoBaseRef = parts
+    if args.InfoBasePath:
+        args.InfoBasePath = infobase_path(args.InfoBasePath, settings.get("root") or Path.cwd())
     for attribute, setting in (("UserName", "IB_USER"), ("Password", "IB_PASSWORD")):
         if getattr(args, attribute) is None:
             setattr(args, attribute, settings.get(setting, ""))
@@ -207,9 +229,9 @@ def vrd_content(args, name):
     root = ET.Element("{http://v8.1c.ru/8.2/virtual-resource-system}point",
                       {"base": "/" + name, "ib": "".join(f'{key}="{value}";' for key, value in parts)})
     ET.SubElement(root, "standardOdata", {"enable": "true"})
-    ET.SubElement(root, "ws", {"pointEnableCommon": "true"})
-    # Without publishExtensionsByDefault the HTTP services of the infobase's extensions
-    # answer 404; the Designer's own publication writes it too.
+    # Without publishExtensionsByDefault the services of the infobase's extensions are not
+    # published: an HTTP service answers 404, a SOAP web service 500 "service not found".
+    ET.SubElement(root, "ws", {"pointEnableCommon": "true", "publishExtensionsByDefault": "true"})
     ET.SubElement(root, "httpServices", {"publishByDefault": "true", "publishExtensionsByDefault": "true"})
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
