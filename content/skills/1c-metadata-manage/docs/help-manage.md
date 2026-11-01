@@ -10,15 +10,17 @@ Adds built-in help to a 1C metadata object: help metadata file (`Help.xml`), HTM
 
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
-| ObjectName | yes | — | Object name (e.g., data processor name) |
-| Lang | no | `ru` | Help language code |
+| ObjectName | yes | — | Object directory relative to `SrcDir`: `Obrabotka` for an EPF beside its `Obrabotka.xml`, `Catalogs/МойСправочник` in a configuration. A trailing slash is fine. There is no `-ProcessorName` alias |
+| Lang | no | `ru` | Help language code: letters, digits, `-`, `_` only; Windows device names (`nul`, `con`, `com1`…) are refused |
 | SrcDir | no | `src` | Source directory |
 
 ## Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1 -ProcessorName "<ObjectName>" [-Lang "<Lang>"] [-SrcDir "<SrcDir>"]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1 -ObjectName "<ObjectName>" [-Lang "<Lang>"] [-SrcDir "<SrcDir>"]
 ```
+
+The object directory must already have an `Ext/` folder. The tool refuses when `Ext/Help.xml` already exists, when `-Lang` is not a plain code (a path such as `../../x` would write outside `Ext/Help`), and on a locked vendor object (support guard, [support-manage.md](support-manage.md)). All refusals happen before any write.
 
 ## What Gets Created
 
@@ -30,8 +32,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-help-manage/s
             ru.html                 # HTML help page
 ```
 
-- `Help.xml` — fixed structure with `<Page>ru</Page>` (namespace `http://v8.1c.ru/8.3/xcf/extrnprops`)
-- `ru.html` — HTML 4.0 Transitional with 1C stylesheet link (`v8help://service_book/service_style`)
+- `Help.xml` — fixed structure with `<Page><Lang></Page>` (namespace `http://v8.1c.ru/8.3/xcf/extrnprops`). Its format version is the owner's: taken from the object descriptor `<ObjectName>.xml` first (an EPF/ERF root included), then from `Configuration.xml` above it, `2.17` only when neither exists. Help is a body of the object, and the platform loads one object only in one format version
+- `<Lang>.html` — HTML 4.0 Transitional with 1C stylesheet link (`v8help://service_book/service_style`). An existing page (left from a deleted `Help.xml` or written by hand) is **kept**: only the descriptor is created, with a `[WARN]`
 - Help is **not registered** in `ChildObjects` of the root XML — file presence is sufficient
 
 ## What Gets Modified

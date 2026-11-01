@@ -22,6 +22,18 @@ No script files were brought into `tools/` — the operations are pure module-te
 
 ## cf-manage.md
 
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`cf-edit` v1.12 → **v1.33**, `cf-info` v1.4 → **v1.10**, `cf-init` v1.3 → **v1.17**, `cf-validate` v1.4 → **v1.14**; `tools/1c-cf-manage/cf-edit-reference.md` refreshed.
+
+- **`cf-edit sort-childObjects`** (new): sorts `ChildObjects` by name inside a kind (1C tree order: case-insensitive, `_` < digits < letters, Latin before Cyrillic, ё = е). Empty value — all kinds except `CommonAttribute`, `Subsystem`, `CommandGroup`, `Language`, plus canonical order of the kind groups; a kind named explicitly is always sorted. Only values are swapped, indentation stays.
+- `cf-edit`: `Bot` sits after `DefinedType`, `PaletteColor` added to the kind order; a new kind group is inserted at its canonical place, not at the end of the block; operation values are case-insensitive; one-line JSON input errors; ISO dates stay strings on pwsh 7.5+; the save inherits the source's BOM / EOL / final newline.
+- `cf-init`: `-FormatVersion` (tested range 2.17–2.21, 2.18 / 2.19 accepted, outside = warning, non-numeric = error); 2.21 writes `TextToSpeech` and the `xmlns:pal` header; `CompatibilityMode DontUse` warns (the platform stores it as `Version8_3_8`); empty elements are self-closing.
+- `cf-validate`: **check 10** — every stamped `Ext/*.xml` body must carry the `Configuration.xml` version (the platform refuses mixed formats); check 1 warns outside 2.17–2.21 instead of rejecting 2.18 / 2.19; check 5 knows `Bot` / `PaletteColor`; enum values follow the platform (`MainClientApplicationWindowMode`: `Workplace`, `FullscreenWorkplace`, `EmbeddedWorkplace`; no `Fullscreen`).
+- All four: `[CmdletBinding(PositionalBinding=$false)]`, `ProviderPath` for UNC paths.
+
+Local deltas re-applied: `.dev.env` `SUPPORT_GUARD` first, fail-closed on an unreadable `ParentConfigurations.bin`, stderr notice when the guard itself fails; `.dev.env` `NEW_OBJECT_POSITION` first inside upstream's own `Get-NewObjectPosition` (upstream adopted the same `end|byName` design, so our separate copies of it, of `Compare-MetadataNames` and of `Test-OrderSensitiveType` were dropped); sibling `cf-validate` from the same `scripts` dir, its exit (or absence) is the exit code; the compact-tag pass also skips `<?…?>`. `sort-childObjects` is the only operation that reorders existing entries; default insertion still follows `NEW_OBJECT_POSITION`. Pinned by a new regression case.
+
 ### Local fix `2026-10-19` — `add-childObject` follows `NEW_OBJECT_POSITION`
 
 `cf-edit` v1.11 → **v1.12** (support ticket 4e6f4e67, item 4): `add-childObject` always inserted a new entry by name inside its kind group (culture-aware `-gt`), whatever `NEW_OBJECT_POSITION` said. It now resolves the setting as `meta-compile` does — `end` (default) after the last object of the kind, as Configurator; `byName` with the 1C-tree comparator; order-sensitive kinds never sorted. Pinned by `tools/tests/metadata-tools-regression.ps1`.
@@ -244,11 +256,30 @@ In addition to the form-compile / form-info / form-add / form-edit / form-remove
 
 ## help-manage.md
 
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`help-add` v1.9 → **v1.26**.
+
+- `Help.xml` takes the **owner's format version**: the object descriptor first (EPF / ERF root included, trailing slash in `-ObjectName` handled), then `Configuration.xml`; it used to be 2.17 for every EPF / ERF.
+- `-Lang` is validated before any write: letters, digits, `-`, `_` only, Windows device names refused — `-Lang ../../x` no longer writes outside `Ext/Help`.
+- An existing `Help/<lang>.html` is kept when `Help.xml` is missing (it used to be overwritten by the skeleton with exit 0); paired `<meta>` / `<link>` in the page.
+
+Local: `.dev.env` `SUPPORT_GUARD` first with fail-closed parsing; `<?…?>` skipped by the compact-tag pass; `[CmdletBinding(PositionalBinding=$false)]` added (upstream left this tool without it). The doc's `-ProcessorName` call was wrong — the parameter is `-ObjectName`. Regression cases: EPF stamped 2.20, refused `-Lang` traversal / device name.
+
 ### Upstream sync `2026-07-30`
 
 Script refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills): `help-add` v1.4 → **v1.9**. It now enforces the vendor support gate — adding help to a locked object of a typical configuration is refused with a pointer to `support-edit` ([support-manage.md](support-manage.md)).
 
 ## interface-manage.md
+
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`interface-edit` v1.8 → **v1.26**, `interface-validate` v1.1 → **v1.7**.
+
+- `interface-validate` **check 14**: the file's format version equals its owner's (subsystem descriptor or `Configuration.xml`) — ERROR; differs only from the rest of the dump — WARN. `-Detailed`; a `-MaxErrors` stop is reported.
+- `interface-edit`: operation values case-insensitive, more Russian kind names, `Detect-FormatVersion` measures characters (a short Cyrillic `Configuration.xml` no longer throws), the save inherits BOM / EOL.
+
+Local deltas re-applied: `.dev.env` `SUPPORT_GUARD` first with fail-closed parsing; sibling `interface-validate`, its exit is the exit code; `<?…?>` skipped by the compact-tag pass.
 
 ### Upstream sync `2026-07-30`
 
@@ -401,6 +432,16 @@ The PowerShell scripts under `tools/1c-skd-{compile,edit,info,validate}/scripts/
 
 ## subsystem-manage.md
 
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`subsystem-compile` v1.9 → **v1.37**, `subsystem-edit` v1.7 → **v1.29**, `subsystem-info` v1.2 → **v1.7**, `subsystem-validate` v1.2 → **v1.8**.
+
+- `subsystem-validate` **check 14**: stamped bodies (`Ext/CommandInterface.xml`, `Ext/Help.xml`) in the descriptor's version — ERROR; descriptor differs from the dump — WARN.
+- `subsystem-compile` registers in the parent by raw-text insertion (the parent stays byte-identical except one line) and puts a new kind group at its canonical place; child stubs and the descriptor follow the configuration's format version (2.21 `xmlns:pal`); `Detect-FormatVersion` measures characters.
+- Both: quotes in text are no longer escaped, missing kinds restored, operation values case-insensitive.
+
+Local deltas re-applied: `.dev.env` `SUPPORT_GUARD` first with fail-closed parsing; sibling `subsystem-validate`, its exit is the exit code. Dropped as superseded: our DOM compact-XML save in `subsystem-compile` (upstream's raw-text insertion is stricter); `subsystem-edit` keeps the `<?…?>` branch of the compact-tag pass.
+
 ### Upstream sync `2026-07-30`
 
 Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills): `subsystem-compile` v1.5 → **v1.9**, `subsystem-edit` v1.2 → **v1.7**, `subsystem-info` v1.0 → **v1.2**, `subsystem-validate` → **v1.2**.
@@ -417,7 +458,29 @@ The PowerShell scripts under `tools/1c-subsystem-manage/scripts/` were refreshed
 - Subsystem `objects` accepts `content` as a synonym (and vice versa).
 - Validators got the universal improvements described in `role-manage.md` → "Recent Additions" (one-liner output by default, `-Detailed`, folder path auto-resolution).
 
+## support-manage.md
+
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`support-edit` v1.0 → **v1.3** (positional binding off; no behaviour change).
+
+- `xdto-compile` / `xdto-edit` replaced their trimmed guard ("`ParentConfigurations.bin` exists → deny") with the shared per-object one: a configuration with modification on and nothing on support (header `{6,0,0,…}`, e.g. ERP) is allowed, as `meta-compile` allows it; a read-only one is still refused, now with the `support-edit` steps.
+- The shared guard resolves `configSrc` from the `.v8-project.json` directory (fallback path only).
+
+Local: `.dev.env` `SUPPORT_GUARD` wins in every copy, fail-closed on an unreadable bin. Regression case: `xdto-compile` on a K=0 configuration and on a locked one.
+
 ## template-manage.md
+
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`template-add` v1.10 → **v1.30**, `template-remove` v1.3 → **v1.9**.
+
+- **HTML templates use the platform layout**: descriptor `Ext/Template.xml` (`<Help>` with `<Page>` entries) plus `Ext/Template/<lang>.html`. The old single `Ext/Template.html` is silently ignored by the platform (the template loads empty). Verified live on 8.3.27.2130: two pages survive `/LoadConfigFromFiles` + `/DumpConfigToFiles` with their text.
+- **`-Lang`**: a repeated call adds a page in another language (the metadata and existing pages are never rewritten); a legacy `Ext/Template.html` is migrated to `Template/ru.html` with a warning, an ambiguous tree is refused; the code is validated before any write.
+- Format version from the owner (EPF / ERF root first), 2.21 `xmlns:pal`; `<Template>` is inserted at the owner kind's canonical place; `Detect-FormatVersion` measures characters; an empty SpreadsheetDocument is a self-closing root.
+- `template-remove`: an emptied `ChildObjects` becomes `<ChildObjects/>`; compact tags and EOL are kept.
+
+Local deltas re-applied: `-ObjectName` as an absolute / relative object XML path (Local fix `2026-09-13`); `.dev.env` `SUPPORT_GUARD` first with fail-closed parsing; `template-remove` preflight parse, atomic root-XML write via a temp file, `-DryRun` / `-Force` (the missing-`-Force` refusal now really exits `2` — `Write-Error` under `Stop` used to end it with `1`); `<?…?>` skipped by the compact-tag pass; `[CmdletBinding(PositionalBinding=$false)]` added to both (upstream left them without it). Regression cases: HTML layout + second language, refused `-Lang`, removal gates.
 
 ### Local fix `2026-09-13` — object XML paths
 
@@ -439,3 +502,15 @@ Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikola
 
 - **OData is enabled correctly in `default.vrd`** — via the `<standardOdata enable="true"/>` child element instead of the old `enableStandardOdata` attribute, which the platform ignored. Publications that need the standard OData interface actually get it now.
 - Platform path resolution follows the `db-*` chain (explicit → `.dev.env` → `.v8-project.json` → auto-detect), locally patched to also accept the version install directory shape used by `.dev.env` `PLATFORM_PATH` (resolves `bin\` for `wsap24.dll`).
+
+## xdto-manage.md
+
+### Upstream sync `2026-11-01` (`2e75b0f`)
+
+`xdto-compile` v1.1 → **v1.18**, `xdto-edit` v1.0 → **v1.9**, `xdto-decompile` v1.0 → **v1.3**, `xdto-info` v1.0 → **v1.3**, `xdto-validate` v1.1 → **v1.7**.
+
+- `xdto-compile` stamps the package with the `Configuration.xml` format version (was hard-coded 2.17), 2.21 `xmlns:pal`; registration in `Configuration.xml` follows the kind order and `NEW_OBJECT_POSITION`.
+- `xdto-compile` / `xdto-edit` use the shared support guard (see `support-manage.md`).
+- `xdto-validate`: English messages; a `-MaxErrors` stop is reported.
+
+Local deltas re-applied: `.dev.env` `SUPPORT_GUARD` and `NEW_OBJECT_POSITION` first; `xdto-edit` takes `xdto-decompile` / `xdto-compile` / `xdto-validate` from its own `scripts` dir. Deviation: a missing `xdto-validate` or its non-zero exit is now the exit code of `xdto-edit` (upstream prints `[SKIP]` / ignores the result and exits 0), like the other editing tools.

@@ -7,10 +7,15 @@ Comprehensive configuration management: create scaffold, edit properties/composi
 ## 1. Init — Create Configuration Scaffold
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1 -Name "<Name>" [-OutputDir "<path>"]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1 -Name "<Name>" [-Synonym "<text>"] [-OutputDir "<path>"] [-Version "<x.y.z.w>"] [-Vendor "<name>"] [-CompatibilityMode Version8_3_27] [-FormatVersion 2.20]
 ```
 
-Creates minimal configuration structure: `Configuration.xml`, `Languages/Русский.xml`, and basic directory structure.
+Creates minimal configuration structure: `Configuration.xml`, `Languages/Русский.xml`, `Ext/ClientApplicationInterface.xml` and basic directory structure.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `CompatibilityMode` | `Version8_3_24` | Set it to the target platform (`Version8_3_27` for 8.3.27) unless the task needs an older mode. `DontUse` only warns: the platform stores it as `Version8_3_8` |
+| `FormatVersion` | `2.17` | Dump format, **not above** the target platform's: 8.3.24 — `2.17`, 8.3.25 — `2.18`, 8.3.26 — `2.19`, 8.3.27 — `2.20`, 8.5 — `2.21`. Outside 2.17–2.21 the scaffold is still written, with a warning; a non-numeric value is an error. `2.21` adds the 8.5 root properties and the `xmlns:pal` namespace |
 
 ---
 
@@ -38,6 +43,12 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scr
 | `add-defaultRole` | `Role.Name` or `Name` | Add default role |
 | `remove-defaultRole` | `Role.Name` or `Name` | Remove default role |
 | `set-defaultRoles` | Names via `;;` | Replace default roles list |
+| `set-panels` / `set-home-page` | JSON | Panel layout and home page (see the reference) |
+| `sort-childObjects` | Kind (`Catalog`, `Catalogs`; batch `;;`) or empty | Sort `ChildObjects` by name inside a kind (1C tree order). Empty value: every kind except `CommonAttribute`, `Subsystem`, `CommandGroup`, `Language`, and the kind groups themselves are put into canonical order. A kind named explicitly is always sorted |
+
+`sort-childObjects` is the explicit way to reorder; `add-childObject` never sorts existing entries, it only places the new one by `NEW_OBJECT_POSITION` (`.dev.env`; `.v8-project.json` `newObjectPosition` is the fallback). The four order-sensitive kinds are never placed by name.
+
+The edit is refused on a locked vendor configuration (support guard, [support-manage.md](support-manage.md)). Auto-validation runs `cf-validate` from the same `scripts` directory; its non-zero exit (or a missing validator) is the exit code of `cf-edit`, the edit itself is already written.
 
 Full property reference: [cf-edit-reference.md](../tools/1c-cf-manage/cf-edit-reference.md).
 
@@ -52,6 +63,9 @@ Full property reference: [cf-edit-reference.md](../tools/1c-cf-manage/cf-edit-re
 
 # Default roles
 ... -Operation set-defaultRoles -Value "ПолныеПрава ;; Администратор"
+
+# Sort catalogs and documents by name; empty value — all kinds plus kind-group order
+... -Operation sort-childObjects -Value "Catalog ;; Document"
 ```
 
 ---
@@ -82,14 +96,16 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scr
 
 | # | Check | Severity |
 |---|-------|----------|
-| 1 | XML well-formedness, MetaDataObject/Configuration, version 2.17/2.20 | ERROR |
+| 1 | XML well-formedness, MetaDataObject/Configuration, uuid; version: malformed = ERROR, outside the tested 2.17–2.21 = WARN | ERROR/WARN |
 | 2 | InternalInfo: 7 ContainedObject, valid ClassId, uniqueness | ERROR |
 | 3 | Properties: Name non-empty, Synonym, DefaultLanguage, DefaultRunMode | ERROR/WARN |
 | 4 | Properties: enum values (11 properties) | ERROR |
-| 5 | ChildObjects: valid type names (44 types), no duplicates, type order | ERROR/WARN |
+| 5 | ChildObjects: valid type names (47 kinds, `Bot`, `PaletteColor`, `IntegrationService` included), no duplicates, type order | ERROR/WARN |
 | 6 | DefaultLanguage references existing Language in ChildObjects | ERROR |
 | 7 | Language files Languages/<name>.xml exist | WARN |
 | 8 | Object directories from ChildObjects exist (spot-check) | WARN |
+| 9 | Form references in `Ext/HomePageWorkArea.xml` and `Default*Form` properties resolve | ERROR |
+| 10 | Every stamped `Ext/*.xml` body is in the `Configuration.xml` format version — the platform refuses to load one object in mixed formats | ERROR |
 
 Exit code: 0 = OK, 1 = errors.
 

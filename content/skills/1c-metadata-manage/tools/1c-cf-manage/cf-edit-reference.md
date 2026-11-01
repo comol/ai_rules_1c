@@ -23,7 +23,7 @@
 | `SynchronousPlatformExtensionAndAddInCallUseMode` | `DontUse`, `Use`, `UseWithWarnings` |
 | `InterfaceCompatibilityMode` | `Version8_2`, `Version8_2EnableTaxi`, `Taxi`, `TaxiEnableVersion8_2`, `TaxiEnableVersion8_5`, `Version8_5EnableTaxi`, `Version8_5` |
 | `DatabaseTablespacesUseMode` | `DontUse`, `Use` |
-| `MainClientApplicationWindowMode` | `Normal`, `Fullscreen`, `Kiosk` |
+| `MainClientApplicationWindowMode` | `Normal`, `Workplace`, `FullscreenWorkplace`, `Kiosk`, `EmbeddedWorkplace` |
 
 ### Ref
 `DefaultLanguage` — значение вида `Language.Русский`
@@ -38,6 +38,20 @@
 **Важно про `add-childObject`**: регистрирует в `<ChildObjects>` объект, **файл которого уже существует на диске**. Если файла нет — exit 1. Для создания нового объекта используй профильный навык — `/meta-compile` (Catalog, Document, Enum, Report, регистры и т.д.), `/role-compile` (Role), `/subsystem-compile` (Subsystem). Они создают файл И регистрируют его за один вызов.
 
 Batch: `"Catalog.Товары ;; Document.Заказ ;; Enum.ВидыОплат"`
+
+## sort-childObjects
+
+Упорядочивает объекты в `<ChildObjects>` по имени **внутри вида**. Значение — имя вида (`Catalog`, `Role`, …), batch через `;;`. Без значения обрабатываются все виды, какие есть в файле.
+
+```
+-Operation sort-childObjects                       — все виды, кроме перечисленных ниже
+-Operation sort-childObjects -Value "Catalog"       — только справочники
+-Operation sort-childObjects -Value "Catalog ;; Role"
+```
+
+Не сортируются, пока вид не назван явно: `CommonAttribute`, `Subsystem`, `CommandGroup`, `Language`.
+
+Вызов без значения дополнительно ставит группы видов в канонический порядок; вызов с явным видом трогает только имена внутри него.
 
 ## add-defaultRole / remove-defaultRole / set-defaultRoles
 

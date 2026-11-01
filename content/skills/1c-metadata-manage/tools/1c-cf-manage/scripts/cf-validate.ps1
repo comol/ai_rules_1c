@@ -1,7 +1,8 @@
-﻿# cf-validate v1.4 — Validate 1C configuration root structure
+﻿# cf-validate v1.14 — Validate 1C configuration root structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)]
+	[Parameter(Mandatory, Position=0)]
 	[Alias('Path')]
 	[string]$ConfigPath,
 
@@ -17,7 +18,7 @@ $ErrorActionPreference = "Stop"
 
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($ConfigPath)) {
-	$ConfigPath = Join-Path (Get-Location).Path $ConfigPath
+	$ConfigPath = Join-Path (Get-Location).ProviderPath $ConfigPath
 }
 
 if (Test-Path $ConfigPath -PathType Container) {
@@ -35,7 +36,7 @@ if (-not (Test-Path $ConfigPath)) {
 	exit 1
 }
 
-$resolvedPath = (Resolve-Path $ConfigPath).Path
+$resolvedPath = (Resolve-Path $ConfigPath).ProviderPath
 $configDir = Split-Path $resolvedPath -Parent
 
 # --- Output infrastructure ---
@@ -77,6 +78,7 @@ $finalize = {
 		$result = "=== Validation OK: Configuration.$objName ($checks checks) ==="
 	} else {
 		Out-Line ""
+		if ($script:stopped -and $script:errors -ge $MaxErrors) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
 		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
 		$result = $script:output.ToString()
 	}
@@ -87,6 +89,34 @@ $finalize = {
 		[System.IO.File]::WriteAllText($OutFile, $result, $utf8Bom)
 		Write-Host "Written to: $OutFile"
 	}
+}
+
+# --- Format version ---
+# Проверенный диапазон версий формата выгрузки: 2.17 (8.3.24) … 2.21 (8.5). Полная лестница —
+# docs/1c-configuration-spec.md, «Лестница версий». Версию задаёт платформа ВЫГРУЗКИ, а не режим
+# совместимости конфигурации. Версии ниже 2.17 (платформы 8.3.23 и старше) существуют, но навыки
+# на них не проверялись — это предупреждение о непокрытии, а не о некорректности файла.
+$formatVerifiedMin = "2.17"
+$formatVerifiedMax = "2.21"
+# Версия формата как число: "2.20" → 220. Строковое сравнение неверно ("2.9" > "2.17").
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+# Штамп версии формата — атрибут version КОРНЕВОГО элемента файла. Копия общего эталона (семья
+# root_version, авторитет — meta-validate).
+function Get-RootVersion([string]$xmlPath) {
+	if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) { return $null }
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($xmlPath)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $len)
+	$m = [regex]::Match($head, '<[A-Za-z_][\w.:-]*(\s[^>]*)?/?>')
+	if (-not $m.Success) { return $null }
+	$v = [regex]::Match($m.Groups[1].Value, '(?:^|\s)version="([^"]*)"')
+	if ($v.Success) { return $v.Groups[1].Value }
+	return $null
 }
 
 # --- Reference tables ---
@@ -108,16 +138,16 @@ $validClassIds = @(
 $childObjectTypes = @(
 	"Language","Subsystem","StyleItem","Style",
 	"CommonPicture","SessionParameter","Role","CommonTemplate",
-	"FilterCriterion","CommonModule","Bot","CommonAttribute","ExchangePlan",
+	"FilterCriterion","CommonModule","CommonAttribute","ExchangePlan",
 	"XDTOPackage","WebService","HTTPService","WSReference",
 	"EventSubscription","ScheduledJob","SettingsStorage","FunctionalOption",
-	"FunctionalOptionsParameter","DefinedType","CommonCommand","CommandGroup",
+	"FunctionalOptionsParameter","DefinedType","Bot","PaletteColor","CommonCommand","CommandGroup",
 	"Constant","CommonForm","Catalog","Document",
 	"DocumentNumerator","Sequence","DocumentJournal","Enum",
 	"Report","DataProcessor","InformationRegister","AccumulationRegister",
 	"ChartOfCharacteristicTypes","ChartOfAccounts","AccountingRegister",
 	"ChartOfCalculationTypes","CalculationRegister",
-	"BusinessProcess","Task","IntegrationService"
+	"BusinessProcess","Task","ExternalDataSource","IntegrationService"
 )
 
 # Type -> directory mapping
@@ -126,6 +156,7 @@ $childTypeDirMap = @{
 	"CommonPicture"="CommonPictures"; "SessionParameter"="SessionParameters"; "Role"="Roles"
 	"CommonTemplate"="CommonTemplates"; "FilterCriterion"="FilterCriteria"; "CommonModule"="CommonModules"
 	"Bot"="Bots"
+	"PaletteColor"="PaletteColors"
 	"CommonAttribute"="CommonAttributes"; "ExchangePlan"="ExchangePlans"; "XDTOPackage"="XDTOPackages"
 	"WebService"="WebServices"; "HTTPService"="HTTPServices"; "WSReference"="WSReferences"
 	"EventSubscription"="EventSubscriptions"; "ScheduledJob"="ScheduledJobs"
@@ -142,7 +173,7 @@ $childTypeDirMap = @{
 	"ChartOfCalculationTypes"="ChartsOfCalculationTypes"
 	"CalculationRegister"="CalculationRegisters"
 	"BusinessProcess"="BusinessProcesses"; "Task"="Tasks"
-	"IntegrationService"="IntegrationServices"
+	"ExternalDataSource"="ExternalDataSources"; "IntegrationService"="IntegrationServices"
 }
 
 # Valid enum values for Configuration properties
@@ -156,7 +187,8 @@ $validEnumValues = @{
 	"SynchronousPlatformExtensionAndAddInCallUseMode" = @("DontUse","Use","UseWithWarnings")
 	"InterfaceCompatibilityMode" = @("Version8_2","Version8_2EnableTaxi","Taxi","TaxiEnableVersion8_2","TaxiEnableVersion8_5","Version8_5EnableTaxi","Version8_5")
 	"DatabaseTablespacesUseMode" = @("DontUse","Use")
-	"MainClientApplicationWindowMode" = @("Normal","Fullscreen","Kiosk")
+	# Проверено платформой 8.3.24 и 8.5.1: Fullscreen нет (ошибка XDTO), есть …Workplace и Kiosk
+	"MainClientApplicationWindowMode" = @("Normal","Workplace","FullscreenWorkplace","Kiosk","EmbeddedWorkplace")
 	"CompatibilityMode" = @("DontUse","Version8_1","Version8_2_13","Version8_2_16","Version8_3_1","Version8_3_2","Version8_3_3","Version8_3_4","Version8_3_5","Version8_3_6","Version8_3_7","Version8_3_8","Version8_3_9","Version8_3_10","Version8_3_11","Version8_3_12","Version8_3_13","Version8_3_14","Version8_3_15","Version8_3_16","Version8_3_17","Version8_3_18","Version8_3_19","Version8_3_20","Version8_3_21","Version8_3_22","Version8_3_23","Version8_3_24","Version8_3_25","Version8_3_26","Version8_3_27","Version8_3_28","Version8_5_1")
 }
 
@@ -203,10 +235,15 @@ if ($root.NamespaceURI -ne $expectedNs) {
 }
 
 $version = $root.GetAttribute("version")
+$versionRank = Get-FormatRank $version
 if (-not $version) {
 	Report-Warn "1. Missing version attribute on MetaDataObject"
-} elseif ($version -ne "2.17" -and $version -ne "2.20" -and $version -ne "2.21") {
-	Report-Warn "1. Unusual version '$version' (expected 2.17, 2.20 or 2.21)"
+} elseif ($versionRank -eq 0) {
+	Report-Error "1. Malformed version '$version' (expected N.N)"
+} elseif ($versionRank -lt (Get-FormatRank $formatVerifiedMin)) {
+	Report-Warn "1. Format version '$version' is below the tested range $formatVerifiedMin-$formatVerifiedMax — skills were not verified on it"
+} elseif ($versionRank -gt (Get-FormatRank $formatVerifiedMax)) {
+	Report-Warn "1. Format version '$version' is above the tested range $formatVerifiedMin-$formatVerifiedMax — skills were not verified on it"
 }
 
 # Must have Configuration child
@@ -601,6 +638,28 @@ if ($formRefsChecked -eq 0) {
 	Report-OK "9. Form references: $formRefsChecked verified"
 } else {
 	foreach ($err in $formRefErrors) { Report-Error "9. $err" }
+}
+
+# --- Check 10: тела конфигурации Ext/*.xml в версии Configuration.xml ---
+# Конфигурация для платформы — такой же объект, как остальные: Configuration.xml и штампованные тела
+# Ext/*.xml (CommandInterface, HomePageWorkArea, Splash, …) загружаются только в одной версии формата
+# («Версия формата загружаемого файла … отличается от версии формата ранее загруженных файлов»).
+$cfgExtDir = Join-Path $configDir "Ext"
+$cfgBodiesOk = 0
+$cfgBodyErrors = 0
+if ($version -and (Test-Path $cfgExtDir -PathType Container)) {
+	$bodyNames = @(Get-ChildItem $cfgExtDir -Filter "*.xml" -File | ForEach-Object { $_.Name })
+	[Array]::Sort($bodyNames, [StringComparer]::Ordinal)
+	foreach ($bn in $bodyNames) {
+		$bodyVer = Get-RootVersion (Join-Path $cfgExtDir $bn)
+		if (-not $bodyVer) { continue }
+		if ($bodyVer -eq $version) { $cfgBodiesOk++; continue }
+		$cfgBodyErrors++
+		Report-Error "10. Ext/$bn is stamped $bodyVer, Configuration.xml $version — the platform refuses to load parts of one object in different formats"
+	}
+}
+if ($cfgBodyErrors -eq 0 -and $cfgBodiesOk -gt 0) {
+	Report-OK "10. Format version: $cfgBodiesOk stamped Ext part(s) agree with Configuration.xml"
 }
 
 # --- Final output ---

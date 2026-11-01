@@ -1440,6 +1440,152 @@ Register-Case 'support xml: add-help preserves compact tags in form descriptor' 
     Assert-CompactXml $target
 }
 
+# ------------------------------------------- upstream sync 2026-11-01: cf root area
+
+function Set-FixtureFormatVersion([string]$Path, [string]$Version) {
+    # Restamp the MetaDataObject version of one fixture file (2.17 in the fixtures).
+    $text = (Get-FileFacts $Path).Text -replace '(<MetaDataObject[^>]*\sversion=")2\.17(")', "`${1}$Version`${2}"
+    [IO.File]::WriteAllText($Path, $text, (New-Object Text.UTF8Encoding($true)))
+}
+
+Register-Case 'template-add: HTML is a descriptor plus Ext/Template/<lang>.html, -Lang adds a page' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    $owner = Join-Path $work 'Obrabotka.xml'
+    Set-FixtureFormatVersion $owner '2.20'
+    $addTemplate = Join-Path $ToolsDir '1c-template-manage\scripts\add-template.ps1'
+    $common = @('-ObjectName', 'Obrabotka', '-TemplateName', 'Page', '-TemplateType', 'HTML', '-SrcDir', $work)
+    $run = Invoke-Tool $addTemplate $common $work
+    Assert-Equal 0 $run.ExitCode "HTML template (stderr: $($run.StdErr))"
+    $ext = Join-Path $work 'Obrabotka\Templates\Page\Ext'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $ext 'Template.html'))) 'the ignored legacy Ext/Template.html was written'
+    $descriptor = (Get-FileFacts (Join-Path $ext 'Template.xml')).Text
+    Assert-True ($descriptor -match '<Help xmlns="http://v8.1c.ru/8.3/xcf/extrnprops"') "descriptor is not an extrnprops Help document: $descriptor"
+    Assert-True ($descriptor -match 'version="2\.20"') "descriptor version is not the owner's: $descriptor"
+    Assert-True ($descriptor -match '<Page>ru</Page>') 'descriptor does not list the ru page'
+    $ruPage = Join-Path $ext 'Template\ru.html'
+    Assert-True (Test-Path -LiteralPath $ruPage) 'missing Ext/Template/ru.html'
+    $metaPath = Join-Path $work 'Obrabotka\Templates\Page.xml'
+    $meta = (Get-FileFacts $metaPath).Text
+    Assert-True ($meta -match '<TemplateType>HTMLDocument</TemplateType>') 'template type'
+    Assert-True ($meta -match '<MetaDataObject[^>]*version="2\.20"') 'template metadata version is not the owner version'
+
+    # A second language adds a page and a <Page>; metadata (uuid) and the ru text stay.
+    [IO.File]::WriteAllText($ruPage, '<html><body>keep</body></html>', (New-Object Text.UTF8Encoding($true)))
+    $run = Invoke-Tool $addTemplate ($common + @('-Lang', 'en')) $work
+    Assert-Equal 0 $run.ExitCode "second language (stderr: $($run.StdErr))"
+    $descriptor = (Get-FileFacts (Join-Path $ext 'Template.xml')).Text
+    Assert-True ($descriptor -match '(?s)<Page>en</Page>.*<Page>ru</Page>') "descriptor pages: $descriptor"
+    Assert-True (Test-Path -LiteralPath (Join-Path $ext 'Template\en.html')) 'missing Ext/Template/en.html'
+    Assert-True ((Get-FileFacts $ruPage).Text -match 'keep') 'the ru page was overwritten'
+    Assert-Equal $meta (Get-FileFacts $metaPath).Text 'template metadata was rewritten by -Lang'
+    Assert-Equal 1 ([regex]::Matches((Get-FileFacts $owner).Text, '<Template>Page</Template>')).Count 'template registration count'
+
+    $run = Invoke-Tool $addTemplate ($common + @('-Lang', 'en')) $work
+    Assert-True ($run.ExitCode -ne 0) 'an existing language page was accepted again'
+}
+
+Register-Case 'template-remove: -DryRun and a missing -Force change nothing, -Force keeps the parent compact' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    $owner = Join-Path $work 'Obrabotka.xml'
+    $removeTemplate = Join-Path $ToolsDir '1c-template-manage\scripts\remove-template.ps1'
+    $run = Invoke-Tool (Join-Path $ToolsDir '1c-template-manage\scripts\add-template.ps1') @('-ObjectName', 'Obrabotka', '-TemplateName', 'Probe', '-TemplateType', 'Text', '-SrcDir', $work) $work
+    Assert-Equal 0 $run.ExitCode "add-template (stderr: $($run.StdErr))"
+    $before = Get-TreeSnapshot $work
+    $common = @('-ObjectName', 'Obrabotka', '-TemplateName', 'Probe', '-SrcDir', $work)
+    $run = Invoke-Tool $removeTemplate ($common + @('-DryRun')) $work
+    Assert-Equal 0 $run.ExitCode "dry run (stderr: $($run.StdErr))"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $work) 'dry run'
+    $run = Invoke-Tool $removeTemplate $common $work
+    Assert-Equal 2 $run.ExitCode 'removal without -Force must be refused with exit 2'
+    Assert-TreeIdentical $before (Get-TreeSnapshot $work) 'refused removal'
+    $run = Invoke-Tool $removeTemplate ($common + @('-Force')) $work
+    Assert-Equal 0 $run.ExitCode "forced removal (stderr: $($run.StdErr))"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $work 'Obrabotka\Templates\Probe.xml'))) 'template descriptor survived'
+    Assert-True ((Get-FileFacts $owner).Text -notmatch '<Template>Probe</Template>') 'registration survived'
+    Assert-True (-not (Test-Path -LiteralPath "$owner.remove-template.tmp")) 'temporary root XML left behind'
+    Assert-CompactXml $owner
+}
+
+Register-Case 'help-add: EPF format version from the owner, trailing slash, existing page kept' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    Set-FixtureFormatVersion (Join-Path $work 'Obrabotka.xml') '2.20'
+    $pageDir = Join-Path $work 'Obrabotka\Ext\Help'
+    New-Item -ItemType Directory -Path $pageDir -Force | Out-Null
+    $page = Join-Path $pageDir 'ru.html'
+    [IO.File]::WriteAllText($page, '<html><body>keep</body></html>', (New-Object Text.UTF8Encoding($true)))
+    $run = Invoke-Tool (Join-Path $ToolsDir '1c-help-manage\scripts\add-help.ps1') @('-ObjectName', 'Obrabotka/', '-SrcDir', $work) $work
+    Assert-Equal 0 $run.ExitCode "add-help (stderr: $($run.StdErr))"
+    $helpXml = (Get-FileFacts (Join-Path $work 'Obrabotka\Ext\Help.xml')).Text
+    Assert-True ($helpXml -match '<Help [^>]*version="2\.20"') "Help.xml is not stamped with the EPF version: $helpXml"
+    Assert-True ((Get-FileFacts $page).Text -match 'keep') 'an existing help page was overwritten by the skeleton'
+}
+
+Register-Case 'help-add / template-add: a path-like or device -Lang is refused before any write' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    New-Item -ItemType Directory -Path (Join-Path $work 'Obrabotka\Ext') -Force | Out-Null
+    $before = Get-TreeSnapshot $work
+    foreach ($lang in @('..\..\..\escaped', '../escaped', 'nul')) {
+        $run = Invoke-Tool (Join-Path $ToolsDir '1c-help-manage\scripts\add-help.ps1') @('-ObjectName', 'Obrabotka', '-Lang', $lang, '-SrcDir', $work) $work
+        Assert-True ($run.ExitCode -ne 0) "add-help accepted -Lang '$lang'"
+        $run = Invoke-Tool (Join-Path $ToolsDir '1c-template-manage\scripts\add-template.ps1') @('-ObjectName', 'Obrabotka', '-TemplateName', 'Page', '-TemplateType', 'HTML', '-Lang', $lang, '-SrcDir', $work) $work
+        Assert-True ($run.ExitCode -ne 0) "add-template accepted -Lang '$lang'"
+    }
+    Assert-TreeIdentical $before (Get-TreeSnapshot $work) 'refused -Lang'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path (Split-Path $work -Parent) 'escaped.html'))) 'a page escaped the work dir'
+}
+
+Register-Case 'cf-edit sort-childObjects: explicit sort composes with the default end insertion' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configPath = Join-Path $Work 'Configuration.xml'
+    $newEnum = (Read-JsonFixture 'meta-compile\new-enum.json').name
+    New-Item -ItemType Directory -Path (Join-Path $Work 'Enums') -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $Work "Enums\$newEnum.xml"), '<MetaDataObject/>', (New-Object System.Text.UTF8Encoding($true)))
+    $cfEdit = Join-Path $ToolsDir '1c-cf-manage\scripts\cf-edit.ps1'
+
+    $run = Invoke-Tool $cfEdit @('-ConfigPath', $configPath, '-Operation', 'add-childObject', '-Value', "Enum.$newEnum", '-NoValidate') $Work
+    Assert-Equal 0 $run.ExitCode "add-childObject (stderr: $($run.StdErr))"
+    Assert-Equal $newEnum (@(Get-ChildObjectEntries $configPath | Where-Object { $_.Tag -eq 'Enum' }))[2].Name 'default insertion must stay at the end'
+
+    $run = Invoke-Tool $cfEdit @('-ConfigPath', $configPath, '-Operation', 'sort-childObjects', '-Value', 'Enum', '-NoValidate') $Work
+    Assert-Equal 0 $run.ExitCode "sort-childObjects (stderr: $($run.StdErr))"
+    $enums = @(Get-ChildObjectEntries $configPath | Where-Object { $_.Tag -eq 'Enum' })
+    Assert-Equal 3 $enums.Count 'enum entry count after sort'
+    Assert-Equal $newEnum $enums[1].Name 'sort-childObjects must order the kind by name'
+    Assert-CompactXml $configPath
+}
+
+Register-Case 'support guard: xdto-compile allows an editable typical configuration, refuses a locked one' {
+    param($Work)
+    $xsd = '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://example.com/probe" elementFormDefault="qualified"><xs:complexType name="Probe"><xs:sequence><xs:element name="Id" type="xs:string"/></xs:sequence></xs:complexType></xs:schema>'
+    $xdtoCompile = Join-Path $ToolsDir '1c-xdto-manage\scripts\xdto-compile.ps1'
+
+    # Header {6,0,0,...}: modification allowed, nothing on support (K=0) - meta-compile writes here.
+    $open = Join-Path $Work 'open'
+    Copy-Fixture 'config-dump' $open "`n"
+    New-Item -ItemType Directory -Path (Join-Path $open 'Ext') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $open 'Ext\ParentConfigurations.bin'), '{6,0,0,aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,0,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb}', (New-Object Text.UTF8Encoding($true)))
+    $xsdPath = Join-Path $Work 'probe.xsd'
+    [IO.File]::WriteAllText($xsdPath, $xsd, (New-Object Text.UTF8Encoding($false)))
+    $run = Invoke-Tool $xdtoCompile @('-XsdPath', $xsdPath, '-OutputDir', $open, '-Name', 'ProbePackage') $Work
+    Assert-Equal 0 $run.ExitCode "xdto-compile refused an editable configuration (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $open 'XDTOPackages\ProbePackage.xml')) 'package descriptor was not written'
+    Assert-True ((Get-FileFacts (Join-Path $open 'Configuration.xml')).Text -match '<XDTOPackage>ProbePackage</XDTOPackage>') 'package was not registered'
+
+    # The on-support fixture keeps the configuration root locked: the shared guard refuses.
+    $locked = Join-Path $Work 'locked'
+    Copy-Fixture 'on-support' $locked "`n"
+    $before = Get-TreeSnapshot $locked
+    $run = Invoke-Tool $xdtoCompile @('-XsdPath', $xsdPath, '-OutputDir', $locked, '-Name', 'ProbePackage') $Work
+    Assert-True ($run.ExitCode -ne 0) 'xdto-compile wrote into a locked configuration'
+    Assert-True ($run.StdErr -match 'support-guard') "stderr does not name the guard: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $locked) 'refused xdto-compile'
+}
+
 Register-Case 'support xml: cfe-borrow preserves compact tags in extension' {
     param($work)
     $base = Join-Path $work 'base'

@@ -1,7 +1,8 @@
-﻿# cf-info v1.4 — Compact summary of 1C configuration root
+﻿# cf-info v1.10 — Compact summary of 1C configuration root
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory=$true)][Alias('Path')][string]$ConfigPath,
+	[Parameter(Mandatory=$true, Position=0)][Alias('Path')][string]$ConfigPath,
 	[ValidateSet("overview","brief","full")]
 	[string]$Mode = "overview",
 	[Alias('Name')]
@@ -21,7 +22,7 @@ function Out([string]$text) { $script:lines += $text }
 
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($ConfigPath)) {
-	$ConfigPath = Join-Path (Get-Location).Path $ConfigPath
+	$ConfigPath = Join-Path (Get-Location).ProviderPath $ConfigPath
 }
 
 # Directory -> find Configuration.xml
@@ -85,20 +86,20 @@ function Get-PropML([string]$propName) {
 	return (Get-MLText $n)
 }
 
-# --- Type name maps (canonical order, 44 types) ---
+# --- Type name maps (canonical order, 46 types) ---
 $typeOrder = @(
 	"Language","Subsystem","StyleItem","Style",
 	"CommonPicture","SessionParameter","Role","CommonTemplate",
-	"FilterCriterion","CommonModule","Bot","CommonAttribute","ExchangePlan",
+	"FilterCriterion","CommonModule","CommonAttribute","ExchangePlan",
 	"XDTOPackage","WebService","HTTPService","WSReference",
 	"EventSubscription","ScheduledJob","SettingsStorage","FunctionalOption",
-	"FunctionalOptionsParameter","DefinedType","CommonCommand","CommandGroup",
+	"FunctionalOptionsParameter","DefinedType","Bot","PaletteColor","CommonCommand","CommandGroup",
 	"Constant","CommonForm","Catalog","Document",
 	"DocumentNumerator","Sequence","DocumentJournal","Enum",
 	"Report","DataProcessor","InformationRegister","AccumulationRegister",
 	"ChartOfCharacteristicTypes","ChartOfAccounts","AccountingRegister",
 	"ChartOfCalculationTypes","CalculationRegister",
-	"BusinessProcess","Task","IntegrationService"
+	"BusinessProcess","Task","ExternalDataSource","IntegrationService"
 )
 
 $typeRuNames = @{
@@ -119,7 +120,7 @@ $typeRuNames = @{
 	"ChartOfCharacteristicTypes"="ПВХ"; "ChartOfAccounts"="Планы счетов"
 	"AccountingRegister"="Регистры бухгалтерии"; "ChartOfCalculationTypes"="ПВР"
 	"CalculationRegister"="Регистры расчёта"; "BusinessProcess"="Бизнес-процессы"
-	"Task"="Задачи"; "IntegrationService"="Сервисы интеграции"
+	"Task"="Задачи"; "ExternalDataSource"="Внешние источники данных"; "IntegrationService"="Сервисы интеграции"
 }
 
 # --- Read panel layout (Ext/ClientApplicationInterface.xml) ---

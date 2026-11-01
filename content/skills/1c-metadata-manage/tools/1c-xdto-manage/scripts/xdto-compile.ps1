@@ -1,5 +1,8 @@
-﻿# xdto-compile v1.1 — Build a 1C XDTO package from an XML Schema (XSD)
+﻿# xdto-compile v1.18 — Build a 1C XDTO package from an XML Schema (XSD) (+support-guard: общая реализация вместо урезанной)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: .dev.env first: SUPPORT_GUARD (shared support guard, fail-closed on an unreadable bin) and
+#   NEW_OBJECT_POSITION (registration in Configuration.xml) win over .v8-project.json.
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory=$true, ParameterSetName='File')]
 	[Alias('Path')]
@@ -37,11 +40,12 @@ $MD_NS   = "http://v8.1c.ru/8.3/MDClasses"
 $V8_NS   = "http://v8.1c.ru/8.1/data/core"
 
 # --- Support guard (Ext/ParentConfigurations.bin) ---
-# Canon: docs/support-manage.md. Blocks edits when the configuration is on
-# vendor support (Ext/ParentConfigurations.bin present next to
-# Configuration.xml). Reaction from .dev.env SUPPORT_GUARD (deny|warn|off,
-# default deny; .v8-project.json editingAllowedCheck stays as the upstream
-# fallback): deny throws, warn warns and continues, off skips the check.
+# Canon: docs/support-manage.md. Blocks edits of vendor objects "на замке" /
+# read-only configs unless allowed. Trigger = bin present; reaction from
+# .dev.env SUPPORT_GUARD (deny|warn|off, default deny; .v8-project.json
+# editingAllowedCheck stays as the upstream fallback). Fail-closed on an
+# unreadable support state (bin exists but cannot be parsed — same reaction);
+# other guard errors degrade to allow with a stderr notice.
 function Get-RootUuid([string]$xmlPath) {
 	if (-not (Test-Path $xmlPath)) { return $null }
 	try {
@@ -58,7 +62,7 @@ function Test-ExternalObjectRoot([string]$xmlPath) {
 		[xml]$mx = Get-Content -Path $xmlPath -Encoding UTF8
 		$el = $mx.DocumentElement.FirstChild
 		while ($el -and $el.NodeType -ne 'Element') { $el = $el.NextSibling }
-		if ($el) { return @('ExternalDataProcessor','ExternalReport') -contains $el.get_LocalName() }
+		if ($el) { return @('ExternalDataProcessor','ExternalReport') -contains $el.LocalName }
 	} catch {}
 	return $false
 }
@@ -74,53 +78,156 @@ function Find-V8Project([string]$startDir) {
 	return $null
 }
 function Get-EditMode([string]$cfgDir) {
-	# 1c-rules: .dev.env SUPPORT_GUARD wins over .v8-project.json editingAllowedCheck.
-	$__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
-	if (Test-Path $__devEnvHelper) {
-	    . $__devEnvHelper
-	    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
-	    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
-	}
-	$mode = "deny"
 	try {
-		$pj = Find-V8Project $cfgDir
-		if ($pj) {
-			$cfg = Get-Content -Path $pj -Raw -Encoding UTF8 | ConvertFrom-Json
-			if ($cfg.PSObject.Properties.Name -contains 'editingAllowedCheck' -and $cfg.editingAllowedCheck) {
-				$mode = [string]$cfg.editingAllowedCheck
+		# 1c-rules: .dev.env SUPPORT_GUARD wins over .v8-project.json editingAllowedCheck.
+		$__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
+		if (Test-Path $__devEnvHelper) {
+		    . $__devEnvHelper
+		    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
+		    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
+		}
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
+		if (-not $pj) { return 'deny' }
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		# configSrc — от каталога .v8-project.json, а не от рабочего каталога: иначе из подкаталога
+		# проекта база не сопоставляется и берётся правило проекта.
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
+		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
+		if ($proj.databases) {
+			foreach ($db in $proj.databases) {
+				if ($db.configSrc) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+						if ($db.editingAllowedCheck) { return $db.editingAllowedCheck }
+					}
+				}
 			}
 		}
-	} catch {}
-	return $mode
+		if ($proj.editingAllowedCheck) { return $proj.editingAllowedCheck }
+		return 'deny'
+	} catch { return 'deny' }
 }
-function Assert-EditAllowed([string]$targetPath) {
+function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	try {
-		$mode = $null
-		$d = $targetPath
-		for ($i = 0; $i -lt 20 -and $d; $i++) {
-			$cfgXml = Join-Path $d "Configuration.xml"
-			$supportBin = Join-Path (Join-Path $d "Ext") "ParentConfigurations.bin"
-			# Автономный объект (внешняя обработка/отчёт) — граница климба
-			foreach ($x in @(Get-ChildItem -Path $d -Filter "*.xml" -File -ErrorAction SilentlyContinue)) {
-				if (Test-ExternalObjectRoot $x.FullName) { return }
+		$rp = $targetPath
+		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).ProviderPath } catch {}
+		# Autonomous external object (EPF/ERF): never part of a config on support (issue #39).
+		if (Test-ExternalObjectRoot $rp) { return }
+		$elemUuid = Get-RootUuid $rp
+		$cfgDir = $null; $binPath = $null
+		$d = if (Test-Path $rp -PathType Container) { $rp } else { [System.IO.Path]::GetDirectoryName($rp) }
+		for ($i = 0; $i -lt 12 -and $d; $i++) {
+			if (Test-ExternalObjectRoot "$d.xml") { return }
+			if (-not $elemUuid) { $elemUuid = Get-RootUuid "$d.xml" }
+			if (-not $cfgDir) {
+				$cand = Join-Path (Join-Path $d "Ext") "ParentConfigurations.bin"
+				if ((Test-Path $cand) -or (Test-Path (Join-Path $d "Configuration.xml"))) { $cfgDir = $d; $binPath = $cand }
 			}
-			if (Test-Path $cfgXml) {
-				if (Test-Path $supportBin) {
-					$mode = Get-EditMode $d
-					if ($mode -eq "off") { return }
-					$msg = "Конфигурация находится на поддержке (Ext/ParentConfigurations.bin). Правка может быть запрещена."
-					if ($mode -eq "warn") { Write-Warning $msg; return }
-					throw "$msg Снимите с поддержки (support-edit) или задайте SUPPORT_GUARD = warn|off в .dev.env."
-				}
-				return
-			}
+			if ($elemUuid -and $cfgDir) { break }
 			$parent = [System.IO.Path]::GetDirectoryName($d)
 			if ($parent -eq $d) { break }
 			$d = $parent
 		}
-	} catch [System.Management.Automation.RuntimeException] {
-		throw
-	} catch {}
+		# New object (no element file): fall back to config root uuid.
+		if (-not $elemUuid -and $cfgDir) { $elemUuid = Get-RootUuid (Join-Path $cfgDir "Configuration.xml") }
+		if (-not $binPath -or -not (Test-Path $binPath)) { return }
+		# Bin present: an unreadable / unparseable support state must not silently
+		# degrade to allow — fail closed via the SUPPORT_GUARD reaction instead.
+		$G = 0; $K = 0; $text = $null; $parseOk = $false
+		try {
+			$bytes = [System.IO.File]::ReadAllBytes($binPath)
+			if ($bytes.Length -gt 32) {
+				$start = 0
+				if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
+				$text = [System.Text.Encoding]::UTF8.GetString($bytes, $start, $bytes.Length - $start)
+				$hm = [regex]::Match($text, '^\{6,(\d+),(\d+),')
+				if ($hm.Success) {
+					$G = [int]$hm.Groups[1].Value
+					$K = [int]$hm.Groups[2].Value
+					$parseOk = $true
+				}
+			}
+		} catch {}
+		if (-not $parseOk) {
+			$mode = Get-EditMode $cfgDir
+			if ($mode -eq 'off') { return }
+			$msg = "[support-guard] Файл состояния поддержки «$binPath» существует, но не читается или не разбирается — состояние объекта неизвестно, он может быть на замке."
+			if ($mode -eq 'warn') { [Console]::Error.WriteLine("$msg Продолжаю по SUPPORT_GUARD=warn."); return }
+			[Console]::Error.WriteLine("$msg`nРедактирование остановлено (fail-closed). Проверьте целостность выгрузки, либо задайте SUPPORT_GUARD = warn|off в .dev.env (канон — docs/support-manage.md).")
+			exit 1
+		}
+		if ($K -eq 0) { return }
+		$best = $null
+		if ($elemUuid) {
+			$u = [regex]::Escape($elemUuid.ToLower())
+			foreach ($m in [regex]::Matches($text, "([0-2]),0,$u")) {
+				$f1 = [int]$m.Groups[1].Value
+				if ($null -eq $best -or $f1 -lt $best) { $best = $f1 }
+			}
+		}
+		$blocked = $false; $code = ""; $reason = ""
+		if ($G -eq 1) { $blocked = $true; $code = "capability-off"; $reason = "возможность изменения конфигурации выключена (вся конфигурация read-only)" }
+		elseif ($require -eq 'removed') {
+			if ($null -ne $best -and $best -ne 2) { $blocked = $true; $code = "not-removed"; $reason = "объект не снят с поддержки — удаление сломает обновления" }
+		}
+		else {
+			if ($null -ne $best -and $best -eq 0) { $blocked = $true; $code = "locked"; $reason = "объект на замке — редактирование сломает обновления" }
+		}
+		if (-not $blocked) { return }
+		$mode = Get-EditMode $cfgDir
+		if ($mode -eq 'off') { return }
+		# Use Console.Error (not Write-Error) — under ErrorActionPreference=Stop the
+		# latter throws and would be swallowed by this function's own catch.
+		if ($mode -eq 'warn') { [Console]::Error.WriteLine("[support-guard] ПРЕДУПРЕЖДЕНИЕ: $reason. Цель: $rp"); return }
+		$head = "[support-guard] Редактирование отклонено: это объект типовой конфигурации на поддержке поставщика, прямое редактирование молча сломает будущие обновления."
+		$cfe = "Рекомендуемый путь: внести доработку в расширение (навыки cfe-borrow / cfe-patch-method) — состояние поддержки менять не нужно, обновления вендора сохраняются."
+		$offNote = "Снять проверку: SUPPORT_GUARD = warn|off в .dev.env (канон — docs/support-manage.md)."
+		if ($code -eq "capability-off") {
+			$state = "Состояние: у всей конфигурации выключена возможность изменения (режим read-only «из коробки») — поэтому объект «$rp» редактировать нельзя."
+			$fix = "Либо снять защиту явно (навык support-edit, два шага):`n  1. support-edit -Path ""$cfgDir"" -Capability on — включить возможность изменения (объекты пока остаются на замке);`n  2. support-edit -Path ""$rp"" -Set editable — открыть этот объект для редактирования.`n  Изменение применяется в базу полной загрузкой выгрузки и обходит механизм обновлений вендора."
+		} elseif ($code -eq "not-removed") {
+			$state = "Состояние: объект «$rp» на поддержке (не снят с поддержки) — его удаление разорвёт обновления вендора."
+			$fix = "Либо сначала снять объект с поддержки, затем удалять:`n  support-edit -Path ""$rp"" -Set off-support — объект уходит из-под обновлений, после этого удаление безопасно."
+		} else {
+			$state = "Состояние: объект «$rp» на замке (возможность изменения конфигурации включена, но сам объект не редактируется)."
+			$fix = "Либо разрешить редактирование этого объекта (навык support-edit, выбрать одно):`n  support-edit -Path ""$rp"" -Set editable — редактировать и дальше получать обновления вендора (возможны конфликты слияния);`n  support-edit -Path ""$rp"" -Set off-support — снять с поддержки: обновления по объекту больше не приходят."
+		}
+		[Console]::Error.WriteLine("$head`n$state`n$cfe`n$fix`n$offNote")
+		exit 1
+	} catch {
+		[Console]::Error.WriteLine("[support-guard] Проверка состояния поддержки не выполнена ($($_.Exception.Message)) — продолжаю без блокировки.")
+		return
+	}
+}
+
+# --- Detect format version ---
+
+function Detect-FormatVersion([string]$dir) {
+	$d = $dir
+	while ($d) {
+		# Автономная внешняя обработка/отчёт: своего Configuration.xml у неё нет, версию несёт
+		# корень самой обработки. Без этого форма и макет внутри обработки 2.21 писались бы 2.17.
+		$extPath = "$d.xml"
+		if (Test-Path $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]' -and $extHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
+		$cfgPath = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfgPath) {
+			$cfgText = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			# Длину среза берём по СТРОКЕ, а не по размеру файла: размер в БАЙТАХ, Substring считает
+			# СИМВОЛЫ, и на кириллице байт больше — короткий Configuration.xml ронял навык исключением.
+			$head = $cfgText.Substring(0, [Math]::Min(2000, $cfgText.Length))
+			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
+		$parent = Split-Path $d -Parent
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return "2.17"
 }
 
 # --- Load the schema ---
@@ -817,7 +924,27 @@ if (-not $Name) {
 $Name = ($Name -replace '[^\wЀ-ӿ]', '_')
 if ($Name -match '^\d') { $Name = "_$Name" }
 
-Assert-EditAllowed $OutputDir
+Assert-EditAllowed $OutputDir "editable"
+
+$script:formatVersion = Detect-FormatVersion $OutputDir
+
+# Объявления пространств имён — одной переменной: место эмиссии её только интерполирует.
+# Правки шапки (как xmlns:pal в формате 2.21) делаются здесь, в одном месте.
+$script:xmlnsDecl = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+
+# Версия формата как число для сравнений: "2.20" → 220, "2.9" → 209.
+# Строковое сравнение здесь неверно ("2.9" > "2.17" лексикографически) — известная ловушка.
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+# 2.21 (8.5) добавила в шапку пространство палитры — ради <Color> у значений перечисления.
+# Вставляем НА МЕСТО (после lf, перед style): платформа держит объявления по алфавиту,
+# дописать в конец нельзя.
+if ((Get-FormatRank $script:formatVersion) -ge 221) {
+	$script:xmlnsDecl = $script:xmlnsDecl -replace ' xmlns:style=', ' xmlns:pal="http://v8.1c.ru/8.1/data/ui/colors/palette" xmlns:style='
+}
 
 $pkgRoot = Join-Path $OutputDir "XDTOPackages"
 $pkgDir  = Join-Path $pkgRoot $Name
@@ -851,7 +978,7 @@ $uuid = [guid]::NewGuid().ToString()
 $md = New-Object System.Text.StringBuilder
 function M([string]$s) { [void]$md.Append($s); [void]$md.Append("`r`n") }
 M '<?xml version="1.0" encoding="UTF-8"?>'
-M '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.17">'
+M ("<MetaDataObject $($script:xmlnsDecl) version=`"$script:formatVersion`">")
 M "`t<XDTOPackage uuid=`"$uuid`">"
 M "`t`t<Properties>"
 M "`t`t`t<Name>$(EscText $Name)</Name>"
@@ -895,53 +1022,208 @@ if ($declaredImports.Count -gt 0 -and (Test-Path $xdtoRootDir)) {
 	}
 }
 
-$configXmlPath = Join-Path $OutputDir "Configuration.xml"
-$regResult = "no-config"
-if (Test-Path $configXmlPath) {
-	$configDoc = New-Object System.Xml.XmlDocument
-	$configDoc.PreserveWhitespace = $true
-	$configDoc.Load($configXmlPath)
-	$nsMgr = New-Object System.Xml.XmlNamespaceManager($configDoc.NameTable)
-	$nsMgr.AddNamespace("md", $MD_NS)
-	$childObjects = $configDoc.SelectSingleNode("//md:Configuration/md:ChildObjects", $nsMgr)
-	if ($childObjects) {
-		$existing = $childObjects.SelectNodes("md:XDTOPackage", $nsMgr)
-		$already = $false
-		foreach ($e in $existing) { if ($e.InnerText -eq $Name) { $already = $true; break } }
-		if ($already) {
-			$regResult = "already"
-		} else {
-			$newElem = $configDoc.CreateElement("XDTOPackage", $MD_NS)
-			$newElem.InnerText = $Name
-			if ($existing.Count -gt 0) {
-				$lastElem = $existing[$existing.Count - 1]
-				$newWs = $configDoc.CreateWhitespace("`n`t`t`t")
-				$childObjects.InsertAfter($newWs, $lastElem) | Out-Null
-				$childObjects.InsertAfter($newElem, $newWs) | Out-Null
-			} else {
-				$lastChild = $childObjects.LastChild
-				if ($lastChild -and $lastChild.NodeType -eq [System.Xml.XmlNodeType]::Whitespace) {
-					$newWs = $configDoc.CreateWhitespace("`n`t`t`t")
-					$childObjects.InsertBefore($newWs, $lastChild) | Out-Null
-					$childObjects.InsertBefore($newElem, $lastChild) | Out-Null
-				} else {
-					$childObjects.AppendChild($configDoc.CreateWhitespace("`n`t`t`t")) | Out-Null
-					$childObjects.AppendChild($newElem) | Out-Null
-					$childObjects.AppendChild($configDoc.CreateWhitespace("`n`t`t")) | Out-Null
+function Esc-XmlText {
+	param([string]$s)
+	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
+}
+
+# Куда навык ставит новую запись в <ChildObjects> — настройка newObjectPosition.
+# databases[].newObjectPosition базы, чей configSrc охватывает каталог родительского XML,
+# иначе корневое поле, иначе end. Значения: end — после последнего объекта того же вида
+# (так дописывает Конфигуратор); byName — по имени среди объектов того же вида.
+# Файл ищем от рабочего каталога вверх, каталог конфигурации — запасной путь: так же
+# его ищут support-guard и группа db-*, а скрипт навыка зовут по абсолютному пути, и cwd
+# остаётся рабочим каталогом проекта.
+# configSrc считается от каталога .v8-project.json, как задокументировано в
+# docs/v8-project-guide.md. Реестр семьи: tests/skills/check-inline-drift.mjs.
+function Get-NewObjectPosition([string]$cfgDir) {
+	try {
+		if (-not $cfgDir) { $cfgDir = "." }
+		# 1c-rules: .dev.env NEW_OBJECT_POSITION decides when the key is set (an unknown value = end).
+		$__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
+		if (Test-Path $__devEnvHelper) {
+		    . $__devEnvHelper
+		    $__devEnvPos = (Get-1CDevEnvValue 'NEW_OBJECT_POSITION')
+		    if ($__devEnvPos) {
+		        if ($__devEnvPos.ToLower() -eq 'byname') { return "byName" }
+		        return "end"
+		    }
+		}
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
+		if (-not $pj) { return "end" }
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
+		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
+		if ($proj.databases) {
+			foreach ($db in $proj.databases) {
+				if ($db.configSrc -and $db.newObjectPosition) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+						if ("$($db.newObjectPosition)" -eq "byName") { return "byName" }
+						return "end"
+					}
 				}
 			}
-			$cfgSettings = New-Object System.Xml.XmlWriterSettings
-			$cfgSettings.Encoding = New-Object System.Text.UTF8Encoding($true)
-			$cfgSettings.Indent = $false
-			$stream = New-Object System.IO.FileStream($configXmlPath, [System.IO.FileMode]::Create)
-			$writer = [System.Xml.XmlWriter]::Create($stream, $cfgSettings)
-			$configDoc.Save($writer)
-			$writer.Close()
-			$stream.Close()
-			$regResult = "added"
+		}
+		if ("$($proj.newObjectPosition)" -eq "byName") { return "byName" }
+		return "end"
+	} catch { return "end" }
+}
+
+# Виды, у которых порядок в дереве несёт смысл: автоматически их не упорядочиваем.
+# CommonAttribute — исключение самого стандарта (#std467): у общих реквизитов-разделителей
+# порядок в дереве задаёт порядок установки параметров сеанса. Subsystem и CommandGroup:
+# пока они не перечислены в <SubsystemsOrder> / <GroupsOrder> файла Ext/CommandInterface.xml,
+# порядок дерева задаёт порядок в интерфейсе, а платформа эти списки сама не заводит
+# (в выгрузке ACC вне GroupsOrder 15 живых групп из 39). Language исключён из осторожности,
+# без замера: языков обычно один-два, и в типовых их порядок не алфавитный.
+# Явно названный вид сортируется в любом случае.
+# Реестр семьи: tests/skills/check-inline-drift.mjs.
+function Test-OrderSensitiveType([string]$typeName) {
+	return @("CommonAttribute", "Subsystem", "CommandGroup", "Language") -ccontains $typeName
+}
+
+# Порядок имён объектов метаданных, как в дереве Конфигуратора.
+# Ключ — пары «ранг+символ»: регистр не учитывается, подчёркивание раньше цифр, цифры раньше
+# букв, буквы по кодам (латиница раньше кириллицы), ё на месте е. Культурные таблицы не
+# используются — они разные на разных ОС и в разных рантаймах, а так оба порта сравнивают
+# одинаково везде. Равные ключи разводит ordinal-сравнение исходных строк.
+# Возвращает -1 | 0 | 1. Реестр семьи: tests/skills/check-inline-drift.mjs.
+function Compare-MetadataNames([string]$a, [string]$b) {
+	$keys = @("", "")
+	$names = @($a, $b)
+	for ($i = 0; $i -lt 2; $i++) {
+		$sb = New-Object System.Text.StringBuilder
+		foreach ($ch in $names[$i].ToLowerInvariant().ToCharArray()) {
+			if ($ch -eq [char]0x0451) { $ch = [char]0x0435 }
+			if ([char]::IsDigit($ch)) { [void]$sb.Append('1') }
+			elseif ([char]::IsLetter($ch)) { [void]$sb.Append('2') }
+			else { [void]$sb.Append('0') }
+			[void]$sb.Append($ch)
+		}
+		$keys[$i] = $sb.ToString()
+	}
+	$r = [string]::CompareOrdinal($keys[0], $keys[1])
+	if ($r -eq 0) { $r = [string]::CompareOrdinal($a, $b) }
+	if ($r -lt 0) { return -1 }
+	if ($r -gt 0) { return 1 }
+	return 0
+}
+
+# Регистрация объекта в <ChildObjects> родительского XML. Общая реализация: эталон —
+# meta-compile, копии — role-compile, xdto-compile. Реестр семьи: tests/skills/check-inline-drift.mjs.
+# Возвращает исход: added | already | no-childobj | no-config.
+# Канонический порядок видов в <ChildObjects> — эталон в docs/1c-configuration-spec.md,
+# таблица «Порядок типов в ChildObjects». Нужен, чтобы новая группа вида вставала на своё
+# место: иначе платформа переставит её при первой же выгрузке и даст диф на ровном месте.
+# Реестр карт: tests/skills/check-type-maps.mjs.
+$childObjectTypes = @(
+	"Language","Subsystem","StyleItem","Style",
+	"CommonPicture","SessionParameter","Role","CommonTemplate",
+	"FilterCriterion","CommonModule","CommonAttribute","ExchangePlan",
+	"XDTOPackage","WebService","HTTPService","WSReference",
+	"EventSubscription","ScheduledJob","SettingsStorage","FunctionalOption",
+	"FunctionalOptionsParameter","DefinedType","Bot","PaletteColor","CommonCommand","CommandGroup",
+	"Constant","CommonForm","Catalog","Document",
+	"DocumentNumerator","Sequence","DocumentJournal","Enum",
+	"Report","DataProcessor","InformationRegister","AccumulationRegister",
+	"ChartOfCharacteristicTypes","ChartOfAccounts","AccountingRegister",
+	"ChartOfCalculationTypes","CalculationRegister",
+	"BusinessProcess","Task","ExternalDataSource","IntegrationService"
+)
+
+function Register-InChildObjects([string]$ParentXmlPath, [string]$ParentTag, [string]$ChildTag, [string]$ChildName) {
+	if (-not (Test-Path $ParentXmlPath)) { return "no-config" }
+
+	$doc = New-Object System.Xml.XmlDocument
+	$doc.PreserveWhitespace = $true
+	$doc.Load($ParentXmlPath)
+
+	$nsMgr = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+	$nsMgr.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
+
+	$childObjects = $doc.SelectSingleNode("//md:$ParentTag/md:ChildObjects", $nsMgr)
+	if (-not $childObjects) { return "no-childobj" }
+
+	$existing = $childObjects.SelectNodes("md:$ChildTag", $nsMgr)
+	foreach ($e in $existing) {
+		if ($e.InnerText -eq $ChildName) { return "already" }
+	}
+
+	# Правка по сырому тексту, зеркально py-порту: сериализация DOM переписала бы файл целиком
+	# (регистр encoding, `<a />` вместо `<a/>`), а текстовая вставка хранит его байт-в-байт —
+	# дельта ровно в одну строку. Правим чужой файл, значит наследуем его стиль (#44/#46/#47).
+	# DOM выше — только на чтение: найти ChildObjects и отсечь дубликат.
+	$configContent = [System.IO.File]::ReadAllText($ParentXmlPath, (New-Object System.Text.UTF8Encoding($false)))
+	$eol = if ($configContent.Contains("`r`n")) { "`r`n" } else { "`n" }
+	$entry = "<$ChildTag>$(Esc-XmlText $ChildName)</$ChildTag>"
+	$enc = New-Object System.Text.UTF8Encoding($true)
+
+	$block = [regex]::Match($configContent, '(?s)<ChildObjects\s*>.*?</ChildObjects>')
+	if (-not $block.Success) {
+		# Самозакрытый <ChildObjects/> раскрываем первой записью
+		$empty = [regex]::Match($configContent, '<ChildObjects\s*/>')
+		if (-not $empty.Success) { return "no-childobj" }
+		$replacement = "<ChildObjects>$eol`t`t`t$entry$eol`t`t</ChildObjects>"
+		$newContent = $configContent.Substring(0, $empty.Index) + $replacement + $configContent.Substring($empty.Index + $empty.Length)
+		[System.IO.File]::WriteAllText($ParentXmlPath, $newContent, $enc)
+		return "added"
+	}
+
+	# byName: перед первым объектом того же вида, чьё имя больше нового.
+	# Виды с осмысленным порядком в дереве пропускаем — см. Test-OrderSensitiveType.
+	if (-not (Test-OrderSensitiveType $ChildTag) -and (Get-NewObjectPosition ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($ParentXmlPath)))) -eq "byName") {
+		$lineRx = [regex]"(?m)^([ \t]*)<$ChildTag>([^<]*)</$ChildTag>"
+		$m = $lineRx.Match($configContent, $block.Index, $block.Length)
+		while ($m.Success) {
+			if ((Compare-MetadataNames $m.Groups[2].Value $ChildName) -gt 0) {
+				$newContent = $configContent.Substring(0, $m.Index) + $m.Groups[1].Value + $entry + $eol + $configContent.Substring($m.Index)
+				[System.IO.File]::WriteAllText($ParentXmlPath, $newContent, $enc)
+				return "added"
+			}
+			$m = $m.NextMatch()
 		}
 	}
+
+	$closeSame = "</$ChildTag>"
+	$blockEnd = $block.Index + $block.Length
+	$lastSame = $configContent.LastIndexOf($closeSame, $blockEnd - 1, $block.Length, [System.StringComparison]::Ordinal)
+	if ($lastSame -ge 0) {
+		# После последнего объекта того же вида (группы по видам сохраняются)
+		$insertAt = $lastSame + $closeSame.Length
+		$newContent = $configContent.Substring(0, $insertAt) + "$eol`t`t`t$entry" + $configContent.Substring($insertAt)
+	} else {
+		# Группы своего вида ещё нет: ставим её в канонический порядок видов — перед первой
+		# группой вида старше по $childObjectTypes. Дописать в конец блока нельзя: платформа
+		# переставит группу при первой же выгрузке и даст диф на ровном месте.
+		$ownIdx = $childObjectTypes.IndexOf($ChildTag)
+		$anchor = $null
+		if ($ownIdx -ge 0) {
+			$typeRx = [regex]"(?m)^([ \t]*)<(\w+)>[^<]*</\2>"
+			$tm = $typeRx.Match($configContent, $block.Index, $block.Length)
+			while ($tm.Success) {
+				$otherIdx = $childObjectTypes.IndexOf($tm.Groups[2].Value)
+				if ($otherIdx -gt $ownIdx) { $anchor = $tm; break }
+				$tm = $tm.NextMatch()
+			}
+		}
+		if ($anchor) {
+			$newContent = $configContent.Substring(0, $anchor.Index) + $anchor.Groups[1].Value + $entry + $eol + $configContent.Substring($anchor.Index)
+		} else {
+			# Видов старше в файле нет — новая строка перед </ChildObjects>,
+			# отступ закрывающего тега переиспользуется
+			$closeAt = $configContent.LastIndexOf("</ChildObjects>", $blockEnd - 1, $block.Length, [System.StringComparison]::Ordinal)
+			$newContent = $configContent.Substring(0, $closeAt) + "`t$entry$eol`t`t" + $configContent.Substring($closeAt)
+		}
+	}
+	[System.IO.File]::WriteAllText($ParentXmlPath, $newContent, $enc)
+	return "added"
 }
+
+$configXmlPath = Join-Path $OutputDir "Configuration.xml"
+$regResult = Register-InChildObjects $configXmlPath "Configuration" "XDTOPackage" $Name
 
 # --- Report ---
 
@@ -961,5 +1243,6 @@ if ($script:warnings.Count -gt 0) {
 switch ($regResult) {
 	"added"     { Write-Host "  Configuration.xml: <XDTOPackage>$Name</XDTOPackage> добавлен в ChildObjects" }
 	"already"   { Write-Host "  Configuration.xml: <XDTOPackage>$Name</XDTOPackage> уже зарегистрирован" }
+	"no-childobj" { [Console]::Error.WriteLine("ПРЕДУПРЕЖДЕНИЕ: Configuration.xml найден, но <ChildObjects> не найден") }
 	"no-config" { Write-Host "  Configuration.xml не найден — регистрация пропущена" }
 }

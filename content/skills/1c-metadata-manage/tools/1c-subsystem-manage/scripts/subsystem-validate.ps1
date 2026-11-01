@@ -1,7 +1,8 @@
-﻿# subsystem-validate v1.2 — Validate 1C subsystem XML structure
+﻿# subsystem-validate v1.8 — Validate 1C subsystem XML structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)][Alias('Path')][string]$SubsystemPath,
+	[Parameter(Mandatory, Position=0)][Alias('Path')][string]$SubsystemPath,
 	[switch]$Detailed,
 	[int]$MaxErrors = 30,
 	[string]$OutFile
@@ -10,9 +11,52 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Штамп версии формата — атрибут version КОРНЕВОГО элемента файла. Копия общего эталона (семья
+# root_version, авторитет — meta-validate).
+function Get-RootVersion([string]$xmlPath) {
+	if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) { return $null }
+	$buf = New-Object byte[] 4096
+	$fs = [System.IO.File]::OpenRead($xmlPath)
+	try { $len = $fs.Read($buf, 0, $buf.Length) } finally { $fs.Dispose() }
+	$head = [System.Text.Encoding]::UTF8.GetString($buf, 0, $len)
+	$m = [regex]::Match($head, '<[A-Za-z_][\w.:-]*(\s[^>]*)?/?>')
+	if (-not $m.Success) { return $null }
+	$v = [regex]::Match($m.Groups[1].Value, '(?:^|\s)version="([^"]*)"')
+	if ($v.Success) { return $v.Groups[1].Value }
+	return $null
+}
+
+# Корень автономной внешней обработки/отчёта. Копия общего эталона (семья is_external_root,
+# авторитет — cf-edit).
+function Test-ExternalObjectRoot([string]$xmlPath) {
+	if (-not (Test-Path $xmlPath)) { return $false }
+	try {
+		[xml]$mx = Get-Content -Path $xmlPath -Encoding UTF8
+		$el = $mx.DocumentElement.FirstChild
+		while ($el -and $el.NodeType -ne 'Element') { $el = $el.NextSibling }
+		if ($el) { return @('ExternalDataProcessor','ExternalReport') -contains $el.LocalName }
+	} catch {}
+	return $false
+}
+
+# Якорь выгрузки: корень автономной EPF/ERF либо Configuration.xml, ближайший вверх. Копия общего
+# эталона (семья find_dump_anchor, авторитет — meta-validate).
+function Find-DumpAnchor([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 15 -and $d; $i++) {
+		if (Test-ExternalObjectRoot "$d.xml") { return "$d.xml" }
+		$cfg = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfg) { return $cfg }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if (-not $parent -or $parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($SubsystemPath)) {
-	$SubsystemPath = Join-Path (Get-Location).Path $SubsystemPath
+	$SubsystemPath = Join-Path (Get-Location).ProviderPath $SubsystemPath
 }
 if (Test-Path $SubsystemPath -PathType Container) {
 	$dirName = Split-Path $SubsystemPath -Leaf
@@ -38,7 +82,7 @@ if (-not (Test-Path $SubsystemPath)) {
 	Write-Host "[ERROR] File not found: $SubsystemPath"
 	exit 1
 }
-$resolvedPath = (Resolve-Path $SubsystemPath).Path
+$resolvedPath = (Resolve-Path $SubsystemPath).ProviderPath
 
 # --- Output infrastructure ---
 $script:errors = 0
@@ -48,16 +92,21 @@ $script:okCount = 0
 $script:output = New-Object System.Text.StringBuilder 8192
 
 function Out-Line([string]$msg) { $script:output.AppendLine($msg) | Out-Null }
-function Report-OK([string]$msg) {
+function Report-OK {
+	param([string]$msg)
 	$script:okCount++
 	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
-function Report-Error([string]$msg) {
+function Report-Error {
+	param([string]$msg)
 	$script:errors++
 	Out-Line "[ERROR] $msg"
-	if ($script:errors -ge $MaxErrors) { $script:stopped = $true }
+	if ($script:errors -ge $MaxErrors) {
+		$script:stopped = $true
+	}
 }
-function Report-Warn([string]$msg) {
+function Report-Warn {
+	param([string]$msg)
 	$script:warnings++
 	Out-Line "[WARN]  $msg"
 }
@@ -325,6 +374,36 @@ if (-not $script:stopped) {
 	} else {
 		Report-OK "13. UseOneCommand: false (no constraint)"
 	}
+
+	# --- 14. Format version: тела Ext/*.xml — как у дескриптора; сверка с выгрузкой ---
+	# Дескриптор подсистемы и её штампованные тела (CommandInterface.xml, Help.xml) платформа загружает
+	# только в одной версии формата: «Версия формата загружаемого файла … отличается от версии формата
+	# ранее загруженных файлов». Вложенные подсистемы — отдельные объекты. С остальной выгрузкой
+	# подсистема может расходиться — платформа такое грузит, это лишь неоднородность выгрузки (типично
+	# после мержа веток, выгруженных разными платформами).
+	if ($version) {
+		$subExtDir = Join-Path (Join-Path $parentDir2 $baseName2) "Ext"
+		$verBodiesOk = 0
+		$verErrors = 0
+		if (Test-Path $subExtDir -PathType Container) {
+			$bodyNames = @(Get-ChildItem $subExtDir -Filter "*.xml" -File | ForEach-Object { $_.Name })
+			[Array]::Sort($bodyNames, [StringComparer]::Ordinal)
+			foreach ($bn in $bodyNames) {
+				$bodyVer = Get-RootVersion (Join-Path $subExtDir $bn)
+				if (-not $bodyVer) { continue }
+				if ($bodyVer -eq $version) { $verBodiesOk++; continue }
+				$verErrors++
+				Report-Error "14. Format version: $baseName2/Ext/$bn is stamped $bodyVer, the descriptor $version — the platform refuses to load parts of one object in different formats"
+			}
+		}
+		$dumpAnchor = Find-DumpAnchor $parentDir2
+		$dumpVer = if ($dumpAnchor) { Get-RootVersion $dumpAnchor } else { $null }
+		if ($dumpVer -and $version -ne $dumpVer) {
+			Report-Warn "14. Format version $version differs from the dump ($dumpVer) — the platform loads it, but the dump is no longer uniform (typical after merging branches dumped by different platforms)"
+		} elseif ($verErrors -eq 0 -and ($verBodiesOk -gt 0 -or $dumpVer)) {
+			Report-OK "14. Format version: $version, matches the stamped parts and the dump"
+		}
+	}
 }
 
 # --- Finalize ---
@@ -334,6 +413,7 @@ if ($script:errors -eq 0 -and $script:warnings -eq 0 -and -not $Detailed) {
 	$result = "=== Validation OK: Subsystem.$subName ($checks checks) ==="
 } else {
 	Out-Line ""
+	if ($script:stopped -and $script:errors -ge $MaxErrors) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
 	Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
 	$result = $script:output.ToString()
 }
@@ -342,7 +422,7 @@ Write-Host $result
 
 if ($OutFile) {
 	if (-not [System.IO.Path]::IsPathRooted($OutFile)) {
-		$OutFile = Join-Path (Get-Location).Path $OutFile
+		$OutFile = Join-Path (Get-Location).ProviderPath $OutFile
 	}
 	$utf8Bom = New-Object System.Text.UTF8Encoding($true)
 	[System.IO.File]::WriteAllText($OutFile, $result, $utf8Bom)

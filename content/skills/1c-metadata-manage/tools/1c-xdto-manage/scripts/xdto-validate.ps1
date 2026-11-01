@@ -1,7 +1,8 @@
-﻿# xdto-validate v1.1 — Validate a 1C XDTO package
+﻿# xdto-validate v1.7 — Validate a 1C XDTO package
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory)]
+	[Parameter(Mandatory, Position=0)]
 	[Alias('Path')]
 	[string]$PackagePath,
 
@@ -43,16 +44,21 @@ $script:stopped = $false
 $script:output = New-Object System.Text.StringBuilder
 
 function Out-Line([string]$s) { [void]$script:output.AppendLine($s) }
-function Report-OK([string]$msg) {
+function Report-OK {
+	param([string]$msg)
 	$script:okCount++
 	if ($Detailed) { Out-Line "[OK]    $msg" }
 }
-function Report-Error([string]$msg) {
+function Report-Error {
+	param([string]$msg)
 	$script:errors++
 	Out-Line "[ERROR] $msg"
-	if ($script:errors -ge $MaxErrors) { $script:stopped = $true }
+	if ($script:errors -ge $MaxErrors) {
+		$script:stopped = $true
+	}
 }
-function Report-Warn([string]$msg) {
+function Report-Warn {
+	param([string]$msg)
 	$script:warnings++
 	Out-Line "[WARN]  $msg"
 }
@@ -60,7 +66,7 @@ function Report-Warn([string]$msg) {
 # --- Resolve paths ---
 
 if (-not [System.IO.Path]::IsPathRooted($PackagePath)) {
-	$PackagePath = Join-Path (Get-Location).Path $PackagePath
+	$PackagePath = Join-Path (Get-Location).ProviderPath $PackagePath
 }
 
 $binPath = $null
@@ -88,7 +94,7 @@ if (Test-Path $PackagePath -PathType Leaf) {
 $fileName = if ($binPath) { [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($binPath))) } else { $PackagePath }
 
 if (-not $binPath) {
-	Write-Host "[ERROR] Не найден Ext/Package.bin для пути: $PackagePath"
+	Write-Host "[ERROR] Ext/Package.bin not found for path: $PackagePath"
 	exit 1
 }
 
@@ -105,6 +111,7 @@ $finalize = {
 		$result = "=== Validation OK: $fileName ($checks checks) ==="
 	} else {
 		Out-Line ""
+		if ($script:stopped -and $script:errors -ge $MaxErrors) { Out-Line "Stopped after $MaxErrors errors. Fix and re-run." }
 		Out-Line "=== Result: $($script:errors) errors, $($script:warnings) warnings ($checks checks) ==="
 		$result = $script:output.ToString()
 	}
@@ -121,21 +128,21 @@ $doc = New-Object System.Xml.XmlDocument
 try {
 	$doc.Load($binPath)
 } catch {
-	Report-Error "Package.bin не является корректным XML: $($_.Exception.Message)"
+	Report-Error "Package.bin is not well-formed XML: $($_.Exception.Message)"
 	& $finalize
 	exit 1
 }
 $pkg = $doc.DocumentElement
 if ($pkg.get_LocalName() -ne "package") {
-	Report-Error "Ожидался корневой <package>, найден <$($pkg.get_LocalName())>"
+	Report-Error "Expected root <package>, found <$($pkg.get_LocalName())>"
 	& $finalize
 	exit 1
 }
-Report-OK "Package.bin: корректный XML, корень <package>"
+Report-OK "Package.bin: well-formed XML, root <package>"
 
 $targetNs = $pkg.GetAttribute("targetNamespace")
 if (-not $targetNs) {
-	Report-Error "У <package> не задан targetNamespace"
+	Report-Error "<package> has no targetNamespace"
 } else {
 	Report-OK "targetNamespace: $targetNs"
 }
@@ -144,9 +151,9 @@ if (-not $targetNs) {
 
 $bytes = [System.IO.File]::ReadAllBytes($binPath)
 if (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) {
-	Report-Warn "Package.bin без BOM UTF-8 — платформа пишет файл с BOM"
+	Report-Warn "Package.bin has no UTF-8 BOM — the platform writes the file with a BOM"
 } else {
-	Report-OK "Кодировка: UTF-8 с BOM"
+	Report-OK "Encoding: UTF-8 with BOM"
 }
 
 # --- 3. Collect declarations ---
@@ -179,13 +186,13 @@ foreach ($t in $topSequence) {
 	$rank = [array]::IndexOf($TOP_ORDER, $t)
 	if ($rank -lt 0) { continue }
 	if ($rank -lt $prevRank) {
-		Report-Error "Нарушен порядок элементов верхнего уровня: <$t> после <$($TOP_ORDER[$prevRank])>. Модель требует import -> property -> valueType -> objectType; платформа отвергнет пакет при обновлении конфигурации"
+		Report-Error "Top-level element order violated: <$t> after <$($TOP_ORDER[$prevRank])>. The model requires import -> property -> valueType -> objectType; the platform rejects the package on configuration update"
 		$orderOk = $false
 		break
 	}
 	$prevRank = $rank
 }
-if ($orderOk) { Report-OK "Порядок элементов верхнего уровня корректен" }
+if ($orderOk) { Report-OK "Top-level element order is correct" }
 
 # --- 4. Duplicate type names ---
 
@@ -194,14 +201,14 @@ foreach ($n in $pkg.ChildNodes) {
 	if ($n.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
 	if ($n.get_LocalName() -ne "objectType" -and $n.get_LocalName() -ne "valueType") { continue }
 	$nm = $n.GetAttribute("name")
-	if (-not $nm) { Report-Error "<$($n.get_LocalName())> без атрибута name"; continue }
+	if (-not $nm) { Report-Error "<$($n.get_LocalName())> has no name attribute"; continue }
 	if ($seen.ContainsKey($nm)) {
-		Report-Error "Дублирующееся имя типа: $nm"
+		Report-Error "Duplicate type name: $nm"
 	} else {
 		$seen[$nm] = $true
 	}
 }
-if ($localTypes.Count -gt 0) { Report-OK "$($localTypes.Count) тип(ов), имена уникальны" }
+if ($localTypes.Count -gt 0) { Report-OK "$($localTypes.Count) type(s), names are unique" }
 
 # --- 5. Type references resolve ---
 
@@ -214,7 +221,7 @@ function Resolve-Ref([System.Xml.XmlElement]$el, [string]$attr, [string]$raw) {
 	# Нотация Кларка {ns}local
 	if ($raw.StartsWith("{")) {
 		$close = $raw.IndexOf("}")
-		if ($close -lt 0) { Report-Error "Некорректная нотация Кларка в $attr=`"$raw`""; return }
+		if ($close -lt 0) { Report-Error "Invalid Clark notation in $attr=`"$raw`""; return }
 		$ns = $raw.Substring(1, $close - 1)
 		$local = $raw.Substring($close + 1)
 	} else {
@@ -223,7 +230,7 @@ function Resolve-Ref([System.Xml.XmlElement]$el, [string]$attr, [string]$raw) {
 			$ns = $el.GetNamespaceOfPrefix($parts[0])
 			$local = $parts[1]
 			if (-not $ns) {
-				Report-Error "Префикс `"$($parts[0])`" не объявлен: $attr=`"$raw`" (тип $($el.get_LocalName()))"
+				Report-Error "Prefix `"$($parts[0])`" is not declared: $attr=`"$raw`" (element $($el.get_LocalName()))"
 				return
 			}
 		} else {
@@ -239,17 +246,17 @@ function Resolve-Ref([System.Xml.XmlElement]$el, [string]$attr, [string]$raw) {
 	if ($ns -eq $targetNs) {
 		if ($attr -eq "ref") {
 			if (-not $globalProps.Contains($local)) {
-				Report-Error "ref=`"$raw`" не разрешается: в пакете нет глобального свойства `"$local`""
+				Report-Error "ref=`"$raw`" does not resolve: the package has no global property `"$local`""
 			}
 		} elseif (-not $localTypes.Contains($local)) {
-			Report-Error "$attr=`"$raw`" не разрешается: в пакете нет типа `"$local`""
+			Report-Error "$attr=`"$raw`" does not resolve: the package has no type `"$local`""
 		}
 		return
 	}
 	if ($ns) {
 		[void]$usedNamespaces.Add($ns)
 		if (-not $imports.Contains($ns)) {
-			Report-Error "$attr=`"$raw`" ссылается на `"$ns`", но <import namespace=`"$ns`"/> не объявлен"
+			Report-Error "$attr=`"$raw`" refers to `"$ns`", but <import namespace=`"$ns`"/> is not declared"
 		}
 	}
 }
@@ -268,7 +275,7 @@ foreach ($el in $pkg.SelectNodes("//*")) {
 	}
 	if ($script:stopped) { break }
 }
-if (-not $script:stopped) { Report-OK "$nodeCount узлов: ссылки на типы разрешаются" }
+if (-not $script:stopped) { Report-OK "$nodeCount nodes: type references resolve" }
 
 if ($script:stopped) { & $finalize; exit 1 }
 
@@ -279,7 +286,7 @@ if ($anyTypeProps.Count -gt 0 -and $imports.Count -gt 0) {
 	$names = @()
 	foreach ($p in $anyTypeProps) { if ($p.HasAttribute("name")) { $names += $p.GetAttribute("name") } }
 	$shown = ($names | Select-Object -First 5) -join ", "
-	Report-Warn "Свойств с type=`"xs:anyType`": $($anyTypeProps.Count) при объявленных импортах ($shown). Тип не разрешён — заполнить структурно такое свойство нельзя. Обычно это след импорта XML-схемы: платформа заменяет неразрешённый чужой тип на anyType без ошибки"
+	Report-Warn "Properties with type=`"xs:anyType`": $($anyTypeProps.Count) despite declared imports ($shown). The type is unresolved — such a property cannot be filled structurally. Usually a trace of an XML Schema import: the platform silently replaces an unresolved foreign type with anyType"
 }
 
 # --- 7. Unused imports ---
@@ -290,9 +297,9 @@ if ($anyTypeProps.Count -gt 0 -and $imports.Count -gt 0) {
 $unused = @()
 foreach ($imp in $imports) { if (-not $usedNamespaces.Contains($imp)) { $unused += $imp } }
 if ($unused.Count -gt 0 -and $anyTypeProps.Count -gt 0) {
-	Report-Warn "Импорт(ы) без единого использованного типа: $($unused -join ', ') — вместе с anyType это признак неразрешённой зависимости"
+	Report-Warn "Import(s) with no type used: $($unused -join ', ') — together with anyType this indicates an unresolved dependency"
 }
-if ($imports.Count -gt 0 -and $unused.Count -eq 0) { Report-OK "$($imports.Count) импорт(ов) — все используются" }
+if ($imports.Count -gt 0 -and $unused.Count -eq 0) { Report-OK "$($imports.Count) import(s) — all used" }
 
 # --- 8. nillable on attribute-form properties ---
 
@@ -303,7 +310,7 @@ foreach ($p in $pkg.SelectNodes("//*[local-name()='property']")) {
 	}
 }
 if ($nillAttrs.Count -gt 0) {
-	Report-Warn "Свойств с nillable=`"true`" и form=`"Attribute`": $($nillAttrs.Count) ($(($nillAttrs | Select-Object -First 5) -join ', ')). Спецификация XSD не допускает nillable у атрибутов — экспорт XML-схемы в Конфигураторе их потеряет"
+	Report-Warn "Properties with nillable=`"true`" and form=`"Attribute`": $($nillAttrs.Count) ($(($nillAttrs | Select-Object -First 5) -join ', ')). The XSD specification does not allow nillable on attributes — XML Schema export in Designer will lose them"
 }
 
 # --- 9. Facet consistency ---
@@ -313,35 +320,35 @@ $facetChecked = 0
 foreach ($t in $pkg.SelectNodes("//*[local-name()='valueType' or local-name()='typeDef']")) {
 	if ($t.get_LocalName() -eq "typeDef" -and $t.GetAttribute("type", $XSI_NS) -eq "ObjectType") { continue }
 	$facetChecked++
-	$nm = if ($t.HasAttribute("name")) { $t.GetAttribute("name") } else { "(анонимный тип)" }
+	$nm = if ($t.HasAttribute("name")) { $t.GetAttribute("name") } else { "(anonymous type)" }
 
 	$len = $t.GetAttribute("length")
 	if ($len -and ($t.HasAttribute("minLength") -or $t.HasAttribute("maxLength"))) {
 		# Спецификация XSD это запрещает, но платформа такие типы хранит — предупреждение, не ошибка
-		Report-Warn "$nm : length задан вместе с minLength/maxLength — спецификация XSD считает их взаимоисключающими"
+		Report-Warn "$nm : length is set together with minLength/maxLength — the XSD specification treats them as mutually exclusive"
 	}
 	$minL = $t.GetAttribute("minLength"); $maxL = $t.GetAttribute("maxLength")
 	if ($minL -and $maxL -and ([int]$minL -gt [int]$maxL)) {
-		Report-Error "$nm : minLength ($minL) больше maxLength ($maxL)"
+		Report-Error "$nm : minLength ($minL) is greater than maxLength ($maxL)"
 	}
 	$td = $t.GetAttribute("totalDigits"); $fd = $t.GetAttribute("fractionDigits")
 	if ($td -and $fd -and ([int]$fd -gt [int]$td)) {
-		Report-Error "$nm : fractionDigits ($fd) больше totalDigits ($td)"
+		Report-Error "$nm : fractionDigits ($fd) is greater than totalDigits ($td)"
 	}
 	$ws = $t.GetAttribute("whiteSpace")
 	if ($ws -and @("preserve", "replace", "collapse") -notcontains $ws) {
-		Report-Error "$nm : недопустимое whiteSpace=`"$ws`""
+		Report-Error "$nm : invalid whiteSpace=`"$ws`""
 	}
 	$var = $t.GetAttribute("variety")
 	if ($var -and @("Atomic", "List", "Union") -notcontains $var) {
-		Report-Error "$nm : недопустимое variety=`"$var`""
+		Report-Error "$nm : invalid variety=`"$var`""
 	}
 	if ($var -eq "List" -and -not $t.HasAttribute("itemType")) {
-		Report-Warn "$nm : variety=`"List`" без itemType"
+		Report-Warn "$nm : variety=`"List`" without itemType"
 	}
 	if ($script:stopped) { break }
 }
-if ($facetChecked -gt 0 -and -not $script:stopped) { Report-OK "$facetChecked простых тип(ов): фасеты согласованы" }
+if ($facetChecked -gt 0 -and -not $script:stopped) { Report-OK "$facetChecked simple type(s): facets are consistent" }
 
 if ($script:stopped) { & $finalize; exit 1 }
 
@@ -350,18 +357,18 @@ if ($script:stopped) { & $finalize; exit 1 }
 foreach ($p in $pkg.SelectNodes("//*[local-name()='property']")) {
 	$form = $p.GetAttribute("form")
 	if ($form -and @("Element", "Attribute", "Text") -notcontains $form) {
-		Report-Error "Свойство `"$($p.GetAttribute('name'))`": недопустимое form=`"$form`""
+		Report-Error "Property `"$($p.GetAttribute('name'))`": invalid form=`"$form`""
 	}
 	$ub = $p.GetAttribute("upperBound")
 	if ($ub -and $ub -ne "-1" -and ([int]$ub -lt 1)) {
-		Report-Error "Свойство `"$($p.GetAttribute('name'))`": upperBound=`"$ub`" (допустимы -1 или число ≥ 1)"
+		Report-Error "Property `"$($p.GetAttribute('name'))`": upperBound=`"$ub`" (allowed: -1 or a number ≥ 1)"
 	}
 	$lb = $p.GetAttribute("lowerBound")
 	if ($lb -and $ub -and $ub -ne "-1" -and ([int]$lb -gt [int]$ub)) {
-		Report-Error "Свойство `"$($p.GetAttribute('name'))`": lowerBound ($lb) больше upperBound ($ub)"
+		Report-Error "Property `"$($p.GetAttribute('name'))`": lowerBound ($lb) is greater than upperBound ($ub)"
 	}
 	if (-not $p.HasAttribute("name") -and -not $p.HasAttribute("ref")) {
-		Report-Error "Свойство без name и без ref"
+		Report-Error "Property without name or ref"
 	}
 	# В модели XDTO fixed — булев признак, само значение лежит в default.
 	# В XML-схеме наоборот: fixed="V" совмещает признак и значение.
@@ -369,28 +376,28 @@ foreach ($p in $pkg.SelectNodes("//*[local-name()='property']")) {
 		$fx = $p.GetAttribute("fixed")
 		$pName = if ($p.HasAttribute("name")) { $p.GetAttribute("name") } else { $p.GetAttribute("ref") }
 		if (@("true", "false") -cnotcontains $fx) {
-			Report-Error "Свойство `"$pName`": fixed=`"$fx`" — в модели это булев признак, значение задаётся в default (в XML-схеме признак и значение совмещены в fixed)"
+			Report-Error "Property `"$pName`": fixed=`"$fx`" — in the model this is a boolean flag; the value goes in default (XML Schema combines flag and value in fixed)"
 		} elseif ($fx -ceq "true" -and -not $p.HasAttribute("default")) {
-			Report-Error "Отсутствует фиксированное значение свойства '$pName': есть fixed=`"true`", нет default"
+			Report-Error "Property `"$pName`": fixed=`"true`" without default — the platform rejects the package («Отсутствует фиксированное значение свойства '$pName'»)"
 		}
 	}
 	if ($script:stopped) { break }
 }
-if (-not $script:stopped) { Report-OK "Свойства: form, кратности и фиксированные значения корректны" }
+if (-not $script:stopped) { Report-OK "Properties: form, cardinalities and fixed values are correct" }
 
 # --- 10b. Structural consistency ---
 
 $structOk = $true
 foreach ($t in $pkg.SelectNodes("//*[local-name()='objectType' or local-name()='typeDef']")) {
 	if ($t.get_LocalName() -eq "typeDef" -and $t.GetAttribute("type", $XSI_NS) -ne "ObjectType") { continue }
-	$tn = if ($t.HasAttribute("name")) { $t.GetAttribute("name") } else { "(анонимный тип)" }
+	$tn = if ($t.HasAttribute("name")) { $t.GetAttribute("name") } else { "(anonymous type)" }
 	$propNames = @{}
 	foreach ($c in $t.ChildNodes) {
 		if ($c.NodeType -ne [System.Xml.XmlNodeType]::Element -or $c.get_LocalName() -ne "property") { continue }
 		$pn = $c.GetAttribute("name")
 		if ($pn) {
 			if ($propNames.ContainsKey($pn)) {
-				Report-Error "$tn : дублирующееся имя свойства `"$pn`""
+				Report-Error "$tn : duplicate property name `"$pn`""
 				$structOk = $false
 			}
 			$propNames[$pn] = $true
@@ -402,7 +409,7 @@ foreach ($t in $pkg.SelectNodes("//*[local-name()='objectType' or local-name()='
 foreach ($p in $pkg.SelectNodes("//*[local-name()='property']")) {
 	$pn = if ($p.HasAttribute("name")) { $p.GetAttribute("name") } else { $p.GetAttribute("ref") }
 	if ($p.HasAttribute("name") -and $p.HasAttribute("ref")) {
-		Report-Error "Свойство `"$pn`": заданы одновременно name и ref — допустимо только одно"
+		Report-Error "Property `"$pn`": both name and ref are set — only one is allowed"
 		$structOk = $false
 	}
 	$inlineTypeDef = $null
@@ -410,11 +417,11 @@ foreach ($p in $pkg.SelectNodes("//*[local-name()='property']")) {
 		if ($c.NodeType -eq [System.Xml.XmlNodeType]::Element -and $c.get_LocalName() -eq "typeDef") { $inlineTypeDef = $c; break }
 	}
 	if ($inlineTypeDef -and $p.HasAttribute("type")) {
-		Report-Error "Свойство `"$pn`": заданы одновременно type и вложенный <typeDef> — допустимо только одно"
+		Report-Error "Property `"$pn`": both type and a nested <typeDef> are set — only one is allowed"
 		$structOk = $false
 	}
 	if ($inlineTypeDef -and -not $inlineTypeDef.HasAttribute("type", $XSI_NS)) {
-		Report-Error "Свойство `"$pn`": у вложенного <typeDef> не задан xsi:type (ValueType или ObjectType)"
+		Report-Error "Property `"$pn`": nested <typeDef> has no xsi:type (ValueType or ObjectType)"
 		$structOk = $false
 	}
 	if ($script:stopped) { break }
@@ -425,7 +432,7 @@ foreach ($vt in $pkg.SelectNodes("//*[local-name()='valueType']")) {
 	foreach ($c in $vt.ChildNodes) {
 		if ($c.NodeType -ne [System.Xml.XmlNodeType]::Element -or $c.get_LocalName() -ne "typeDef") { continue }
 		if ($c.HasAttribute("type", $XSI_NS)) {
-			Report-Warn "$($vt.GetAttribute('name')) : у <typeDef> внутри <valueType> задан xsi:type — платформа его здесь не пишет"
+			Report-Warn "$($vt.GetAttribute('name')) : <typeDef> inside <valueType> has xsi:type — the platform does not write it here"
 		}
 	}
 }
@@ -438,7 +445,7 @@ foreach ($t in $pkg.SelectNodes("//*[local-name()='objectType'][@base]")) {
 	$bns = $t.GetNamespaceOfPrefix($parts[0])
 	if ($bns -ne $targetNs) { continue }
 	if ($valueTypeNames.Contains($parts[1])) {
-		Report-Error "$($t.GetAttribute('name')) : base=`"$b`" ссылается на valueType, а objectType может наследоваться только от objectType"
+		Report-Error "$($t.GetAttribute('name')) : base=`"$b`" refers to a valueType, but an objectType can only inherit from an objectType"
 		$structOk = $false
 	}
 }
@@ -449,7 +456,7 @@ foreach ($t in $pkg.SelectNodes("//*[local-name()='valueType'][@base]")) {
 	$bns = $t.GetNamespaceOfPrefix($parts[0])
 	if ($bns -ne $targetNs) { continue }
 	if ($objectTypeNames.Contains($parts[1])) {
-		Report-Error "$($t.GetAttribute('name')) : base=`"$b`" ссылается на objectType, а valueType может строиться только на простом типе"
+		Report-Error "$($t.GetAttribute('name')) : base=`"$b`" refers to an objectType, but a valueType can only be built on a simple type"
 		$structOk = $false
 	}
 }
@@ -462,12 +469,12 @@ foreach ($t in $pkg.SelectNodes("//*[local-name()='valueType' or local-name()='t
 		if ($c.NodeType -eq [System.Xml.XmlNodeType]::Element -and $c.get_LocalName() -eq "typeDef") { $hasMember = $true; break }
 	}
 	if (-not $hasMember) {
-		$tn = if ($t.HasAttribute("name")) { $t.GetAttribute("name") } else { "(анонимный тип)" }
-		Report-Warn "$tn : variety=`"Union`" без memberTypes и без вложенных типов — состав объединения пуст"
+		$tn = if ($t.HasAttribute("name")) { $t.GetAttribute("name") } else { "(anonymous type)" }
+		Report-Warn "$tn : variety=`"Union`" without memberTypes or nested types — the union is empty"
 	}
 }
 
-if ($structOk -and -not $script:stopped) { Report-OK "Структура типов и свойств согласована" }
+if ($structOk -and -not $script:stopped) { Report-OK "Type and property structure is consistent" }
 
 if ($script:stopped) { & $finalize; exit 1 }
 
@@ -481,19 +488,19 @@ if ($mdPath) {
 	$mdName = $md.SelectSingleNode("//md:XDTOPackage/md:Properties/md:Name", $nsm)
 	$mdNs = $md.SelectSingleNode("//md:XDTOPackage/md:Properties/md:Namespace", $nsm)
 	if (-not $mdName) {
-		Report-Error "В объекте метаданных не задано <Name>"
+		Report-Error "The metadata object has no <Name>"
 	} elseif ($mdName.InnerText -ne $fileName) {
-		Report-Error "<Name>$($mdName.InnerText)</Name> не совпадает с именем каталога `"$fileName`""
+		Report-Error "<Name>$($mdName.InnerText)</Name> does not match the directory name `"$fileName`""
 	} else {
-		Report-OK "Объект метаданных: Name = $($mdName.InnerText)"
+		Report-OK "Metadata object: Name = $($mdName.InnerText)"
 	}
 	if ($mdNs -and $mdNs.InnerText -ne $targetNs) {
-		Report-Error "<Namespace>$($mdNs.InnerText)</Namespace> не совпадает с targetNamespace пакета ($targetNs)"
+		Report-Error "<Namespace>$($mdNs.InnerText)</Namespace> does not match the package targetNamespace ($targetNs)"
 	} elseif ($mdNs) {
-		Report-OK "Namespace объекта метаданных совпадает с targetNamespace"
+		Report-OK "Metadata object Namespace matches targetNamespace"
 	}
 } else {
-	Report-Warn "Файл объекта метаданных <Имя>.xml не найден рядом с каталогом пакета"
+	Report-Warn "Metadata object file <Name>.xml not found next to the package directory"
 }
 
 # --- 12. Registration in Configuration.xml + namespace uniqueness ---
@@ -509,9 +516,9 @@ if (Test-Path $configXml) {
 		if ($e.InnerText -eq $fileName) { $registered = $true; break }
 	}
 	if ($registered) {
-		Report-OK "Зарегистрирован в Configuration.xml"
+		Report-OK "Registered in Configuration.xml"
 	} else {
-		Report-Error "<XDTOPackage>$fileName</XDTOPackage> отсутствует в ChildObjects файла Configuration.xml — платформа пакет не увидит"
+		Report-Error "<XDTOPackage>$fileName</XDTOPackage> is missing from ChildObjects in Configuration.xml — the platform will not see the package"
 	}
 
 	# Уникальность targetNamespace среди пакетов конфигурации
@@ -543,20 +550,20 @@ if (Test-Path $configXml) {
 		$missing = @()
 		foreach ($imp in $imports) { if (-not $knownNs.ContainsKey($imp) -and $PLATFORM_NS -notcontains $imp) { $missing += $imp } }
 		if ($missing.Count -gt 0) {
-			Report-Error ("Импортируемые пакеты не определены в конфигурации: " + ($missing -join ", ") +
-			              ". Платформа отвергнет пакет при обновлении конфигурации — соберите зависимости первыми")
+			Report-Error ("Imported packages are not defined in the configuration: " + ($missing -join ", ") +
+			              ". The platform rejects the package on configuration update — build the dependencies first")
 		} elseif ($imports.Count -gt 0) {
-			Report-OK "Все импорты разрешаются в пакеты конфигурации"
+			Report-OK "All imports resolve to configuration packages"
 		}
 
 		if ($clash.Count -gt 0) {
-			Report-Warn "targetNamespace `"$targetNs`" объявлен также в пакет(ах): $($clash -join ', '). Платформа это допускает, но <import> на это пространство имён становится неоднозначным"
+			Report-Warn "targetNamespace `"$targetNs`" is also declared in package(s): $($clash -join ', '). The platform allows this, but an <import> of this namespace becomes ambiguous"
 		} else {
-			Report-OK "targetNamespace уникален в конфигурации"
+			Report-OK "targetNamespace is unique in the configuration"
 		}
 	}
 } else {
-	Report-Warn "Configuration.xml не найден ($ConfigDir) — проверки регистрации и уникальности namespace пропущены"
+	Report-Warn "Configuration.xml not found ($ConfigDir) — registration and namespace uniqueness checks skipped"
 }
 
 # --- Final ---
