@@ -82,6 +82,11 @@ Other tool commands remain PowerShell-only. The upstream pin above is not to be 
 - the PowerShell tool scripts under `tools/` synced from the same upstream
   (per-tool versions and local changes: `docs/*.md`, section "Upstream sync").
 
+Not part of this skill, listed for completeness: the ruleset source also
+carries a port of upstream `hooks/support-guard.mjs` for Claude Code
+(`plugins/1c-rules/hooks/`, not installed with the skill), with its own copy of
+this notice in `plugins/1c-rules/hooks/NOTICE.md`.
+
 ### MIT licence text
 
 ```
