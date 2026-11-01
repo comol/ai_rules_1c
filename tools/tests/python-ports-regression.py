@@ -1698,6 +1698,88 @@ def _(work):
     assert_true("3" in run["stderr"], f"the child exit code is not reported: {run['stderr'][-400:]}")
 
 
+# A minimal external data processor root: meta-validate does not know this type
+# (upstream #108), epf-validate does - and it ships for PowerShell only.
+EPF_ROOT_XML = (
+    '﻿<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" '
+    'xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" '
+    'xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+    'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.17">\n'
+    '\t<ExternalDataProcessor uuid="38b3aeb1-20a1-4867-9dae-6dde58168dd3">\n'
+    '\t\t<InternalInfo>\n'
+    '\t\t\t<xr:ContainedObject>\n'
+    '\t\t\t\t<xr:ClassId>c3831ec8-d8d5-4f93-8a22-f9bfae07327f</xr:ClassId>\n'
+    '\t\t\t\t<xr:ObjectId>0e2629f7-57de-49fc-9d0c-6a39ad2fce15</xr:ObjectId>\n'
+    '\t\t\t</xr:ContainedObject>\n'
+    '\t\t\t<xr:GeneratedType name="ExternalDataProcessorObject.RegrEpf" category="Object">\n'
+    '\t\t\t\t<xr:TypeId>68e05431-464d-4e3d-80f5-8ab80545e042</xr:TypeId>\n'
+    '\t\t\t\t<xr:ValueId>3ef72aaf-1d5d-468b-bbff-0260dd8d0fca</xr:ValueId>\n'
+    '\t\t\t</xr:GeneratedType>\n'
+    '\t\t</InternalInfo>\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>RegrEpf</Name>\n'
+    '\t\t\t<Synonym/>\n'
+    '\t\t\t<Comment/>\n'
+    '\t\t\t<DefaultForm/>\n'
+    '\t\t\t<AuxiliaryForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</ExternalDataProcessor>\n'
+    '</MetaDataObject>\n')
+
+
+def epf_target(work, name):
+    directory = os.path.join(work, name)
+    os.makedirs(os.path.join(directory, "RegrEpf", "Ext"))
+    with open(os.path.join(directory, "RegrEpf", "Ext", "ObjectModule.bsl"), "wb") as handle:
+        handle.write(b"\xef\xbb\xbf")
+    target = os.path.join(directory, "RegrEpf.xml")
+    with open(target, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(EPF_ROOT_XML)
+    return directory, target
+
+
+@case("meta-edit: an external data processor without a PowerShell host is refused before the write")
+def _(work):
+    """epf-validate has no Python port. Without pwsh the edit must not be written and
+    then reported as unvalidated - it is refused up front, like a missing meta-validate."""
+    directory, target = epf_target(work, "epf-no-host")
+    before = snapshot_tree(directory)
+    env = dict(os.environ)
+    env["PATH"] = ""
+    proc = subprocess.run(
+        [sys.executable, "-B", META_EDIT_PY,
+         "-ObjectPath", target, "-Operation", "add-attribute", "-Value", "RegrFlag: Boolean"],
+        cwd=directory, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    assert_true(proc.returncode != 0,
+                f"an EPF edit with no PowerShell host exited 0 (stdout: {proc.stdout[-400:]})")
+    assert_tree_identical(before, snapshot_tree(directory), "EPF edit with no PowerShell host")
+    assert_true("epf-validate" in (proc.stderr or ""),
+                f"the refusal does not name epf-validate: {(proc.stderr or '')[-400:]}")
+    assert_true("Running meta-validate" not in (proc.stdout or ""),
+                "the external object was handed to meta-validate")
+
+
+@case("meta-edit: an external data processor is validated by epf-validate through PowerShell",
+      needs_powershell=True)
+def _(work):
+    if not find_powershell_host():
+        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+    directory, target = epf_target(work, "epf-with-host")
+    run = run_python_tool(
+        META_EDIT_PY,
+        ["-ObjectPath", target, "-Operation", "add-attribute", "-Value", "RegrFlag: Boolean"],
+        directory)
+    combined = run["stdout"] + run["stderr"]
+    assert_equal(0, run["exit_code"], f"EPF edit exit code: {combined[-600:]}")
+    assert_true("--- Running epf-validate ---" in combined,
+                f"epf-validate did not run: {combined[-400:]}")
+    assert_true("Running meta-validate" not in combined and "Unrecognized" not in combined,
+                f"the external object went to the wrong validator: {combined[-400:]}")
+    assert_true("<Name>RegrFlag</Name>" in file_facts(target)["text"], "the attribute was not added")
+
+
 @case("meta-edit auto-validation parity: PowerShell runs the validator, never prints [SKIP]",
       needs_powershell=True)
 def _(work):
@@ -2000,7 +2082,11 @@ def _(work):
 # DescriptionLength > 0 and refuses enum values the platform does not have;
 # form-add refuses a non-identifier -FormName and names an information register's
 # object-form main attribute "Запись"; meta-validate rejects the shapes of checks
-# 1e, 2, 6f, 6g, 8, 12 and 16a with the same diagnostics in both runtimes.
+# 24, 2, 20, 6f, 6g, 8, 12 and 16a with the same diagnostics in both runtimes.
+# (2026-11-01: the local 1e / 6e gave way to upstream check 24 - a body stamped
+# differently from its descriptor is the error; an object that differs from the
+# dump is only a warning. A Default*Form that names no form is check 20; 6f keeps
+# the role check.)
 
 MINIMAL_DOCUMENT = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -2174,9 +2260,12 @@ def meta_validate_shapes(work, label):
     """Directory, target and expected marker of every shape the new checks reject."""
     shapes = []
 
-    directory, target = catalog_target(work, f"mv-{label}-1e")
-    edit_text(os.path.join(directory, "Configuration.xml"), 'version="2.17"', 'version="2.20"')
-    shapes.append(("1e", directory, target))
+    directory, target = catalog_target(work, f"mv-{label}-24")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", target, "-FormName", "ItemForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add for 24 (stderr: {run['stderr'][-300:]})")
+    edit_text(os.path.join(directory, "Catalogs", "TestCatalog", "Forms", "ItemForm", "Ext", "Form.xml"),
+              'version="2.17"', 'version="2.20"')
+    shapes.append(("24.", directory, target))
 
     directory, target = catalog_target(work, f"mv-{label}-2")
     text = file_facts(target)["text"]
@@ -2185,8 +2274,15 @@ def meta_validate_shapes(work, label):
     write_text(target, text[:start] + text[end:])
     shapes.append(("2.", directory, target))
 
-    directory, target = catalog_target(work, f"mv-{label}-6f")
+    directory, target = catalog_target(work, f"mv-{label}-20")
     edit_text(target, "<DefaultObjectForm/>", "<DefaultObjectForm>Catalog.TestCatalog.Form.Ghost</DefaultObjectForm>")
+    shapes.append(("20.", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-6f")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", target, "-FormName", "ListForm", "-Purpose", "List"],
+                          directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add for 6f (stderr: {run['stderr'][-300:]})")
+    edit_text(target, "<DefaultObjectForm/>", "<DefaultObjectForm>Catalog.TestCatalog.Form.ListForm</DefaultObjectForm>")
     shapes.append(("6f.", directory, target))
 
     directory, target = catalog_target(work, f"mv-{label}-6g")
@@ -2239,6 +2335,45 @@ def _(work):
         ps = run_powershell_tool(META_VALIDATE_PS1, ["-ObjectPath", target], directory)
         assert_equal(py["exit_code"], ps["exit_code"], f"{marker}: exit codes differ")
         assert_equal(diagnostics(py), diagnostics(ps), f"{marker}: diagnostics differ")
+
+
+def type_reduction_target(work, label, version):
+    """A catalog whose Description carries TypeReductionMode, in a dump of `version`."""
+    directory, target = catalog_target(work, f"mv-trm-{label}-{version}")
+    edit_text(os.path.join(directory, "Configuration.xml"), 'version="2.17"', f'version="{version}"')
+    edit_text(target, 'version="2.17"', f'version="{version}"')
+    edit_text(target, "<DefaultObjectForm/>",
+              "<DefaultObjectForm/>\n\t\t\t<StandardAttributes>\n\t\t\t\t<xr:StandardAttribute name=\"Description\">"
+              "\n\t\t\t\t\t<xr:TypeReductionMode>TransformValues</xr:TypeReductionMode>"
+              "\n\t\t\t\t</xr:StandardAttribute>\n\t\t\t</StandardAttributes>")
+    return directory, target
+
+
+@case("meta-validate: TypeReductionMode is a 2.18 property, no false error on 2.18 / 2.19 (18)")
+def _(work):
+    # Upstream 2e5289a8: the threshold was 2.20 and check 18 failed nearly every
+    # object of a 8.3.25 / 8.3.26 dump. A 2.17 file still gets the error.
+    for version, expect_error in (("2.17", True), ("2.18", False), ("2.19", False)):
+        directory, target = type_reduction_target(work, "py", version)
+        run = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+        combined = run["stdout"] + run["stderr"]
+        if expect_error:
+            assert_true(run["exit_code"] != 0 and "[ERROR] 18." in combined,
+                        f"{version}: check 18 no longer fires\n{combined[-600:]}")
+        else:
+            assert_equal(0, run["exit_code"], f"{version}: exit code\n{combined[-600:]}")
+            assert_true("[ERROR]" not in combined, f"{version}: false error\n{combined[-600:]}")
+
+
+@case("meta-validate TypeReductionMode parity: PowerShell agrees on 2.17 / 2.18 / 2.19",
+      needs_powershell=True)
+def _(work):
+    for version in ("2.17", "2.18", "2.19"):
+        directory, target = type_reduction_target(work, "parity", version)
+        py = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+        ps = run_powershell_tool(META_VALIDATE_PS1, ["-ObjectPath", target], directory)
+        assert_equal(py["exit_code"], ps["exit_code"], f"{version}: exit codes differ")
+        assert_equal(diagnostics(py), diagnostics(ps), f"{version}: diagnostics differ")
 
 
 # ---------------------------------------------------------------- shipped command ports
