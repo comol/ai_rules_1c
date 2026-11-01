@@ -13,7 +13,7 @@ This matters because editing a supported object directly is not a style question
 
 Every mutating tool of this skill checks the support state before touching anything:
 
-`cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
+`cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `role-edit`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
 
 **Trigger.** The guard activates only when the configuration is genuinely on vendor support — i.e. `Ext/ParentConfigurations.bin` is present next to `Configuration.xml` (found by walking up from the target path). Own configurations, extensions and autonomous external objects (EPF/ERF) are never affected. A support-state file that exists but cannot be read or parsed gets the same `deny|warn|off` reaction (fail-closed — an unknown state may be a locked object); other guard errors (the state cannot even be located) degrade to *allow* with a stderr notice.
 
