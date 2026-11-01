@@ -1,5 +1,6 @@
-﻿# cfe-init v1.2 — Create 1C configuration extension scaffold (CFE)
+﻿# cfe-init v1.13 — Create 1C configuration extension scaffold (CFE) (+write_xml_file/write_utf8_bom: общий эталон записи)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
 	[string]$Name,
@@ -16,6 +17,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Esc-XmlText {
+	param([string]$s)
+	# Эскейп ТЕКСТА элемента: только & < > — кавычку и апостроф платформа держит сырыми.
+	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
+}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # --- Default NamePrefix ---
@@ -25,7 +32,7 @@ if (-not $NamePrefix) {
 
 # --- Resolve output dir ---
 if (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
-	$OutputDir = Join-Path (Get-Location).Path $OutputDir
+	$OutputDir = Join-Path (Get-Location).ProviderPath $OutputDir
 }
 
 # --- Check existing ---
@@ -41,9 +48,12 @@ $formatVersion = "2.17"
 
 # --- Resolve ConfigPath ---
 $baseLangUuid = "00000000-0000-0000-0000-000000000000"
+$langName = "Русский"
+$langCode = "ru"
+$roleSuffix = "ОсновнаяРоль"
 if ($ConfigPath) {
 	if (-not [System.IO.Path]::IsPathRooted($ConfigPath)) {
-		$ConfigPath = Join-Path (Get-Location).Path $ConfigPath
+		$ConfigPath = Join-Path (Get-Location).ProviderPath $ConfigPath
 	}
 	if (Test-Path $ConfigPath -PathType Container) {
 		$candidate = Join-Path $ConfigPath "Configuration.xml"
@@ -51,11 +61,26 @@ if ($ConfigPath) {
 		else { Write-Error "No Configuration.xml in config directory: $ConfigPath"; exit 1 }
 	}
 	if (-not (Test-Path $ConfigPath)) { Write-Error "Config file not found: $ConfigPath"; exit 1 }
-	$cfgDir = Split-Path (Resolve-Path $ConfigPath).Path -Parent
+	$cfgDir = Split-Path (Resolve-Path $ConfigPath).ProviderPath -Parent
 
-	# 3a. Read Language UUID from base config
-	$baseLangFile = Join-Path (Join-Path $cfgDir "Languages") "Русский.xml"
-	if (Test-Path $baseLangFile) {
+	$baseCfgDoc = New-Object System.Xml.XmlDocument
+	$baseCfgDoc.PreserveWhitespace = $false
+	$baseCfgDoc.Load((Resolve-Path $ConfigPath).ProviderPath)
+	$baseCfgNs = New-Object System.Xml.XmlNamespaceManager($baseCfgDoc.NameTable)
+	$baseCfgNs.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
+
+	# 3a. Основной язык базы. Он контролируемый: расширение с другим основным языком платформа
+	# загружает, но не применяет («ОсновнойЯзык не совпадает»). Имя — из DefaultLanguage, а не
+	# «Русский»: в многоязычной конфигурации Русский.xml бывает и у неосновного языка — с чужим UUID.
+	$defLangNode = $baseCfgDoc.SelectSingleNode("//md:Configuration/md:Properties/md:DefaultLanguage", $baseCfgNs)
+	if ($defLangNode -and $defLangNode.InnerText.Trim() -match '^Language\.(.+)$') {
+		$langName = $Matches[1]
+		Write-Host "[INFO] Base config DefaultLanguage: $langName"
+	} else {
+		Write-Host "[WARN] DefaultLanguage not found in base config, using default: $langName"
+	}
+	$baseLangFile = Join-Path (Join-Path $cfgDir "Languages") "$langName.xml"
+	if (Test-Path -LiteralPath $baseLangFile) {
 		$baseLangDoc = New-Object System.Xml.XmlDocument
 		$baseLangDoc.PreserveWhitespace = $false
 		$baseLangDoc.Load($baseLangFile)
@@ -66,19 +91,25 @@ if ($ConfigPath) {
 		if ($langEl) {
 			$baseLangUuid = $langEl.GetAttribute("uuid")
 			Write-Host "[INFO] Base config Language UUID: $baseLangUuid"
+			$codeNode = $langEl.SelectSingleNode("md:Properties/md:LanguageCode", $baseCfgNs)
+			if ($codeNode -and $codeNode.InnerText.Trim()) {
+				$langCode = $codeNode.InnerText.Trim()
+			} else {
+				Write-Host "[WARN] No LanguageCode in $baseLangFile, using default: $langCode"
+			}
 		} else {
 			Write-Host "[WARN] No <Language> element in $baseLangFile"
 		}
 	} else {
-		Write-Host "[WARN] Base config language not found: $baseLangFile"
+		Write-Host "[WARN] Base config language not found: $baseLangFile — UUID left zero, LanguageCode defaults to $langCode"
 	}
 
+	# Имя основной роли конфигуратор строит по варианту встроенного языка БАЗЫ: при English —
+	# <Префикс>DefaultRole. Сам вариант расширения он при этом оставляет Russian (замер 8.3.24).
+	$svNode = $baseCfgDoc.SelectSingleNode("//md:Configuration/md:Properties/md:ScriptVariant", $baseCfgNs)
+	if ($svNode -and $svNode.InnerText.Trim() -ceq 'English') { $roleSuffix = "DefaultRole" }
+
 	# 3b. Read CompatibilityMode and InterfaceCompatibilityMode from base config
-	$baseCfgDoc = New-Object System.Xml.XmlDocument
-	$baseCfgDoc.PreserveWhitespace = $false
-	$baseCfgDoc.Load((Resolve-Path $ConfigPath).Path)
-	$baseCfgNs = New-Object System.Xml.XmlNamespaceManager($baseCfgDoc.NameTable)
-	$baseCfgNs.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
 	$fmtVer = $baseCfgDoc.DocumentElement.GetAttribute("version")
 	if ($fmtVer) {
 		$formatVersion = $fmtVer
@@ -121,33 +152,58 @@ $co7 = [guid]::NewGuid().ToString()
 # --- Synonym XML ---
 $synonymXml = ""
 if ($Synonym) {
-	$synonymXml = "`r`n`t`t`t`t<v8:item>`r`n`t`t`t`t`t<v8:lang>ru</v8:lang>`r`n`t`t`t`t`t<v8:content>$([System.Security.SecurityElement]::Escape($Synonym))</v8:content>`r`n`t`t`t`t</v8:item>`r`n`t`t`t"
+	$synonymXml = "`r`n`t`t`t`t<v8:item>`r`n`t`t`t`t`t<v8:lang>$(Esc-XmlText ($langCode))</v8:lang>`r`n`t`t`t`t`t<v8:content>$(Esc-XmlText ($Synonym))</v8:content>`r`n`t`t`t`t</v8:item>`r`n`t`t`t"
 }
 
 # --- Optional properties ---
-$vendorXml = if ($Vendor) { [System.Security.SecurityElement]::Escape($Vendor) } else { "" }
-$versionXml = if ($Version) { [System.Security.SecurityElement]::Escape($Version) } else { "" }
+# Элемент целиком, а не значение внутри пары: при пустом значении Конфигуратор
+# пишет <Vendor/>, а не <Vendor></Vendor>.
+$vendorEl = if ($Vendor) { "<Vendor>$(Esc-XmlText ($Vendor))</Vendor>" } else { "<Vendor/>" }
+$versionEl = if ($Version) { "<Version>$(Esc-XmlText ($Version))</Version>" } else { "<Version/>" }
 
 # --- Role name ---
-$roleName = "${NamePrefix}ОсновнаяРоль"
+$roleName = "${NamePrefix}$roleSuffix"
 
 # --- DefaultRoles XML ---
-$defaultRolesXml = ""
+# Элемент целиком: без роли Конфигуратор пишет <DefaultRoles/>, а не пустую пару.
+$defaultRolesEl = "<DefaultRoles/>"
 if (-not $NoRole) {
-	$defaultRolesXml = "`r`n`t`t`t`t<xr:Item xsi:type=`"xr:MDObjectRef`">Role.$roleName</xr:Item>`r`n`t`t`t"
+	$defaultRolesEl = "<DefaultRoles>`r`n`t`t`t`t<xr:Item xsi:type=`"xr:MDObjectRef`">Role.$roleName</xr:Item>`r`n`t`t`t</DefaultRoles>"
 }
 
 # --- ChildObjects ---
-$childObjectsXml = "`r`n`t`t`t<Language>Русский</Language>"
+$childObjectsXml = "`r`n`t`t`t<Language>$(Esc-XmlText ($langName))</Language>"
 if (-not $NoRole) {
 	$childObjectsXml += "`r`n`t`t`t<Role>$roleName</Role>"
 }
 $childObjectsXml += "`r`n`t`t"
 
+# Объявления пространств имён — одной переменной: места эмиссии её только интерполируют.
+# Правки шапки (как xmlns:pal в формате 2.21) делаются здесь, в одном месте.
+$xmlnsDecl = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+
+# Версия формата как число для сравнений: "2.20" → 220, "2.9" → 209.
+# Строковое сравнение здесь неверно ("2.9" > "2.17" лексикографически) — известная ловушка.
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+# 2.21 (8.5) добавила в шапку пространство палитры — ради <Color> у значений перечисления.
+# Вставляем НА МЕСТО (после lf, перед style): платформа держит объявления по алфавиту,
+# дописать в конец нельзя.
+# Caption/ShortCaption — свойства корня из того же формата 2.21, между Version и
+# DefaultLanguage (позиция снята с выгрузки расширения из базы 8.5).
+$f221Captions = ""
+if ((Get-FormatRank $formatVersion) -ge 221) {
+	$xmlnsDecl = $xmlnsDecl -replace ' xmlns:style=', ' xmlns:pal="http://v8.1c.ru/8.1/data/ui/colors/palette" xmlns:style='
+	$f221Captions = "`r`n`t`t`t<Caption/>`r`n`t`t`t<ShortCaption/>"
+}
+
 # --- Configuration.xml ---
 $cfgXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="$formatVersion">
+<MetaDataObject $xmlnsDecl version="$formatVersion">
 	<Configuration uuid="$uuidCfg">
 		<InternalInfo>
 			<xr:ContainedObject>
@@ -181,22 +237,22 @@ $cfgXml = @"
 		</InternalInfo>
 		<Properties>
 			<ObjectBelonging>Adopted</ObjectBelonging>
-			<Name>$([System.Security.SecurityElement]::Escape($Name))</Name>
+			<Name>$(Esc-XmlText ($Name))</Name>
 			<Synonym>$synonymXml</Synonym>
 			<Comment/>
 			<ConfigurationExtensionPurpose>$Purpose</ConfigurationExtensionPurpose>
 			<KeepMappingToExtendedConfigurationObjectsByIDs>true</KeepMappingToExtendedConfigurationObjectsByIDs>
-			<NamePrefix>$([System.Security.SecurityElement]::Escape($NamePrefix))</NamePrefix>
+			<NamePrefix>$(Esc-XmlText ($NamePrefix))</NamePrefix>
 			<ConfigurationExtensionCompatibilityMode>$CompatibilityMode</ConfigurationExtensionCompatibilityMode>
 			<DefaultRunMode>ManagedApplication</DefaultRunMode>
 			<UsePurposes>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">PlatformApplication</v8:Value>
 			</UsePurposes>
 			<ScriptVariant>Russian</ScriptVariant>
-			<DefaultRoles>$defaultRolesXml</DefaultRoles>
-			<Vendor>$vendorXml</Vendor>
-			<Version>$versionXml</Version>
-			<DefaultLanguage>Language.Русский</DefaultLanguage>
+			$defaultRolesEl
+			$vendorEl
+			$versionEl$f221Captions
+			<DefaultLanguage>Language.$(Esc-XmlText ($langName))</DefaultLanguage>
 			<BriefInformation/>
 			<DetailedInformation/>
 			<Copyright/>
@@ -209,18 +265,18 @@ $cfgXml = @"
 </MetaDataObject>
 "@
 
-# --- Languages/Русский.xml (adopted format) ---
+# --- Languages/<основной язык>.xml (adopted format) ---
 $langXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="$formatVersion">
+<MetaDataObject $xmlnsDecl version="$formatVersion">
 	<Language uuid="$uuidLang">
 		<InternalInfo/>
 		<Properties>
 			<ObjectBelonging>Adopted</ObjectBelonging>
-			<Name>Русский</Name>
+			<Name>$(Esc-XmlText ($langName))</Name>
 			<Comment/>
 			<ExtendedConfigurationObject>$baseLangUuid</ExtendedConfigurationObject>
-			<LanguageCode>ru</LanguageCode>
+			<LanguageCode>$(Esc-XmlText ($langCode))</LanguageCode>
 		</Properties>
 	</Language>
 </MetaDataObject>
@@ -229,10 +285,10 @@ $langXml = @"
 # --- Role XML ---
 $roleXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="$formatVersion">
+<MetaDataObject $xmlnsDecl version="$formatVersion">
 	<Role uuid="$uuidRole">
 		<Properties>
-			<Name>$([System.Security.SecurityElement]::Escape($roleName))</Name>
+			<Name>$(Esc-XmlText ($roleName))</Name>
 			<Synonym/>
 			<Comment/>
 		</Properties>
@@ -252,9 +308,18 @@ if (-not (Test-Path $langDir)) {
 # --- Write files with UTF-8 BOM ---
 $enc = New-Object System.Text.UTF8Encoding($true)
 
-[System.IO.File]::WriteAllText($cfgFile, $cfgXml, $enc)
-$langFile = Join-Path $langDir "Русский.xml"
-[System.IO.File]::WriteAllText($langFile, $langXml, $enc)
+# XML в каноне выгрузки Конфигуратора: CRLF в разделителях, без перевода в конце.
+#
+# Копия этой функции есть в каждом навыке-эмиттере (навыки автономны). Держать
+# копии одинаковыми — сознательно: разошедшиеся копии сводят на нет весь смысл.
+function Write-XmlFile([string]$path, [string]$text, $encoding) {
+	$t = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
+	[System.IO.File]::WriteAllText($path, $t.TrimEnd("`r", "`n"), $encoding)
+}
+
+Write-XmlFile $cfgFile $cfgXml $enc
+$langFile = Join-Path $langDir "$langName.xml"
+Write-XmlFile $langFile $langXml $enc
 
 # --- Role ---
 if (-not $NoRole) {
@@ -263,7 +328,7 @@ if (-not $NoRole) {
 		New-Item -ItemType Directory -Path $roleDir -Force | Out-Null
 	}
 	$roleFile = Join-Path $roleDir "$roleName.xml"
-	[System.IO.File]::WriteAllText($roleFile, $roleXml, $enc)
+	Write-XmlFile $roleFile $roleXml $enc
 }
 
 # --- Output ---

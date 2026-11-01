@@ -18,6 +18,8 @@
 			<Catalog>Nomenklatura</Catalog>
 			<Catalog>Zeta</Catalog>
 			<Document>Zakaz</Document>
+			<DataProcessor>Obrabotka</DataProcessor>
+			<ChartOfCharacteristicTypes>VidySvoystv</ChartOfCharacteristicTypes>
 		</ChildObjects>
 	</Configuration>
 </MetaDataObject>

@@ -58,6 +58,7 @@
 			<ExtendedTooltip name="ПодсказкаРасширеннаяПодсказка" id="9"/>
 		</LabelDecoration>
 		<Table name="Таблица" id="10">
+			<DataPath>Объект.Tovary</DataPath>
 			<Representation>List</Representation>
 			<CommandSet>
 				<ExcludedCommand>Add</ExcludedCommand>
