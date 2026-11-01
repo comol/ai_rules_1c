@@ -25,11 +25,11 @@ The only exceptions mirror the metadata skill: the skill is not exposed in the s
 
 ## Safety invariants (do not route around)
 
-Invariants 1–4 are enforced by the script. Invariants 5–6 are agent refusals: the script has no bind/unbind operations, and composing them ad-hoc is the defect.
+Invariants 1–4 are enforced by the script, and so is the `INFOBASE_ROLE=prod` boundary of [repo-sdlc.md → Boundaries](docs/repo-sdlc.md#boundaries). Invariants 5–6 are agent refusals: the script has no bind/unbind operations, and composing them ad-hoc is the defect.
 
-1. **Explicit object lists only.** `lock` / `update` / `commit` / `unlock` require `-Objects` with exact metadata full names. An empty list, `*`, or the configuration root is refused: the official CLI without `-Objects` applies the operation to the **whole configuration**.
+1. **Explicit object lists only.** `lock` / `update` / `commit` / `unlock` require `-Objects` with exact metadata full names. An empty list or `*` is refused: the official CLI without `-Objects` applies the operation to the **whole configuration**. The root `Конфигурация` is accepted **alone** — it is one object, and locking it is how a new top-level object gets added; the root with `-IncludeChildObjects` is the whole configuration and is refused. An attribute, tabular section, dimension or resource is not a repository object: the script substitutes its owner and says so.
 2. **Force is double-gated.** `-Force` needs `REPOSITORY_ALLOW_FORCE=true` in `.dev.env` **and** a per-call confirmation switch (`-ConfirmForce`; for `unlock` — `-ConfirmDiscardChanges`, because a forced unlock discards uncommitted changes). Never set `REPOSITORY_ALLOW_FORCE` yourself — that value is the user's decision.
-3. **A lock conflict is a report, not an obstacle.** "Объект уже захвачен пользователем …" means another developer holds the object: report to the user and stop. Never resolve it with a forced unlock on your own initiative.
+3. **A lock conflict is a report, not an obstacle.** «Объект захвачен для редактирования другим пользователем: X (user)» means another developer holds the object: report to the user and stop. Never resolve it with a forced unlock on your own initiative. A lock is not atomic: the script reports every object, and the ones it lists as locked by you **are** held — keep them for the re-scoped plan or release them with `unlock`.
 4. **Commit comments are mandatory** — task reference plus what changed; the script refuses an empty comment.
 5. **Never unbind while repository mode is on.** With `REPOSITORY_PATH` set, disconnecting the configuration from the repository is **forbidden**: `/ConfigurationRepositoryUnbindCfg`, the Designer action «Отключиться от хранилища», and any equivalent. A lock conflict, a read-only object, a failed `/update1cbase` load, or a user request to "just unbind so we can edit" is not a reason — a refusal is the correct outcome (same standing as routing around vendor support). Never empty `REPOSITORY_PATH` to drop this prohibition as a step of the current task.
 6. **Never bind** an unbound infobase to a repository (`/ConfigurationRepositoryBindCfg`), create repositories, or manage repository users — these are one-shot administrative acts outside this skill's scope; report the need to the user.
@@ -49,7 +49,7 @@ Invariants 1–4 are enforced by the script. Invariants 5–6 are agent refusals
 | How repository binding changes the dev cycle, `/update1cbase`, metadata mutations, conflict handling | — | [repo-sdlc.md](docs/repo-sdlc.md) |
 | Refresh source files after `lock -Revised` / `update`; freshness check before loading them into the IB | — | [repo-sdlc.md → Source files follow the infobase](docs/repo-sdlc.md#source-files-follow-the-infobase) |
 
-Reports (`status` / `history` / `diff`) are written to a file and only an excerpt is printed — read the report file for targeted analysis instead of pulling megabytes into context.
+Reports (`status` / `history` / `diff`) are written to a file and only an excerpt is printed — read the report file for targeted analysis instead of pulling megabytes into context. `lock` / `update` / `commit` / `unlock` print a verdict per object; when objects were received from the repository, the output names them, saves the list and prints the ready export command — run it before editing those files ([repo-sdlc.md → Source files follow the infobase](docs/repo-sdlc.md#source-files-follow-the-infobase)).
 
 ## Path conventions
 
