@@ -1,8 +1,11 @@
-﻿# form-add v1.12 — Add managed form to 1C config object
+﻿# form-add v1.34 — Add managed form to 1C config object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
-# Local: -FormName must be a 1C identifier (refused with exit 2 before any path
-# or XPath is built from it), and the object form of an information register
-# names its RecordManager main attribute "Запись", as the Configurator does.
+# Local: .dev.env SUPPORT_GUARD wins over .v8-project.json, and an unreadable
+# support state fails closed; -FormName must be a 1C identifier (refused with
+# exit 2 before any path or XPath is built from it); -FormName / -Synonym are
+# XML-escaped in the descriptor. (The information register's record form names
+# its main attribute "Запись" upstream too since 1.2x — Purpose=Record.)
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
 	[string]$ObjectPath,
@@ -12,8 +15,15 @@ param(
 
 	[string]$Synonym = $FormName,
 
-	[string]$Purpose = "Object",
+	# Пусто = основная форма вида (Primary в таблице): у справочника это форма объекта,
+	# у регистра сведений — форма записи, у журнала — форма списка. Жёсткое "Object"
+	# по умолчанию было бы неверным для видов, у которых формы объекта не бывает.
+	[string]$Purpose = "",
 
+	# Алиас с дефисом внутри имени: вызов вида --set-default PowerShell разбирает как имя
+	# параметра "set-default" и без алиаса отвечает отказом биндинга. Написания -SetDefault,
+	# --SetDefault и --setdefault совпадают с именем параметра и так.
+	[Alias('set-default')]
 	[switch]$SetDefault
 )
 
@@ -68,16 +78,20 @@ function Get-EditMode([string]$cfgDir) {
 		    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
 		    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
 		}
-		$pj = Find-V8Project (Get-Location).Path
-		if (-not $pj) { $pj = Find-V8Project $cfgDir }
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
 		if (-not $pj) { return 'deny' }
-		$proj = Get-Content -Raw $pj | ConvertFrom-Json
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		# configSrc — от каталога .v8-project.json, а не от рабочего каталога: иначе из подкаталога
+		# проекта база не сопоставляется и берётся правило проекта.
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
 		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
 		if ($proj.databases) {
 			foreach ($db in $proj.databases) {
 				if ($db.configSrc) {
-					$src = [System.IO.Path]::GetFullPath($db.configSrc).TrimEnd('\', '/')
-					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar)) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
 						if ($db.editingAllowedCheck) { return $db.editingAllowedCheck }
 					}
 				}
@@ -90,7 +104,7 @@ function Get-EditMode([string]$cfgDir) {
 function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	try {
 		$rp = $targetPath
-		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).Path } catch {}
+		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).ProviderPath } catch {}
 		# Autonomous external object (EPF/ERF): never part of a config on support (issue #39).
 		if (Test-ExternalObjectRoot $rp) { return }
 		$elemUuid = Get-RootUuid $rp
@@ -116,6 +130,8 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 		$G = 0; $K = 0; $text = $null; $parseOk = $false
 		try {
 			$bytes = [System.IO.File]::ReadAllBytes($binPath)
+			# A state of 32 bytes or less is the empty container a configuration keeps when vendor support was removed completely (docs/1c-support-state-spec.md upstream: ~16 bytes) - nothing is on support, so it is not 'unreadable'.
+			if ($bytes.Length -le 32) { $parseOk = $true }
 			if ($bytes.Length -gt 32) {
 				$start = 0
 				if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
@@ -185,9 +201,20 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 function Detect-FormatVersion([string]$dir) {
 	$d = $dir
 	while ($d) {
+		# Автономная внешняя обработка/отчёт: своего Configuration.xml у неё нет, версию несёт
+		# корень самой обработки. Без этого форма и макет внутри обработки 2.21 писались бы 2.17.
+		$extPath = "$d.xml"
+		if (Test-Path $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]' -and $extHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
 		$cfgPath = Join-Path $d "Configuration.xml"
 		if (Test-Path $cfgPath) {
-			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			$cfgText = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			# Длину среза берём по СТРОКЕ, а не по размеру файла: размер в БАЙТАХ, Substring считает
+			# СИМВОЛЫ, и на кириллице байт больше — короткий Configuration.xml ронял навык исключением.
+			$head = $cfgText.Substring(0, [Math]::Min(2000, $cfgText.Length))
 			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
 		}
 		$parent = Split-Path $d -Parent
@@ -208,11 +235,56 @@ if ($FormName -cnotmatch '^[A-Za-z_А-яЁё][0-9A-Za-z_А-яЁё]{0,127}\z') {
 	exit 2
 }
 
+# Версия формата как число для сравнений: "2.20" → 220, "2.9" → 209.
+# Строковое сравнение здесь неверно ("2.9" > "2.17" лексикографически) — известная ловушка.
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+# Режим совместимости конфигурации ($null — не определён). От него зависит xmlns:dcssch в шапке
+# формы: при режиме < 8.3.19 платформа объявляет его только при использовании, иначе — всегда.
+# Подъём останавливается на корне внешней обработки/отчёта: её форму режим базы не меняет, а
+# Configuration.xml выше по дереву (src/cf рядом с src/epf) — чужой. Читаем 64 КБ: тег ~11-12 КБ.
+function Detect-CompatibilityMode([string]$dir) {
+	$d = $dir
+	while ($d) {
+		$extPath = "$d.xml"
+		if (Test-Path -LiteralPath $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]') { return $null }
+		}
+		$cfgPath = Join-Path $d "Configuration.xml"
+		if (Test-Path -LiteralPath $cfgPath) {
+			$text = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			$head = $text.Substring(0, [Math]::Min(65536, $text.Length))
+			if ($head -match '<CompatibilityMode>([^<]+)</CompatibilityMode>') { return $Matches[1].Trim() }
+			# Расширение: своего CompatibilityMode нет, форму ведёт его собственный режим. В основной
+			# конфигурации этот тег — режим для её расширений, не её собственный: только для расширения.
+			if ($head -match '<ConfigurationExtensionPurpose>' -and $head -match '<ConfigurationExtensionCompatibilityMode>([^<]+)</ConfigurationExtensionCompatibilityMode>') { return $Matches[1].Trim() }
+			return $null
+		}
+		$parent = Split-Path $d -Parent
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+# Номер режима совместимости для сравнений: "Version8_3_27" → 80327, "Version8_5_1" → 80501.
+function Get-CompatModeRank([string]$mode) {
+	if ($mode -match '^Version(\d+)_(\d+)(?:_(\d+))?$') {   # и двухчастный Version8_1
+		return [int]$Matches[1] * 10000 + [int]$Matches[2] * 100 + [int]$Matches[3]
+	}
+	return 0
+}
+
 # --- Фаза 1: Определение типа объекта ---
 
 # Resolve ObjectPath (directory → .xml)
 if (-not [System.IO.Path]::IsPathRooted($ObjectPath)) {
-	$ObjectPath = Join-Path (Get-Location).Path $ObjectPath
+	$ObjectPath = Join-Path (Get-Location).ProviderPath $ObjectPath
 }
 if (Test-Path $ObjectPath -PathType Container) {
 	$dirName = Split-Path $ObjectPath -Leaf
@@ -228,12 +300,41 @@ if (-not (Test-Path $ObjectPath)) {
 }
 
 $objectXmlFull = Resolve-Path $ObjectPath
-Assert-EditAllowed $objectXmlFull.Path 'editable'
-$script:formatVersion = Detect-FormatVersion (Split-Path $objectXmlFull.Path -Parent)
+Assert-EditAllowed $objectXmlFull.ProviderPath 'editable'
+# Версию берём прежде всего из корня самого объекта — он её несёт всегда, а у автономной
+# внешней обработки/отчёта подниматься к Configuration.xml просто некуда.
+$script:formatVersion = $null
+$objHead = [System.IO.File]::ReadAllText($objectXmlFull.ProviderPath, [System.Text.Encoding]::UTF8)
+$objHead = $objHead.Substring(0, [Math]::Min(2000, $objHead.Length))
+if ($objHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { $script:formatVersion = $Matches[1] }
+if (-not $script:formatVersion) { $script:formatVersion = Detect-FormatVersion (Split-Path $objectXmlFull.ProviderPath -Parent) }
+
+# Объявления пространств имён — одной переменной на корень: места эмиссии их только
+# интерполируют. Правки шапки (как xmlns:pal в формате 2.21) делаются здесь, в одном месте.
+$script:xmlnsDecl = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+$script:formNsDecl = 'xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+
+# 2.21 (8.5) добавила в шапку пространство палитры — ради <Color> у значений перечисления.
+# Вставляем НА МЕСТО (после lf, перед style): платформа держит объявления по алфавиту,
+# дописать в конец нельзя.
+if ((Get-FormatRank $script:formatVersion) -ge 221) {
+	$script:xmlnsDecl = $script:xmlnsDecl -replace ' xmlns:style=', ' xmlns:pal="http://v8.1c.ru/8.1/data/ui/colors/palette" xmlns:style='
+	$script:formNsDecl = $script:formNsDecl -replace ' xmlns:style=', ' xmlns:pal="http://v8.1c.ru/8.1/data/ui/colors/palette" xmlns:style='
+}
+
+# xmlns:dcssch платформа пишет в шапку формы всегда — кроме режима совместимости ниже 8.3.19, где
+# объявляет его только при использовании (пустая форма его не использует). Внешняя обработка и
+# нераспознанный режим (DontUse — ранг 0) — как текущая платформа. Старт подъёма — «каталог» самого
+# объекта: так первым проверяется его же X.xml, и корень внешней обработки узнаётся сразу.
+$script:compatMode = Detect-CompatibilityMode ($objectXmlFull.ProviderPath -replace '\.xml$', '')
+$compatRank = Get-CompatModeRank $script:compatMode
+if (-not ($compatRank -gt 0 -and $compatRank -lt 80319)) {
+	$script:formNsDecl = $script:formNsDecl -replace ' xmlns:dcsset=', ' xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema" xmlns:dcsset='
+}
 
 $xmlDoc = New-Object System.Xml.XmlDocument
 $xmlDoc.PreserveWhitespace = $true
-$xmlDoc.Load($objectXmlFull.Path)
+$xmlDoc.Load($objectXmlFull.ProviderPath)
 
 $nsMgr = New-Object System.Xml.XmlNamespaceManager($xmlDoc.NameTable)
 $nsMgr.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
@@ -246,26 +347,175 @@ if (-not $metaDataObject) {
 	$metaDataObject = $xmlDoc.DocumentElement
 }
 
-$supportedTypes = @(
-	"Document", "Catalog", "DataProcessor", "Report",
-	"ExternalDataProcessor", "ExternalReport",
-	"InformationRegister", "AccumulationRegister", "ChartOfAccounts", "ChartOfCharacteristicTypes",
-	"ExchangePlan", "BusinessProcess", "Task", "DocumentJournal"
-)
+# --- Таблица видов: вид → допустимые назначения ---
+#
+# Одна запись на вид вместо разрозненных списков «поддерживаемые типы», «объектные типы»,
+# «обработко-подобные» и «карта типов реквизита». Раньше они расходились молча: DocumentJournal
+# был среди поддерживаемых, но не в карте типов, и в форму уходило `cfg:.Журнал` — платформа
+# такую выгрузку не принимает, а навык рапортовал успех.
+#
+# MainAttr — тип главного реквизита; `{0}` подставляется именем объекта:
+#   "DynamicList" — динамический список (добавляется Settings/MainTable);
+#   $null         — произвольная форма, блока Attributes нет вовсе.
+# Slot — свойство объекта под «основную форму»; $null — такого свойства у вида нет.
+# Эталон таблицы — docs/1c-form-spec.md, сверяется гардом check-form-purposes.mjs.
 
+$formKinds = @{
+	"Catalog" = @{
+		"Object"       = @{ MainAttr = "CatalogObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"Folder"       = @{ MainAttr = "CatalogObject.{1}"; AttrName = "Объект"; Slot = "DefaultFolderForm"; SavedData = $true }
+		"List"         = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice"       = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"FolderChoice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultFolderChoiceForm" }
+		"Custom"       = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"ChartOfCharacteristicTypes" = @{
+		"Object"       = @{ MainAttr = "ChartOfCharacteristicTypesObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"Folder"       = @{ MainAttr = "ChartOfCharacteristicTypesObject.{1}"; AttrName = "Объект"; Slot = "DefaultFolderForm"; SavedData = $true }
+		"List"         = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice"       = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"FolderChoice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultFolderChoiceForm" }
+		"Custom"       = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"Document" = @{
+		"Object" = @{ MainAttr = "DocumentObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"ChartOfAccounts" = @{
+		"Object" = @{ MainAttr = "ChartOfAccountsObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"ChartOfCalculationTypes" = @{
+		"Object" = @{ MainAttr = "ChartOfCalculationTypesObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"ExchangePlan" = @{
+		"Object" = @{ MainAttr = "ExchangePlanObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"BusinessProcess" = @{
+		"Object" = @{ MainAttr = "BusinessProcessObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"Task" = @{
+		"Object" = @{ MainAttr = "TaskObject.{1}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"DataProcessor" = @{
+		"Object" = @{ MainAttr = "DataProcessorObject.{1}"; AttrName = "Объект"; Slot = "DefaultForm"; Primary = $true }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"Report" = @{
+		"Object" = @{ MainAttr = "ReportObject.{1}"; AttrName = "Объект"; Slot = "DefaultForm"; Primary = $true }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"ExternalDataProcessor" = @{
+		"Object" = @{ MainAttr = "ExternalDataProcessorObject.{1}"; AttrName = "Объект"; Slot = "DefaultForm"; Primary = $true }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"ExternalReport" = @{
+		"Object" = @{ MainAttr = "ExternalReportObject.{1}"; AttrName = "Объект"; Slot = "DefaultForm"; Primary = $true }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"InformationRegister" = @{
+		"Record"    = @{ MainAttr = "InformationRegisterRecordManager.{1}"; AttrName = "Запись"; Slot = "DefaultRecordForm"; SavedData = $true; Primary = $true }
+		"List"      = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"RecordSet" = @{ MainAttr = "InformationRegisterRecordSet.{1}"; AttrName = "Набор"; Slot = $null; SavedData = $true }
+		"Custom"    = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"AccumulationRegister" = @{
+		"List"      = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm"; Primary = $true }
+		"RecordSet" = @{ MainAttr = "AccumulationRegisterRecordSet.{1}"; AttrName = "Набор"; Slot = $null; SavedData = $true }
+		"Custom"    = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"AccountingRegister" = @{
+		"List"      = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm"; Primary = $true }
+		"RecordSet" = @{ MainAttr = "AccountingRegisterRecordSet.{1}"; AttrName = "Набор"; Slot = $null; SavedData = $true }
+		"Custom"    = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"CalculationRegister" = @{
+		"List"      = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm"; Primary = $true }
+		"RecordSet" = @{ MainAttr = "CalculationRegisterRecordSet.{1}"; AttrName = "Набор"; Slot = $null; SavedData = $true }
+		"Custom"    = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"DocumentJournal" = @{
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultForm"; Primary = $true }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"FilterCriterion" = @{
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultForm"; Primary = $true }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"Enum" = @{
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm"; Primary = $true }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	"SettingsStorage" = @{
+		"Save"   = @{ MainAttr = $null; AttrName = $null; Slot = "DefaultSaveForm"; Primary = $true }
+		"Load"   = @{ MainAttr = $null; AttrName = $null; Slot = "DefaultLoadForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+	# Таблица внешнего источника — единственный вид, чьё имя в ссылках трёхчастное
+	# (Источник.Таблица): подставляется {2}, а не {1}.
+	"Table" = @{
+		"Object" = @{ MainAttr = "ExternalDataSourceTableObject.{2}"; AttrName = "Объект"; Slot = "DefaultObjectForm"; SavedData = $true; Primary = $true }
+		"Record" = @{ MainAttr = "ExternalDataSourceTableRecordManager.{2}"; AttrName = "Запись"; Slot = "DefaultRecordForm"; SavedData = $true }
+		"List"   = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultListForm" }
+		"Choice" = @{ MainAttr = "DynamicList"; AttrName = "Список"; Slot = "DefaultChoiceForm" }
+		"Custom" = @{ MainAttr = $null; AttrName = $null; Slot = $null }
+	}
+}
+
+# Виды, у которых свойство DefaultForm есть, но собственных форм не бывает — отказ с причиной,
+# а не «тип не поддерживается».
+$noOwnForms = @{
+	"Constant" = "у константы нет собственных форм — используйте общую форму (CommonForm)"
+}
+
+$supportedTypes = @($formKinds.Keys) + @($noOwnForms.Keys)
+
+# Отдельный факт, не выводимый из таблицы назначений: у форм обработок и отчётов в метаданных
+# формы есть <ExtendedPresentation>.
+$processorLikeTypes = @("DataProcessor", "Report", "ExternalDataProcessor", "ExternalReport")
+
+# Вид объекта — первый элемент-потомок MetaDataObject, а не первое совпавшее по всему документу
+# имя. Поиск по документу зависел от порядка перебора видов: у бизнес-процесса есть свойство
+# <Task>, и он определялся как задача, после чего имя объекта не находилось вовсе.
 $objectType = $null
 $objectNode = $null
-foreach ($t in $supportedTypes) {
-	$node = $xmlDoc.SelectSingleNode("//md:$t", $nsMgr)
-	if ($node) {
-		$objectType = $t
-		$objectNode = $node
+foreach ($child in $metaDataObject.ChildNodes) {
+	if ($child.NodeType -eq [System.Xml.XmlNodeType]::Element) {
+		$objectType = $child.LocalName
+		$objectNode = $child
 		break
 	}
 }
 
+if ($objectType -and -not ($formKinds.ContainsKey($objectType) -or $noOwnForms.ContainsKey($objectType))) {
+	Write-Error "Тип объекта '$objectType' не поддерживается. Поддерживаемые типы: $(($formKinds.Keys | Sort-Object) -join ', ')"
+	exit 1
+}
+
 if (-not $objectType) {
-	Write-Error "Не удалось определить тип объекта. Поддерживаемые типы: $($supportedTypes -join ', ')"
+	Write-Error "Не удалось определить тип объекта. Поддерживаемые типы: $(($formKinds.Keys | Sort-Object) -join ', ')"
+	exit 1
+}
+
+if ($noOwnForms.ContainsKey($objectType)) {
+	Write-Error "$objectType не поддерживается: $($noOwnForms[$objectType])"
 	exit 1
 }
 
@@ -279,53 +529,106 @@ if (-not $objectName) {
 Write-Host ""
 Write-Host "=== form-add ==="
 Write-Host ""
+# Ссылка на объект и имя для типов формы. У всех видов это "Вид.Имя", и только
+# у таблицы внешнего источника — "ExternalDataSource.<Источник>.Table.<Таблица>", а в именах
+# типов — "<Источник>.<Таблица>". Имя источника в самом файле таблицы не хранится —
+# единственное место, где навык смотрит на путь: ExternalDataSources/<Источник>/Tables/<Таблица>.xml
+$objectQualifiedName = $objectName
+$objectRef = "$objectType.$objectName"
+if ($objectType -eq "Table") {
+	$tablesDir = Split-Path -Parent $objectXmlFull.ProviderPath
+	$edsSource = Split-Path -Leaf (Split-Path -Parent $tablesDir)
+	if (-not $edsSource -or (Split-Path -Leaf $tablesDir) -ne "Tables") {
+		Write-Error "Таблица внешнего источника ожидается по пути ExternalDataSources/<Источник>/Tables/<Таблица>.xml, а не '$($objectXmlFull.ProviderPath)'"
+		exit 1
+	}
+	$objectQualifiedName = "$edsSource.$objectName"
+	$objectRef = "ExternalDataSource.$edsSource.Table.$objectName"
+	$tdtNode = $xmlDoc.SelectSingleNode("//md:Table/md:Properties/md:TableDataType", $nsMgr)
+	$tableDataType = if ($tdtNode) { $tdtNode.InnerText.Trim() } else { "ObjectData" }
+}
+
 Write-Host "Object: $objectType.$objectName"
 
 # --- Фаза 2: Валидация Purpose ---
 
-$Purpose = $Purpose.Substring(0,1).ToUpper() + $Purpose.Substring(1).ToLower()
-# Нормализация
-switch ($Purpose) {
-	"Object" { }
-	"List"   { }
-	"Choice" { }
-	"Record" { }
-	default {
-		Write-Error "Недопустимое назначение: $Purpose. Допустимые: Object, List, Choice, Record"
+# Назначение ищем в таблице регистронезависимо — как принимает PowerShell (в py-порту .lower()).
+$kindPurposes = $formKinds[$objectType]
+
+# Обиходные написания назначения приводим к канону молча: русское название вида формы и
+# английское с суффиксом Form. Ключ нормализуем — регистр, пробелы и разделители не значимы.
+# Канон в документации один; здесь только приём ошибочного ввода, чтобы вызов не падал на форме
+# записи вместо назначения. Применимость назначения к виду объекта проверяется ниже как обычно.
+$purposeSynonyms = @{
+	"формаобъекта"="Object"; "формаэлемента"="Object"; "формадокумента"="Object"
+	"объект"="Object"; "элемент"="Object"; "документ"="Object"; "objectform"="Object"
+	"формасписка"="List"; "список"="List"; "listform"="List"
+	"формавыбора"="Choice"; "выбор"="Choice"; "choiceform"="Choice"
+	"формагруппы"="Folder"; "группа"="Folder"; "folderform"="Folder"
+	"формавыборагруппы"="FolderChoice"; "выборгруппы"="FolderChoice"; "folderchoiceform"="FolderChoice"
+	"формазаписи"="Record"; "запись"="Record"; "recordform"="Record"
+	"форманаборазаписей"="RecordSet"; "наборзаписей"="RecordSet"; "recordsetform"="RecordSet"
+	"формасохранения"="Save"; "формасохранениянастроек"="Save"; "сохранение"="Save"; "saveform"="Save"
+	"формазагрузки"="Load"; "формазагрузкинастроек"="Load"; "загрузка"="Load"; "loadform"="Load"
+	"произвольная"="Custom"; "произвольнаяформа"="Custom"; "customform"="Custom"
+}
+if ($Purpose) {
+	$purposeProbe = ($Purpose -replace '[\s_-]', '').ToLowerInvariant()
+	$isKnownPurpose = $false
+	foreach ($p in $kindPurposes.Keys) {
+		if ($p.ToLowerInvariant() -eq $Purpose.ToLowerInvariant()) { $isKnownPurpose = $true; break }
+	}
+	if (-not $isKnownPurpose -and $purposeSynonyms.ContainsKey($purposeProbe)) {
+		$Purpose = $purposeSynonyms[$purposeProbe]
+	}
+}
+if (-not $Purpose) {
+	if ($objectType -eq "Table" -and $tableDataType -eq "NonobjectData") {
+		# Пометка Primary в таблице видов одна на вид, а у таблицы с составным ключом
+		# формы объекта не бывает — основной становится форма записи.
+		$Purpose = "Record"
+	} else {
+		foreach ($p in $kindPurposes.Keys) {
+			if ($kindPurposes[$p].Primary) { $Purpose = $p; break }
+		}
+	}
+}
+$purposeKey = $null
+foreach ($p in $kindPurposes.Keys) {
+	if ($p.ToLowerInvariant() -eq $Purpose.ToLowerInvariant()) { $purposeKey = $p; break }
+}
+if (-not $purposeKey) {
+	Write-Error "Назначение '$Purpose' недопустимо для $objectType. Допустимые: $(($kindPurposes.Keys | Sort-Object) -join ', ')"
+	exit 1
+}
+$Purpose = $purposeKey
+$purposeRule = $kindPurposes[$Purpose]
+
+# У таблицы внешнего источника набор назначений зависит от вида данных (замерено на
+# 8.3.24.1691): ObjectData — Object/List/Choice, NonobjectData — Record/List/Choice. Неверная пара
+# не отвергается схемой формы, а валит загрузку всей конфигурации «Исключением XDTO» без причины.
+if ($objectType -eq "Table") {
+	if ($tableDataType -eq "NonobjectData" -and $Purpose -eq "Object") {
+		Write-Error "Таблица '$objectName' с составным ключом (TableDataType=NonobjectData): формы объекта у неё нет — используйте -Purpose Record."
+		exit 1
+	}
+	if ($tableDataType -ne "NonobjectData" -and $Purpose -eq "Record") {
+		Write-Error "Таблица '$objectName' с ключом из одного поля (TableDataType=ObjectData): формы записи у неё нет — используйте -Purpose Object."
 		exit 1
 	}
 }
 
-$objectLikeTypes = @("Document", "Catalog", "ChartOfAccounts", "ChartOfCharacteristicTypes", "ExchangePlan", "BusinessProcess", "Task")
-$processorLikeTypes = @("DataProcessor", "Report", "ExternalDataProcessor", "ExternalReport")
-
-switch ($Purpose) {
-	"Object" {
-		# допустимо для всех типов
-	}
-	"List" {
-		if ($objectType -eq "DataProcessor") {
-			Write-Error "Purpose=List недопустим для DataProcessor"
-			exit 1
-		}
-	}
-	"Choice" {
-		if ($objectType -in $processorLikeTypes -or $objectType -eq "InformationRegister") {
-			Write-Error "Purpose=Choice недопустим для $objectType"
-			exit 1
-		}
-	}
-	"Record" {
-		if ($objectType -ne "InformationRegister") {
-			Write-Error "Purpose=Record допустим только для InformationRegister"
-			exit 1
-		}
-	}
+# Гард от повторения дефекта: запись таблицы обязана быть заполненной. Пустой MainAttr — это
+# произвольная форма (законное состояние), а вот наполовину заполненная запись означала бы, что
+# таблицу правили невнимательно, и в XML уйдёт мусор вроде `cfg:.Журнал`.
+if ($purposeRule.MainAttr -and -not $purposeRule.AttrName) {
+	Write-Error "Внутренняя ошибка таблицы видов: у $objectType/$Purpose задан MainAttr без AttrName"
+	exit 1
 }
 
 # --- Фаза 3: Создание файлов ---
 
-$objectDir = [System.IO.Path]::ChangeExtension($objectXmlFull.Path, $null).TrimEnd('.')
+$objectDir = [System.IO.Path]::ChangeExtension($objectXmlFull.ProviderPath, $null).TrimEnd('.')
 $formsDir = Join-Path $objectDir "Forms"
 $formMetaPath = Join-Path $formsDir "$FormName.xml"
 
@@ -361,9 +664,16 @@ if ($objectType -in $processorLikeTypes) {
 	$extPresentationLine = "`n`t`t`t<ExtendedPresentation/>"
 }
 
+# Использование в режиме совместимости интерфейса — свойство формата 2.21 (8.5),
+# сразу после UsePurposes (проверено по выгрузке 8.5, до ExtendedPresentation).
+$useInIfcLine = ""
+if ((Get-FormatRank $script:formatVersion) -ge 221) {
+	$useInIfcLine = "`n`t`t`t<UseInInterfaceCompatibilityMode>Any</UseInInterfaceCompatibilityMode>"
+}
+
 $formMetaXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
-<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="$($script:formatVersion)">
+<MetaDataObject $($script:xmlnsDecl) version="$($script:formatVersion)">
 	<Form uuid="$formUuid">
 		<Properties>
 			<Name>$(ConvertTo-XmlText $FormName)</Name>
@@ -379,153 +689,158 @@ $formMetaXml = @"
 			<UsePurposes>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">PlatformApplication</v8:Value>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">MobilePlatformApplication</v8:Value>
-			</UsePurposes>$extPresentationLine
+			</UsePurposes>$useInIfcLine$extPresentationLine
 		</Properties>
 	</Form>
 </MetaDataObject>
 "@
 
-[System.IO.File]::WriteAllText($formMetaPath, $formMetaXml, $encBom)
+# XML в каноне выгрузки Конфигуратора: CRLF в разделителях, без перевода в конце.
+#
+# Копия этой функции есть в каждом навыке-эмиттере (навыки автономны). Держать
+# копии одинаковыми — сознательно: разошедшиеся копии сводят на нет весь смысл.
+#
+# Модуль .bsl сюда НЕ идёт — он пишется отдельно.
+function Write-XmlFile([string]$path, [string]$text, $encoding) {
+	$t = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
+	[System.IO.File]::WriteAllText($path, $t.TrimEnd("`r", "`n"), $encoding)
+}
+
+Write-XmlFile $formMetaPath $formMetaXml $encBom
 
 # --- 3b. Form.xml ---
 
 $formXmlPath = Join-Path $formExtDir "Form.xml"
 
-$formNsDecl = 'xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+# Одна ветка вместо трёх: что писать, решает запись таблицы видов. Раньше тип главного
+# реквизита брался из отдельной карты, и отсутствие вида в ней давало `cfg:.Имя` — молча.
+$attributesBlock = ""
+if ($purposeRule.MainAttr) {
+	$mainAttrType = $purposeRule.MainAttr -f $objectType, $objectName, $objectQualifiedName
+	$mainAttrName = $purposeRule.AttrName
 
-if ($Purpose -eq "List" -or $Purpose -eq "Choice") {
-	# Динамический список
-	# MainTable: тип.имя
-	$mainTable = "$objectType.$objectName"
+	# Динамический список несёт MainTable, остальные типы — SavedData по записи таблицы.
+	$tailLines = ""
+	if ($mainAttrType -eq "DynamicList") {
+		$mainTable = $objectRef
+		$tailLines = "`n`t`t`t<Settings xsi:type=""DynamicList"">`n`t`t`t`t<MainTable>$mainTable</MainTable>`n`t`t`t</Settings>"
+	} elseif ($purposeRule.SavedData) {
+		$tailLines = "`n`t`t`t<SavedData>true</SavedData>"
+	}
 
-	$formXml = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<Form $formNsDecl version="$($script:formatVersion)">
-	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
-		<Autofill>true</Autofill>
-	</AutoCommandBar>
-	<ChildItems/>
-	<Attributes>
-		<Attribute name="Список" id="1">
-			<Type>
-				<v8:Type>cfg:DynamicList</v8:Type>
-			</Type>
-			<MainAttribute>true</MainAttribute>
-			<Settings xsi:type="DynamicList">
-				<MainTable>$mainTable</MainTable>
-			</Settings>
-		</Attribute>
-	</Attributes>
-</Form>
-"@
-} elseif ($Purpose -eq "Record") {
-	# Запись регистра сведений
-	$mainAttrName = "Запись"
-	$mainAttrType = "InformationRegisterRecordManager.$objectName"
+	$attributesBlock = @"
 
-	$formXml = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<Form $formNsDecl version="$($script:formatVersion)">
-	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
-		<Autofill>true</Autofill>
-	</AutoCommandBar>
-	<ChildItems/>
 	<Attributes>
 		<Attribute name="$mainAttrName" id="1">
 			<Type>
 				<v8:Type>cfg:$mainAttrType</v8:Type>
 			</Type>
-			<MainAttribute>true</MainAttribute>
-			<SavedData>true</SavedData>
+			<MainAttribute>true</MainAttribute>$tailLines
 		</Attribute>
 	</Attributes>
-</Form>
-"@
-} else {
-	# Object — форма объекта. У регистра сведений главный реквизит менеджера записи
-	# называется «Запись», как в формах записи Конфигуратора.
-	$mainAttrName = if ($objectType -eq "InformationRegister") { "Запись" } else { "Объект" }
-
-	# Маппинг типа объекта на тип реквизита
-	$attrTypeMap = @{
-		"Document"                    = "DocumentObject"
-		"Catalog"                     = "CatalogObject"
-		"DataProcessor"               = "DataProcessorObject"
-		"Report"                      = "ReportObject"
-		"ExternalDataProcessor"       = "ExternalDataProcessorObject"
-		"ExternalReport"              = "ExternalReportObject"
-		"ChartOfAccounts"             = "ChartOfAccountsObject"
-		"ChartOfCharacteristicTypes"  = "ChartOfCharacteristicTypesObject"
-		"ExchangePlan"                = "ExchangePlanObject"
-		"BusinessProcess"             = "BusinessProcessObject"
-		"Task"                        = "TaskObject"
-		"InformationRegister"         = "InformationRegisterRecordManager"
-		"AccumulationRegister"        = "AccumulationRegisterRecordSet"
-	}
-
-	$mainAttrType = "$($attrTypeMap[$objectType]).$objectName"
-
-	# SavedData: standard for Catalog/Document/etc, but not for processor-like (DataProcessor/Report/External*)
-	$savedDataLine = ""
-	if ($objectType -notin $processorLikeTypes) {
-		$savedDataLine = "`n`t`t`t<SavedData>true</SavedData>"
-	}
-
-	$formXml = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<Form $formNsDecl version="$($script:formatVersion)">
-	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
-		<Autofill>true</Autofill>
-	</AutoCommandBar>
-	<ChildItems/>
-	<Attributes>
-		<Attribute name="$mainAttrName" id="1">
-			<Type>
-				<v8:Type>cfg:$mainAttrType</v8:Type>
-			</Type>
-			<MainAttribute>true</MainAttribute>$savedDataLine
-		</Attribute>
-	</Attributes>
-</Form>
 "@
 }
+
+# Произвольная форма (MainAttr = $null) — без блока Attributes вовсе. В типовых это самая
+# частая форма после объектной: 907 у справочников, 941 у документов, 3482 у отчётов.
+$formXml = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<Form $($script:formNsDecl) version="$($script:formatVersion)">
+	<AutoCommandBar name="ФормаКоманднаяПанель" id="-1">
+		<Autofill>true</Autofill>
+	</AutoCommandBar>
+	<ChildItems/>$attributesBlock
+</Form>
+"@
 
 if (Test-Path $formXmlPath) {
 	Write-Host "[SKIP] Form.xml already exists: $formXmlPath — not overwriting"
 } else {
-	[System.IO.File]::WriteAllText($formXmlPath, $formXml, $encBom)
+	Write-XmlFile $formXmlPath $formXml $encBom
 }
 
 # --- 3c. Module.bsl ---
 
+# Пустой модуль формы. Табличных областей нет: имя таблицы при создании формы неизвестно.
+function Get-FormModuleTemplate {
+	$out = @()
+	foreach ($r in @('ОбработчикиСобытийФормы', 'ОбработчикиСобытийЭлементовШапкиФормы', 'ОбработчикиКомандФормы', 'ОбработчикиОповещений', 'СлужебныеПроцедурыИФункции')) {
+		if ($out.Count -gt 0) { $out += '' }
+		$out += @("#Область $r", '', '#КонецОбласти')
+	}
+	return $out
+}
+
 $modulePath = Join-Path $formModuleDir "Module.bsl"
 
-$moduleBsl = @"
-#Область ОбработчикиСобытийФормы
-
-#КонецОбласти
-
-#Область ОбработчикиСобытийЭлементовФормы
-
-#КонецОбласти
-
-#Область ОбработчикиКомандФормы
-
-#КонецОбласти
-
-#Область ОбработчикиОповещений
-
-#КонецОбласти
-
-#Область СлужебныеПроцедурыИФункции
-
-#КонецОбласти
-"@
+$moduleBsl = (Get-FormModuleTemplate) -join "`n"
 
 if (Test-Path $modulePath) {
 	Write-Host "[SKIP] Module.bsl already exists: $modulePath — not overwriting"
 } else {
+	# Модуль пишем в каноне платформы: CRLF в разделителях строк (корпус: 2643 CRLF,
+	# чисто-LF 0 из 3001). Хвостовой перевод НЕ навязываем — у платформы он
+	# неканоничен (1235 модулей с ним, 766 без).
+	$moduleBsl = ($moduleBsl -replace "`r`n", "`n") -replace "`n", "`r`n"
 	[System.IO.File]::WriteAllText($modulePath, $moduleBsl, $encBom)
+}
+
+# Порядок групп в <ChildObjects> объекта по виду. Это xs:sequence <Вид>ChildObjects из MDClasses XSD,
+# сверенный выгрузкой платформы: выгрузка сама ставит группы в этот порядок, так что вставка не на место
+# даёт дифф при следующей выгрузке. Единого порядка нет — у документа Form стоит до TabularSection.
+function Get-ObjectChildOrder {
+	return @{
+		"Catalog"                    = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Document"                   = @("Attribute", "Form", "TabularSection", "Template", "Command")
+		"ExchangePlan"               = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ChartOfCharacteristicTypes" = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ChartOfAccounts"            = @("Attribute", "TabularSection", "AccountingFlag", "ExtDimensionAccountingFlag", "Form", "Template", "Command")
+		"ChartOfCalculationTypes"    = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"BusinessProcess"            = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Task"                       = @("Attribute", "TabularSection", "Form", "Template", "AddressingAttribute", "Command")
+		"DataProcessor"              = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Report"                     = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ExternalDataProcessor"      = @("Attribute", "TabularSection", "Form", "Template")
+		"ExternalReport"             = @("Attribute", "TabularSection", "Form", "Template")
+		"Enum"                       = @("EnumValue", "Form", "Template", "Command")
+		"InformationRegister"        = @("Resource", "Attribute", "Dimension", "Form", "Template", "Command")
+		"AccumulationRegister"       = @("Resource", "Attribute", "Dimension", "Form", "Template", "Command")
+		"AccountingRegister"         = @("Dimension", "Resource", "Attribute", "Form", "Template", "Command")
+		"CalculationRegister"        = @("Resource", "Attribute", "Dimension", "Recalculation", "Form", "Template", "Command")
+		"DocumentJournal"            = @("Column", "Form", "Template", "Command")
+		"Table"                      = @("Field", "Form", "Command", "Template")
+		"ExternalDataSource"         = @("Table", "Cube", "Function")
+		"Cube"                       = @("DimensionTable", "Dimension", "Resource", "Form", "Command", "Template")
+		"DimensionTable"             = @("Field", "Form", "Command", "Template")
+		"FilterCriterion"            = @("Form", "Command")
+		"SettingsStorage"            = @("Form", "Template")
+		"TabularSection"             = @("Attribute")
+	}
+}
+
+# Элемент <ChildObjects>, ПЕРЕД которым встаёт новый <tag>; $null — дописать в конец.
+# Сразу за последним элементом своего тега, иначе перед первым элементом группы, идущей
+# по канону вида позже. Вид или тег вне канона — $null, как раньше.
+function Find-ChildAnchor($container, [string]$tag, [string]$objType) {
+	$children = New-Object System.Collections.Generic.List[object]
+	foreach ($c in $container.ChildNodes) { if ($c.NodeType -eq 'Element') { $children.Add($c) } }
+	$lastIdx = -1
+	for ($i = 0; $i -lt $children.Count; $i++) {
+		if ($children[$i].LocalName -ceq $tag) { $lastIdx = $i }
+	}
+	if ($lastIdx -ge 0) {
+		if ($lastIdx + 1 -lt $children.Count) { return $children[$lastIdx + 1] }
+		return $null
+	}
+	$order = (Get-ObjectChildOrder)[$objType]
+	if (-not $order) { return $null }
+	$tagIdx = [array]::IndexOf([string[]]$order, $tag)
+	if ($tagIdx -lt 0) { return $null }
+	$later = @($order | Select-Object -Skip ($tagIdx + 1))
+	foreach ($c in $children) {
+		if ($later -ccontains $c.LocalName) { return $c }
+	}
+	return $null
 }
 
 # --- Фаза 4: Регистрация в родительском объекте ---
@@ -543,38 +858,13 @@ if (-not $alreadyRegistered) {
 $formElem = $xmlDoc.CreateElement("Form", "http://v8.1c.ru/8.3/MDClasses")
 $formElem.InnerText = $FormName
 
-# Ищем первый <Template> для вставки перед ним
-$firstTemplate = $childObjects.SelectSingleNode("md:Template", $nsMgr)
-# Ищем первую <TabularSection> для вставки перед ней (если нет Template)
-$firstTabular = $childObjects.SelectSingleNode("md:TabularSection", $nsMgr)
-
-# Определяем точку вставки: перед Template, перед TabularSection, или в конец
-$insertBefore = $null
-if ($firstTemplate) {
-	$insertBefore = $firstTemplate
-} elseif ($firstTabular) {
-	$insertBefore = $firstTabular
-}
+# Место — по канону вида: порядок групп у видов разный (у документа форма до ТЧ)
+$insertBefore = Find-ChildAnchor $childObjects "Form" $objectType
 
 if ($insertBefore) {
-	# Вставить перед найденным элементом, с переносом строки
-	$whitespace = $xmlDoc.CreateWhitespace("`n`t`t`t")
+	# Отступ перед insertBefore уже стоит и достаётся форме; свой перевод строки — после неё
 	$childObjects.InsertBefore($formElem, $insertBefore) | Out-Null
-	$childObjects.InsertBefore($whitespace, $formElem) | Out-Null
-	# Переставляем: whitespace перед formElem — неправильный порядок
-	# Правильно: formElem, затем whitespace перед insertBefore
-	# InsertBefore возвращает вставленный узел, порядок: ... formElem whitespace insertBefore ...
-	# На самом деле нам нужно: ... \n\t\t\tformElem \n\t\t\tinsertBefore
-	# Удалим и вставим правильно
-	$childObjects.RemoveChild($whitespace) | Out-Null
-	$childObjects.RemoveChild($formElem) | Out-Null
-
-	$childObjects.InsertBefore($formElem, $insertBefore) | Out-Null
-	# Whitespace нужен ДО formElem (перенос строки + отступ)
-	# Но перед insertBefore уже должен быть whitespace от предыдущего элемента
-	# Нам нужно добавить whitespace ПОСЛЕ formElem (перед insertBefore)
-	$ws = $xmlDoc.CreateWhitespace("`n`t`t`t")
-	$childObjects.InsertBefore($ws, $insertBefore) | Out-Null
+	$childObjects.InsertBefore($xmlDoc.CreateWhitespace("`n`t`t`t"), $insertBefore) | Out-Null
 } else {
 	# Добавить в конец ChildObjects
 	if ($childObjects.ChildNodes.Count -eq 0) {
@@ -600,26 +890,19 @@ if ($insertBefore) {
 $existingForms = $childObjects.SelectNodes("md:Form", $nsMgr)
 $isFirstFormForPurpose = $false
 $defaultPropName = $null
-$defaultValue = "$objectType.$objectName.Form.$FormName"
+$defaultValue = "$objectRef.Form.$FormName"
 
-# Определяем имя свойства для DefaultForm
-switch ($Purpose) {
-	"Object" {
-		if ($objectType -in $processorLikeTypes) {
-			$defaultPropName = "DefaultForm"
-		} else {
-			$defaultPropName = "DefaultObjectForm"
-		}
+# Свойство «основная форма» — из записи таблицы. Раньше выбиралось по одному Purpose без учёта
+# вида, и для журнала писалось DefaultListForm, которого у журнала нет: слот не находился, навык
+# молча ничего не делал.
+$defaultPropName = $purposeRule.Slot
+
+$defaultNode = $null
+if ($defaultPropName) {
+	$defaultNode = $xmlDoc.SelectSingleNode("//md:${objectType}/md:Properties/md:$defaultPropName", $nsMgr)
+	if ($defaultNode) {
+		$isFirstFormForPurpose = [string]::IsNullOrWhiteSpace($defaultNode.InnerText)
 	}
-	"List"   { $defaultPropName = "DefaultListForm" }
-	"Choice" { $defaultPropName = "DefaultChoiceForm" }
-	"Record" { $defaultPropName = "DefaultRecordForm" }
-}
-
-# Проверяем, установлено ли уже значение
-$defaultNode = $xmlDoc.SelectSingleNode("//md:${objectType}/md:Properties/md:$defaultPropName", $nsMgr)
-if ($defaultNode) {
-	$isFirstFormForPurpose = [string]::IsNullOrWhiteSpace($defaultNode.InnerText)
 }
 
 $defaultUpdated = $false
@@ -631,16 +914,36 @@ if ($SetDefault -or $isFirstFormForPurpose) {
 }
 
 # Сохранить с BOM
-$xmlText = $xmlDoc.OuterXml
+$settings = New-Object System.Xml.XmlWriterSettings
+$settings.Encoding = $encBom
+$settings.Indent = $false
+$settings.NewLineHandling = [System.Xml.NewLineHandling]::None
+
+# Через MemoryStream, а не прямо в файл: нужен шаг пост-обработки строки.
+$memStream = New-Object System.IO.MemoryStream
+$writer = [System.Xml.XmlWriter]::Create($memStream, $settings)
+$xmlDoc.Save($writer)
+$writer.Flush(); $writer.Close()
+
+$xmlText = [System.Text.Encoding]::UTF8.GetString($memStream.ToArray())
+$memStream.Close()
+if ($xmlText.Length -gt 0 -and $xmlText[0] -eq [char]0xFEFF) { $xmlText = $xmlText.Substring(1) }
+$xmlText = $xmlText.Replace('encoding="utf-8"', 'encoding="UTF-8"')
+# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Внутри
+# CDATA/комментария ` />` может быть содержимым (там `>` не экранируется),
+# поэтому они идут первыми ветками альтернации и возвращаются как есть.
+# Local (2026-09-14): processing instructions are protected as well — ` />` inside <?…?> is literal text.
 $xmlText = [regex]::Replace($xmlText, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
-$targetEol = if ([System.IO.File]::ReadAllText($objectXmlFull.Path) -match "`r`n") { "`r`n" } else { "`n" }
+# Целевой перевод строки: стиль файла-назначения — правка наследует его (#44/#46/#47),
+# новый файл получает канон выгрузки CRLF. Зеркало _detect_xml_style в py-порту.
+$targetEol = if ((Test-Path -LiteralPath $objectXmlFull.ProviderPath) -and ([System.IO.File]::ReadAllText($objectXmlFull.ProviderPath) -notmatch "`r`n")) { "`n" } else { "`r`n" }
 $xmlText = ($xmlText -replace "`r`n", "`n") -replace "`n", $targetEol
-[System.IO.File]::WriteAllText($objectXmlFull.Path, $xmlText, $encBom)
+[System.IO.File]::WriteAllText($objectXmlFull.ProviderPath, $xmlText, $encBom)
 
 # --- Фаза 5: Вывод ---
 
 # Относительные пути для вывода
-$basePath = Split-Path $objectXmlFull.Path -Parent
+$basePath = Split-Path $objectXmlFull.ProviderPath -Parent
 # Определяем корень (ищем родительский каталог типа Documents, Catalogs и т.д.)
 $relFormMeta = $formMetaPath.Replace($basePath, "").TrimStart("\", "/")
 $relFormXml = $formXmlPath.Replace($basePath, "").TrimStart("\", "/")
@@ -662,5 +965,9 @@ if ($alreadyRegistered) {
 }
 if ($defaultUpdated) {
 	Write-Host "${defaultPropName}: $defaultValue"
+} elseif (-not $defaultPropName) {
+	# Молчать здесь нельзя: пользователь ждёт, что форма станет основной, а свойства под неё
+	# у платформы нет (форма набора записей, произвольная форма).
+	Write-Host "Основной не назначена: у $objectType нет свойства для формы с назначением $Purpose"
 }
 Write-Host ""

@@ -11,8 +11,10 @@ name: validate-rules
 # Jobs cover the content skills and both metadata-tool runtimes:
 #   content-skills (linux) — real DOCX output and offline Gemini model selection.
 #   validate (windows) — the ruleset validator, the PowerShell tool regressions,
-#     and the full Python suite including the PowerShell/Python parity and
-#     installer packaging gates, which need a PowerShell host.
+#     the full Python suite including the PowerShell/Python parity and
+#     installer packaging gates, which need a PowerShell host (--strict: a case
+#     skipped for a missing PowerShell host fails the job), and the opt-in
+#     support-guard hook of the Claude Code plugin against the PowerShell guard.
 #   python-ports (linux) — the safety contract of the Python ports on the
 #     platform they exist for. Runs with --python-only, so the PowerShell-bound
 #     cases are skipped rather than silently passing.
@@ -82,6 +84,17 @@ jobs:
         shell: powershell
         run: .\tools\render-gate-evals.ps1 -OutDir "$env:RUNNER_TEMP\gate-evals"
 
+      # Vendored cc-1c-skills scripts copy shared functions into each other (support guard,
+      # platform launch, .dev.env helpers, form/meta emitters). Every copy of a registered
+      # family must match its authority unless the registry declares the variant and why;
+      # a function called at script top level must be declared above the call.
+      - name: Vendored copy drift and declaration order
+        shell: powershell
+        run: |
+          .\tools\tests\vendored-drift.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\tools\tests\vendored-drift.ps1
+
       # Behaviour regressions for the meta-edit / meta-compile tool scripts of the
       # 1c-metadata-manage skill. Same interpreter, no 1C platform needed: the cases
       # materialize their own fixtures and assert on the resulting bytes.
@@ -93,6 +106,22 @@ jobs:
       - name: Extension borrow regressions
         shell: powershell
         run: .\tools\tests\cfe-borrow-regression.ps1
+
+      # db-* / epf-* launch tools against a fake 1cv8.exe compiled by the suite: trap exit code,
+      # load-mode resolution, smuggled batch keys, repository credentials and masking, /DumpResult.
+      - name: Database tool regressions (fake platform)
+        shell: powershell
+        run: .\tools\tests\db-tools-regression.ps1
+
+      # web-* PowerShell scripts end to end against a fake httpd.exe (no Apache, no 1C).
+      - name: Web publication regressions (PowerShell)
+        shell: powershell
+        run: .\tools\tests\web-ops-regression.ps1
+
+      # repo-ops against a fake 1cv8.exe and sample repository logs (no platform).
+      - name: Repository operation regressions
+        shell: powershell
+        run: .\tools\tests\repo-ops-regression.ps1
 
       # Marketplace wrapper: DryRun plans only, no network, no install.ps1 write.
       - name: Marketplace bootstrap
@@ -120,11 +149,21 @@ jobs:
       # -B keeps CI from writing __pycache__ into the checked-out tree.
       - name: Python port regressions (with PowerShell parity)
         shell: powershell
-        run: python -B "tools/tests/python-ports-regression.py"
+        run: python -B "tools/tests/python-ports-regression.py" --strict
 
       - name: Python web operation regressions (offline)
         shell: powershell
         run: python -B "tools/tests/web-python-regression.py"
+
+      # plugins/1c-rules/hooks: the Node hook and the PowerShell guard of the
+      # vendored tools must reach the same verdict on the same synthetic dumps.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Support-guard hook (Node hook vs PowerShell guard)
+        shell: powershell
+        run: .\tools\tests\support-guard-hook.ps1 -RequireNode
 
   python-ports:
     runs-on: ubuntu-latest

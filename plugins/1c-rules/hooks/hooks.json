@@ -1,5 +1,5 @@
 {
-  "description": "Run install.ps1 for 1C projects. ensure never auto-updates and skips non-1C or CLI-config directories.",
+  "description": "Run install.ps1 for 1C projects (ensure never auto-updates and skips non-1C or CLI-config directories). Experimental support guard for raw edits of a vendor configuration dump: off unless .dev.env sets SUPPORT_GUARD_HOOK=on.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,17 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/invoke-install.sh\" ensure claude-code"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/support-guard.sh\""
           }
         ]
       }

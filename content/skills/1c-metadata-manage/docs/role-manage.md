@@ -1,253 +1,143 @@
-# 1C Role Manage — Compile, Info, Validate
+# 1C Role Manage — Compile, Edit, Info, Validate
 
-Create, analyze, and validate 1C roles (metadata + Rights.xml) for access rights management.
+Create, edit in place, analyze, and validate 1C roles (metadata + Rights.xml) for access rights management.
+
+| Task | Tool |
+|------|------|
+| New role | `role-compile` (section 1) — new UUID, registers the role in `Configuration.xml` |
+| Change an existing role — rights, RLS, templates, flags, synonym | `role-edit` (section 2) — UUID and every other entry stay as they are |
+| Summary of a role | `role-info` (section 3) |
+| Check a role | `role-validate` (section 4) — `role-edit` runs it automatically |
+
+Never re-compile an existing role: `role-compile` issues a new UUID and rewrites `Rights.xml` whole. It refuses (exit 1, nothing written) when `Roles/<Name>.xml` already exists; `-Force` replaces the role deliberately (local gate, upstream overwrites).
 
 ---
 ## 1. Compile — Create Role
 
-Creates role files (metadata + Rights.xml) from a JSON description.
+Creates `Roles/<Name>.xml` and `Roles/<Name>/Ext/Rights.xml` from a JSON description and registers `<Role>` in `Configuration.xml`. The full JSON DSL (Russian, upstream original) is [`dsl-reference.md`](../tools/1c-role-compile/dsl-reference.md).
 
-> **Preferred path** — invoke the PowerShell script `tools/1c-role-compile/scripts/role-compile.ps1` (added from upstream `cc-1c-skills` `w-2026-05-17`). The full JSON DSL for the script lives in `tools/1c-role-compile/dsl-reference.md` (legacy Russian — to be translated separately).
->
-> The XML templates below are for rights-only changes to an existing role — the hand-edit exception of `SKILL.md → Hard rule` (no tool edits a role in place: `role-compile` writes a new role with a new UUID). Keep the role's `.xml`, its UUID and the other entries as they are and finish with `role-validate` (section 3).
-
-## Usage
-
-```
-1c-role-compile <RolePath> <OutputDir>
-```
-
-- **RolePath** — path to the JSON role definition.
-- **OutputDir** — either the configuration source root (the script creates `Roles/` itself) or a path that already ends with `Roles`.
-
-**Command:**
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -RolePath "<role.json>" -OutputDir "<src-root-or-Roles>"
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -JsonPath "<role.json>" -OutputDir "<src-root-or-Roles>"
 ```
 
-The script accepts the DSL keys `objects` (canonical) or its synonym `rights`. UUIDs and registration in `Configuration.xml` are handled automatically.
+| Parameter | Description |
+|-----------|-------------|
+| `-JsonPath` | Path to the JSON role definition |
+| `-OutputDir` | The configuration source root (`Roles/` is created) or a path that already ends with `Roles` |
 
-## File Structure and Registration
+The new `<Role>` entry goes into `<ChildObjects>` by `.dev.env` `NEW_OBJECT_POSITION` (`end` by default, after the last role; `byName` sorts it among the roles), the same rule as `meta-compile` / `cf-edit`.
 
-```
-Roles/
-  RoleName.xml           ← metadata (uuid, name, synonym)
-  RoleName/
-    Ext/
-      Rights.xml         ← rights definition
-```
+### JSON DSL — Quick Reference
 
-Add `<Role>RoleName</Role>` to `<ChildObjects>` section in `Configuration.xml`.
-
-## Metadata Template: Roles/RoleName.xml
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
-        xmlns:v8="http://v8.1c.ru/8.1/data/core"
-        xmlns:xr="http://v8.1c.ru/8.3/xcf/readable"
-        xmlns:xs="http://www.w3.org/2001/XMLSchema"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        version="2.17">
-    <Role uuid="GENERATE-UUID-HERE">
-        <Properties>
-            <Name>RoleName</Name>
-            <Synonym>
-                <v8:item>
-                    <v8:lang>ru</v8:lang>
-                    <v8:content>Display role name</v8:content>
-                </v8:item>
-            </Synonym>
-            <Comment/>
-        </Properties>
-    </Role>
-</MetaDataObject>
+```json
+{
+  "name": "SalesManager",
+  "synonym": "Sales manager",
+  "objects": [
+    "Catalog.Products: @view",
+    "Document.SalesOrder: @edit",
+    "InformationRegister.Prices: Read, Update",
+    { "name": "Document.Sale", "preset": "view", "rights": { "Delete": false }, "rls": { "Read": "#ForObject(\"\")" } },
+    { "name": "Catalog.Products.Attribute.Price", "rights": { "View": false } }
+  ],
+  "templates": [ { "name": "ForObject(Modifier)", "condition": "WHERE Company = &CurrentCompany" } ]
+}
 ```
 
-**UUID:** `powershell.exe -Command "[guid]::NewGuid().ToString()"`
+- Optional root keys: `comment` (`""`), `setForNewObjects` (`false`), `setForAttributesByDefault` (`true`), `independentRightsOfChildObjects` (`false`). `rights` is accepted as a synonym of `objects`.
+- Shorthand: `"Type.Name: @preset"` or `"Type.Name: Right1, Right2"`. Object form: `preset` (without `@`) + `rights` (dict `{"Right": true/false}` or array) + `rls` (`{"Right": "condition"}`).
+- Russian type and right names are accepted (`Справочник.Контрагенты: Чтение`); the canonical form is English.
+- RLS: a template reference starts with `#` (`#ForObject("")`); `&` is escaped automatically.
+- **Condition or template body from a file:** write `@path` as the value — `"rls": {"Read": "@condition.txt"}`, `"condition": "@template.txt"`. A relative path is looked up next to the JSON file, then in the current directory.
+- Attributes, tabular sections, dimensions and resources inherit the rights of their object — give them a denial (`"rights": {"View": false}`) to close what they inherit.
+- An extension role listed in `DefaultRoles` cannot grant rights on adopted objects (the platform refuses) — put such rights into a separate role.
 
-## Rights Template: Roles/RoleName/Ext/Rights.xml
+### Services — rights live on nested objects
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<Rights xmlns="http://v8.1c.ru/8.2/roles"
-        xmlns:xs="http://www.w3.org/2001/XMLSchema"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:type="Rights" version="2.17">
-    <setForNewObjects>false</setForNewObjects>
-    <setForAttributesByDefault>true</setForAttributesByDefault>
-    <independentRightsOfChildObjects>false</independentRightsOfChildObjects>
-    <!-- <object> blocks -->
-</Rights>
-```
+A right on a service as a whole does not exist: the platform checks the URL-template method, the web-service operation, the integration-service channel. A role with `HTTPService.X: Use` on the root loads, passes old validators and answers **403** on every route.
 
-NB: namespace `http://v8.1c.ru/8.2/roles` (historically 8.2, not 8.3).
+- Short form `"HTTPService.EDI: Use"` (also `WebService.X: Use`, `IntegrationService.X: Use`) is **expanded by `role-compile` / `role-edit`** from the service metadata of the configuration the role belongs to into one entry per leaf, e.g. `HTTPService.EDI.URLTemplate.NewDocs.Method.POST: Use`. No metadata found or no nested objects → refusal.
+- Part of the routes — full paths: `HTTPService.API.URLTemplate.Files.Method.Get: Use`, `WebService.Exchange.Operation.Load: Use`, `IntegrationService.Bus.IntegrationServiceChannel.Orders: Use`.
+- The segment after `Method.` is the **name of the Method object** in the metadata tree, not an HTTP verb (`Method.GET`, `Method.Установить`, …).
 
-## Rights Block Format
+### Refusal before writing
 
-```xml
-<object>
-    <name>Catalog.Products</name>
-    <right><name>Read</name><value>true</value></right>
-    <right><name>View</name><value>true</value></right>
-</object>
-```
+Every problem in the description is collected and reported at once, then the run exits `1` — no role files are written and `Configuration.xml` is not touched:
 
-Object name — dot notation: `ObjectType.Name[.NestedType.NestedName]`.
+- a type that has no rights in roles (`Enum`, `CommonModule`, … — section 5) or an unknown type (typo). A rights block on an enum makes the configuration hang on load without a message;
+- a right that does not exist for the type, a nested kind impossible for the type, a right not allowed for the nested kind;
+- a service root that cannot be expanded; an extension default role granting rights on adopted objects.
 
-## Common Rights Sets
+### What is written
 
-### Catalog / ExchangePlan
-
-| Set | Rights |
-|-----|--------|
-| Read | Read, View, InputByString |
-| Full | Read, Insert, Update, Delete, View, Edit, InputByString, InteractiveInsert, InteractiveSetDeletionMark, InteractiveClearDeletionMark |
-
-### Document
-
-| Set | Rights |
-|-----|--------|
-| Read | Read, View, InputByString |
-| Full | Read, Insert, Update, Delete, View, Edit, InputByString, Posting, UndoPosting, InteractiveInsert, InteractiveSetDeletionMark, InteractiveClearDeletionMark, InteractivePosting, InteractivePostingRegular, InteractiveUndoPosting, InteractiveChangeOfPosted |
-
-### InformationRegister / AccumulationRegister / AccountingRegister
-
-| Set | Rights |
-|-----|--------|
-| Read | Read, View |
-| Full | Read, Update, View, Edit |
-
-TotalsControl — only for totals management, usually not needed.
-
-### Simple Types
-
-| Type | Rights |
-|------|--------|
-| `DataProcessor` / `Report` | Use, View |
-| `Constant` | Read, Update, View, Edit (read-only: Read, View) |
-| `CommonForm` / `CommonCommand` / `Subsystem` / `FilterCriterion` | View |
-| `DocumentJournal` | Read, View |
-| `Sequence` | Read, Update |
-| `SessionParameter` | Get (+ Set if writes) |
-| `CommonAttribute` | View (+ Edit if edits) |
-| `WebService` / `HTTPService` / `IntegrationService` | Use |
-| `CalculationRegister` | Read, View |
-
-### Rare Reference Types
-
-| Type | Specifics (relative to Catalog) |
-|------|--------------------------------|
-| `ChartOfAccounts`, `ChartOfCharacteristicTypes`, `ChartOfCalculationTypes` | + Predefined rights (InteractiveDeletePredefinedData, etc.) |
-| `BusinessProcess` | + Start, InteractiveStart, InteractiveActivate |
-| `Task` | + Execute, InteractiveExecute, InteractiveActivate |
-
-### Types WITHOUT Rights in Roles
-
-Enum, FunctionalOption, DefinedType, CommonModule, CommonPicture, CommonTemplate — do not appear in Rights.xml.
-
-### Nested Objects (rights: View, Edit)
-
-```
-Catalog.Contractors.Attribute.TIN
-Document.Sales.StandardAttribute.Posted
-Document.Sales.TabularSection.Items
-InformationRegister.Prices.Dimension.Product
-InformationRegister.Prices.Resource.Price
-Catalog.Contractors.Command.OpenCard          ← View only
-Task.Assignment.AddressingAttribute.Performer
-```
-
-Used for granular denial: `<value>false</value>` on a specific attribute.
-
-### Configuration
-
-Object: `Configuration.ConfigName`. Key rights: Administration, DataAdministration, ThinClient, WebClient, ThickClient, MobileClient, ExternalConnection, Output, SaveUserData, InteractiveOpenExtDataProcessors, InteractiveOpenExtReports, MainWindowModeNormal, MainWindowModeWorkplace, MainWindowModeEmbeddedWorkplace, MainWindowModeFullscreenWorkplace, MainWindowModeKiosk, AnalyticsSystemClient.
-
-> DataHistory rights (ReadDataHistory, UpdateDataHistory, etc.) exist for Catalog, Document, Register, Constant — but are rarely used in standard roles.
-
-## RLS (Row-Level Security)
-
-Inside `<right>`, after `<value>`. Applies to Read, Update, Insert, Delete.
-
-```xml
-<right>
-    <name>Read</name>
-    <value>true</value>
-    <restrictionByCondition>
-        <condition>#TemplateName("Param1", "Param2")</condition>
-    </restrictionByCondition>
-</right>
-```
-
-Templates — at the end of Rights.xml, after all `<object>` blocks:
-
-```xml
-<restrictionTemplate>
-    <name>TemplateName(Param1, Param2)</name>
-    <condition>Template text</condition>
-</restrictionTemplate>
-```
-
-`&` in conditions → `&amp;`. Typical templates: ForObject, ByValues, ForRegister.
-
-## Example: Role for a Scheduled Job
-
-```xml
-<object>
-    <name>Catalog.Currencies</name>
-    <right><name>Read</name><value>true</value></right>
-</object>
-<object>
-    <name>InformationRegister.CurrencyRates</name>
-    <right><name>Read</name><value>true</value></right>
-    <right><name>Update</name><value>true</value></right>
-</object>
-<object>
-    <name>Constant.MainCurrency</name>
-    <right><name>Read</name><value>true</value></right>
-</object>
-```
-
-Background jobs do not require Interactive/View/Edit rights or configuration rights (ThinClient, WebClient, etc.) — only programmatic rights (Read, Insert, Update, Delete, Posting).
+- **Rights closure.** The platform completes the set on load (`Edit` → `Read`, `Update`, `View`; interactive rights → their base set; `View` of a data processor / report → `Use`), so the closure is written right away. From format 2.19 (8.3.26) a right equal to the role default (`setForNewObjects`) is not stored.
+- **Platform order.** `<right>` order inside `<object>` is fixed per type; `<object>` nodes go by the UUID of the metadata object (nested — by the attribute / command UUID). An object not found in the dump is written last with a notice.
+- **Format version** of both files = the `Configuration.xml` version (or the EPF/ERF root).
 
 ---
-## 2. Info — Analyze Rights
+## 2. Edit — Change an Existing Role
+
+Changes rights, RLS, templates, flags, synonym or comment of an existing role in place: the UUID, the other rights, RLS and templates are kept, the file's BOM / EOL style is preserved.
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-edit/scripts/role-edit.ps1 -RolePath "<role>" -Operation <op> -Value "<value>"
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-edit/scripts/role-edit.ps1 -RolePath "<role>" -DefinitionFile "<ops.json>"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `-RolePath` (aliases `-Path`, `-RightsPath`) | Role folder `Roles/<Name>`, `Roles/<Name>.xml` or `Roles/<Name>/Ext/Rights.xml` |
+| `-Operation` | One operation from the table below |
+| `-Value` | Operation value; several values of the same operation — separated by `;;` |
+| `-DefinitionFile` | JSON array `[{"operation": "...", "value": "..."}, …]` — several different operations in one call (instead of `-Operation`) |
+| `-NoValidate` | Do not run `role-validate` after the edit |
+
+Operations are applied in the order given.
+
+| Operation | `Value` | Effect |
+|-----------|---------|--------|
+| `add-rights` | `Type.Name: Right1, Right2` or `Type.Name: @preset` | Add rights, keep the existing ones |
+| `set-rights` | same | Replace the object's rights set |
+| `remove-rights` | `Type.Name: Right1` — remove rights; `Type.Name` — remove the object | Remove rights; an object left without granted rights is removed |
+| `deny-rights` | `Type.Name: Right1, Right2` | Deny on an attribute / tabular section that otherwise inherits the object's rights |
+| `set-rls` | `Type.Name.Right: condition`, `Type.Name.Right[Field1, Field2]: condition` | Row-level restriction; the right must already be granted |
+| `remove-rls` | `Type.Name.Right` — all rows; `Type.Name.Right[Field1]` — one row | Remove a restriction, keep the right |
+| `add-template` / `set-template` | `Name(Params): condition` | Add / replace (or add) an RLS template |
+| `remove-template` | `Name(Params)` or `Name` | Remove a template |
+| `modify-property` | `setForNewObjects=true`, `setForAttributesByDefault=false`, `independentRightsOfChildObjects=true` | Global role flags |
+| `set-synonym` / `set-comment` | text | Role synonym / comment |
+
+```powershell
+... -RolePath "src/Roles/Manager" -Operation add-rights -Value "InformationRegister.Prices: Read, Update"
+... -RolePath "src/Roles/Manager" -Operation add-rights -Value "Catalog.Products: @view ;; Document.Order: @edit"
+... -RolePath "src/Roles/Manager" -Operation deny-rights -Value "Catalog.Products.Attribute.Price: View"
+```
+
+- Object and right names, presets, nested paths and the service short form are the same as in `role-compile`; the rights tables of both tools are identical.
+- `remove-rights` / `deny-rights` cascade: rights that need the removed one go too (remove `Read` → `Update`, `View`, `Edit` go); the cascade is listed in the output.
+- **RLS rows.** An RLS right is a list of rows, like the "Data access restrictions" table of the role editor: a row without fields applies to all other fields, a row with fields — only to them. A row with the same field set is replaced, a new set is added. Typical: close the table and keep the reference presentation fields open — `Catalog.Products.Read: WHERE FALSE`, then `Catalog.Products.Read[Ref, Code, Description]: ` (empty condition).
+- **Value from a file:** `@path` in place of an RLS condition, template body, synonym or comment (`-Value "Catalog.Products.Read: @condition.txt"`). A relative path is looked up next to `-DefinitionFile` (otherwise next to the role's `Rights.xml`), then in the current directory; `;;` inside the file is plain text.
+- An error in any value is a refusal **before writing** — nothing changes. A locked role of a configuration on vendor support is refused ([support-manage.md](support-manage.md)).
+- Auto-validation: `role-validate` runs after the write and its exit code is the result of the run. A missing validator is refused before the edit; `-NoValidate` is the only opt-out.
+
+---
+## 3. Info — Analyze Rights
 
 Parses a role's `Rights.xml` and outputs a compact summary: objects grouped by type, showing only allowed rights. Compression: thousands of XML lines → 50–150 lines of text.
 
-## Usage
-
-```
-1c-role-info <RightsPath>
-```
-
-**RightsPath** — path to the role's `Rights.xml` file (typically `Roles/RoleName/Ext/Rights.xml`).
-
-## Command
-
 ```powershell
-powershell.exe -File skills/1c-metadata-manage/tools/1c-role-info/scripts/role-info.ps1 -RightsPath <path> -OutFile <output.txt>
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-info/scripts/role-info.ps1 -RightsPath <path> -OutFile <output.txt>
 ```
-
-### Parameters
 
 | Parameter | Required | Description |
 |-----------|:--------:|-------------|
-| `-RightsPath` | yes | Path to Rights.xml |
+| `-RightsPath` (alias `-Path`) | yes | Path to `Rights.xml` (positional) |
 | `-ShowDenied` | no | Show denied rights (hidden by default) |
 | `-Limit` | no | Max output lines (default `150`). `0` = unlimited |
 | `-Offset` | no | Skip N lines — for pagination (default `0`) |
 | `-OutFile` | no | Write result to file (UTF-8 BOM). Without this — console output |
 
 **Important:** Always use `-OutFile` and read result via Read tool. Direct console output may corrupt Cyrillic characters.
-
-For large roles with truncated output:
-```powershell
-... -Offset 150            # pagination: skip first 150 lines
-```
-
-## Output Format
 
 ```
 === Role: BasicRightsBP --- "Basic Rights: Enterprise Accounting" ===
@@ -258,11 +148,6 @@ Allowed rights:
 
   Catalog (8):
     Contractors: Read, View, InputByString
-    Banks: Read, View, InputByString
-    ...
-
-  Document (12):
-    SalesInvoice: Read, View, Posting, InteractivePosting
     ...
 
   InformationRegister (6):
@@ -280,95 +165,150 @@ Total: 138 allowed, 18 denied
 [TRUNCATED] Shown 150 of 220 lines. Use -Offset 150 to continue.
 ```
 
-Use `-Offset N` and `-Limit N` for paginated viewing.
-
-### Notation
-
-- `[RLS]` — right with row-level security restriction (restrictionByCondition)
-- `-View`, `-Edit` — denied rights (in Denied section, with `-ShowDenied`)
-- Nested objects shown with suffix: `Contractors.StandardAttribute.PredefinedDataName`
+`[RLS]` — right with a row-level restriction; `-View`, `-Edit` — denied rights (with `-ShowDenied`); nested objects shown with a suffix: `Contractors.StandardAttribute.PredefinedDataName`.
 
 ---
-## 3. Validate — Check Correctness
+## 4. Validate — Check Correctness
 
-Checks correctness of a role's `Rights.xml`: XML format, namespace, global flags, object types, right names, RLS restrictions, templates. The role metadata (UUID, name, synonym) is checked as well when `Roles/<RoleName>.xml` is found — it is located from the `Rights.xml` path, there is no parameter for it.
-
-## Usage
+Checks a role's `Rights.xml`: XML format, namespace, global flags, object types, right names, nested kinds, RLS, templates, and — when `Roles/<RoleName>.xml` is found next to it (located from the `Rights.xml` path, there is no parameter for it) — the role metadata, the format version and the registration in `Configuration.xml`.
 
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-validate/scripts/role-validate.ps1 -RightsPath <path> [-OutFile <output.txt>] [-Detailed] [-MaxErrors <n>]
 ```
 
-### Parameters
-
 | Parameter | Required | Description |
 |-----------|:--------:|-------------|
-| `-RightsPath` (alias `-Path`) | yes | Path to `Rights.xml` of the role, or to the role folder `Roles/RoleName` (resolved to `Ext/Rights.xml`) |
-| `-OutFile` | no | Write result to file (UTF-8 BOM). Without this — console output |
+| `-RightsPath` (alias `-Path`) | yes | `Rights.xml` of the role, or the role folder `Roles/RoleName` (resolved to `Ext/Rights.xml`). The only positional parameter |
+| `-OutFile` | no | Write result to file (UTF-8 BOM) — by name only |
 | `-Detailed` | no | Print every passed check, not only the one-line summary |
-| `-MaxErrors` | no | Stop after this many errors (default 30) |
+| `-MaxErrors` | no | Stop after this many errors (default 30); the summary says the check stopped |
 
-**Important:** For Cyrillic paths, use `-OutFile` and read the result via the Read tool.
+A second positional argument is a parameter error — it no longer binds to `-OutFile` and overwrites that file (for example `Roles/X.xml`) with the report.
 
-## Checks
+**Errors** (exit `1`):
 
-### Rights.xml
-1. XML well-formed — parses without errors
-2. Root element `<Rights>` with namespace `http://v8.1c.ru/8.2/roles`
-3. Three global flags: `setForNewObjects`, `setForAttributesByDefault`, `independentRightsOfChildObjects`
-4. For each `<object>`:
-   - `<name>` is not empty
-   - Object type is recognized (Catalog, Document, InformationRegister, etc.)
-   - Each `<right>` has `<name>` and `<value>` (`true`/`false`)
-   - Right name is valid for the object type (with suggestion on typo)
-5. Nested objects (3+ segments via `.`): only View, Edit allowed (or Use for IntegrationServiceChannel)
-6. RLS `<restrictionByCondition>`: `<condition>` is not empty
-7. Templates `<restrictionTemplate>`: `<name>` and `<condition>` are not empty
+- invalid XML, wrong root element, object without `<name>`, `<right>` without `<name>`, a value other than `true` / `false`;
+- a type without rights in roles (`Enum`, `CommonModule`, `CommonPicture`, `ScheduledJob`, …) or an unknown type;
+- a right that does not exist for the type (with a suggestion), a nested kind impossible for the type or owned by another type, a right not allowed for the nested kind;
+- a right on a whole service (`HTTPService.X`, `WebService.X`, `IntegrationService.X`) — the routes would answer 403;
+- metadata: no `<Role>` element, invalid UUID, empty `<Name>`;
+- the `Rights.xml` format version differs from `Roles/<Name>.xml` — the platform refuses to load parts of one object in different formats.
 
-### Metadata (when `Roles/<RoleName>.xml` exists)
-- `<Role>` element found
-- UUID in correct format
-- `<Name>` is not empty
-- `<Synonym>` is present
+**Warnings**: namespace other than `http://v8.1c.ru/8.2/roles`, a missing / non-boolean global flag, an empty RLS condition, a template without name or condition, an empty synonym, a role version different from the dump (`Configuration.xml`; loads, but the dump is no longer uniform), the role not registered in `Configuration.xml`.
 
-## Message Levels
+Exit code: `0` — no errors (warnings may exist), `1` — errors found. For Cyrillic paths use `-OutFile` and read the result via the Read tool.
 
-| Marker | Meaning |
-|--------|---------|
-| `OK` | Check passed |
-| `WARN` | Warning (unknown object type, suspicious right name) |
-| `ERR` | Error (invalid XML, missing required elements) |
+---
+## 5. Rights Reference
 
-Exit code: `0` — no errors, `1` — errors found.
+A role has rights on exactly 27 types; any other type is refused by `role-compile` / `role-edit` and is an error in `role-validate`. Full per-type lists: `$knownRights` in `role-compile.ps1` (the same table is in `role-edit.ps1`).
 
-## Examples
+| Type | Rights |
+|------|--------|
+| `Configuration` | Administration, DataAdministration, UpdateDataBaseConfiguration, ConfigurationExtensionsAdministration, ActiveUsers, EventLog, ExclusiveMode, ThinClient, ThickClient, WebClient, MobileClient, ExternalConnection, Automation, Output, SaveUserData, TechnicalSpecialistMode, InteractiveOpenExtDataProcessors, InteractiveOpenExtReports, AnalyticsSystemClient, CollaborationSystemInfoBaseRegistration, MainWindowModeNormal, MainWindowModeWorkplace, MainWindowModeEmbeddedWorkplace, MainWindowModeFullscreenWorkplace, MainWindowModeKiosk |
+| `Catalog`, `ChartOfCharacteristicTypes` | Read, Insert, Update, Delete, View, Edit, InputByString, Interactive* (Insert, SetDeletionMark, ClearDeletionMark, Delete, DeleteMarked), *PredefinedData, *DataHistory* |
+| `Document` | the same + Posting, UndoPosting, InteractivePosting, InteractivePostingRegular, InteractiveUndoPosting, InteractiveChangeOfPosted |
+| `ChartOfAccounts`, `ChartOfCalculationTypes`, `ExchangePlan` | Read, Insert, Update, Delete, View, Edit, InputByString, Interactive*, *DataHistory* |
+| `BusinessProcess` | Read, Insert, Update, Delete, View, Edit, InputByString, Start, InteractiveInsert, InteractiveSetDeletionMark, InteractiveClearDeletionMark, InteractiveDelete, InteractiveDeleteMarked, InteractiveActivate, InteractiveStart, *DataHistory* |
+| `Task` | the same, Execute / InteractiveExecute instead of Start / InteractiveStart |
+| `InformationRegister` | Read, Update, View, Edit, TotalsControl, *DataHistory* |
+| `AccumulationRegister`, `AccountingRegister` | Read, Update, View, Edit, TotalsControl |
+| `CalculationRegister` | Read, Update, View, Edit |
+| `Constant` | Read, Update, View, Edit, *DataHistory* |
+| `DocumentJournal` | Read, View |
+| `Sequence` | Read, Update |
+| `DataProcessor`, `Report` | Use, View |
+| `WebService`, `HTTPService`, `IntegrationService` | none on the root — only on nested objects (below) |
+| `CommonForm`, `CommonCommand`, `Subsystem`, `FilterCriterion` | View |
+| `CommonAttribute` | View, Edit |
+| `SessionParameter` | Get, Set |
+| `ExternalDataSource` | Use, Administration, StandardAuthenticationChange, SessionStandardAuthenticationChange, SessionOSAuthenticationChange |
 
-### Rights.xml Only
+### Nested objects
 
-```powershell
-... -RightsPath Roles/БазовыеПраваБП/Ext/Rights.xml
+A path longer than two segments addresses part of an object; the next-to-last segment (the kind) sets the rights.
+
+| Kind | Rights |
+|------|--------|
+| `Attribute`, `StandardAttribute`, `TabularSection`, `StandardTabularSection`, `Dimension`, `Resource`, `AccountingFlag`, `ExtDimensionAccountingFlag`, `AddressingAttribute` | View, Edit |
+| `Command`, nested `Subsystem` | View |
+| `Operation` (WebService), `Method` (HTTPService, under `URLTemplate`), `IntegrationServiceChannel` (IntegrationService) | Use |
+| `Recalculation` (CalculationRegister) | Read, Update |
+| `ExternalDataSource.X.Table.T` | Read, Insert, Update, Delete, View, Edit, InputByString, InteractiveInsert, InteractiveDelete |
+| `…Table.T.Field.F`, `…Cube.C.DimensionTable.T.Field.F` | View, Edit |
+| `ExternalDataSource.X.Cube.C`, `…Cube.C.DimensionTable.T` | Read, View |
+| `…Cube.C.Dimension.D`, `…Cube.C.Resource.R`, `…Table.T.Command.K` (and Cube / DimensionTable commands) | View |
+| `ExternalDataSource.X.Function.F` | Use, View |
+
+`Operation`, `Method`, `IntegrationServiceChannel`, `Recalculation` and the external-data-source kinds (`Table`, `Cube`, `Function`, `Field`, `DimensionTable`) exist only under their own parent type. Document-journal columns (`DocumentJournal.J.Column.C`) have no rights. Examples: `Catalog.Contractors.Attribute.TIN: View, Edit`, `Document.Sales.TabularSection.Items.Attribute.Price: View`.
+
+### Types without rights in roles
+
+`Enum`, `CommonModule`, `DefinedType`, `CommonPicture`, `CommonTemplate`, `Language`, `FunctionalOption`, `FunctionalOptionsParameter`, `EventSubscription`, `ScheduledJob`, `StyleItem`, `Style`, `SettingsStorage`, `XDTOPackage`, `WSReference`, `DocumentNumerator` — absent from the role editor tree; a rights entry on them is refused / an error.
+
+### Presets
+
+| Preset | Type | Rights |
+|--------|------|--------|
+| `@view` | Catalog, ExchangePlan, Document, ChartOf*, BusinessProcess, Task | Read, View, InputByString |
+| | InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegister, Constant, DocumentJournal | Read, View |
+| | Sequence | Read |
+| | CommonForm, CommonCommand, Subsystem, FilterCriterion, CommonAttribute | View |
+| | DataProcessor, Report | Use, View |
+| | SessionParameter | Get |
+| | Configuration | ThinClient, WebClient, Output, SaveUserData, MainWindowModeNormal |
+| `@edit` | Catalog, ExchangePlan, ChartOf* | Read, Insert, Update, Delete, View, Edit, InputByString, InteractiveInsert, InteractiveSetDeletionMark, InteractiveClearDeletionMark |
+| | Document | the same + Posting, UndoPosting, InteractivePosting, InteractivePostingRegular, InteractiveUndoPosting, InteractiveChangeOfPosted |
+| | BusinessProcess / Task | the catalog set + Start, InteractiveActivate, InteractiveStart / Execute, InteractiveActivate, InteractiveExecute |
+| | InformationRegister, AccumulationRegister, AccountingRegister, Constant | Read, Update, View, Edit |
+| | DocumentJournal / Sequence / SessionParameter / CommonAttribute | Read, View / Read, Update / Get, Set / View, Edit |
+
+No presets for services and external data sources — give the rights explicitly. Background jobs need only programmatic rights (Read, Insert, Update, Delete, Posting) — no Interactive / View / Edit and no client rights on `Configuration`.
+
+---
+## 6. Rights.xml Format (for reading)
+
+```
+Roles/
+  RoleName.xml           ← metadata (uuid, name, synonym)
+  RoleName/
+    Ext/
+      Rights.xml         ← rights definition
 ```
 
-### Role Folder, Full Trace
-
-```powershell
-... -RightsPath Roles/МояРоль -Detailed
+```xml
+<Rights xmlns="http://v8.1c.ru/8.2/roles" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Rights" version="2.17">
+    <setForNewObjects>false</setForNewObjects>
+    <setForAttributesByDefault>true</setForAttributesByDefault>
+    <independentRightsOfChildObjects>false</independentRightsOfChildObjects>
+    <object>
+        <name>Catalog.Products</name>
+        <right><name>Read</name><value>true</value>
+            <restrictionByCondition><condition>#ForObject("")</condition></restrictionByCondition>
+            <restrictionByCondition><field>Ref</field><field>Code</field><condition/></restrictionByCondition>
+        </right>
+    </object>
+    <restrictionTemplate>
+        <name>ForObject(Modifier)</name>
+        <condition>Template text</condition>
+    </restrictionTemplate>
+</Rights>
 ```
 
-### Verification After role-compile
-
-```
-1c-role-compile role.json Roles/
-1c-role-validate -RightsPath Roles/МояРоль/Ext/Rights.xml
-```
+- Namespace `http://v8.1c.ru/8.2/roles` (historically 8.2); `version` equals the role descriptor's version.
+- Object name — dot notation `ObjectType.Name[.NestedKind.NestedName]`.
+- Only values different from the role default are stored (from format 2.19): with `setForNewObjects=false` the top level holds grants, with `true` — denials; nested attribute kinds follow `setForAttributesByDefault`.
+- `<restrictionByCondition>` may repeat; `<field>` limits a row to those fields (standard attributes in English: `Ref`, `Code`, `Description`, `Date`, `Number`, …); an empty `<condition/>` means no restriction for them.
 
 ---
 ## Typical Workflow
 
 ```
-1c-role-compile <RoleName> <RolesDir>                    — create role from description
-1c-role-validate -RightsPath <path>                      — validate correctness
-1c-role-info <RightsPath>                                — analyze existing role before modification
+1c-role-compile -JsonPath role.json -OutputDir <src>        — create a new role
+1c-role-edit -RolePath <src>/Roles/<Name> -Operation ...    — change an existing role (runs role-validate)
+1c-role-validate -RightsPath <src>/Roles/<Name>             — validate
+1c-role-info -RightsPath <src>/Roles/<Name>/Ext/Rights.xml  — analyze before / after a change
 ```
 
 MCP evidence set (`content/rules/tooling-playbooks.md`): `get_xsd_schema` / `verify_xml` with `object_type="Роль"`.

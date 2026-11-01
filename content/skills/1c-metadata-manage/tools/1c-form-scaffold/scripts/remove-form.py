@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# remove-form v1.4 — Remove form from 1C object
-# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, pinned at
-#         ecd289fe11733028d87b55284ea9fb5feff8f513 — the same upstream state the
-#         vendored remove-form.ps1 v1.4 was synced from.
+# remove-form v1.11 — Remove form from 1C object
+# Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, synced at
+#         2e75b0f483eb020e9f09562d1a7be1982bc5ac6e — the same upstream state the
+#         vendored remove-form.ps1 was synced from.
 # Licence: MIT, Copyright (c) 2025-2026 Nick Shirokov. Full notice and permission
 #          text: ../../../NOTICE.md (installed as
 #          skills/1c-metadata-manage/NOTICE.md).
@@ -16,6 +16,12 @@
 #          * the mutation itself is a bounded transaction — deletions are renames
 #            into a quarantine on the same filesystem and every step has an undo,
 #            so a failure anywhere restores the original tree.
+#        From upstream 1.5–1.11 only the reference check of 93d9511a is taken (the
+#        full reference "<Kind>.<Object>.Form.<Name>" instead of the "Form.<Name>"
+#        tail, a scan of the rest of the configuration) and the case-insensitive
+#        parameter names (d325a3d5). Upstream's -Force also cleans foreign
+#        references; here -Force stays the deletion gate and the cleaning is the
+#        separate -CleanReferences switch, inside the same transaction.
 
 import argparse
 import os
@@ -38,6 +44,16 @@ QUARANTINE_NAME = ".remove-form-quarantine"
 CYRILLIC = "А-яЁё"
 IDENTIFIER_RE = re.compile(
     rf"^[A-Za-z_{CYRILLIC}][0-9A-Za-z_{CYRILLIC}]{{0,127}}$")
+
+
+# Case-insensitive parameter names, as PowerShell binds them (upstream d325a3d5).
+def ci_parse_args(parser, argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    names = {s.lower(): s for a in parser._actions for s in a.option_strings}
+    for i, tok in enumerate(argv):
+        if tok.startswith('-') and tok.lower() in names:
+            argv[i] = names[tok.lower()]
+    return parser.parse_args(argv)
 
 
 def die(message, code):
@@ -178,9 +194,9 @@ class Transaction:
         os.makedirs(self.quarantine)
         self.started = True
 
-    def backup_file(self, path):
+    def backup_file(self, path, slot="root-backup.xml"):
         """Keep a copy so a later step can restore the original bytes."""
-        backup = os.path.join(self.quarantine, "root-backup.xml")
+        backup = os.path.join(self.quarantine, slot)
         shutil.copyfile(path, backup)
 
         def restore():
@@ -200,9 +216,9 @@ class Transaction:
                                 (parked, path),
                                 lambda step: os.path.exists(step.recovery[0])))
 
-    def replace_file(self, path, payload):
+    def replace_file(self, path, payload, slot="root-new.xml"):
         """Swap in new bytes atomically; the undo is the backup taken earlier."""
-        staged = os.path.join(self.quarantine, "root-new.xml")
+        staged = os.path.join(self.quarantine, slot)
         with open(staged, "wb") as handle:
             handle.write(payload)
         os.replace(staged, path)
@@ -312,6 +328,79 @@ def drop_element_keeping_indent(node):
     parent.remove(node)
 
 
+def remove_node_with_indent(node):
+    """Remove an element with the whitespace in front of it; an emptied container
+    becomes self-closing. Mirror of Remove-NodeWithIndent in remove-form.ps1."""
+    parent = node.getparent()
+    if parent is None:
+        return
+    prev = node.getprevious()
+    if prev is not None:
+        prev.tail = node.tail
+    else:
+        parent.text = node.tail
+    parent.remove(node)
+    if len(parent) == 0 and not (parent.text or "").strip():
+        parent.text = None
+
+
+def clear_form_refs(tree, ref):
+    """Clear every reference to the form, matched on the FULL reference (upstream
+    93d9511a). The old tail match on ``Form.<Name>`` also blanked
+    ``DocumentJournal.J.Form.<Name>`` and ``CommonForm.<Name>`` slots. The canonical
+    "not set" depends on the file: an empty slot in an object / Configuration.xml,
+    an absent property inside Ext/Form.xml, and a home-page Item is cut out whole.
+    Returns the touched slots, for the plan. Mirror of Clear-FormRefs in PS."""
+    root = tree.getroot()
+    is_form_file = etree.QName(root).localname == "Form"
+    touched = []
+    ref_lc = ref.lower()
+    for el in list(root.iter()):
+        if not isinstance(el.tag, str) or len(el) > 0:   # leaves only
+            continue
+        if (el.text or "").strip().lower() != ref_lc:     # case-insensitive, like PS -ne
+            continue
+        ln = etree.QName(el).localname
+        parent = el.getparent()
+        if ln == "Form" and parent is not None and etree.QName(parent).localname == "Item":
+            touched.append("remove Item/Form")
+            remove_node_with_indent(parent)
+        elif is_form_file:
+            touched.append(f"remove {ln}")
+            remove_node_with_indent(el)
+        else:
+            touched.append(f"clear {ln}")
+            el.text = None                                # <Tag/>, never <Tag></Tag>
+    return touched
+
+
+def find_foreign_references(scan_root, skip_files, skip_dirs, form_ref):
+    """``[{path, rel, tags}]`` of every other XML under *scan_root* that names the
+    form by its full reference. Read-only; ordinal order, as the PS port sorts."""
+    pattern = re.compile(r"<([A-Za-z0-9_.]+)>" + re.escape(form_ref) + r"</")
+    skip_files = {os.path.normcase(f) for f in skip_files}
+    skip_dirs = [os.path.normcase(d.rstrip("\\/") + os.sep) for d in skip_dirs]
+    found = []
+    candidates = []
+    for dirpath, _dirnames, filenames in os.walk(scan_root):
+        for fn in filenames:
+            if fn.lower().endswith(".xml"):
+                candidates.append(os.path.join(dirpath, fn))
+    for fp in sorted(candidates):
+        norm = os.path.normcase(fp)
+        if norm in skip_files or any(norm.startswith(d) for d in skip_dirs):
+            continue
+        with open(fp, "r", encoding="utf-8-sig", errors="replace") as handle:
+            content = handle.read()
+        if form_ref not in content:
+            continue
+        tags = [m.group(1) for m in pattern.finditer(content)]
+        if tags:
+            found.append({"path": fp, "rel": os.path.relpath(fp, scan_root), "tags": tags,
+                          "tree": None, "touched": [], "payload": None})
+    return found
+
+
 def main():
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -326,7 +415,9 @@ def main():
                         help="Print the full plan and change nothing.")
     parser.add_argument("-Force", action="store_true",
                         help="Authorize the deletion. Without it the run stops before any mutation.")
-    args = parser.parse_args()
+    parser.add_argument("-CleanReferences", action="store_true",
+                        help="Also clear references to the form in other files of the configuration.")
+    args = ci_parse_args(parser)
 
     # --- Input validation: before a single path is built ---
 
@@ -371,6 +462,17 @@ def main():
     tree = etree.parse(root_xml_full, parser_xml)
     root = tree.getroot()
 
+    # Kind and name of the object: the full form reference is built from them.
+    type_node = next((c for c in root if isinstance(c.tag, str)), None)
+    if type_node is None:
+        die(f"Не удалось определить вид объекта в {root_xml_path}", 1)
+    md_type = etree.QName(type_node).localname
+    name_node = type_node.find("md:Properties/md:Name", NSMAP)
+    obj_meta_name = (name_node.text or "").strip() if name_node is not None else ""
+    if not obj_meta_name:
+        obj_meta_name = object_name
+    form_ref = f"{md_type}.{obj_meta_name}.Form.{form_name}"
+
     # Remove <Form>FormName</Form> from ChildObjects
     form_node_found = False
     for node in root.findall(".//md:ChildObjects/md:Form", NSMAP):
@@ -381,36 +483,89 @@ def main():
     if not form_node_found:
         die(f"Form is not registered in ChildObjects: {form_name}", 1)
 
-    # Clear any Default*/Auxiliary* form slot that pointed to the removed form
-    # (form-add writes the purpose-specific property: DefaultObjectForm / DefaultListForm /
-    #  DefaultChoiceForm / DefaultRecordForm / DefaultForm — not just generic DefaultForm).
-    cleared_default_properties = []
-    ref_re = re.compile(rf"Form\.{re.escape(form_name)}$")
-    for el in root.iter():
-        if not isinstance(el.tag, str):
-            continue
-        if etree.QName(el).localname.endswith("Form") and el.text and ref_re.search(el.text):
-            el.text = ""
-            cleared_default_properties.append(etree.QName(el).localname)
+    # Clear every slot of the object itself that points to this form: form-add writes
+    # the purpose-specific Default*/Auxiliary*Form, attributes may carry a ChoiceForm.
+    own_touched = clear_form_refs(tree, form_ref)
+
+    # --- References from the rest of the configuration (upstream 93d9511a) ---
+    #
+    # The configuration root is -SrcDir or one of its three parents that holds
+    # Configuration.xml. Without one (an external data processor, a partial tree)
+    # only the object's own directory is scanned - its other forms can still point here.
+    src_full = os.path.abspath(src_dir).rstrip("\\/")
+    scan_root = None
+    probe = src_full
+    for _ in range(4):
+        if os.path.exists(os.path.join(probe, "Configuration.xml")):
+            scan_root = probe
+            break
+        up = os.path.dirname(probe)
+        if not up or up == probe:
+            break
+        probe = up
+    config_found = scan_root is not None
+    if scan_root is None:
+        scan_root = os.path.abspath(processor_dir).rstrip("\\/")
+
+    foreign = []
+    if os.path.isdir(scan_root):
+        foreign = find_foreign_references(
+            scan_root,
+            [os.path.abspath(root_xml_path), os.path.abspath(form_meta_path)],
+            [os.path.abspath(form_dir), os.path.join(src_full, QUARANTINE_NAME)],
+            form_ref)
+
+    if args.CleanReferences:
+        for ref in foreign:
+            # Every file this run writes must be reached without a link on the way.
+            require_chain(scan_root, ref["path"], f"файла со ссылкой ({ref['rel']})")
+            ref_tree = etree.parse(ref["path"], parser_xml)
+            ref["touched"] = clear_form_refs(ref_tree, form_ref)
+            if not ref["touched"]:
+                die(f"Ссылку на {form_ref} в {ref['rel']} нельзя очистить автоматически "
+                    f"(она не в отдельном свойстве). Уберите её вручную и повторите.", 1)
+            ref["tree"] = ref_tree
 
     # Render now: a serialization failure must surface before anything is deleted.
     payload = render_xml_with_bom(tree, root_xml_full)
+    for ref in foreign:
+        if ref["tree"] is not None:
+            ref["payload"] = render_xml_with_bom(ref["tree"], ref["path"])
 
     # --- Safety gate ---
 
     print("Planned changes:")
     print(f"  modify: {root_xml_path} (remove ChildObjects/Form '{form_name}')")
-    for property_name in cleared_default_properties:
-        print(f"  modify: {root_xml_path} (clear {property_name})")
+    for step in own_touched:
+        print(f"  modify: {root_xml_path} ({step})")
     print(f"  delete: {form_meta_path}")
     if os.path.isdir(form_dir):
         print(f"  delete: {form_dir} (recursive)")
+    if foreign:
+        print(f"References to {form_ref} from other files: {len(foreign)}")
+        for ref in foreign:
+            if args.CleanReferences:
+                for step in sorted(set(ref["touched"]), key=str.lower):
+                    print(f"  modify: {os.path.join(scan_root, ref['rel'])} ({step})")
+            else:
+                tags = ", ".join(sorted(set(ref["tags"]), key=str.lower))
+                print(f"  reference: {os.path.join(scan_root, ref['rel'])} <{tags}>")
+        if not args.CleanReferences:
+            print("  These references block the removal: clear them by hand, or add "
+                  "-CleanReferences to clear them in the same transaction.")
+    if not config_found:
+        print(f"[WARN] Configuration.xml not found within three levels above -SrcDir: "
+              f"only {scan_root} was checked for references.")
 
     if args.DryRun:
         print("[DRY-RUN] No files changed.")
         sys.exit(0)
     if not args.Force:
         die("Removal requires explicit -Force. Run with -DryRun first to review the plan.", 2)
+    if foreign and not args.CleanReferences:
+        die(f"Форма {form_ref} используется в других файлах ({len(foreign)}) — удаление "
+            f"остановлено, ничего не изменено. Уберите ссылки или повторите с "
+            f"-Force -CleanReferences.", 2)
 
     # --- Mutation: one bounded transaction, rolled back as a whole on any failure ---
 
@@ -423,6 +578,15 @@ def main():
             transaction.move_away(form_dir, "form-dir")
         transaction.move_away(form_meta_path, "form-meta.xml")
         transaction.replace_file(root_xml_full, payload)
+        # -CleanReferences: the other files, each backed up first so the rollback
+        # can put its original bytes back.
+        index = 0
+        for ref in foreign:
+            if ref["payload"] is None:
+                continue
+            index += 1
+            transaction.backup_file(ref["path"], f"ref-backup-{index}.xml")
+            transaction.replace_file(ref["path"], ref["payload"], f"ref-new-{index}.xml")
     except BaseException as exc:  # noqa: BLE001 - every failure mode rolls back
         report = transaction.rollback()
         # The primary failure first and unmasked - it is what has to be acted on.
@@ -456,6 +620,10 @@ def main():
         print(f"[OK] Removed directory: {form_dir}")
     print(f"[OK] Removed file: {form_meta_path}")
     print(f"[OK] Form {form_name} removed from {root_xml_path}")
+    for ref in foreign:
+        if ref["payload"] is not None:
+            print(f"[OK] Cleared reference in {ref['rel']}: "
+                  f"{', '.join(sorted(set(ref['touched']), key=str.lower))}")
 
 
 if __name__ == "__main__":

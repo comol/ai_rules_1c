@@ -5,7 +5,7 @@ The toolchain of that skill is PowerShell-only, so a Linux / macOS install
 receives tools it cannot execute. The fix is to ship each tool twice - a
 PowerShell script for Windows and a Python port next to it - vendored from
 Nikolay-Shirokov/cc-1c-skills (MIT) at the commit the PowerShell family was
-synced from: ecd289fe11733028d87b55284ea9fb5feff8f513.
+synced from: 2e75b0f483eb020e9f09562d1a7be1982bc5ac6e.
 
 This file is the regression net for that runtime. It currently covers the first
 ported tool, ``remove-form`` - a tool that deletes files, so its contract is
@@ -49,6 +49,7 @@ Usage::
 
     python -B tools/tests/python-ports-regression.py
     python -B tools/tests/python-ports-regression.py --python-only
+    python -B tools/tests/python-ports-regression.py --strict
     python -B tools/tests/python-ports-regression.py --filter 'remove-form*'
     python -B tools/tests/python-ports-regression.py --keep-work-dir
 """
@@ -98,7 +99,24 @@ class CaseFailure(Exception):
 
 class CaseSkipped(Exception):
     """Raised when a case needs a runtime the machine does not have (e.g. a
-    PowerShell host on a bare Linux container). Reported, never fatal."""
+    PowerShell host on a bare Linux container). Reported, never fatal - except
+    under ``--strict`` for a missing PowerShell host, see below."""
+
+
+class PowerShellHostMissing(CaseSkipped):
+    """A case skipped because neither pwsh nor powershell.exe is on PATH.
+
+    Legitimate on the Linux job (which runs ``--python-only`` anyway); on the
+    Windows job it means the PowerShell parity and packaging gates silently did
+    not run, so ``--strict`` turns it into a failure."""
+
+
+POWERSHELL_HOST_MISSING = "no PowerShell host on PATH (pwsh / powershell.exe)"
+
+
+def is_powershell_host_skip(exc):
+    """Typed skip, or the message of a case that still raises the plain class."""
+    return isinstance(exc, PowerShellHostMissing) or str(exc).startswith("no PowerShell host")
 
 
 CASES: list[tuple[str, "callable", bool]] = []
@@ -219,7 +237,7 @@ def find_powershell_host():
 def run_powershell_tool(script, tool_args, work_dir):
     host = find_powershell_host()
     if not host:
-        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+        raise PowerShellHostMissing(POWERSHELL_HOST_MISSING)
     proc = subprocess.run(
         [host, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, *tool_args],
         cwd=work_dir,
@@ -1189,7 +1207,7 @@ def _(work):
 # ---------------------------------------------------------------- licensing
 
 UPSTREAM_NOTICE_REL = "content/skills/1c-metadata-manage/NOTICE.md"
-UPSTREAM_PIN = "ecd289fe11733028d87b55284ea9fb5feff8f513"
+UPSTREAM_PIN = "2e75b0f483eb020e9f09562d1a7be1982bc5ac6e"
 
 
 @case("remove-form safety parity: PowerShell refuses the same names and paths", needs_powershell=True)
@@ -1321,6 +1339,9 @@ def _(work):
     assert_true("windows-latest" in text, "the workflow lost its Windows PowerShell parity job")
     assert_true("--python-only" in text,
                 "the Linux job does not skip the PowerShell-bound cases (--python-only)")
+    assert_true('python-ports-regression.py" --strict' in text,
+                "the Windows job does not run the suite with --strict, so a missing "
+                "PowerShell host would skip the parity gates and still pass")
     assert_true("python -B" in text or "python3 -B" in text,
                 "the workflow runs Python without -B, so CI writes __pycache__ into the tree")
     assert_true("lxml" in text, "the workflow never installs the lxml dependency of the ports")
@@ -1346,7 +1367,7 @@ def _(work):
     that rots silently. Install into a clean project and check the real output."""
     host = find_powershell_host()
     if not host:
-        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+        raise PowerShellHostMissing(POWERSHELL_HOST_MISSING)
 
     project = os.path.join(work, "project")
     os.makedirs(project, exist_ok=True)
@@ -1698,6 +1719,88 @@ def _(work):
     assert_true("3" in run["stderr"], f"the child exit code is not reported: {run['stderr'][-400:]}")
 
 
+# A minimal external data processor root: meta-validate does not know this type
+# (upstream #108), epf-validate does - and it ships for PowerShell only.
+EPF_ROOT_XML = (
+    '﻿<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" '
+    'xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" '
+    'xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+    'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.17">\n'
+    '\t<ExternalDataProcessor uuid="38b3aeb1-20a1-4867-9dae-6dde58168dd3">\n'
+    '\t\t<InternalInfo>\n'
+    '\t\t\t<xr:ContainedObject>\n'
+    '\t\t\t\t<xr:ClassId>c3831ec8-d8d5-4f93-8a22-f9bfae07327f</xr:ClassId>\n'
+    '\t\t\t\t<xr:ObjectId>0e2629f7-57de-49fc-9d0c-6a39ad2fce15</xr:ObjectId>\n'
+    '\t\t\t</xr:ContainedObject>\n'
+    '\t\t\t<xr:GeneratedType name="ExternalDataProcessorObject.RegrEpf" category="Object">\n'
+    '\t\t\t\t<xr:TypeId>68e05431-464d-4e3d-80f5-8ab80545e042</xr:TypeId>\n'
+    '\t\t\t\t<xr:ValueId>3ef72aaf-1d5d-468b-bbff-0260dd8d0fca</xr:ValueId>\n'
+    '\t\t\t</xr:GeneratedType>\n'
+    '\t\t</InternalInfo>\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>RegrEpf</Name>\n'
+    '\t\t\t<Synonym/>\n'
+    '\t\t\t<Comment/>\n'
+    '\t\t\t<DefaultForm/>\n'
+    '\t\t\t<AuxiliaryForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</ExternalDataProcessor>\n'
+    '</MetaDataObject>\n')
+
+
+def epf_target(work, name):
+    directory = os.path.join(work, name)
+    os.makedirs(os.path.join(directory, "RegrEpf", "Ext"))
+    with open(os.path.join(directory, "RegrEpf", "Ext", "ObjectModule.bsl"), "wb") as handle:
+        handle.write(b"\xef\xbb\xbf")
+    target = os.path.join(directory, "RegrEpf.xml")
+    with open(target, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(EPF_ROOT_XML)
+    return directory, target
+
+
+@case("meta-edit: an external data processor without a PowerShell host is refused before the write")
+def _(work):
+    """epf-validate has no Python port. Without pwsh the edit must not be written and
+    then reported as unvalidated - it is refused up front, like a missing meta-validate."""
+    directory, target = epf_target(work, "epf-no-host")
+    before = snapshot_tree(directory)
+    env = dict(os.environ)
+    env["PATH"] = ""
+    proc = subprocess.run(
+        [sys.executable, "-B", META_EDIT_PY,
+         "-ObjectPath", target, "-Operation", "add-attribute", "-Value", "RegrFlag: Boolean"],
+        cwd=directory, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    assert_true(proc.returncode != 0,
+                f"an EPF edit with no PowerShell host exited 0 (stdout: {proc.stdout[-400:]})")
+    assert_tree_identical(before, snapshot_tree(directory), "EPF edit with no PowerShell host")
+    assert_true("epf-validate" in (proc.stderr or ""),
+                f"the refusal does not name epf-validate: {(proc.stderr or '')[-400:]}")
+    assert_true("Running meta-validate" not in (proc.stdout or ""),
+                "the external object was handed to meta-validate")
+
+
+@case("meta-edit: an external data processor is validated by epf-validate through PowerShell",
+      needs_powershell=True)
+def _(work):
+    if not find_powershell_host():
+        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+    directory, target = epf_target(work, "epf-with-host")
+    run = run_python_tool(
+        META_EDIT_PY,
+        ["-ObjectPath", target, "-Operation", "add-attribute", "-Value", "RegrFlag: Boolean"],
+        directory)
+    combined = run["stdout"] + run["stderr"]
+    assert_equal(0, run["exit_code"], f"EPF edit exit code: {combined[-600:]}")
+    assert_true("--- Running epf-validate ---" in combined,
+                f"epf-validate did not run: {combined[-400:]}")
+    assert_true("Running meta-validate" not in combined and "Unrecognized" not in combined,
+                f"the external object went to the wrong validator: {combined[-400:]}")
+    assert_true("<Name>RegrFlag</Name>" in file_facts(target)["text"], "the attribute was not added")
+
+
 @case("meta-edit auto-validation parity: PowerShell runs the validator, never prints [SKIP]",
       needs_powershell=True)
 def _(work):
@@ -1999,8 +2102,12 @@ def _(work):
 # ChoiceMode and a document form the posting defaults, binds Description only when
 # DescriptionLength > 0 and refuses enum values the platform does not have;
 # form-add refuses a non-identifier -FormName and names an information register's
-# object-form main attribute "Запись"; meta-validate rejects the shapes of checks
-# 1e, 2, 6f, 6g, 8, 12 and 16a with the same diagnostics in both runtimes.
+# record-form main attribute "Запись"; meta-validate rejects the shapes of checks
+# 24, 2, 20, 6f, 6g, 8, 12 and 16a with the same diagnostics in both runtimes.
+# (2026-11-01: the local 1e / 6e gave way to upstream check 24 - a body stamped
+# differently from its descriptor is the error; an object that differs from the
+# dump is only a warning. A Default*Form that names no form is check 20; 6f keeps
+# the role check.)
 
 MINIMAL_DOCUMENT = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -2120,17 +2227,25 @@ def assert_form_add_name_and_record(script, runner, work, label):
         assert_equal(2, run["exit_code"], f"{label}: -FormName {bad!r} exit code")
     assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused -FormName")
 
+    # Upstream 1.2x+: an information register has no object form; its primary
+    # (default) purpose is Record, and -Purpose Object is refused with the list.
     register = os.path.join(directory, "InformationRegisters", "TestRegister.xml")
     write_text(register, MINIMAL_REGISTER)
-    run = runner(script, ["-ObjectPath", register, "-FormName", "ObjectForm", "-Purpose", "Object"], directory)
-    assert_equal(0, run["exit_code"], f"{label}: register object form (stderr: {run['stderr'][-400:]})")
-    form = os.path.join(directory, "InformationRegisters", "TestRegister", "Forms", "ObjectForm", "Ext", "Form.xml")
+    run = runner(script, ["-ObjectPath", register, "-FormName", "RecordForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: register record form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "InformationRegisters", "TestRegister", "Forms", "RecordForm", "Ext", "Form.xml")
     names = [a.get("name") for a in ElementTree.parse(form).getroot().iter()
              if a.tag.rsplit("}", 1)[-1] == "Attribute"]
-    assert_equal([RECORD_NAME], names, f"{label}: register object-form main attribute")
+    assert_equal([RECORD_NAME], names, f"{label}: register record-form main attribute")
+    assert_true("<DefaultRecordForm>InformationRegister.TestRegister.Form.RecordForm</DefaultRecordForm>"
+                in file_facts(register)["text"], f"{label}: DefaultRecordForm was not set")
+    before = snapshot_tree(directory)
+    run = runner(script, ["-ObjectPath", register, "-FormName", "ObjectForm", "-Purpose", "Object"], directory)
+    assert_true(run["exit_code"] != 0, f"{label}: -Purpose Object was accepted for a register")
+    assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused -Purpose Object")
 
 
-@case("form-add: a non-identifier -FormName is refused, a register's object form uses Запись")
+@case("form-add: a non-identifier -FormName is refused, a register's record form uses Запись")
 def _(work):
     assert_form_add_name_and_record(FORM_ADD_PY, run_python_tool, work, "py")
 
@@ -2139,6 +2254,236 @@ def _(work):
       needs_powershell=True)
 def _(work):
     assert_form_add_name_and_record(FORM_ADD_PS1, run_powershell_tool, work, "ps")
+
+
+# ---------------------------------------------------------------- upstream sync 2026-11-01 (2e75b0f)
+#
+# Regressions for the upstream fixes the sync brought in, each run through both
+# runtimes: enum values in the platform spelling (7c1a3318, 14f1126b, afd863a4,
+# 24429b46), the platform child order of buttons and commands (bd0081c2), the
+# form kinds of a document journal / accumulation register (45353afc, 53fc16d2)
+# and the full-reference scan of remove-form (93d9511a) under the local
+# -CleanReferences switch.
+
+ENUM_ORDER_DSL = {
+    "title": "T",
+    "elements": [
+        {"input": "Field", "path": "Value", "horizontalAlign": "right"},
+        {"table": "Rows", "path": "Data", "selectionMode": "single", "columns": []},
+        {"button": "Run", "command": "Run", "representation": "textPicture", "title": "Run",
+         "picture": "StdPicture.Refresh", "defaultButton": True},
+    ],
+    "attributes": [{"name": "Value", "type": "string"},
+                   {"name": "Data", "type": "ValueTable", "columns": []}],
+    "commands": [{"name": "Run", "action": "RunHandler", "representation": "PictureAndText",
+                  "picture": "StdPicture.Refresh", "shortcut": "F5", "title": "Run"}],
+}
+
+# Platform order of the children the DSL above produces (the corpus order upstream
+# encodes in childTagOrder); a different order is refused with an XDTO exception.
+BUTTON_ORDER = ["Representation", "DefaultButton", "CommandName", "Picture", "Title"]
+COMMAND_ORDER = ["Title", "Shortcut", "Picture", "Action", "Representation"]
+
+
+def _local(el):
+    return el.tag.rsplit("}", 1)[-1]
+
+
+def _child_order(node, wanted):
+    return [_local(c) for c in node if _local(c) in wanted]
+
+
+def assert_enum_and_order(script, work, label):
+    runner = run_python_tool if script.endswith(".py") else run_powershell_tool
+    directory = os.path.join(work, "enum-order-" + label)
+    os.makedirs(directory, exist_ok=True)
+    source = os.path.join(directory, "in.json")
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump(ENUM_ORDER_DSL, handle, ensure_ascii=False)
+    out = os.path.join(directory, "ok", "Form.xml")
+    run = runner(script, ["-JsonPath", source, "-OutputPath", out], directory)
+    assert_equal(0, run["exit_code"], f"{label}: compile exit code (stderr: {run['stderr'][-400:]})")
+    root = ElementTree.parse(out).getroot()
+    by = {(_local(el), el.get("name")): el for el in root.iter() if el.get("name")}
+
+    def child_text(key, tag):
+        found = [c for c in by[key] if _local(c) == tag]
+        return (found[0].text or "").strip() if found else None
+
+    assert_equal("Right", child_text(("InputField", "Field"), "HorizontalAlign"), f"{label}: input HorizontalAlign")
+    assert_equal("SingleRow", child_text(("Table", "Rows"), "SelectionMode"), f"{label}: table SelectionMode")
+    assert_equal("PictureAndText", child_text(("Button", "Run"), "Representation"), f"{label}: button Representation")
+    assert_equal("TextPicture", child_text(("Command", "Run"), "Representation"), f"{label}: command Representation")
+    assert_equal(BUTTON_ORDER, _child_order(by[("Button", "Run")], BUTTON_ORDER), f"{label}: button child order")
+    assert_equal(COMMAND_ORDER, _child_order(by[("Command", "Run")], COMMAND_ORDER), f"{label}: command child order")
+
+    bad = json.loads(json.dumps(ENUM_ORDER_DSL))
+    bad["elements"][1]["selectionMode"] = "bogus"
+    with open(source, "w", encoding="utf-8") as handle:
+        json.dump(bad, handle, ensure_ascii=False)
+    refused = os.path.join(directory, "bad", "Form.xml")
+    run = runner(script, ["-JsonPath", source, "-OutputPath", refused], directory)
+    assert_true(run["exit_code"] != 0, f"{label}: selectionMode=bogus was accepted")
+    assert_true(not os.path.exists(refused), f"{label}: refused but still wrote {refused}")
+
+
+@case("form-compile: enum values in the platform spelling, button / command children in platform order")
+def _(work):
+    assert_enum_and_order(FORM_COMPILE_PY, work, "py")
+
+
+@case("form-compile enum / order parity: PowerShell writes the same values and order",
+      needs_powershell=True)
+def _(work):
+    assert_enum_and_order(FORM_COMPILE_PS1, work, "ps")
+
+
+MINIMAL_JOURNAL = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"'
+    ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17">\n'
+    '\t<DocumentJournal uuid="3b1e2d4c-5a6f-4b7e-8c9d-0e1f2a3b4c5d">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>TestJournal</Name>\n'
+    '\t\t\t<DefaultForm/>\n'
+    '\t\t\t<AuxiliaryForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</DocumentJournal>\n'
+    '</MetaDataObject>\n'
+)
+
+MINIMAL_ACCUMULATION = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:v8="http://v8.1c.ru/8.1/data/core"'
+    ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17">\n'
+    '\t<AccumulationRegister uuid="4c2f3e5d-6b7a-4c8f-9d0e-1f2a3b4c5d6e">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>TestAccum</Name>\n'
+    '\t\t\t<DefaultListForm/>\n'
+    '\t\t\t<AuxiliaryListForm/>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</AccumulationRegister>\n'
+    '</MetaDataObject>\n'
+)
+
+
+def _main_attribute(form_xml):
+    root = ElementTree.parse(form_xml).getroot()
+    for attr in root.iter():
+        if _local(attr) != "Attribute":
+            continue
+        if any(_local(c) == "MainAttribute" and (c.text or "").strip() == "true" for c in attr):
+            types = [(t.text or "").strip() for t in attr.iter() if _local(t) == "Type" and len(t) == 0]
+            main_table = [(t.text or "").strip() for t in attr.iter() if _local(t) == "MainTable"]
+            return attr.get("name"), types, main_table
+    return None, [], []
+
+
+def assert_journal_and_accumulation(script, runner, work, label):
+    directory = os.path.join(work, "form-kinds-" + label)
+    copy_fixture("config-dump", directory)
+    journal = os.path.join(directory, "DocumentJournals", "TestJournal.xml")
+    write_text(journal, MINIMAL_JOURNAL)
+    run = runner(script, ["-ObjectPath", journal, "-FormName", "ListForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: journal form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "DocumentJournals", "TestJournal", "Forms", "ListForm", "Ext", "Form.xml")
+    name, types, main_table = _main_attribute(form)
+    assert_equal("Список", name, f"{label}: journal list-form main attribute")
+    assert_equal(["cfg:DynamicList"], types, f"{label}: journal main attribute type")
+    assert_equal(["DocumentJournal.TestJournal"], main_table, f"{label}: journal MainTable")
+    text = file_facts(journal)["text"]
+    assert_true("<DefaultForm>DocumentJournal.TestJournal.Form.ListForm</DefaultForm>" in text,
+                f"{label}: the journal's DefaultForm slot was not set")
+    assert_true("cfg:." not in file_facts(form)["text"], f"{label}: an object-less cfg: type was written")
+
+    accum = os.path.join(directory, "AccumulationRegisters", "TestAccum.xml")
+    write_text(accum, MINIMAL_ACCUMULATION)
+    run = runner(script, ["-ObjectPath", accum, "-FormName", "SetForm", "-Purpose", "RecordSet"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: record-set form (stderr: {run['stderr'][-400:]})")
+    form = os.path.join(directory, "AccumulationRegisters", "TestAccum", "Forms", "SetForm", "Ext", "Form.xml")
+    name, types, _ = _main_attribute(form)
+    assert_equal("Набор", name, f"{label}: record-set main attribute")
+    assert_equal(["cfg:AccumulationRegisterRecordSet.TestAccum"], types, f"{label}: record-set main attribute type")
+    text = file_facts(accum)["text"]
+    assert_true("<DefaultListForm/>" in text, f"{label}: a record-set form took the list-form slot")
+    assert_true("<Form>SetForm</Form>" in text, f"{label}: the record-set form is not registered")
+
+
+@case("form-add: a document journal gets its list form, an accumulation register a record-set form")
+def _(work):
+    assert_journal_and_accumulation(FORM_ADD_PY, run_python_tool, work, "py")
+
+
+@case("form-add form-kind parity: PowerShell writes the same journal and record-set forms",
+      needs_powershell=True)
+def _(work):
+    assert_journal_and_accumulation(FORM_ADD_PS1, run_powershell_tool, work, "ps")
+
+
+FOREIGN_CATALOG = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17">\n'
+    '\t<Catalog uuid="5d3a4f6e-7c8b-4d9a-8e1f-2a3b4c5d6e7f">\n'
+    '\t\t<Properties>\n'
+    '\t\t\t<Name>Other</Name>\n'
+    '\t\t\t<DefaultListForm>CommonForm.ListForm</DefaultListForm>\n'
+    '\t\t\t<DefaultChoiceForm>Catalog.TestCatalog.Form.ListForm</DefaultChoiceForm>\n'
+    '\t\t</Properties>\n'
+    '\t\t<ChildObjects/>\n'
+    '\t</Catalog>\n'
+    '</MetaDataObject>\n'
+)
+
+
+def assert_remove_form_foreign_references(script, runner, work, label):
+    directory = os.path.join(work, "foreign-" + label)
+    copy_fixture("config-dump", directory)
+    catalog = os.path.join(directory, "Catalogs", "TestCatalog.xml")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", catalog, "-FormName", "ListForm", "-Purpose", "List"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add (stderr: {run['stderr'][-300:]})")
+    # A same-named slot of the object itself that names ANOTHER form must survive:
+    # the old tail match on "Form.<Name>" blanked it.
+    edit_text(catalog, "<AuxiliaryListForm/>",
+              "<AuxiliaryListForm>DocumentJournal.J.Form.ListForm</AuxiliaryListForm>")
+    other = os.path.join(directory, "Catalogs", "Other.xml")
+    write_text(other, FOREIGN_CATALOG)
+    args = ["-ObjectName", "TestCatalog", "-FormName", "ListForm", "-SrcDir", os.path.join(directory, "Catalogs")]
+
+    dry = runner(script, args + ["-DryRun"], directory)
+    assert_equal(0, dry["exit_code"], f"{label}: -DryRun exit code (stderr: {dry['stderr'][-300:]})")
+    assert_true("Other.xml" in dry["stdout"] and "DefaultChoiceForm" in dry["stdout"],
+                f"{label}: the plan does not name the foreign reference:\n{dry['stdout']}")
+
+    before = snapshot_tree(directory)
+    blocked = runner(script, args + ["-Force"], directory)
+    assert_equal(2, blocked["exit_code"], f"{label}: -Force without -CleanReferences (stderr: {blocked['stderr'][-300:]})")
+    assert_tree_identical(before, snapshot_tree(directory), f"{label}: refused removal")
+
+    run = runner(script, args + ["-Force", "-CleanReferences"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: -Force -CleanReferences (stderr: {run['stderr'][-300:]})")
+    other_text = file_facts(other)["text"]
+    assert_true("Catalog.TestCatalog.Form.ListForm" not in other_text, f"{label}: the foreign reference survived")
+    assert_true("<DefaultChoiceForm/>" in other_text, f"{label}: the foreign slot was not emptied as <Tag/>")
+    assert_true("<DefaultListForm>CommonForm.ListForm</DefaultListForm>" in other_text,
+                f"{label}: a CommonForm reference of the same name was blanked")
+    own = file_facts(catalog)["text"]
+    assert_true("<DefaultListForm/>" in own, f"{label}: the object's own slot was not cleared")
+    assert_true("<AuxiliaryListForm>DocumentJournal.J.Form.ListForm</AuxiliaryListForm>" in own,
+                f"{label}: another object's form of the same name was blanked")
+    assert_no_leftovers(directory, f"{label}: foreign-reference removal")
+
+
+@case("remove-form: references from other files block the removal; -CleanReferences clears exactly them")
+def _(work):
+    assert_remove_form_foreign_references(REMOVE_FORM_PY, run_python_tool, work, "py")
+
+
+@case("remove-form foreign-reference parity: PowerShell blocks and cleans the same references",
+      needs_powershell=True)
+def _(work):
+    assert_remove_form_foreign_references(REMOVE_FORM_PS1, run_powershell_tool, work, "ps")
 
 
 CLASH_ATTRIBUTE = (
@@ -2174,9 +2519,12 @@ def meta_validate_shapes(work, label):
     """Directory, target and expected marker of every shape the new checks reject."""
     shapes = []
 
-    directory, target = catalog_target(work, f"mv-{label}-1e")
-    edit_text(os.path.join(directory, "Configuration.xml"), 'version="2.17"', 'version="2.20"')
-    shapes.append(("1e", directory, target))
+    directory, target = catalog_target(work, f"mv-{label}-24")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", target, "-FormName", "ItemForm"], directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add for 24 (stderr: {run['stderr'][-300:]})")
+    edit_text(os.path.join(directory, "Catalogs", "TestCatalog", "Forms", "ItemForm", "Ext", "Form.xml"),
+              'version="2.17"', 'version="2.20"')
+    shapes.append(("24.", directory, target))
 
     directory, target = catalog_target(work, f"mv-{label}-2")
     text = file_facts(target)["text"]
@@ -2185,8 +2533,15 @@ def meta_validate_shapes(work, label):
     write_text(target, text[:start] + text[end:])
     shapes.append(("2.", directory, target))
 
-    directory, target = catalog_target(work, f"mv-{label}-6f")
+    directory, target = catalog_target(work, f"mv-{label}-20")
     edit_text(target, "<DefaultObjectForm/>", "<DefaultObjectForm>Catalog.TestCatalog.Form.Ghost</DefaultObjectForm>")
+    shapes.append(("20.", directory, target))
+
+    directory, target = catalog_target(work, f"mv-{label}-6f")
+    run = run_python_tool(FORM_ADD_PY, ["-ObjectPath", target, "-FormName", "ListForm", "-Purpose", "List"],
+                          directory)
+    assert_equal(0, run["exit_code"], f"{label}: form-add for 6f (stderr: {run['stderr'][-300:]})")
+    edit_text(target, "<DefaultObjectForm/>", "<DefaultObjectForm>Catalog.TestCatalog.Form.ListForm</DefaultObjectForm>")
     shapes.append(("6f.", directory, target))
 
     directory, target = catalog_target(work, f"mv-{label}-6g")
@@ -2239,6 +2594,45 @@ def _(work):
         ps = run_powershell_tool(META_VALIDATE_PS1, ["-ObjectPath", target], directory)
         assert_equal(py["exit_code"], ps["exit_code"], f"{marker}: exit codes differ")
         assert_equal(diagnostics(py), diagnostics(ps), f"{marker}: diagnostics differ")
+
+
+def type_reduction_target(work, label, version):
+    """A catalog whose Description carries TypeReductionMode, in a dump of `version`."""
+    directory, target = catalog_target(work, f"mv-trm-{label}-{version}")
+    edit_text(os.path.join(directory, "Configuration.xml"), 'version="2.17"', f'version="{version}"')
+    edit_text(target, 'version="2.17"', f'version="{version}"')
+    edit_text(target, "<DefaultObjectForm/>",
+              "<DefaultObjectForm/>\n\t\t\t<StandardAttributes>\n\t\t\t\t<xr:StandardAttribute name=\"Description\">"
+              "\n\t\t\t\t\t<xr:TypeReductionMode>TransformValues</xr:TypeReductionMode>"
+              "\n\t\t\t\t</xr:StandardAttribute>\n\t\t\t</StandardAttributes>")
+    return directory, target
+
+
+@case("meta-validate: TypeReductionMode is a 2.18 property, no false error on 2.18 / 2.19 (18)")
+def _(work):
+    # Upstream 2e5289a8: the threshold was 2.20 and check 18 failed nearly every
+    # object of a 8.3.25 / 8.3.26 dump. A 2.17 file still gets the error.
+    for version, expect_error in (("2.17", True), ("2.18", False), ("2.19", False)):
+        directory, target = type_reduction_target(work, "py", version)
+        run = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+        combined = run["stdout"] + run["stderr"]
+        if expect_error:
+            assert_true(run["exit_code"] != 0 and "[ERROR] 18." in combined,
+                        f"{version}: check 18 no longer fires\n{combined[-600:]}")
+        else:
+            assert_equal(0, run["exit_code"], f"{version}: exit code\n{combined[-600:]}")
+            assert_true("[ERROR]" not in combined, f"{version}: false error\n{combined[-600:]}")
+
+
+@case("meta-validate TypeReductionMode parity: PowerShell agrees on 2.17 / 2.18 / 2.19",
+      needs_powershell=True)
+def _(work):
+    for version in ("2.17", "2.18", "2.19"):
+        directory, target = type_reduction_target(work, "parity", version)
+        py = run_python_tool(META_VALIDATE_PY, ["-ObjectPath", target], directory)
+        ps = run_powershell_tool(META_VALIDATE_PS1, ["-ObjectPath", target], directory)
+        assert_equal(py["exit_code"], ps["exit_code"], f"{version}: exit codes differ")
+        assert_equal(diagnostics(py), diagnostics(ps), f"{version}: diagnostics differ")
 
 
 # ---------------------------------------------------------------- shipped command ports
@@ -2309,12 +2703,19 @@ def _(work):
 
 @case("docs: the skill documents the Python runtime for the shipped commands only")
 def _(work):
-    path = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage", "SKILL.md")
-    with open(path, "rb") as handle:
-        text = handle.read().decode("utf-8-sig")
+    # SKILL.md keeps only the routing line (709ecac moved the command table out of the
+    # always-loaded context); the table itself lives in docs/runtime-selection.md, which
+    # SKILL.md must link. Both texts together are what the agent reads.
+    skill_dir = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage")
+    with open(os.path.join(skill_dir, "SKILL.md"), "rb") as handle:
+        skill = handle.read().decode("utf-8-sig")
+    assert_true("docs/runtime-selection.md" in skill,
+                "SKILL.md no longer routes to docs/runtime-selection.md")
+    with open(os.path.join(skill_dir, "docs", "runtime-selection.md"), "rb") as handle:
+        text = skill + chr(10) + handle.read().decode("utf-8-sig")
     for stem in PORTED_COMMANDS:
         assert_true(f"{stem}.py" in text,
-                    f"SKILL.md does not name the ported entry point {stem}.py")
+                    f"neither SKILL.md nor docs/runtime-selection.md names the ported entry point {stem}.py")
     # The honest half: a tool with no Python peer must not be advertised with one.
     unported = sorted(
         entry for entry in os.listdir(TOOLS_DIR)
@@ -2329,7 +2730,7 @@ def _(work):
                 continue
             promised = name[:-4] + ".py"
             assert_true(promised not in text,
-                        f"SKILL.md promises {promised}, which does not exist under {entry}")
+                        f"the skill docs promise {promised}, which does not exist under {entry}")
 
 
 @case("packaging: install ships Python ports and optional workflows, tracks them, and they run",
@@ -2337,7 +2738,7 @@ def _(work):
 def _(work):
     host = find_powershell_host()
     if not host:
-        raise CaseSkipped("no PowerShell host on PATH (pwsh / powershell.exe)")
+        raise PowerShellHostMissing(POWERSHELL_HOST_MISSING)
     project = os.path.join(work, "project")
     os.makedirs(project, exist_ok=True)
     proc = subprocess.run(
@@ -2414,8 +2815,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--filter", default="*", help="Run only cases whose name matches this wildcard pattern.")
     parser.add_argument("--keep-work-dir", action="store_true", help="Do not delete the temp working directory.")
-    parser.add_argument("--python-only", action="store_true",
-                        help="Skip cases that need a PowerShell host (Linux CI job).")
+    host_mode = parser.add_mutually_exclusive_group()
+    host_mode.add_argument("--python-only", action="store_true",
+                           help="Skip cases that need a PowerShell host (Linux CI job).")
+    host_mode.add_argument("--strict", action="store_true",
+                           help="Fail a case that is skipped for a missing PowerShell host "
+                                "(Windows CI job: the parity gates must really run).")
     args = parser.parse_args()
 
     # Case names and failure messages carry Cyrillic 1C names; a redirected
@@ -2445,6 +2850,11 @@ def main():
             body(work)
             print(f"[PASS] {name}")
         except CaseSkipped as exc:
+            if args.strict and is_powershell_host_skip(exc):
+                failures.append(f"{name}: skipped under --strict: {exc}")
+                print(f"[FAIL] {name}")
+                print(f"       skipped under --strict: {exc}")
+                continue
             skipped.append(f"{name}: {exc}")
             print(f"[SKIP] {name} - {exc}")
         except Exception as exc:  # noqa: BLE001 - a case may fail in any way

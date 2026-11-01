@@ -15,9 +15,9 @@
       3. A single attribute (or tabular-section column) could not be borrowed,
          and the main attribute came only with the whole data-path cascade.
       4. A new extension ChildObjects entry was sorted by name inside its type
-         group; Configurator appends it to the end of the group. (In the main
-         configuration cf-edit / meta-compile follow NEW_OBJECT_POSITION, pinned
-         by metadata-tools-regression.ps1.)
+         group; Configurator appends it to the end of the group. Since the
+         2e75b0f sync cfe-borrow follows NEW_OBJECT_POSITION from .dev.env like
+         cf-edit / meta-compile: end by default, byName on request.
       5. A borrowed form always got an empty Ext/Form/Module.bsl.
       6. A borrowed Document had no <RegisterRecords/>.
       7. cfe-validate check 12 only warned about a CommonPicture / StyleItem the
@@ -26,11 +26,24 @@
       8. Detect-FormatVersion passed the file byte length to String.Substring.
       9. ExcludedCommand was removed inside ChildItems, leaving an element (a
          table without Add / Copy) with an empty CommandSet in both parts
-         (ticket 2b392369).
+         (ticket 2b392369). The set stays only while the element keeps its
+         DataPath: an unbound table has no Add / Copy and 8.3.27 rejects it.
      10. ChoiceParameterLinks and TypeLink kept a readable object path. The
          platform rejects that path when the attribute is not borrowed
          (GitHub issue 33). The borrowed form must carry the source-form link
          code in both parts, and must not use the extension id 1000001.
+     11. Re-borrowing an object rewrote its XML and lost own attributes
+         (upstream 8fe727e3); -Module adds a module and its PropertyState
+         to an object that is already borrowed. A merge after a column
+         borrow went into the tabular section's ChildObjects (b5662a38).
+     12. A data processor shell had no <ChildObjects/> and a chart of
+         characteristic types shell no Characteristic generated type, so
+         the extension did not load (upstream 8925bd58, 902b643a).
+
+    The cases under 3 follow upstream 2e75b0f: a subobject is borrowed
+    through the a67314ec path (its refusal names the missing child), and
+    the Only main attribute is copied whole from the source form
+    (d3ea8262), so its <Type> keeps the source line layout.
 
     The fixtures under fixtures/cfe-borrow/ are materialized with CRLF and a
     UTF-8 BOM into a temp directory; no 1C platform or infobase is needed.
@@ -254,9 +267,17 @@ Register-Case 'attribute: Document.X.Attribute.Y borrows that attribute alone' {
     $before = [System.IO.File]::ReadAllBytes($objFile)
     Invoke-Borrow $ws 'Document.Zakaz.Attribute.Kontragent' | Out-Null
     Assert-True (Test-SameBytes $before $objFile) 're-borrow changed the object file'
-    # An unknown attribute is refused, not taken for an object name.
+    # An unknown attribute is refused before anything is written, not taken for an object name.
     $bad = Invoke-Borrow $ws 'Document.Zakaz.Attribute.Missing' -ExpectExit 1
-    Assert-True ($bad.StdErr -match 'Source attribute not found') "unexpected refusal: $($bad.StdErr)"
+    # PowerShell wraps the stderr record at the console width, even inside a word.
+    Assert-True (($bad.StdErr -replace '\s+', '') -match "Attribute'Missing'notfoundinDocument\.Zakaz") "unexpected refusal: $($bad.StdErr)"
+    Assert-True (Test-SameBytes $before $objFile) 'a refused borrow changed the object file'
+    # The kind segment may be Russian, as the type may be.
+    $rekvizit = -join @(0x0420, 0x0435, 0x043A, 0x0432, 0x0438, 0x0437, 0x0438, 0x0442 | ForEach-Object { [char]$_ })
+    Invoke-Borrow $ws "Document.Zakaz.$rekvizit.Summa" | Out-Null
+    $after = Get-Xml $objFile
+    $names = @($after.Doc.SelectNodes('/md:MetaDataObject/md:Document/md:ChildObjects/md:Attribute/md:Properties/md:Name', $after.Ns) | ForEach-Object { $_.InnerText })
+    Assert-Equal 'Kontragent,Summa' ($names -join ',') 'attributes after a Russian-kind borrow'
 }
 
 Register-Case 'attribute: a tabular-section column path borrows the section with that column' {
@@ -292,9 +313,19 @@ Register-Case 'attribute: a tabular-section column path borrows the section with
 Register-Case 'form: -BorrowMainAttribute Only adds the main attribute without the cascade' {
     param($work)
     $ws = New-Workspace $work
+    # UseAlways on the source main attribute names an object attribute that Only does not borrow.
+    $objekt = -join @(0x041E, 0x0431, 0x044A, 0x0435, 0x043A, 0x0442 | ForEach-Object { [char]$_ })
+    $srcFormPath = Join-Path $ws.Base "$FormRel\Ext\Form.xml"
+    $srcText = Read-Text $srcFormPath
+    $savedData = "`t`t`t<SavedData>true</SavedData>`n"
+    Assert-True $srcText.Contains($savedData) 'fixture main attribute has no SavedData line'
+    $srcText = $srcText.Replace($savedData, $savedData + "`t`t`t<UseAlways>`n`t`t`t`t<Field>$objekt.Kontragent</Field>`n`t`t`t</UseAlways>`n")
+    [System.IO.File]::WriteAllText($srcFormPath, ($srcText -replace "`n", "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
     Invoke-Borrow $ws $FormObject @('-BorrowMainAttribute', 'Only') | Out-Null
     $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
-    Assert-Equal 2 ([regex]::Matches($out, '<Attribute name="[^"]+" id="1000001">\s*<Type><v8:Type>cfg:DocumentObject\.Zakaz</v8:Type></Type>\s*<MainAttribute>true</MainAttribute>')).Count 'main attribute in the form and in BaseForm'
+    # The source main attribute is copied whole (its own line layout), only the id becomes 1000001.
+    Assert-Equal 2 ([regex]::Matches($out, '<Attribute name="[^"]+" id="1000001">\s*<Type>\s*<v8:Type>cfg:DocumentObject\.Zakaz</v8:Type>\s*</Type>\s*<MainAttribute>true</MainAttribute>')).Count 'main attribute in the form and in BaseForm'
+    Assert-Equal 0 ([regex]::Matches($out, '<UseAlways>|<Columns>')).Count 'UseAlways / Columns left on the Only main attribute'
     Assert-Equal 0 ([regex]::Matches($out, 'DataPath>')).Count 'data paths left in the borrowed form'
     # Stripped the same way in both parts: BaseForm ChildItems is the form's ChildItems one tab deeper.
     $formItems = Get-Slice $out '<Form ' "`n`t<Attributes>"
@@ -307,13 +338,25 @@ Register-Case 'form: -BorrowMainAttribute Only adds the main attribute without t
     Assert-True (-not (Test-Path (Join-Path $ws.Ext 'Catalogs\Kontragenty.xml'))) 'attribute type objects cascaded'
 }
 
-Register-Case 'form: an element CommandSet keeps its ExcludedCommand list in the form and BaseForm' {
+Register-Case 'form: an element CommandSet keeps its ExcludedCommand list while the element stays bound' {
     param($work)
-    $ws = New-Workspace $work
+    $tableSet = '<CommandSet>\s*<ExcludedCommand>Add</ExcludedCommand>\s*<ExcludedCommand>Copy</ExcludedCommand>\s*</CommandSet>'
+    $emptySet = '<CommandSet>\s*</CommandSet>|<CommandSet/>'
+    # -BorrowMainAttribute Form keeps the table bound to Object.Tovary: the set stays in both parts.
+    $ws = New-Workspace (Join-Path $work 'bound')
+    Invoke-Borrow $ws $FormObject @('-BorrowMainAttribute', 'Form') | Out-Null
+    $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
+    Assert-Equal 2 ([regex]::Matches($out, $tableSet)).Count 'table CommandSet with Add/Copy in the form and in BaseForm'
+    Assert-Equal 0 ([regex]::Matches($out, $emptySet)).Count 'empty CommandSet in the borrowed form'
+    # Without the main attribute the table loses its DataPath, and with it the Add / Copy commands:
+    # the platform rejects such a set (8.3.27, "invalid form item command name"). It goes whole.
+    $ws = New-Workspace (Join-Path $work 'skeleton')
     Invoke-Borrow $ws $FormObject | Out-Null
     $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
-    Assert-Equal 2 ([regex]::Matches($out, '<CommandSet>\s*<ExcludedCommand>Add</ExcludedCommand>\s*<ExcludedCommand>Copy</ExcludedCommand>\s*</CommandSet>')).Count 'table CommandSet with Add/Copy in the form and in BaseForm'
-    Assert-Equal 0 ([regex]::Matches($out, '<CommandSet>\s*</CommandSet>|<CommandSet/>')).Count 'empty CommandSet in the borrowed form'
+    Assert-Equal 0 ([regex]::Matches($out, '<ExcludedCommand>Add</ExcludedCommand>')).Count 'unbound table kept its CommandSet'
+    Assert-Equal 0 ([regex]::Matches($out, $emptySet)).Count 'empty CommandSet in the skeleton form'
+    # The form-level CommandSet is a form property and stays in both parts in every mode.
+    Assert-Equal 2 ([regex]::Matches($out, '<CommandSet>\s*<ExcludedCommand>Copy</ExcludedCommand>\s*<ExcludedCommand>SetDeletionMark</ExcludedCommand>')).Count 'form-level CommandSet in the form and in BaseForm'
 }
 
 # ---------------------------------------------------------------- 4. ChildObjects order
@@ -324,6 +367,16 @@ Register-Case 'ChildObjects: a borrowed object is appended to the end of its typ
     Invoke-Borrow $ws 'Catalog.Alpha ;; Document.Zakaz ;; Catalog.Kontragenty' | Out-Null
     $entries = @(Get-ChildObjectEntries (Join-Path $ws.Ext 'Configuration.xml') | Where-Object { $_ -notlike 'Language:*' })
     Assert-Equal 'Catalog:Zeta,Catalog:Alpha,Catalog:Kontragenty,Document:Zakaz' ($entries -join ',') 'extension ChildObjects order'
+}
+
+Register-Case 'ChildObjects: NEW_OBJECT_POSITION=byName in .dev.env places the entry by name' {
+    param($work)
+    $ws = New-Workspace $work
+    # The tool runs with the case directory as its working directory; .dev.env is found upward from it.
+    [System.IO.File]::WriteAllText((Join-Path $ws.Work '.dev.env'), "NEW_OBJECT_POSITION=byName`r`n", (New-Object System.Text.UTF8Encoding($false)))
+    Invoke-Borrow $ws 'Catalog.Kontragenty ;; Catalog.Alpha' | Out-Null
+    $entries = @(Get-ChildObjectEntries (Join-Path $ws.Ext 'Configuration.xml') | Where-Object { $_ -notlike 'Language:*' })
+    Assert-Equal 'Catalog:Alpha,Catalog:Kontragenty,Catalog:Zeta' ($entries -join ',') 'extension ChildObjects order under byName'
 }
 
 # ---------------------------------------------------------------- 5. form module
@@ -595,6 +648,102 @@ Register-Case 'form: choice and type links use the source-form code when the att
     Assert-Link $all 'Filter.Extra' '9'
     Assert-TypePathCount $all $readableSumma 2
     Assert-TypePathCount $all $currentText 2
+}
+
+# ---------------------------------------------------------------- 11. re-borrow protection, -Module
+
+Register-Case 're-borrow: a borrowed object is not rewritten; -Module adds the module and its mark' {
+    param($work)
+    $ws = New-Workspace $work
+    Invoke-Borrow $ws 'Document.Zakaz' | Out-Null
+    $objFile = Join-Path $ws.Ext 'Documents\Zakaz.xml'
+    # An own attribute added after the borrow (as meta-edit would) must survive every re-borrow.
+    $text = Read-Text $objFile
+    Assert-True $text.Contains("`t`t<ChildObjects/>") 'fixture shell has no empty ChildObjects'
+    $own = "`t`t<ChildObjects>`n`t`t`t<Attribute uuid=`"e0e0e0e0-0000-4000-8000-0000000000f1`">`n`t`t`t`t<Properties>`n" +
+        "`t`t`t`t`t<Name>trOwn</Name>`n`t`t`t`t`t<Synonym/>`n`t`t`t`t`t<Comment/>`n`t`t`t`t`t<Type>`n" +
+        "`t`t`t`t`t`t<v8:Type>xs:boolean</v8:Type>`n`t`t`t`t`t</Type>`n`t`t`t`t</Properties>`n`t`t`t</Attribute>`n`t`t</ChildObjects>"
+    $text = $text.Replace("`t`t<ChildObjects/>", $own)
+    [System.IO.File]::WriteAllText($objFile, ($text -replace "`n", "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
+    $before = [System.IO.File]::ReadAllBytes($objFile)
+    $run = Invoke-Borrow $ws 'Document.Zakaz'
+    Assert-True (Test-SameBytes $before $objFile) 're-borrow rewrote the borrowed object'
+    Assert-True ($run.StdOut -match 'Already borrowed: Document\.Zakaz') "no 'Already borrowed' notice:`n$($run.StdOut)"
+    $entries = @(Get-ChildObjectEntries (Join-Path $ws.Ext 'Configuration.xml') | Where-Object { $_ -eq 'Document:Zakaz' })
+    Assert-Equal 1 $entries.Count 'Document.Zakaz entries in the extension ChildObjects'
+    # -Module on a re-borrow: the module file and its PropertyState, the own attribute stays.
+    Invoke-Borrow $ws 'Document.Zakaz' @('-Module', 'ObjectModule') | Out-Null
+    $module = Join-Path $ws.Ext 'Documents\Zakaz\Ext\ObjectModule.bsl'
+    Assert-True (Test-Path $module) 'ObjectModule.bsl was not created'
+    $after = Read-Text $objFile
+    Assert-True $after.Contains('<Name>trOwn</Name>') 'own attribute lost on a re-borrow with -Module'
+    Assert-True ($after -match '<xr:PropertyState>\s*<xr:Property>ObjectModule</xr:Property>\s*<xr:State>Extended</xr:State>\s*</xr:PropertyState>') "no ObjectModule PropertyState:`n$after"
+    Assert-True (-not (Test-Path (Join-Path $ws.Ext 'Documents\Zakaz\Ext\ManagerModule.bsl'))) 'a module that was not asked for was created'
+    # Module code survives a further re-borrow.
+    $code = "Procedure Probe() Export`r`nEndProcedure`r`n"
+    [System.IO.File]::WriteAllText($module, $code, (New-Object System.Text.UTF8Encoding($true)))
+    $moduleBefore = [System.IO.File]::ReadAllBytes($module)
+    $objBefore = [System.IO.File]::ReadAllBytes($objFile)
+    Invoke-Borrow $ws 'Document.Zakaz' @('-Module', 'ObjectModule') | Out-Null
+    Assert-True (Test-SameBytes $moduleBefore $module) 're-borrow changed the object module'
+    Assert-True (Test-SameBytes $objBefore $objFile) 'a repeated -Module duplicated the PropertyState'
+}
+
+Register-Case 'merge: -BorrowMainAttribute after a column borrow writes into the object own ChildObjects' {
+    param($work)
+    $ws = New-Workspace $work
+    Invoke-Borrow $ws 'Document.Zakaz.TabularSection.Tovary.Attribute.Kolichestvo' | Out-Null
+    Invoke-Borrow $ws $FormObject @('-BorrowMainAttribute', 'Form') | Out-Null
+    $ext = Get-Xml (Join-Path $ws.Ext 'Documents\Zakaz.xml')
+    $own = $ext.Doc.SelectSingleNode('/md:MetaDataObject/md:Document/md:ChildObjects', $ext.Ns)
+    $kinds = @($own.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.LocalName })
+    Assert-Equal 'Attribute,Form,TabularSection' ($kinds -join ',') 'own ChildObjects of the borrowed document (Document kind order)'
+    $topAttrs = @($own.SelectNodes('md:Attribute/md:Properties/md:Name', $ext.Ns) | ForEach-Object { $_.InnerText })
+    Assert-Equal 'Kontragent' ($topAttrs -join ',') 'object attributes borrowed for the form'
+    # The merged attribute keeps the source <Type> layout, as the round-trip dump writes it (8.3.27).
+    $src = Get-Xml (Join-Path $ws.Base 'Documents\Zakaz.xml')
+    $kXPath = '/md:MetaDataObject/md:Document/md:ChildObjects/md:Attribute[md:Properties/md:Name="Kontragent"]'
+    Assert-Equal (Get-AttributeTypeText $src $kXPath) (Get-AttributeTypeText $ext $kXPath) 'merged attribute <Type> block'
+    # The form shows the table on Object.Tovary: the missing column is merged into the borrowed section,
+    # after the column that was already there; nothing lands in the section from the object level.
+    $cols = @($own.SelectNodes('md:TabularSection/md:ChildObjects/*', $ext.Ns) | ForEach-Object { $_.SelectSingleNode('md:Properties/md:Name', $ext.Ns).InnerText })
+    Assert-Equal 'Kolichestvo,Nomenklatura' ($cols -join ',') 'tabular-section columns after the form borrow'
+    Assert-Equal 1 @($own.SelectNodes('md:TabularSection', $ext.Ns)).Count 'tabular sections in the borrowed document'
+}
+
+# ---------------------------------------------------------------- 12. container shells
+
+function Get-GeneratedCategories($Xml, [string]$XPath) {
+    return @($Xml.Doc.SelectNodes("$XPath/md:InternalInfo/xr:GeneratedType", $Xml.Ns) | ForEach-Object { $_.GetAttribute('category') })
+}
+
+Register-Case 'shell: a borrowed data processor carries an empty ChildObjects and its generated types' {
+    param($work)
+    $ws = New-Workspace $work
+    Invoke-Borrow $ws 'DataProcessor.Obrabotka' | Out-Null
+    $ext = Get-Xml (Join-Path $ws.Ext 'DataProcessors\Obrabotka.xml')
+    $xp = '/md:MetaDataObject/md:DataProcessor'
+    $co = $ext.Doc.SelectSingleNode("$xp/md:ChildObjects", $ext.Ns)
+    Assert-True ($null -ne $co) 'data processor shell has no ChildObjects (the platform rejects the load)'
+    Assert-Equal 0 @($co.ChildNodes | Where-Object { $_.NodeType -eq 'Element' }).Count 'children of the shell ChildObjects'
+    Assert-Equal 'Object,Manager' ((Get-GeneratedCategories $ext $xp) -join ',') 'data processor generated types'
+    Assert-Equal 'DataProcessorObject.Obrabotka' $ext.Doc.SelectSingleNode("$xp/md:InternalInfo/xr:GeneratedType[@category='Object']", $ext.Ns).GetAttribute('name') 'Object generated type name'
+    Assert-True ((Get-ChildObjectEntries (Join-Path $ws.Ext 'Configuration.xml')) -contains 'DataProcessor:Obrabotka') 'DataProcessor.Obrabotka not registered'
+    $v = Invoke-Validate $ws
+    Assert-Equal 0 $v.ExitCode "cfe-validate after a data processor borrow:`n$($v.StdOut)"
+}
+
+Register-Case 'shell: a borrowed chart of characteristic types carries the Characteristic generated type' {
+    param($work)
+    $ws = New-Workspace $work
+    Invoke-Borrow $ws 'ChartOfCharacteristicTypes.VidySvoystv' | Out-Null
+    $ext = Get-Xml (Join-Path $ws.Ext 'ChartsOfCharacteristicTypes\VidySvoystv.xml')
+    $xp = '/md:MetaDataObject/md:ChartOfCharacteristicTypes'
+    Assert-Equal 'Object,Ref,Selection,List,Characteristic,Manager' ((Get-GeneratedCategories $ext $xp) -join ',') 'chart of characteristic types generated types'
+    Assert-Equal 'Characteristic.VidySvoystv' $ext.Doc.SelectSingleNode("$xp/md:InternalInfo/xr:GeneratedType[@category='Characteristic']", $ext.Ns).GetAttribute('name') 'Characteristic generated type name'
+    Assert-True ($null -ne $ext.Doc.SelectSingleNode("$xp/md:ChildObjects", $ext.Ns)) 'chart of characteristic types shell has no ChildObjects'
+    $v = Invoke-Validate $ws
+    Assert-Equal 0 $v.ExitCode "cfe-validate after a chart of characteristic types borrow:`n$($v.StdOut)"
 }
 
 # ---------------------------------------------------------------- run

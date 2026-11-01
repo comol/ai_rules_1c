@@ -1,5 +1,13 @@
-﻿# db-load-git v1.18 — Load Git changes into 1C database
+﻿# db-load-git v1.36 — Load Git changes into 1C database
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
+#   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
+#   ibcmdargs, the .dev.env directory is a project root for relative infobase paths;
+#   /ConfigurationRepositoryP is masked like /P.
+#   Every Designer launch passes /DumpResult and fails on a non-zero or missing result (Get-DumpResultError).
+#   Repository credentials: .dev.env REPOSITORY_* before the registry record (main configuration only).
+#   Extension applicability check is opt-in (-ApplyCheck): /update1cbase Step 2c is the gate.
+#   Repository hints point at 1c-repository-manage and .dev.env.
 # NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
@@ -40,7 +48,7 @@
     Имя расширения для загрузки
 
 .PARAMETER AllExtensions
-    Загрузить все расширения
+    Не поддерживается: загрузка частями идёт по одному расширению (-Extension)
 
 .PARAMETER Format
     Формат файлов: Hierarchical или Plain (по умолчанию Hierarchical)
@@ -64,7 +72,7 @@
     .\db-load-git.ps1 -InfoBasePath "C:\Bases\MyDB" -ConfigDir "C:\src" -DryRun
 #>
 
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
     [Parameter(Mandatory=$false)]
     [string]$V8Path,
@@ -111,14 +119,248 @@ param(
     [switch]$UpdateDB,
 
     [Parameter(Mandatory=$false)]
+    # Ключ для регрессов и верификации снапшотов, не для повседневного вызова: в SKILL.md
+    # намеренно не выносится. Поднимает код возврата, если платформа отчиталась об успехе,
+    # но в логе есть отбраковка.
+    [switch]$StrictLog,
+
+    # Пропустить проверку применимости расширения после загрузки.
+    [Parameter(Mandatory=$false)]
+    [switch]$NoApplyCheck,
+
+    # 1c-rules: проверить применимость расширения после загрузки. По умолчанию выключено — гейт
+    # применимости /update1cbase Step 2c; с ключом отказ платформы даёт код 1.
+    [Parameter(Mandatory=$false)]
+    [switch]$ApplyCheck,
+
+    [Parameter(Mandatory=$false)]
+    [string]$RepositoryPath,
+
+    [Parameter(Mandatory=$false)]
+    [string]$RepositoryUser,
+
+    [Parameter(Mandatory=$false)]
+    [string]$RepositoryPassword,
+
+    [Parameter(Mandatory=$false)]
     [string[]]$AdditionalV8Arguments = @(),
 
     [Parameter(Mandatory=$false)]
     [string[]]$AdditionalIbcmdArguments = @()
 )
 
+# Необработанная ошибка (напр. привязка параметра) внутри try/finally без catch завершала
+# скрипт с кодом 0 — ложный успех без запуска платформы. Любая такая ошибка — код 1.
+# py-порт: необработанное исключение и так даёт код 1.
+trap { Write-Host "Error: $($_.Exception.Message) ($($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber))" -ForegroundColor Red; exit 1 }
+
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+function ConvertTo-CleanPath {
+    # Forgive what is unambiguous in a path the caller passed: surrounding whitespace,
+    # surrounding quotes that survived shell parsing, a trailing separator. A quote left
+    # inside afterwards cannot be part of a real path — reject it by name instead of letting
+    # 1C answer with its opaque "Неверные или отсутствующие параметры соединения".
+    param([string]$Value, [string]$ParamName)
+    if (-not $Value) { return $Value }
+    $v = $Value.Trim()
+    if ($v.Length -ge 2 -and $v[0] -eq $v[-1] -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
+        $v = $v.Substring(1, $v.Length - 2).Trim()
+    }
+    # «C:x» — от текущего каталога диска C, своего у каждого процесса: смысл не угадать, почти
+    # всегда это опечатка в «C:\x». Отказ с подсказкой, а не путь «где-то» у платформы.
+    if ($v -match '^[A-Za-z]:(?![\\/])') {
+        $drive = $v.Substring(0, 2)
+        Write-Host "Error: $ParamName is relative to the current directory of drive $drive ($Value) - use $drive\$($v.Substring(2)) or a path without a drive" -ForegroundColor Red
+        exit 1
+    }
+    if ($v.Length -gt 3 -and ($v[-1] -eq '\' -or $v[-1] -eq '/')) { $v = $v.Substring(0, $v.Length - 1) }
+    if ($v.Contains('"')) {
+        Write-Host "Error: $ParamName contains a quote character: $Value" -ForegroundColor Red
+        exit 1
+    }
+    return $v
+}
+$V8Path = ConvertTo-CleanPath $V8Path '-V8Path'
+$InfoBasePath = ConvertTo-CleanPath $InfoBasePath '-InfoBasePath'
+$ConfigDir = ConvertTo-CleanPath $ConfigDir '-ConfigDir'
+function Resolve-WorkPath {
+    # Путь файла или каталога — от рабочего каталога. Платформе уходит только абсолютный: ibcmd
+    # отбрасывает ведущие «..» относительного пути и читает или пишет не там.
+    # Абсолютный — как в Resolve-InfoBasePath: диск с разделителем или UNC.
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if ($Path -notmatch '^([A-Za-z]:[\\/]|[\\/]{2})') {
+        $cwd = (Get-Location).ProviderPath
+        $joined = if ($Path -match '^[\\/]') { [System.IO.Path]::GetPathRoot($cwd).TrimEnd('\', '/') + $Path }
+            else { [System.IO.Path]::Combine($cwd, $Path) }
+        $Path = [System.IO.Path]::GetFullPath($joined)
+    }
+    while ($Path.Length -gt 3 -and ($Path[-1] -eq '\' -or $Path[-1] -eq '/')) { $Path = $Path.Substring(0, $Path.Length - 1) }
+    return $Path
+}
+$ConfigDir = Resolve-WorkPath $ConfigDir
+
+function Resolve-InfoBasePath {
+    # Относительный путь к базе — от корня проекта (каталог .v8-project.json, вверх от рабочего
+    # каталога), как configSrc; без файла проекта — от рабочего каталога. Платформе уходит только
+    # абсолютный: ibcmd считает относительный --db-path от каталога --data, а он у навыков временный.
+    # Абсолютный — только с диском и разделителем или UNC: «\x» .NET считает корневым, а платформа
+    # разрешила бы его от своего каталога; «\x» берёт диск базового каталога. «C:x» отклоняет ещё
+    # ConvertTo-CleanPath. Хвостовые разделители срезаются, но корень («C:\») остаётся корнем.
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if ($Path -notmatch '^([A-Za-z]:[\\/]|[\\/]{2})') {
+        $cwd = (Get-Location).ProviderPath
+        $base = $cwd
+        $d = $cwd
+        for ($i = 0; $i -lt 20 -and $d; $i++) {
+            # 1c-rules: the project root is the nearest directory with .dev.env or .v8-project.json.
+            if ((Test-Path -LiteralPath (Join-Path $d ".dev.env")) -or (Test-Path -LiteralPath (Join-Path $d ".v8-project.json"))) { $base = $d; break }
+            $parent = [System.IO.Path]::GetDirectoryName($d)
+            if ($parent -eq $d) { break }
+            $d = $parent
+        }
+        $joined = if ($Path -match '^[\\/]') { [System.IO.Path]::GetPathRoot($base).TrimEnd('\', '/') + $Path }
+            else { [System.IO.Path]::Combine($base, $Path) }
+        $Path = [System.IO.Path]::GetFullPath($joined)
+    }
+    while ($Path.Length -gt 3 -and ($Path[-1] -eq '\' -or $Path[-1] -eq '/')) { $Path = $Path.Substring(0, $Path.Length - 1) }
+    return $Path
+}
+$InfoBasePath = Resolve-InfoBasePath $InfoBasePath
+
+# --- Запись базы в .v8-project.json ---
+# Модель не передаёт ни путь к платформе конкретной базы, ни реквизиты хранилища: скрипт
+# сопоставляет параметры соединения с записью в databases[] и берёт их оттуда. Тот же приём,
+# что в cf-edit.ps1 (сопоставление по configSrc).
+function Find-V8Project([string]$startDir) {
+	$d = $startDir
+	for ($i = 0; $i -lt 20 -and $d; $i++) {
+		$pj = Join-Path $d ".v8-project.json"
+		if (Test-Path $pj) { return $pj }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+function Test-SamePath {
+    param([string]$A, [string]$B)
+    if (-not $A -or -not $B) { return $false }
+    try {
+        $na = [System.IO.Path]::GetFullPath($A).TrimEnd('\', '/')
+        $nb = [System.IO.Path]::GetFullPath($B).TrimEnd('\', '/')
+        return $na.Equals($nb, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+
+function Find-ProjectDatabase {
+    # Запись базы в реестре, соответствующая переданному соединению. $null, если не найдена.
+    $pf = Find-V8Project (Get-Location).ProviderPath
+    if (-not $pf) { return $null }
+    try { $proj = Get-Content $pf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    if (-not $proj.databases) { return $null }
+    foreach ($db in $proj.databases) {
+        if ($InfoBasePath -and $db.path) {
+            try { $dbPath = [System.IO.Path]::Combine((Split-Path $pf -Parent), $db.path) } catch { $dbPath = $null }
+            if ($dbPath -and (Test-SamePath $dbPath $InfoBasePath)) { return $db }
+        }
+        if ($InfoBaseServer -and $InfoBaseRef -and $db.server -and $db.ref) {
+            if ($db.server.Equals($InfoBaseServer, [System.StringComparison]::OrdinalIgnoreCase) -and
+                $db.ref.Equals($InfoBaseRef, [System.StringComparison]::OrdinalIgnoreCase)) { return $db }
+        }
+    }
+    return $null
+}
+
+function Resolve-RepositorySettings {
+    # Возвращает @{ Path; User; Password; FromRegistry }. Явные -Repository* всегда сильнее реестра.
+    $dbRec = Find-ProjectDatabase
+    $rec = $null
+    if ($dbRec) {
+        if ($Extension) {
+            # У расширения СВОЁ хранилище со своим путём (проверено): выбирается парой
+            # /ConfigurationRepositoryF"<путь расширения>" + -Extension "<Имя>".
+            if ($dbRec.extensions) {
+                foreach ($ext in $dbRec.extensions) {
+                    if ($ext.name -and $ext.name.Equals($Extension, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $rec = $ext.repository
+                        break
+                    }
+                }
+            }
+        } else {
+            $rec = $dbRec.repository
+        }
+    }
+    # 1c-rules: .dev.env REPOSITORY_PATH / REPOSITORY_USER / REPOSITORY_PASSWORD (the repository of
+    # the main configuration) win over the registry record; explicit -Repository* still win over
+    # both. An extension's own repository is described only by the registry (extensions[].repository).
+    if (-not $Extension) {
+        $__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
+        if (Test-Path $__devEnvHelper) {
+            . $__devEnvHelper
+            $__devEnvRepo = Get-1CDevEnvValue 'REPOSITORY_PATH'
+            if ($__devEnvRepo) {
+                $rec = [pscustomobject]@{
+                    path     = $__devEnvRepo
+                    user     = (Get-1CDevEnvValue 'REPOSITORY_USER')
+                    password = (Get-1CDevEnvValue 'REPOSITORY_PASSWORD')
+                }
+            }
+        }
+    }
+    $path = if ($RepositoryPath) { $RepositoryPath } elseif ($rec -and $rec.path) { [string]$rec.path } else { $null }
+    $user = if ($RepositoryUser) { $RepositoryUser } elseif ($rec -and $rec.user) { [string]$rec.user } else { $null }
+    # Пустой пароль = отсутствующий: 1С требует опускать ключ целиком, а не передавать пустое значение.
+    $pwd  = if ($RepositoryPassword) { $RepositoryPassword } elseif ($rec -and $rec.password) { [string]$rec.password } else { $null }
+    return @{
+        Path         = if ($path) { $path.Trim().Trim('"') } else { $null }
+        User         = $user
+        Password     = $pwd
+        FromRegistry = [bool]($rec -and $rec.path)
+        DbRecord     = $dbRec
+    }
+}
+
+function Get-RepositoryArgs {
+    # Ключи доступа к хранилищу. Форма — кавычки ВНУТРИ токена, как у /N и /P.
+    param([hashtable]$Repo)
+    $a = @()
+    if (-not $Repo -or -not $Repo.Path) { return $a }
+    $a += "/ConfigurationRepositoryF`"$($Repo.Path)`""
+    if ($Repo.User) { $a += "/ConfigurationRepositoryN`"$($Repo.User)`"" }
+    if ($Repo.Password) { $a += "/ConfigurationRepositoryP`"$($Repo.Password)`"" }
+    return $a
+}
+
+# Сообщения платформы про хранилище конфигурации называют причину, но не действие. Действие
+# дописываем сами: без него модель упирается в отказ и не знает, чем его лечить.
+# 1c-rules: действие — через навык 1c-repository-manage (repo-ops.ps1), реквизиты — в .dev.env.
+function Write-RepositoryHints {
+    param([string]$LogText)
+    if (-not $LogText) { return }
+    if ($LogText -match 'текущая конфигурация помещена в хранилище') {
+        Write-Host "[hint] полная загрузка в базу, подключённую к хранилищу, невозможна." -ForegroundColor Yellow
+        Write-Host "       Используйте -Mode Partial, предварительно захватив объекты: 1c-repository-manage, repo-ops -Operation lock -Objects <...>" -ForegroundColor Yellow
+    }
+    foreach ($m in [regex]::Matches($LogText, 'объект метаданных ([^\s]+) не захвачен в хранилище')) {
+        $obj = $m.Groups[1].Value
+        if ($obj -eq 'Configuration') {
+            Write-Host "[hint] не захвачен корень конфигурации — он нужен, чтобы добавить или удалить объект верхнего уровня." -ForegroundColor Yellow
+            Write-Host "       Захватите «Конфигурация» через 1c-repository-manage; если инструмент корень не берёт — попросите пользователя захватить его в Конфигураторе" -ForegroundColor Yellow
+        } else {
+            Write-Host "[hint] объект не захвачен в хранилище: 1c-repository-manage, repo-ops -Operation lock -Objects `"$obj`"" -ForegroundColor Yellow
+        }
+    }
+    if ($LogText -match 'Соединение с хранилищем конфигурации не установлено') {
+        Write-Host "[hint] соединение с хранилищем не установлено. Две причины:" -ForegroundColor Yellow
+        Write-Host "       реквизиты неизвестны — задайте REPOSITORY_PATH / REPOSITORY_USER / REPOSITORY_PASSWORD в .dev.env (или -RepositoryPath / -RepositoryUser / -RepositoryPassword);" -ForegroundColor Yellow
+        Write-Host "       либо хранилище недоступно — для сетевого проверьте сервер хранилища и порт." -ForegroundColor Yellow
+    }
+}
 
 function Protect-Secrets {
     # Redact literal secret values from a display string (String.Replace is literal, not regex).
@@ -136,12 +378,23 @@ $script:V8OwnedKeys = @(
     '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg',
     '/DumpExternalDataProcessorOrReportToFiles', '/LoadExternalDataProcessorOrReportFromFiles'
 )
+# Пакетные команды платформы. В одной командной строке DESIGNER выполняет ТОЛЬКО ПОСЛЕДНЮЮ,
+# остальные молча отбрасывает (проверено на 8.3.24: /LoadConfigFromFiles вместе с
+# /CheckCanApplyConfigurationExtensions завершились кодом 0 с пустым логом, и загрузка НЕ
+# состоялась). Такая команда в дополнительных аргументах подменяет собой операцию навыка, а навык
+# отчитывается успехом. Дополнительные аргументы — это опции, а не режимы.
+$script:V8BatchKeys = @(
+    '/CheckConfig', '/CheckModules', '/CheckCanApplyConfigurationExtensions',
+    '/DumpDBCfgList', '/DeleteCfg', '/UpdateCfg', '/CompareCfg', '/MergeCfg',
+    '/ManageCfgSupport', '/RollbackCfg', '/ConvertFiles'
+)
+
 $script:IbcmdOwnedKeys = @(
     '--db-path', '--data', '--out', '--file', '--load', '--restore',
     '--import', '--export', '--apply', '--force', '--create-database',
     '--user', '--password'
 )
-$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP')
+$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP', '/ConfigurationRepositoryP')
 $script:IbcmdSecretKeys = @('--password', '--token', '--db-pwd')
 
 function Test-ArgKeyMatch {
@@ -166,7 +419,7 @@ function Get-ProjectExtraArgs {
         $__devEnvArgs = @(Get-1CDevEnvArgs $__devEnvKey)
         if ($__devEnvArgs.Count -gt 0) { return $__devEnvArgs }
     }
-    $dir = (Get-Location).Path
+    $dir = (Get-Location).ProviderPath
     while ($dir) {
         $pf = Join-Path $dir ".v8-project.json"
         if (Test-Path $pf) {
@@ -193,6 +446,14 @@ function Assert-ExtraArgs {
         if ($Engine -eq 'ibcmd' -and $tok -notmatch '^-') {
             Write-Host "Error: '$tok' is a positional token — pass values as --key=value ($paramName cannot extend the ibcmd command)" -ForegroundColor Red
             exit 1
+        }
+        if ($Engine -ne 'ibcmd') {
+            foreach ($b in $script:V8BatchKeys) {
+                if (Test-ArgKeyMatch $tok $b) {
+                    Write-Host "Error: $b is a batch command; passed via $paramName it would replace the skill's own operation (a command line runs only its last batch command)" -ForegroundColor Red
+                    exit 1
+                }
+            }
         }
         foreach ($k in $owned) {
             if (Test-ArgKeyMatch $tok $k) {
@@ -285,18 +546,90 @@ function Get-ObjectXmlFromSubFile {
     return $null
 }
 
+# Каталоги выгрузки объектов верхнего уровня → элемент в <ChildObjects> конфигурации.
+$script:TypeDirTag = @{
+    "Languages"="Language"; "Subsystems"="Subsystem"; "StyleItems"="StyleItem"; "Styles"="Style"
+    "CommonPictures"="CommonPicture"; "SessionParameters"="SessionParameter"; "Roles"="Role"; "CommonTemplates"="CommonTemplate"
+    "FilterCriteria"="FilterCriterion"; "CommonModules"="CommonModule"; "Bots"="Bot"; "PaletteColors"="PaletteColor"; "CommonAttributes"="CommonAttribute"; "ExchangePlans"="ExchangePlan"
+    "XDTOPackages"="XDTOPackage"; "WebServices"="WebService"; "HTTPServices"="HTTPService"; "WSReferences"="WSReference"
+    "EventSubscriptions"="EventSubscription"; "ScheduledJobs"="ScheduledJob"; "SettingsStorages"="SettingsStorage"; "FunctionalOptions"="FunctionalOption"
+    "FunctionalOptionsParameters"="FunctionalOptionsParameter"; "DefinedTypes"="DefinedType"; "CommonCommands"="CommonCommand"; "CommandGroups"="CommandGroup"
+    "Constants"="Constant"; "CommonForms"="CommonForm"; "Catalogs"="Catalog"; "Documents"="Document"
+    "DocumentNumerators"="DocumentNumerator"; "Sequences"="Sequence"; "DocumentJournals"="DocumentJournal"; "Enums"="Enum"
+    "Reports"="Report"; "DataProcessors"="DataProcessor"; "InformationRegisters"="InformationRegister"; "AccumulationRegisters"="AccumulationRegister"
+    "ChartsOfCharacteristicTypes"="ChartOfCharacteristicTypes"; "ChartsOfAccounts"="ChartOfAccounts"; "AccountingRegisters"="AccountingRegister"
+    "ChartsOfCalculationTypes"="ChartOfCalculationTypes"; "CalculationRegisters"="CalculationRegister"
+    "BusinessProcesses"="BusinessProcess"; "Tasks"="Task"; "ExternalDataSources"="ExternalDataSource"; "IntegrationServices"="IntegrationService"
+}
+
+function Get-DeletionVerdicts {
+    # Что загрузка частями сделает с путями, удалёнными в git. Удалённый ОБЪЕКТ (его XML-описание)
+    # исчезнет из базы, только если в списке его владелец и в составе владельца (ChildObjects)
+    # объекта уже нет. Удалённую ЧАСТЬ объекта (модуль, файлы Ext/) загрузка частями не удаляет
+    # никогда — платформа молча пропускает отсутствующий файл, даже перечисленный явно.
+    # Пути вне каталогов объектов (README, docs/…) — не конфигурация, их удаление не оценивается.
+    # Возвращает вердикт по каждому удалению: @{ Path; Applied; Reason }.
+    param([string[]]$Deleted, [string[]]$Loaded, [string]$Root, [string]$Format)
+    $result = @()
+    $ours = @($Deleted | Where-Object { $script:TypeDirTag.ContainsKey(($_ -split '/')[0]) -and ($_ -split '/').Count -ge 2 })
+    if ($Format -eq "Plain") {
+        foreach ($d in $ours) { $result += @{ Path = $d; Applied = $false; Reason = "формат Plain — удаление загрузкой частями не применяется" } }
+        return $result
+    }
+    foreach ($d in $ours) {
+        $segs = $d -split '/'
+        $extIdx = [array]::IndexOf($segs, 'Ext')
+        if ($extIdx -lt 0 -and $d -match '\.xml$' -and ($segs.Count -eq 2 -or $segs.Count -ge 4)) {
+            # Описание объекта: владелец — Configuration.xml или описание объекта двумя уровнями выше.
+            # Элемент состава — по каталогу: Catalogs → Catalog, Forms → Form.
+            if ($segs.Count -eq 2) {
+                $owner = "Configuration.xml"
+                $tag = $script:TypeDirTag[$segs[0]]
+            } else {
+                $owner = ($segs[0..($segs.Count - 3)] -join '/') + ".xml"
+                $tag = $segs[-2] -replace 's$', ''
+            }
+            if ($Deleted -contains $owner) { continue }
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($segs[-1])
+            if ($Loaded -notcontains $owner) {
+                $result += @{ Path = $d; Applied = $false; Reason = "владелец $owner не изменён — состав в базе прежний" }
+                continue
+            }
+            $ownerText = [System.IO.File]::ReadAllText((Join-Path $Root $owner))
+            $m = [regex]::Match($ownerText, '(?s)<ChildObjects>.*</ChildObjects>')
+            $pattern = '(?m)^\s*<' + $tag + '>' + [regex]::Escape($name) + '</' + $tag + '>\s*$'
+            if ($m.Success -and [regex]::IsMatch($m.Value, $pattern)) {
+                $result += @{ Path = $d; Applied = $false; Reason = "$owner всё ещё содержит объект в составе" }
+            } else {
+                $result += @{ Path = $d; Applied = $true; Reason = "через $owner" }
+            }
+            continue
+        }
+        if ($extIdx -lt 0) { continue }
+        # Часть объекта: сам объект — сегменты до Ext. Удалён вместе с объектом — судьба объекта.
+        if ($Deleted -contains (($segs[0..($extIdx - 1)] -join '/') + ".xml")) { continue }
+        $result += @{ Path = $d; Applied = $false; Reason = "часть объекта — загрузка частями файлы не удаляет (пустой файл вместо удаления очистит модуль)" }
+    }
+    return $result
+}
+
 # --- Resolve V8Path (skip if DryRun) ---
 if (-not $DryRun) {
     function Find-ProjectV8Path {
-        # 1c-rules: .dev.env is this project's single source of truth — it wins over
-        # .v8-project.json, which stays supported as the upstream fallback below.
+        # 1c-rules: -V8Path (caller) -> .dev.env PLATFORM_PATH -> v8path of the matching .v8-project.json
+        # database record -> root v8path -> auto-detect. .dev.env is this project's single source of
+        # truth; .v8-project.json stays supported as the upstream fallback below.
         $__devEnvHelper = Join-Path $PSScriptRoot '../../_common/DevEnv.ps1'
         if (Test-Path $__devEnvHelper) {
             . $__devEnvHelper
             $__devEnvV8 = Get-1CDevEnvValue 'PLATFORM_PATH'
             if ($__devEnvV8) { return $__devEnvV8 }
         }
-        $dir = (Get-Location).Path
+        # v8path записи базы сильнее корневого: в одном проекте базы живут на разных версиях
+        # платформы, а версию формата выгрузки задаёт та платформа, которая выгружает.
+        $dbRec = Find-ProjectDatabase
+        if ($dbRec -and $dbRec.v8path) { return [string]$dbRec.v8path }
+        $dir = (Get-Location).ProviderPath
         while ($dir) {
             $pf = Join-Path $dir ".v8-project.json"
             if (Test-Path $pf) {
@@ -358,6 +691,165 @@ function ConvertFrom-PlatformBytes {
     }
 }
 
+function Initialize-PlatformProcess {
+    # Process.Start hands the child EVERY inheritable handle we hold, not only the pipes made
+    # for it, and PowerShell keeps copies of its own stdout among them. A process the platform
+    # leaves behind (crashpad_handler on 8.5) would then hold our caller's pipe open long after
+    # we exit, and the caller hangs. PlatformProcess starts the platform the way Python does:
+    # with an explicit list of the three handles it may inherit. Compiled once per run; if the
+    # compiler is unavailable, $false sends the caller back to Process.Start.
+    if ($null -ne $script:platformProcessReady) { return $script:platformProcessReady }
+    $script:platformProcessReady = $false
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+
+public static class PlatformProcess {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO {
+        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct SECURITY_ATTRIBUTES { public int nLength; public IntPtr lpSecurityDescriptor; public bool bInheritHandle; }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CreatePipe(out IntPtr read, out IntPtr write, ref SECURITY_ATTRIBUTES sa, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool UpdateProcThreadAttribute(IntPtr list, int flags, IntPtr attr, IntPtr value, IntPtr size, IntPtr prev, IntPtr retSize);
+    [DllImport("kernel32.dll")]
+    static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern int WaitForSingleObject(IntPtr h, int ms);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetExitCodeProcess(IntPtr h, out int code);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
+
+    const int HANDLE_FLAG_INHERIT = 1;
+    const int STARTF_USESTDHANDLES = 0x100;
+    const int EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+    const int CREATE_NO_WINDOW = 0x8000000;
+    static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = (IntPtr)0x20002;
+
+    // Runs "exe" arguments with stdin at EOF and both output pipes captured. Waits for the
+    // process itself, then gives the readers drainMs to collect what is already buffered.
+    public static int Run(string exe, string arguments, int drainMs, out byte[] stdout, out byte[] stderr) {
+        var sa = new SECURITY_ATTRIBUTES();
+        sa.nLength = Marshal.SizeOf(sa);
+        sa.bInheritHandle = true;
+        IntPtr inR = IntPtr.Zero, inW = IntPtr.Zero, outR = IntPtr.Zero, outW = IntPtr.Zero, errR = IntPtr.Zero, errW = IntPtr.Zero;
+        IntPtr attrs = IntPtr.Zero, handles = IntPtr.Zero;
+        bool attrsReady = false, started = false;
+        var pi = new PROCESS_INFORMATION();
+        try {
+            if (!CreatePipe(out inR, out inW, ref sa, 0) || !CreatePipe(out outR, out outW, ref sa, 0)
+                || !CreatePipe(out errR, out errW, ref sa, 0)) throw new Win32Exception();
+            // Our ends of the pipes stay with us
+            SetHandleInformation(inW, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(errR, HANDLE_FLAG_INHERIT, 0);
+
+            var size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            attrs = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(attrs, 1, 0, ref size)) throw new Win32Exception();
+            attrsReady = true;
+            handles = Marshal.AllocHGlobal(3 * IntPtr.Size);
+            Marshal.WriteIntPtr(handles, 0, inR);
+            Marshal.WriteIntPtr(handles, IntPtr.Size, outW);
+            Marshal.WriteIntPtr(handles, 2 * IntPtr.Size, errW);
+            if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles,
+                (IntPtr)(3 * IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+
+            var si = new STARTUPINFOEX();
+            si.StartupInfo.cb = Marshal.SizeOf(si);
+            si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            si.StartupInfo.hStdInput = inR;
+            si.StartupInfo.hStdOutput = outW;
+            si.StartupInfo.hStdError = errW;
+            si.lpAttributeList = attrs;
+            // Same command line as Process.Start builds: quoted program (left as is if already
+            // quoted), then the arguments
+            var program = exe.Length > 1 && exe[0] == '"' && exe[exe.Length - 1] == '"' ? exe : "\"" + exe + "\"";
+            var cmd = new StringBuilder(program + (string.IsNullOrEmpty(arguments) ? "" : " " + arguments));
+            if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, true,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, IntPtr.Zero, null, ref si, out pi)) {
+                // System messages for a bad executable carry a %1 placeholder for its name
+                var e = new Win32Exception();
+                throw new Win32Exception(e.NativeErrorCode, e.Message.Replace("%1", exe));
+            }
+            started = true;
+        } finally {
+            // The child's ends are its own now; closing stdin's write end gives it EOF
+            foreach (var h in new[] { inR, outW, errW, inW }) if (h != IntPtr.Zero) CloseHandle(h);
+            if (!started) {
+                if (outR != IntPtr.Zero) CloseHandle(outR);
+                if (errR != IntPtr.Zero) CloseHandle(errR);
+            }
+            if (attrsReady) DeleteProcThreadAttributeList(attrs);
+            if (attrs != IntPtr.Zero) Marshal.FreeHGlobal(attrs);
+            if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
+        }
+        CloseHandle(pi.hThread);
+
+        var outBuf = new MemoryStream();
+        var errBuf = new MemoryStream();
+        var readers = new[] { Drain(outR, outBuf), Drain(errR, errBuf) };
+        int code;
+        try {
+            WaitForSingleObject(pi.hProcess, -1);
+            if (!GetExitCodeProcess(pi.hProcess, out code)) throw new Win32Exception();
+        } finally {
+            CloseHandle(pi.hProcess);
+        }
+        var deadline = DateTime.UtcNow.AddMilliseconds(drainMs);
+        foreach (var t in readers) t.Join(Math.Max(0, (int)(deadline - DateTime.UtcNow).TotalMilliseconds));
+        lock (outBuf) stdout = outBuf.ToArray();
+        lock (errBuf) stderr = errBuf.ToArray();
+        return code;
+    }
+
+    // Reads in chunks: a held pipe never reaches EOF, so whatever arrived must already be in buf
+    static Thread Drain(IntPtr handle, MemoryStream buf) {
+        var t = new Thread(() => {
+            try {
+                using (var fs = new FileStream(new SafeFileHandle(handle, true), FileAccess.Read, 4096, false)) {
+                    var chunk = new byte[65536];
+                    int n;
+                    while ((n = fs.Read(chunk, 0, chunk.Length)) > 0) lock (buf) buf.Write(chunk, 0, n);
+                }
+            } catch (Exception) { }   // anything escaping a background thread kills powershell
+        });
+        t.IsBackground = true;
+        t.Start();
+        return t;
+    }
+}
+'@
+        $script:platformProcessReady = $true
+    } catch { }
+    return $script:platformProcessReady
+}
+
 function Invoke-PlatformProcess {
     # Run the platform non-interactively and capture its console output. A closed stdin pipe
     # (EOF) makes an auth prompt fast-fail instead of hanging; capturing keeps the child's
@@ -369,32 +861,47 @@ function Invoke-PlatformProcess {
     #   1cv8     — -PreQuoted: the caller already put quotes inside the token (File="C:\a b"),
     #              which is where 1C's own parser expects them; quoting again breaks the value.
     param([string]$Exe, [string[]]$ProcArgs, [switch]$PreQuoted)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $Exe
-    $psi.Arguments = if ($PreQuoted) {
+    $arguments = if ($PreQuoted) {
         $ProcArgs -join ' '
     } else {
         ($ProcArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
     }
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $p.StandardInput.Close()
-    # stderr is drained in parallel: reading the streams one after another deadlocks
-    # as soon as the other one fills its pipe buffer.
-    $errMs = New-Object System.IO.MemoryStream
-    $errTask = $p.StandardError.BaseStream.CopyToAsync($errMs)
-    $outMs = New-Object System.IO.MemoryStream
-    $p.StandardOutput.BaseStream.CopyTo($outMs)
-    $errTask.Wait()
-    $p.WaitForExit()
-    $out = ConvertFrom-PlatformBytes $outMs.ToArray()
-    $err = ConvertFrom-PlatformBytes $errMs.ToArray()
+    # Wait for the process, not for EOF: a child it leaves behind (crashpad_handler on 8.5)
+    # inherits the pipes and keeps them open. By the time the platform exits, what it wrote
+    # is already buffered and drains at once; the 1 s only covers a held pipe.
+    if (Initialize-PlatformProcess) {
+        $outBytes = $null
+        $errBytes = $null
+        $code = [PlatformProcess]::Run($Exe, $arguments, 1000, [ref]$outBytes, [ref]$errBytes)
+    } else {
+        # No compiler: Process.Start leaks our handles to the platform, but we still never
+        # hang on a held pipe ourselves.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Exe
+        $psi.Arguments = $arguments
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $p.StandardInput.Close()
+        # Both streams are drained in parallel: reading them one after another deadlocks
+        # as soon as the other one fills its pipe buffer.
+        $errMs = New-Object System.IO.MemoryStream
+        $errTask = $p.StandardError.BaseStream.CopyToAsync($errMs)
+        $outMs = New-Object System.IO.MemoryStream
+        $outTask = $p.StandardOutput.BaseStream.CopyToAsync($outMs)
+        $p.WaitForExit()
+        [void][System.Threading.Tasks.Task]::WaitAll(@($outTask, $errTask), 1000)
+        $outBytes = $outMs.ToArray()
+        $errBytes = $errMs.ToArray()
+        $code = $p.ExitCode
+    }
+    $out = ConvertFrom-PlatformBytes $outBytes
+    $err = ConvertFrom-PlatformBytes $errBytes
     if ($err) { $out += $err }
-    return [pscustomobject]@{ Output = $out; ExitCode = $p.ExitCode }
+    return [pscustomobject]@{ Output = $out; ExitCode = $code }
 }
 
 function Write-PlatformOutput {
@@ -413,8 +920,132 @@ function Write-PlatformOutput {
     Write-Host "--- End ---"
 }
 
+# 1c-rules: batch verdict. /DumpResult receives the result of the batch command (0 = success).
+# Read it before trusting exit code 0: a batch command can fail while 1cv8 exits 0, and a missing
+# file means the command never completed (content/rules/designer-batch-checks.md -> The verdict is
+# three signals). Returns '' on success, otherwise the reason to report.
+function Get-DumpResultError {
+    param([string]$ResultFile)
+    $code = ''
+    if ($ResultFile -and (Test-Path -LiteralPath $ResultFile)) {
+        $text = Get-Content -LiteralPath $ResultFile -Raw -ErrorAction SilentlyContinue
+        if ($text) { $code = ($text -replace '[^\d\-]', '') }
+    }
+    if ($code -eq '0') { return '' }
+    if ($code) { return "batch result $code reported by /DumpResult (0 = success)" }
+    return "/DumpResult wrote no result - the batch command did not complete"
+}
 
-    $engine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
+# Строки лога, о которых платформа сообщает, НЕ поднимая код возврата: метаданные отброшены или
+# конфигурация нерабочая, а операция при этом «успешна». Возвращает подошедшие строки.
+#
+# Копия этой функции есть в каждом навыке, который читает /Out-лог загрузки (навыки автономны).
+# Держать копии одинаковыми — сознательно: разошедшиеся копии сводят на нет весь смысл.
+function Find-SilentRejections {
+    param([string]$LogText)
+    $patterns = @(
+        'Неверное свойство объекта метаданных',
+        'не входит в состав объекта метаданных',
+        'Неизвестное имя типа',
+        'Неизвестный объект метаданных',
+        'Ни один из документов не является регистратором для регистра',
+        'Неверное значение перечисления',
+        'не может быть приведен к типу',
+        # Режим совместимости выше платформы: объекты в базу не попадают, отказ приходит в рантайме.
+        # Обрезано до инвариантной части — конкретная версия в сообщении меняется.
+        'Для работы с конфигурацией необходима версия платформы не меньше'
+    )
+    $found = @()
+    if ($LogText) {
+        foreach ($line in ($LogText -split "`r?`n")) {
+            foreach ($pat in $patterns) {
+                if ($line -match [regex]::Escape($pat)) {
+                    $found += $line.Trim()
+                    break
+                }
+            }
+        }
+    }
+    # Возвращаем массив БЕЗ запятой-обёртки: вызывающий берёт результат в @(), а `return ,$found`
+    # дал бы массив из одного пустого массива — фантомное срабатывание на чистом логе.
+    return $found
+}
+
+
+    # Постусловие применимости расширения: платформа отчитывается успехом и о расширении, которое
+# не применит — отказ всплывает лениво, при первом вызове метода, записью в журнал регистрации.
+#
+# Запуск ОБЯЗАТЕЛЬНО отдельный. Дописать эту команду в строку операции нельзя: в одной командной
+# строке DESIGNER выполняет только ПОСЛЕДНЮЮ пакетную команду, остальные молча отбрасывает —
+# проверено на 8.3.24, /LoadConfigFromFiles вместе с /CheckCanApplyConfigurationExtensions
+# завершились кодом 0 с пустым логом, и загрузка не состоялась.
+#
+# Проверку умеет только 1cv8; если навык работал через ibcmd, берём соседний исполняемый файл.
+function Invoke-ApplyCheck {
+    param([string]$Exe, [string[]]$ConnArgs, [string]$Extension, [string[]]$ExtraArgs)
+    $exeDir = Split-Path $Exe -Parent
+    $exeLeaf = Split-Path $Exe -Leaf
+    $v8 = if ($exeLeaf -match '^ibcmd') { Join-Path $exeDir ("1cv8" + [System.IO.Path]::GetExtension($Exe)) } else { $Exe }
+    if (-not (Test-Path $v8)) { return @{ Skipped = $true; Reason = "1cv8 not found at $v8"; ExitCode = 0; Lines = @(); DumpError = '' } }
+    $dir = Join-Path ([IO.Path]::GetTempPath()) "apply_check_$(Get-Random)"
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    try {
+        $a = @("DESIGNER") + $ConnArgs + @("/CheckCanApplyConfigurationExtensions")
+        if ($Extension) { $a += "-Extension", "`"$Extension`"" }
+        $outFile = Join-Path $dir "check_log.txt"
+        $resultFile = Join-Path $dir "check_result.txt"
+        $a += "/Out", "`"$outFile`"", "/DumpResult", "`"$resultFile`"", "/DisableStartupDialogs"
+        $a += $ExtraArgs
+        $res = Invoke-PlatformProcess $v8 $a -PreQuoted
+        $lines = @()
+        if (Test-Path $outFile) {
+            $raw = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
+            if ($raw) { $lines = @($raw -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }) }
+        }
+        return @{ Skipped = $false; Reason = ''; ExitCode = $res.ExitCode; Lines = $lines; DumpError = (Get-DumpResultError $resultFile) }
+    } finally {
+        if ($dir -and (Test-Path $dir)) { Remove-Item -Path $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# Проверить и напечатать. $true, если платформа расширение не применит — вызывающий решает,
+# поднимать ли код возврата (строгий режим).
+function Invoke-ApplyCheckReport {
+    param([string]$Exe, [string[]]$ConnArgs, [string]$Extension, [string[]]$ExtraArgs)
+    $ac = Invoke-ApplyCheck $Exe $ConnArgs $Extension $ExtraArgs
+    if ($ac.Skipped) {
+        Write-Host "[note] applicability check skipped: $($ac.Reason)" -ForegroundColor Yellow
+        return $false
+    }
+    if ($ac.ExitCode -ne 0 -or $ac.Lines.Count -gt 0 -or $ac.DumpError) {
+        Write-Host "[warning] the extension is loaded, but the platform will not apply it:" -ForegroundColor Yellow
+        foreach ($l in $ac.Lines) { Write-Host "  $l" -ForegroundColor Yellow }
+        if ($ac.DumpError -and $ac.Lines.Count -eq 0) { Write-Host "  $($ac.DumpError)" -ForegroundColor Yellow }
+        return $true
+    }
+    return $false
+}
+
+# Проверять ли применимость: -NoApplyCheck сильнее настройки проекта.
+# 1c-rules: off by default. /update1cbase Step 2c runs the applicability gate (/CheckModules, then
+# /CheckCanApplyConfigurationExtensions) between load and update; a second Designer pass from the
+# loader would only double it. -ApplyCheck or .v8-project.json extensionApplyCheck=true turn it on.
+function Get-ApplyCheckEnabled {
+    param([switch]$Disabled, [switch]$Requested)
+    if ($Disabled) { return $false }
+    if ($Requested) { return $true }
+    $pf = Find-V8Project (Get-Location).ProviderPath
+    if ($pf) {
+        try {
+            $proj = Get-Content $pf -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($null -ne $proj.extensionApplyCheck) { return [bool]$proj.extensionApplyCheck }
+        } catch {}
+    }
+    return $false
+}
+
+
+$engine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
     if ($engine -eq "ibcmd") {
         if (-not $InfoBasePath) {
             Write-Host "Error: ibcmd supports file infobases only (use -InfoBasePath)" -ForegroundColor Red
@@ -442,6 +1073,14 @@ if ($Source -eq "Commit" -and -not $CommitRange) {
     exit 1
 }
 
+# --- -AllExtensions: загрузка частями идёт по одному расширению ---
+# Конфигуратор сочетание -AllExtensions с -listFile отвергает сам, ibcmd его не поддерживает.
+if ($AllExtensions) {
+    Write-Host "Error: -AllExtensions cannot be combined with a partial load" -ForegroundColor Red
+    Write-Host "  Загружайте расширения по одному: -Extension <имя>, -ConfigDir — каталог этого расширения." -ForegroundColor Yellow
+    exit 1
+}
+
 # --- Check git ---
 try {
     $null = git --version 2>&1
@@ -453,6 +1092,8 @@ try {
 # --- Get changed files from Git ---
 # Все git-вызовы для сбора путей идут через один хелпер с -c core.quotePath=false,
 # иначе кириллические пути возвращаются в octal-виде и не распознаются (зеркало run_git в .py).
+# diff — с --no-renames: при переименовании иначе виден только новый путь, а старый — это
+# удаление, о котором надо предупредить.
 function Invoke-GitLines {
     param([string[]]$GitArgs)
     $out = git -c core.quotePath=false @GitArgs 2>&1
@@ -461,7 +1102,6 @@ function Invoke-GitLines {
 }
 
 $changedFiles = @()
-$ConfigDir = (Resolve-Path $ConfigDir).Path.TrimEnd('\')
 $configDirNormalized = $ConfigDir.Replace('\', '/')
 
 Push-Location $ConfigDir
@@ -469,21 +1109,21 @@ try {
     switch ($Source) {
         "Staged" {
             Write-Host "Getting staged changes..."
-            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--cached', '--name-only', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--cached', '--name-only', '--no-renames', '--relative')
         }
         "Unstaged" {
             Write-Host "Getting unstaged changes..."
-            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--no-renames', '--relative')
             $changedFiles += Invoke-GitLines -GitArgs @('ls-files', '--others', '--exclude-standard')
         }
         "Commit" {
             Write-Host "Getting changes from $CommitRange..."
-            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--relative', $CommitRange)
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--no-renames', '--relative', $CommitRange)
         }
         "All" {
             Write-Host "Getting all uncommitted changes..."
-            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--cached', '--name-only', '--relative')
-            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--cached', '--name-only', '--no-renames', '--relative')
+            $changedFiles += Invoke-GitLines -GitArgs @('diff', '--name-only', '--no-renames', '--relative')
             $changedFiles += Invoke-GitLines -GitArgs @('ls-files', '--others', '--exclude-standard')
         }
     }
@@ -503,6 +1143,7 @@ Write-Host "Git changes detected: $($changedFiles.Count) files"
 # --- Filter and map to config files ---
 $configFiles = @()
 $supportSkipped = @()
+$deletedFiles = @()
 
 foreach ($file in $changedFiles) {
     $file = $file.Trim().Replace('\', '/')
@@ -514,6 +1155,7 @@ foreach ($file in $changedFiles) {
     if ($file -eq "ConfigDumpInfo.xml" -or $file -match '(^|/)ConfigDumpInfo\.xml$') { continue }
 
     $fullPath = Join-Path $ConfigDir $file
+    if (-not (Test-Path -LiteralPath $fullPath)) { $deletedFiles += $file }
 
     if ($file -match '\.xml$') {
         # XML file — add directly if exists
@@ -560,9 +1202,30 @@ if ($supportSkipped.Count -gt 0) {
     Write-Host "  Смена состояния поддержки применяется только полной загрузкой (db-load-xml -Mode Full)." -ForegroundColor Yellow
 }
 
+$verdicts = @(Get-DeletionVerdicts -Deleted $deletedFiles -Loaded $configFiles -Root $ConfigDir -Format $Format)
+$unapplied = @($verdicts | Where-Object { -not $_.Applied })
+foreach ($v in @($verdicts | Where-Object { $_.Applied })) { Write-Host "[note] удаление применится $($v.Reason): $($v.Path)" }
+if ($unapplied.Count -gt 0) {
+    Write-Host "[ВНИМАНИЕ] Удаления, которые загрузка частями НЕ применит — в базе они останутся:" -ForegroundColor Yellow
+    foreach ($u in $unapplied) { Write-Host "  - $($u.Path): $($u.Reason)" -ForegroundColor Yellow }
+    Write-Host "  Применить их можно полной загрузкой (db-load-xml -Mode Full)." -ForegroundColor Yellow
+}
+
 if ($configFiles.Count -eq 0) {
+    if ($unapplied.Count -gt 0) {
+        Write-Host "Error: changes found, but none of them can be applied by a partial load (see above)" -ForegroundColor Red
+        exit 1
+    }
     Write-Host "No configuration files found in changes"
     exit 0
+}
+
+# Корневой Configuration.xml — это объект «Конфигурация»: вместе с объектом платформа грузит его
+# дочерние объекты, а у конфигурации это весь состав. В список он попадает из диффа сам, поэтому
+# предупреждаем — пользователь его не выбирал.
+if (@($configFiles | Where-Object { ($_ -replace '\\', '/') -ieq 'Configuration.xml' }).Count -gt 0) {
+    Write-Host "[ВНИМАНИЕ] В изменениях есть Configuration.xml: платформа выполнит ПОЛНУЮ загрузку" -ForegroundColor Yellow
+    Write-Host "  конфигурации, а не только изменённых объектов." -ForegroundColor Yellow
 }
 
 Write-Host "Files for loading: $($configFiles.Count)"
@@ -576,7 +1239,7 @@ if ($DryRun) {
 }
 
 # --- Temp dir ---
-$tempDir = Join-Path $env:TEMP "db_load_git_$(Get-Random)"
+$tempDir = Join-Path ([IO.Path]::GetTempPath()) "db_load_git_$(Get-Random)"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
 try {
@@ -584,10 +1247,6 @@ try {
         # --- ibcmd branch (file infobase only; import specific files) ---
         if ($Format -eq "Plain") {
             Write-Host "Error: ibcmd config import supports hierarchical format only (use -Format Hierarchical or 1cv8)" -ForegroundColor Red
-            exit 1
-        }
-        if ($AllExtensions) {
-            Write-Host "Error: ibcmd config import does not support -AllExtensions (use -Extension or 1cv8)" -ForegroundColor Red
             exit 1
         }
         $arguments = @("infobase", "config", "import", "files") + $configFiles
@@ -623,6 +1282,13 @@ try {
             } else {
                 Write-Host "Error updating database configuration (code: $exitCode)$(Get-ExitAnnotation $exitCode)" -ForegroundColor Red
             }
+        # Проверку применимости умеет только 1cv8 — соединение для неё собираем в его форме.
+        if ($exitCode -eq 0 -and $Extension -and (Get-ApplyCheckEnabled -Disabled:$NoApplyCheck -Requested:$ApplyCheck)) {
+            $acConn = @("/F", "`"$InfoBasePath`"")
+            if ($UserName) { $acConn += "/N`"$UserName`"" }
+            if ($Password) { $acConn += "/P`"$Password`"" }
+            if ((Invoke-ApplyCheckReport $V8Path $acConn $Extension @()) -and ($StrictLog -or $ApplyCheck)) { $exitCode = 1 }
+        }
             Write-PlatformOutput $applyOut
         }
         exit $exitCode
@@ -635,16 +1301,24 @@ try {
     [System.IO.File]::WriteAllLines($listFile, $configFiles, $utf8Bom)
 
     # --- Build arguments ---
-    $arguments = @("DESIGNER")
+    # Аргументы соединения собираем отдельно: тем же набором пойдёт запуск проверки применимости.
+    $connArgs = @()
 
     if ($InfoBaseServer -and $InfoBaseRef) {
-        $arguments += "/S", "`"$InfoBaseServer/$InfoBaseRef`""
+        $connArgs += "/S", "`"$InfoBaseServer/$InfoBaseRef`""
     } else {
-        $arguments += "/F", "`"$InfoBasePath`""
+        $connArgs += "/F", "`"$InfoBasePath`""
     }
 
-    if ($UserName) { $arguments += "/N`"$UserName`"" }
-    if ($Password) { $arguments += "/P`"$Password`"" }
+    if ($UserName) { $connArgs += "/N`"$UserName`"" }
+    if ($Password) { $connArgs += "/P`"$Password`"" }
+
+    # База под хранилищем не примет НИ ОДНОЙ операции конфигуратора без этих реквизитов, а для
+    # базы вне хранилища они безвредны — поэтому подставляем всегда, когда они известны.
+    $__repo = Resolve-RepositorySettings
+    $connArgs += Get-RepositoryArgs $__repo
+
+    $arguments = @("DESIGNER") + $connArgs
 
     $arguments += "/LoadConfigFromFiles", "`"$ConfigDir`""
     $arguments += "-listFile", "`"$listFile`""
@@ -655,8 +1329,6 @@ try {
     # --- Extensions ---
     if ($Extension) {
         $arguments += "-Extension", "`"$Extension`""
-    } elseif ($AllExtensions) {
-        $arguments += "-AllExtensions"
     }
 
     # --- UpdateDB ---
@@ -667,6 +1339,7 @@ try {
     # --- Output ---
     $outFile = Join-Path $tempDir "load_log.txt"
     $arguments += "/Out", "`"$outFile`""
+    # 1c-rules: /DumpResult beside /Out - the batch verdict, read right after the launch.
     $resultFile = Join-Path $tempDir "batch_result.txt"
     $arguments += "/DumpResult", "`"$resultFile`""
     $arguments += "/DisableStartupDialogs"
@@ -675,28 +1348,13 @@ try {
     # --- Execute ---
     Write-Host ""
     Write-Host "Executing partial configuration load..."
-    Write-Host "Running: 1cv8.exe $(Protect-Secrets ((Format-ArgsForDisplay $arguments $engine) -join ' ') @($Password, $UserName))"
+    Write-Host "Running: 1cv8.exe $(Protect-Secrets ((Format-ArgsForDisplay $arguments $engine) -join ' ') @($Password, $UserName, $__repo.Password))"
 
     $__v8 = Invoke-PlatformProcess $V8Path $arguments -PreQuoted
     $exitCode = $__v8.ExitCode
-
-    # The platform's own batch verdict: /DumpResult writes 0 on success. Read it before
-    # trusting the exit code - a batch command can fail while 1cv8 exits 0 (canon:
-    # content/rules/designer-batch-checks.md -> The verdict is three signals).
     if ($exitCode -eq 0) {
-        $dumpCode = ''
-        if (Test-Path -LiteralPath $resultFile) {
-            $dumpText = Get-Content -LiteralPath $resultFile -Raw -ErrorAction SilentlyContinue
-            if ($dumpText) { $dumpCode = ($dumpText -replace '[^\d\-]', '') }
-        }
-        if ($dumpCode -ne '0') {
-            if ($dumpCode) {
-                Write-Host "[error] batch result $dumpCode reported by /DumpResult (0 = success)" -ForegroundColor Red
-            } else {
-                Write-Host "[error] /DumpResult wrote no result - the batch command did not complete" -ForegroundColor Red
-            }
-            $exitCode = 1
-        }
+        $__dumpError = Get-DumpResultError $resultFile
+        if ($__dumpError) { Write-Host "[error] $__dumpError" -ForegroundColor Red; $exitCode = 1 }
     }
 
     # --- Result ---
@@ -707,6 +1365,7 @@ try {
         Write-Host "Error loading configuration (code: $exitCode)$(Get-ExitAnnotation $exitCode)" -ForegroundColor Red
     }
 
+    $logContent = $null
     if (Test-Path $outFile) {
         $logContent = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
         if ($logContent) {
@@ -716,11 +1375,29 @@ try {
         }
     }
     Write-PlatformOutput $__v8.Output
+    Write-RepositoryHints $logContent
+
+    # Причину не называем: строки лога печатаются следом и говорят за себя, а класс проблемы
+    # разный — от отброшенного свойства до нерабочей на этой платформе конфигурации. Подсказку
+    # про -StrictLog не даём: операция уже выполнена, повторять её ради того же текста незачем.
+    $silentFailures = @(Find-SilentRejections $logContent)
+    # Только при успехе: при провале лог уже выведен целиком, а блок повторял бы его строки
+    # под заголовком «reported success» — неправдой рядом с «Error … (code: N)».
+    if ($exitCode -eq 0 -and $silentFailures.Count -gt 0) {
+        Write-Host "[warning] platform reported success, but the log contains $($silentFailures.Count) problem(s):" -ForegroundColor Yellow
+        foreach ($f in $silentFailures) { Write-Host "  $f" -ForegroundColor Yellow }
+        if ($StrictLog) { $exitCode = 1 }
+    }
+
+    # Расширение могло загрузиться «успешно» и остаться неприменимым — спрашиваем платформу.
+    if ($exitCode -eq 0 -and $Extension -and (Get-ApplyCheckEnabled -Disabled:$NoApplyCheck -Requested:$ApplyCheck)) {
+        if ((Invoke-ApplyCheckReport $V8Path $connArgs $Extension $extraArgs) -and ($StrictLog -or $ApplyCheck)) { $exitCode = 1 }
+    }
 
     exit $exitCode
 
 } finally {
-    if (Test-Path $tempDir) {
+    if ($tempDir -and (Test-Path $tempDir)) {
         Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

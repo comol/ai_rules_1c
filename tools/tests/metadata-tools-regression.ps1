@@ -415,8 +415,10 @@ Register-Case 'meta-edit: the mandatory meta-validate really runs and never degr
     $combined = "$($run.StdOut)$($run.StdErr)"
     Assert-True ($combined -match '--- Running meta-validate ---') "the validator banner never appeared: $combined"
     Assert-True ($combined -notmatch '\[SKIP\]') "validation was skipped instead of run: $combined"
-    Assert-True ($combined -match '=== Validation: Catalog\.TestCatalog ===') "the validator printed no banner for the edited object: $combined"
-    Assert-True ($combined -match '=== Result: 0 errors') "the validator produced no clean result line: $combined"
+    # meta-validate 1.45 prints a clean run as one line, '=== Validation OK: <Obj> (N checks) ===';
+    # the long form (banner + '=== Result: 0 errors') remains for warnings and -Detailed.
+    Assert-True ($combined -match '=== Validation( OK)?: Catalog\.TestCatalog') "the validator printed no banner for the edited object: $combined"
+    Assert-True ($combined -match '=== Validation OK: Catalog\.TestCatalog|=== Result: 0 errors') "the validator produced no clean result line: $combined"
 
     $after = Get-FileFacts $target
     Assert-True ($before.Text -ne $after.Text) 'baseline and result are the same bytes - the case asserts nothing'
@@ -543,6 +545,64 @@ Register-Case 'meta-edit: a validator that reports errors propagates its non-zer
     Assert-True ($run.StdErr -match '3') "the child exit code is not reported: $($run.StdErr)"
 }
 
+Register-Case 'meta-edit: an external data processor is validated by epf-validate, a missing one is refused' {
+    param($Work)
+    # Upstream #108 (372510bb): meta-validate does not know ExternalDataProcessor /
+    # ExternalReport, so a correct edit ended in 'Unrecognized metadata type'. The
+    # validator is chosen by object type and resolved under the downstream directory
+    # 1c-epf-validate; its absence is refused before the write, like meta-validate's.
+    $epfInit = Join-Path $ToolsDir '1c-epf-scaffold\scripts\init.ps1'
+    $src = Join-Path $Work 'epf'
+    New-Item -ItemType Directory -Path $src -Force | Out-Null
+    $init = Invoke-Tool $epfInit @('-Name', 'RegrEpf', '-SrcDir', $src) $Work
+    Assert-Equal 0 $init.ExitCode "epf-init exit code (stderr: $($init.StdErr))"
+    $target = Join-Path $src 'RegrEpf.xml'
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag: Boolean') $Work
+    Assert-Equal 0 $run.ExitCode "meta-edit exit code (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    $combined = "$($run.StdOut)$($run.StdErr)"
+    Assert-True ($combined -match '--- Running epf-validate ---') "epf-validate did not run: $combined"
+    Assert-True ($combined -notmatch 'Running meta-validate|\[SKIP\]|Unrecognized') "the external object went to the wrong validator: $combined"
+
+    $broken = New-BrokenToolTree $Work 'no-epf-validator' { param($Root)
+        Remove-Item -LiteralPath (Join-Path $Root '1c-epf-validate\scripts\epf-validate.ps1') -Force
+    }
+    $before = Get-TreeSnapshot $src
+    $run = Invoke-Tool (Join-Path $broken '1c-meta-edit\scripts\meta-edit.ps1') @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag2: Boolean') $Work
+    Assert-True ($run.ExitCode -ne 0) "a missing epf-validate exited 0 (stdout: $($run.StdOut))"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $src) 'EPF edit with no epf-validate available'
+    Assert-True ($run.StdErr -match 'epf-validate') "the refusal does not name epf-validate: $($run.StdErr)"
+}
+
+Register-Case 'meta-edit: a missing element or an invalid enum value is refused, an alias is canonicalized' {
+    param($Work)
+    # cfd2d1be: modifying an element that does not exist printed WARN and exited 0 -
+    # a batch run read it as success. 50bc9f5c / 0ff84878: modify-property wrote an
+    # enum value and a property key as given, so 'Whatever' or a lower-case tag
+    # reached the dump. Now: refusal with exit 1 and nothing written; a known alias
+    # or another letter case is written as the canonical value and tag.
+    $dump = Join-Path $Work 'dump'
+    Copy-Fixture 'config-dump' $dump "`n"
+    $target = Join-Path $dump 'Catalogs\TestCatalog.xml'
+    $before = Get-TreeSnapshot $dump
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'modify-attribute', '-Value', 'NoSuchAttr: synonym=X') $dump
+    Assert-True ($run.ExitCode -ne 0) "modify of a missing attribute exited 0 (stdout: $($run.StdOut))"
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'NoSuchAttr') "the refusal does not name the element: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $dump) 'modify of a missing attribute'
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'modify-property', '-Value', 'CodeAllowedLength=Whatever') $dump
+    Assert-True ($run.ExitCode -ne 0) "an invalid enum value exited 0 (stdout: $($run.StdOut))"
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'Invalid value') "the refusal does not list valid values: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $dump) 'modify-property with an invalid enum value'
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'modify-property', '-Value', 'codeallowedlength=fixed') $dump
+    Assert-Equal 0 $run.ExitCode "modify-property with an alias (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    $text = (Get-FileFacts $target).Text
+    Assert-True ($text -cmatch '<CodeAllowedLength>Fixed</CodeAllowedLength>') 'the value or the tag was not canonicalized'
+    Assert-True ($text -cnotmatch '<codeallowedlength') 'the property key was written in the case it was given'
+}
+
 # ---------------------------------------------------------------- C. meta-validate form checks
 
 Register-Case 'meta-validate: an inline ChildObjects/Form descriptor is rejected (6a)' {
@@ -573,6 +633,38 @@ Register-Case 'meta-validate: a form registered without its descriptor file is r
     $combined = "$($run.StdOut)$($run.StdErr)"
     Assert-True ($run.ExitCode -ne 0) "the validator accepted a dangling form reference: $combined"
     Assert-True ($combined -match '6b\.') "no 6b diagnostic: $combined"
+}
+
+# Upstream 2e5289a8: TypeReductionMode is a 2.18 property (8.3.25), not 2.20. With the
+# old threshold check 18 raised a false ERROR on almost every object of a 8.3.25 /
+# 8.3.26 dump - and meta-edit turned that into a non-zero exit after a correct edit.
+Register-Case 'meta-validate: TypeReductionMode in a 2.18 / 2.19 dump is not an error (18)' {
+    param($Work)
+    $block = "<DefaultObjectForm/>`n`t`t`t<StandardAttributes>`n`t`t`t`t<xr:StandardAttribute name=`"Description`">" +
+        "`n`t`t`t`t`t<xr:TypeReductionMode>TransformValues</xr:TypeReductionMode>" +
+        "`n`t`t`t`t</xr:StandardAttribute>`n`t`t`t</StandardAttributes>"
+    $bom = New-Object System.Text.UTF8Encoding($true)
+    foreach ($ver in @('2.17', '2.18', '2.19')) {
+        $dir = Join-Path $Work $ver
+        Copy-Fixture 'config-dump' $dir "`n"
+        $target = Join-Path $dir 'Catalogs\TestCatalog.xml'
+        foreach ($file in @((Join-Path $dir 'Configuration.xml'), $target)) {
+            $text = [System.IO.File]::ReadAllText($file).Replace('version="2.17"', "version=`"$ver`"")
+            if ($file -eq $target) { $text = $text.Replace('<DefaultObjectForm/>', $block) }
+            [System.IO.File]::WriteAllText($file, $text, $bom)
+        }
+        Assert-True ([System.IO.File]::ReadAllText($target).Contains("version=`"$ver`">")) "${ver}: the fixture edit did not land"
+        Assert-True ([System.IO.File]::ReadAllText($target).Contains('<xr:TypeReductionMode>')) "${ver}: no TypeReductionMode in the fixture"
+        $run = Invoke-Tool $MetaValidate @('-ObjectPath', $target) $dir
+        $combined = "$($run.StdOut)$($run.StdErr)"
+        if ($ver -eq '2.17') {
+            # The property really is new in 2.18: a 2.17 file still gets the error.
+            Assert-True ($run.ExitCode -ne 0 -and $combined -match '\[ERROR\] 18\.') "2.17: check 18 no longer fires: $combined"
+        } else {
+            Assert-Equal 0 $run.ExitCode "${ver}: meta-validate exit code ($combined)"
+            Assert-True ($combined -notmatch '\[ERROR\]') "${ver}: false error on TypeReductionMode: $combined"
+        }
+    }
 }
 
 # ---------------------------------------------------------------- D. form-add / form-compile
@@ -650,8 +742,9 @@ Register-Case 'form-compile: a standalone handlers map produces the event, confl
 
 Register-Case 'form-validate: version, owner type, folder type, handlers and conversion context' {
     param($Work)
-    # form-validate v1.10 checks 1, 12, 12b, 13 and 14 on a form-add scaffold. BSL
-    # is written in English keywords so this file stays pure ASCII.
+    # form-validate v1.39 checks 12, 14, 22 (with the local declaration / directive /
+    # arity sub-checks), 28 (local, was 12b) and 29 (local, was 14) on a form-add
+    # scaffold. BSL is written in English keywords so this file stays pure ASCII.
     $FormValidate = Join-Path $ToolsDir '1c-form-validate\scripts\form-validate.ps1'
     Copy-Fixture 'config-dump' $Work "`n"
     $target = Join-Path $Work 'Catalogs\TestCatalog.xml'
@@ -678,27 +771,41 @@ Register-Case 'form-validate: version, owner type, folder type, handlers and con
     Assert-Equal 0 $ok.ExitCode "a matching handler was rejected: $($ok.Text)"
     Assert-True ($ok.Text -notmatch '\[WARN\]') "a matching handler was warned about: $($ok.Text)"
 
+    # Upstream severity since 1.3x: a binding without its procedure is an error (22).
     $missing = & $validate $withEvent "&AtClient`nProcedure Unrelated()`nEndProcedure`n"
-    Assert-Equal 0 $missing.ExitCode "a missing handler must stay a warning: $($missing.Text)"
-    Assert-True ($missing.Text -match '\[WARN\]\s+13\..*not found') "no warning for a missing handler: $($missing.Text)"
+    Assert-True ($missing.ExitCode -ne 0) "a missing handler was accepted: $($missing.Text)"
+    Assert-True ($missing.Text -match '\[ERROR\] 22\..*not found') "no error for a missing handler: $($missing.Text)"
+
+    $noDirective = & $validate $withEvent "Procedure OnOpenHandler(Cancel)`nEndProcedure`n"
+    Assert-Equal 0 $noDirective.ExitCode "a handler without a directive must stay a warning: $($noDirective.Text)"
+    Assert-True ($noDirective.Text -match '\[WARN\]\s+22\..*no compilation directive') "no warning for a missing directive: $($noDirective.Text)"
 
     $duplicate = & $validate $withEvent ($clientHandler + "`n" + $clientHandler)
     Assert-True ($duplicate.ExitCode -ne 0) "a duplicate handler was accepted: $($duplicate.Text)"
-    Assert-True ($duplicate.Text -match '\[ERROR\] 13\..*declared 2 times') "no error for a duplicate handler: $($duplicate.Text)"
+    Assert-True ($duplicate.Text -match '\[ERROR\] 22\..*declared 2 times') "no error for a duplicate handler: $($duplicate.Text)"
 
     $conversion = & $validate $withEvent ($clientHandler + "`n&AtClient`nProcedure Convert()`n`tValue = FormAttributeToValue(`"Object`");`nEndProcedure`n")
     Assert-True ($conversion.ExitCode -ne 0) "a client-side FormAttributeToValue was accepted: $($conversion.Text)"
-    Assert-True ($conversion.Text -match '\[ERROR\] 14\.') "no error for a client-side conversion: $($conversion.Text)"
+    Assert-True ($conversion.Text -match '\[ERROR\] 29\.') "no error for a client-side conversion: $($conversion.Text)"
     $serverConversion = & $validate $withEvent ($clientHandler + "`n&AtServer`nProcedure Convert()`n`tValue = FormAttributeToValue(`"Object`");`nEndProcedure`n")
     Assert-Equal 0 $serverConversion.ExitCode "a server-side FormAttributeToValue was rejected: $($serverConversion.Text)"
 
+    # Check 14 (upstream c943acef / b20276fa): the body must match its descriptor
+    # Forms/Main.xml; a pair that agrees but differs from the dump only warns.
     $version = & $validate ($pristineForm -replace 'version="2\.17"', 'version="2.20"') ''
-    Assert-True ($version.ExitCode -ne 0) "a Form.xml version different from Configuration.xml was accepted: $($version.Text)"
-    Assert-True ($version.Text -match 'differs from Configuration\.xml') "no version diagnostic: $($version.Text)"
+    Assert-True ($version.ExitCode -ne 0) "a Form.xml version different from its descriptor was accepted: $($version.Text)"
+    Assert-True ($version.Text -match '\[ERROR\] 14\..*differs from the form descriptor') "no version diagnostic: $($version.Text)"
+    $descriptor = Join-Path $formsDir 'Main.xml'
+    $pristineDescriptor = (Get-FileFacts $descriptor).Text
+    [System.IO.File]::WriteAllText($descriptor, ($pristineDescriptor -replace 'version="2\.17"', 'version="2.20"'), $bom)
+    $pair = & $validate ($pristineForm -replace 'version="2\.17"', 'version="2.20"') ''
+    [System.IO.File]::WriteAllText($descriptor, $pristineDescriptor, $bom)
+    Assert-Equal 0 $pair.ExitCode "a consistent 2.20 pair in a 2.17 dump was rejected: $($pair.Text)"
+    Assert-True ($pair.Text -match '\[WARN\]\s+14\..*differs from the dump') "no dump-uniformity warning: $($pair.Text)"
 
     $owner = & $validate ($pristineForm -replace 'cfg:CatalogObject\.TestCatalog', 'cfg:CatalogObject.OtherCatalog') ''
     Assert-True ($owner.ExitCode -ne 0) "the default object form with a foreign main attribute was accepted: $($owner.Text)"
-    Assert-True ($owner.Text -match '\[ERROR\] 12b\.') "no 12b diagnostic: $($owner.Text)"
+    Assert-True ($owner.Text -match '\[ERROR\] 28\.') "no 28 (owner) diagnostic: $($owner.Text)"
 
     $folder = & $validate ($pristineForm -replace '</Attributes>', "`t<Attribute name=`"Extra`" id=`"2`">`n`t`t`t<Type>`n`t`t`t`t<v8:Type>cfg:Catalogs.TestCatalog</v8:Type>`n`t`t`t</Type>`n`t`t</Attribute>`n`t</Attributes>") ''
     Assert-True ($folder.ExitCode -ne 0) "cfg:Catalogs.TestCatalog was accepted: $($folder.Text)"
@@ -709,6 +816,36 @@ Register-Case 'form-validate: version, owner type, folder type, handlers and con
     [System.IO.File]::WriteAllText($otherXml, ((Get-FileFacts $otherXml).Text -replace 'cfg:CatalogObject\.TestCatalog', 'cfg:CatalogObject.OtherCatalog'), $bom)
     $nonDefault = Invoke-Tool $FormValidate @('-FormPath', $otherXml) $Work
     Assert-Equal 0 $nonDefault.ExitCode "a non-default form with another main attribute was rejected: $($nonDefault.StdOut)"
+}
+
+Register-Case 'form-edit: a DynamicList attribute without a source is refused, with mainTable it is written' {
+    param($Work)
+    # Local delta of 2026-09-10 kept across the upstream 1.46 rewrite: the Designer
+    # loads a dynamic list with neither MainTable nor QueryText, the form then fails
+    # to open. form-edit refuses that JSON before writing anything.
+    $FormEdit = Join-Path $ToolsDir '1c-form-edit\scripts\form-edit.ps1'
+    Copy-Fixture 'config-dump' $Work "`n"
+    $target = Join-Path $Work 'Catalogs\TestCatalog.xml'
+    $run = Invoke-Tool $FormAdd @('-ObjectPath', $target, '-FormName', 'Main', '-Purpose', 'Object') $Work
+    Assert-Equal 0 $run.ExitCode "form-add (stderr: $($run.StdErr))"
+    $formXml = Join-Path $Work 'Catalogs\TestCatalog\Forms\Main\Ext\Form.xml'
+    $before = (Get-FileHash -LiteralPath $formXml -Algorithm SHA256).Hash
+    $noSource = Join-Path $Work 'no-source.json'
+    [System.IO.File]::WriteAllText($noSource, '{"attributes":[{"name":"Rows","type":"DynamicList"}]}', (New-Object System.Text.UTF8Encoding($false)))
+    $refused = Invoke-Tool $FormEdit @('-FormPath', $formXml, '-JsonPath', $noSource) $Work
+    Assert-True ($refused.ExitCode -ne 0) "a DynamicList without a source was accepted: $($refused.StdOut)"
+    Assert-True ("$($refused.StdOut)$($refused.StdErr)" -match 'mainTable or settings\.query') "no refusal message: $($refused.StdOut)$($refused.StdErr)"
+    Assert-Equal $before (Get-FileHash -LiteralPath $formXml -Algorithm SHA256).Hash 'Form.xml changed although the edit was refused'
+
+    $withSource = Join-Path $Work 'with-source.json'
+    [System.IO.File]::WriteAllText($withSource, '{"attributes":[{"name":"Rows","type":"DynamicList","settings":{"mainTable":"Catalog.TestCatalog"}}]}', (New-Object System.Text.UTF8Encoding($false)))
+    $ok = Invoke-Tool $FormEdit @('-FormPath', $formXml, '-JsonPath', $withSource) $Work
+    Assert-Equal 0 $ok.ExitCode "a DynamicList with mainTable was refused: $($ok.StdOut)$($ok.StdErr)"
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($formXml)
+    $main = $xml.SelectSingleNode("//*[local-name()='Attribute'][@name='Rows']/*[local-name()='Settings']/*[local-name()='MainTable']")
+    Assert-True ($null -ne $main) 'the DynamicList attribute has no Settings/MainTable'
+    Assert-Equal 'Catalog.TestCatalog' $main.InnerText.Trim() 'MainTable'
 }
 
 # ---------------------------------------------------------------- B. meta-compile
@@ -775,6 +912,72 @@ Register-Case 'meta-compile: NEW_OBJECT_POSITION=end is the backward-compatible 
 
     $enums = @(Get-ChildObjectEntries $configPath | Where-Object { $_.Tag -eq 'Enum' })
     Assert-Equal $newEnum $enums[2].Name 'explicit end must behave like the default'
+}
+
+Register-Case 'meta-compile: an existing object is refused without -Force and keeps its uuid' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configPath = Join-Path $Work 'Configuration.xml'
+    Copy-Item (Join-Path $FixturesDir 'meta-compile\new-enum.json') (Join-Path $Work 'new-enum.json')
+    $first = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work) $Work
+    Assert-Equal 0 $first.ExitCode "first meta-compile exit code (stderr: $($first.StdErr))"
+    $objXml = @(Get-ChildItem -LiteralPath (Join-Path $Work 'Enums') -Filter '*.xml' |
+        Sort-Object LastWriteTimeUtc -Descending)[0].FullName
+    $objBefore = [System.IO.File]::ReadAllBytes($objXml)
+    $configBefore = Get-FileFacts $configPath
+
+    # Upstream only warns here; a recompile would give the object a new uuid and cut the link
+    # to the infobase object, so the local tool refuses before it writes anything.
+    $second = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work) $Work
+    Assert-Equal 1 $second.ExitCode "an existing object was recompiled without -Force (stdout: $($second.StdOut))"
+    Assert-True ($second.StdErr -match 'already exists' -and $second.StdErr -match '-Force' -and $second.StdErr -match 'meta-edit') "refusal does not explain itself: $($second.StdErr)"
+    Assert-Equal ([System.Convert]::ToBase64String($objBefore)) ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($objXml))) 'refused compile still rewrote the object file'
+    Assert-Equal $configBefore.Text (Get-FileFacts $configPath).Text 'refused compile still edited Configuration.xml'
+
+    $forced = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work, '-Force') $Work
+    Assert-Equal 0 $forced.ExitCode "-Force did not replace the object (stderr: $($forced.StdErr))"
+    $uuidRx = [regex]'<Enum uuid="([^"]+)"'
+    $oldUuid = $uuidRx.Match([System.Text.Encoding]::UTF8.GetString($objBefore)).Groups[1].Value
+    $newUuid = $uuidRx.Match((Get-FileFacts $objXml).Text).Groups[1].Value
+    Assert-True ($oldUuid -and $newUuid -and $oldUuid -ne $newUuid) "-Force is expected to replace the object (uuid $oldUuid -> $newUuid)"
+}
+
+Register-Case 'meta-compile: a Constant without valueType is a String, not of type Constant' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $jsonPath = Join-Path $Work 'const.json'
+    [System.IO.File]::WriteAllText($jsonPath, '{ "type": "Constant", "name": "RegrConst" }', (New-Object System.Text.UTF8Encoding($false)))
+    $run = Invoke-Tool $MetaCompile @('-JsonPath', $jsonPath, '-OutputDir', $Work) $Work
+    Assert-Equal 0 $run.ExitCode "meta-compile exit code (stderr: $($run.StdErr))"
+    $text = (Get-FileFacts (Join-Path $Work 'Constants\RegrConst.xml')).Text
+    Assert-True ($text -notmatch '<v8:Type>Constant</v8:Type>') 'the object kind leaked into the value type (platform: unknown type name - Constant)'
+    Assert-True ($text -match '<v8:Type>xs:string</v8:Type>') 'a Constant without valueType must default to String'
+}
+
+Register-Case 'meta-compile: an unknown type name is refused before anything is written' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configPath = Join-Path $Work 'Configuration.xml'
+    $configBefore = Get-FileFacts $configPath
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+
+    # A typo used to reach the XML verbatim; the platform then refused the whole configuration.
+    $typoJson = Join-Path $Work 'typo.json'
+    [System.IO.File]::WriteAllText($typoJson, '{ "type": "Catalog", "name": "RegrTypo", "attributes": [ "Amount: Nubmer(15,2)" ] }', $utf8)
+    $typo = Invoke-Tool $MetaCompile @('-JsonPath', $typoJson, '-OutputDir', $Work) $Work
+    Assert-True ($typo.ExitCode -ne 0) "an unknown type name was accepted (stdout: $($typo.StdOut))"
+    Assert-True ($typo.StdErr -match 'Nubmer\(15,2\)') "the refusal does not name the type: $($typo.StdErr)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Catalogs\RegrTypo.xml'))) 'the object file was written with an unknown type'
+    Assert-Equal $configBefore.Text (Get-FileFacts $configPath).Text 'a refused compile still registered the object'
+
+    # A DBMS spelling is understood, not written verbatim: varchar(150) is String(150).
+    $dbmsJson = Join-Path $Work 'dbms.json'
+    [System.IO.File]::WriteAllText($dbmsJson, '{ "type": "Catalog", "name": "RegrDbms", "attributes": [ "Code1C: varchar(150)" ] }', $utf8)
+    $dbms = Invoke-Tool $MetaCompile @('-JsonPath', $dbmsJson, '-OutputDir', $Work) $Work
+    Assert-Equal 0 $dbms.ExitCode "meta-compile exit code (stderr: $($dbms.StdErr))"
+    $text = (Get-FileFacts (Join-Path $Work 'Catalogs\RegrDbms.xml')).Text
+    Assert-True ($text -notmatch 'varchar') 'a DBMS type name reached the XML verbatim'
+    Assert-True ($text -match '(?s)<v8:Type>xs:string</v8:Type>\s*<v8:StringQualifiers>\s*<v8:Length>150</v8:Length>') 'varchar(150) must become String(150)'
 }
 
 Register-Case 'cf-edit add-childObject: default position appends after the last object of the type' {
@@ -881,8 +1084,10 @@ Register-Case 'meta-compile: re-registering the same object is a no-op' {
     Assert-Equal 0 $first.ExitCode "first meta-compile exit code (stderr: $($first.StdErr))"
     $afterFirst = Get-FileFacts $configPath
 
-    $second = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work) $Work
-    Assert-Equal 0 $second.ExitCode "second meta-compile exit code (stderr: $($second.StdErr))"
+    # A second compile of an existing object is refused without -Force (see the next case);
+    # with -Force the object file is replaced, but the registration stays a no-op.
+    $second = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work, '-Force') $Work
+    Assert-Equal 0 $second.ExitCode "second meta-compile -Force exit code (stderr: $($second.StdErr))"
     $afterSecond = Get-FileFacts $configPath
 
     $hits = @(Get-ChildObjectEntries $configPath | Where-Object { $_.Name -eq $newEnum })
@@ -913,6 +1118,25 @@ Register-Case 'support guard: .dev.env SUPPORT_GUARD=off still wins over the def
     $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag: Boolean', '-NoValidate') $Work
     Assert-Equal 0 $run.ExitCode "guard did not honour SUPPORT_GUARD=off (stderr: $($run.StdErr))"
     Assert-True ((Get-FileFacts $target).Text -match '<Name>RegrFlag</Name>') 'edit was not applied with the guard off'
+}
+
+Register-Case 'support guard: support removed completely (tiny bin) allows; an unreadable bin stays fail-closed' {
+    param($Work)
+    Copy-Fixture 'on-support' $Work "`n"
+    $bin = Join-Path $Work 'Ext\ParentConfigurations.bin'
+    $target = Join-Path $Work 'Catalogs\Locked.xml'
+    # The empty container a configuration keeps once vendor support was removed completely.
+    [System.IO.File]::WriteAllBytes($bin, ([byte[]](0xEF, 0xBB, 0xBF) + [System.Text.Encoding]::ASCII.GetBytes('{6,0,0,0}')))
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag: Boolean', '-NoValidate') $Work
+    Assert-Equal 0 $run.ExitCode "support removed completely was refused (stderr: $($run.StdErr))"
+    Assert-True ((Get-FileFacts $target).Text -match '<Name>RegrFlag</Name>') 'edit was not applied once support was removed'
+
+    $before = [System.IO.File]::ReadAllBytes($target)
+    [System.IO.File]::WriteAllText($bin, ('{7,0,1,' + ('x' * 64) + '}'))
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag2: Boolean', '-NoValidate') $Work
+    Assert-True ($run.ExitCode -ne 0) 'an unparseable support state let the edit through'
+    Assert-True ($run.StdErr -match 'ParentConfigurations\.bin') "the refusal does not name the state file: $($run.StdErr)"
+    Assert-Equal ([System.Convert]::ToBase64String($before)) ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($target))) 'refused edit still touched the file'
 }
 
 Register-Case 'support guard: meta-compile still refuses to write into a locked dump' {
@@ -1440,6 +1664,152 @@ Register-Case 'support xml: add-help preserves compact tags in form descriptor' 
     Assert-CompactXml $target
 }
 
+# ------------------------------------------- upstream sync 2026-11-01: cf root area
+
+function Set-FixtureFormatVersion([string]$Path, [string]$Version) {
+    # Restamp the MetaDataObject version of one fixture file (2.17 in the fixtures).
+    $text = (Get-FileFacts $Path).Text -replace '(<MetaDataObject[^>]*\sversion=")2\.17(")', "`${1}$Version`${2}"
+    [IO.File]::WriteAllText($Path, $text, (New-Object Text.UTF8Encoding($true)))
+}
+
+Register-Case 'template-add: HTML is a descriptor plus Ext/Template/<lang>.html, -Lang adds a page' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    $owner = Join-Path $work 'Obrabotka.xml'
+    Set-FixtureFormatVersion $owner '2.20'
+    $addTemplate = Join-Path $ToolsDir '1c-template-manage\scripts\add-template.ps1'
+    $common = @('-ObjectName', 'Obrabotka', '-TemplateName', 'Page', '-TemplateType', 'HTML', '-SrcDir', $work)
+    $run = Invoke-Tool $addTemplate $common $work
+    Assert-Equal 0 $run.ExitCode "HTML template (stderr: $($run.StdErr))"
+    $ext = Join-Path $work 'Obrabotka\Templates\Page\Ext'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $ext 'Template.html'))) 'the ignored legacy Ext/Template.html was written'
+    $descriptor = (Get-FileFacts (Join-Path $ext 'Template.xml')).Text
+    Assert-True ($descriptor -match '<Help xmlns="http://v8.1c.ru/8.3/xcf/extrnprops"') "descriptor is not an extrnprops Help document: $descriptor"
+    Assert-True ($descriptor -match 'version="2\.20"') "descriptor version is not the owner's: $descriptor"
+    Assert-True ($descriptor -match '<Page>ru</Page>') 'descriptor does not list the ru page'
+    $ruPage = Join-Path $ext 'Template\ru.html'
+    Assert-True (Test-Path -LiteralPath $ruPage) 'missing Ext/Template/ru.html'
+    $metaPath = Join-Path $work 'Obrabotka\Templates\Page.xml'
+    $meta = (Get-FileFacts $metaPath).Text
+    Assert-True ($meta -match '<TemplateType>HTMLDocument</TemplateType>') 'template type'
+    Assert-True ($meta -match '<MetaDataObject[^>]*version="2\.20"') 'template metadata version is not the owner version'
+
+    # A second language adds a page and a <Page>; metadata (uuid) and the ru text stay.
+    [IO.File]::WriteAllText($ruPage, '<html><body>keep</body></html>', (New-Object Text.UTF8Encoding($true)))
+    $run = Invoke-Tool $addTemplate ($common + @('-Lang', 'en')) $work
+    Assert-Equal 0 $run.ExitCode "second language (stderr: $($run.StdErr))"
+    $descriptor = (Get-FileFacts (Join-Path $ext 'Template.xml')).Text
+    Assert-True ($descriptor -match '(?s)<Page>en</Page>.*<Page>ru</Page>') "descriptor pages: $descriptor"
+    Assert-True (Test-Path -LiteralPath (Join-Path $ext 'Template\en.html')) 'missing Ext/Template/en.html'
+    Assert-True ((Get-FileFacts $ruPage).Text -match 'keep') 'the ru page was overwritten'
+    Assert-Equal $meta (Get-FileFacts $metaPath).Text 'template metadata was rewritten by -Lang'
+    Assert-Equal 1 ([regex]::Matches((Get-FileFacts $owner).Text, '<Template>Page</Template>')).Count 'template registration count'
+
+    $run = Invoke-Tool $addTemplate ($common + @('-Lang', 'en')) $work
+    Assert-True ($run.ExitCode -ne 0) 'an existing language page was accepted again'
+}
+
+Register-Case 'template-remove: -DryRun and a missing -Force change nothing, -Force keeps the parent compact' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    $owner = Join-Path $work 'Obrabotka.xml'
+    $removeTemplate = Join-Path $ToolsDir '1c-template-manage\scripts\remove-template.ps1'
+    $run = Invoke-Tool (Join-Path $ToolsDir '1c-template-manage\scripts\add-template.ps1') @('-ObjectName', 'Obrabotka', '-TemplateName', 'Probe', '-TemplateType', 'Text', '-SrcDir', $work) $work
+    Assert-Equal 0 $run.ExitCode "add-template (stderr: $($run.StdErr))"
+    $before = Get-TreeSnapshot $work
+    $common = @('-ObjectName', 'Obrabotka', '-TemplateName', 'Probe', '-SrcDir', $work)
+    $run = Invoke-Tool $removeTemplate ($common + @('-DryRun')) $work
+    Assert-Equal 0 $run.ExitCode "dry run (stderr: $($run.StdErr))"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $work) 'dry run'
+    $run = Invoke-Tool $removeTemplate $common $work
+    Assert-Equal 2 $run.ExitCode 'removal without -Force must be refused with exit 2'
+    Assert-TreeIdentical $before (Get-TreeSnapshot $work) 'refused removal'
+    $run = Invoke-Tool $removeTemplate ($common + @('-Force')) $work
+    Assert-Equal 0 $run.ExitCode "forced removal (stderr: $($run.StdErr))"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $work 'Obrabotka\Templates\Probe.xml'))) 'template descriptor survived'
+    Assert-True ((Get-FileFacts $owner).Text -notmatch '<Template>Probe</Template>') 'registration survived'
+    Assert-True (-not (Test-Path -LiteralPath "$owner.remove-template.tmp")) 'temporary root XML left behind'
+    Assert-CompactXml $owner
+}
+
+Register-Case 'help-add: EPF format version from the owner, trailing slash, existing page kept' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    Set-FixtureFormatVersion (Join-Path $work 'Obrabotka.xml') '2.20'
+    $pageDir = Join-Path $work 'Obrabotka\Ext\Help'
+    New-Item -ItemType Directory -Path $pageDir -Force | Out-Null
+    $page = Join-Path $pageDir 'ru.html'
+    [IO.File]::WriteAllText($page, '<html><body>keep</body></html>', (New-Object Text.UTF8Encoding($true)))
+    $run = Invoke-Tool (Join-Path $ToolsDir '1c-help-manage\scripts\add-help.ps1') @('-ObjectName', 'Obrabotka/', '-SrcDir', $work) $work
+    Assert-Equal 0 $run.ExitCode "add-help (stderr: $($run.StdErr))"
+    $helpXml = (Get-FileFacts (Join-Path $work 'Obrabotka\Ext\Help.xml')).Text
+    Assert-True ($helpXml -match '<Help [^>]*version="2\.20"') "Help.xml is not stamped with the EPF version: $helpXml"
+    Assert-True ((Get-FileFacts $page).Text -match 'keep') 'an existing help page was overwritten by the skeleton'
+}
+
+Register-Case 'help-add / template-add: a path-like or device -Lang is refused before any write' {
+    param($work)
+    Copy-Fixture 'epf-with-form' $work
+    New-Item -ItemType Directory -Path (Join-Path $work 'Obrabotka\Ext') -Force | Out-Null
+    $before = Get-TreeSnapshot $work
+    foreach ($lang in @('..\..\..\escaped', '../escaped', 'nul')) {
+        $run = Invoke-Tool (Join-Path $ToolsDir '1c-help-manage\scripts\add-help.ps1') @('-ObjectName', 'Obrabotka', '-Lang', $lang, '-SrcDir', $work) $work
+        Assert-True ($run.ExitCode -ne 0) "add-help accepted -Lang '$lang'"
+        $run = Invoke-Tool (Join-Path $ToolsDir '1c-template-manage\scripts\add-template.ps1') @('-ObjectName', 'Obrabotka', '-TemplateName', 'Page', '-TemplateType', 'HTML', '-Lang', $lang, '-SrcDir', $work) $work
+        Assert-True ($run.ExitCode -ne 0) "add-template accepted -Lang '$lang'"
+    }
+    Assert-TreeIdentical $before (Get-TreeSnapshot $work) 'refused -Lang'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path (Split-Path $work -Parent) 'escaped.html'))) 'a page escaped the work dir'
+}
+
+Register-Case 'cf-edit sort-childObjects: explicit sort composes with the default end insertion' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configPath = Join-Path $Work 'Configuration.xml'
+    $newEnum = (Read-JsonFixture 'meta-compile\new-enum.json').name
+    New-Item -ItemType Directory -Path (Join-Path $Work 'Enums') -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $Work "Enums\$newEnum.xml"), '<MetaDataObject/>', (New-Object System.Text.UTF8Encoding($true)))
+    $cfEdit = Join-Path $ToolsDir '1c-cf-manage\scripts\cf-edit.ps1'
+
+    $run = Invoke-Tool $cfEdit @('-ConfigPath', $configPath, '-Operation', 'add-childObject', '-Value', "Enum.$newEnum", '-NoValidate') $Work
+    Assert-Equal 0 $run.ExitCode "add-childObject (stderr: $($run.StdErr))"
+    Assert-Equal $newEnum (@(Get-ChildObjectEntries $configPath | Where-Object { $_.Tag -eq 'Enum' }))[2].Name 'default insertion must stay at the end'
+
+    $run = Invoke-Tool $cfEdit @('-ConfigPath', $configPath, '-Operation', 'sort-childObjects', '-Value', 'Enum', '-NoValidate') $Work
+    Assert-Equal 0 $run.ExitCode "sort-childObjects (stderr: $($run.StdErr))"
+    $enums = @(Get-ChildObjectEntries $configPath | Where-Object { $_.Tag -eq 'Enum' })
+    Assert-Equal 3 $enums.Count 'enum entry count after sort'
+    Assert-Equal $newEnum $enums[1].Name 'sort-childObjects must order the kind by name'
+    Assert-CompactXml $configPath
+}
+
+Register-Case 'support guard: xdto-compile allows an editable typical configuration, refuses a locked one' {
+    param($Work)
+    $xsd = '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://example.com/probe" elementFormDefault="qualified"><xs:complexType name="Probe"><xs:sequence><xs:element name="Id" type="xs:string"/></xs:sequence></xs:complexType></xs:schema>'
+    $xdtoCompile = Join-Path $ToolsDir '1c-xdto-manage\scripts\xdto-compile.ps1'
+
+    # Header {6,0,0,...}: modification allowed, nothing on support (K=0) - meta-compile writes here.
+    $open = Join-Path $Work 'open'
+    Copy-Fixture 'config-dump' $open "`n"
+    New-Item -ItemType Directory -Path (Join-Path $open 'Ext') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $open 'Ext\ParentConfigurations.bin'), '{6,0,0,aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,0,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb}', (New-Object Text.UTF8Encoding($true)))
+    $xsdPath = Join-Path $Work 'probe.xsd'
+    [IO.File]::WriteAllText($xsdPath, $xsd, (New-Object Text.UTF8Encoding($false)))
+    $run = Invoke-Tool $xdtoCompile @('-XsdPath', $xsdPath, '-OutputDir', $open, '-Name', 'ProbePackage') $Work
+    Assert-Equal 0 $run.ExitCode "xdto-compile refused an editable configuration (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $open 'XDTOPackages\ProbePackage.xml')) 'package descriptor was not written'
+    Assert-True ((Get-FileFacts (Join-Path $open 'Configuration.xml')).Text -match '<XDTOPackage>ProbePackage</XDTOPackage>') 'package was not registered'
+
+    # The on-support fixture keeps the configuration root locked: the shared guard refuses.
+    $locked = Join-Path $Work 'locked'
+    Copy-Fixture 'on-support' $locked "`n"
+    $before = Get-TreeSnapshot $locked
+    $run = Invoke-Tool $xdtoCompile @('-XsdPath', $xsdPath, '-OutputDir', $locked, '-Name', 'ProbePackage') $Work
+    Assert-True ($run.ExitCode -ne 0) 'xdto-compile wrote into a locked configuration'
+    Assert-True ($run.StdErr -match 'support-guard') "stderr does not name the guard: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $locked) 'refused xdto-compile'
+}
+
 Register-Case 'support xml: cfe-borrow preserves compact tags in extension' {
     param($work)
     $base = Join-Path $work 'base'
@@ -1468,6 +1838,116 @@ Register-Case 'support xml: skd-edit keeps compact tags without changing literal
     foreach ($literal in @('<![CDATA[literal <Text />]]>', '<!-- literal <Comment /> -->', '<?probe literal <PI /> ?>')) {
         Assert-True $after.Contains($literal) "XML literal changed: $literal"
     }
+}
+
+# ---------------------------------------------------------------- roles (role-compile / role-edit / role-validate)
+
+$RoleCompile  = Join-Path $ToolsDir '1c-role-compile\scripts\role-compile.ps1'
+$RoleEdit     = Join-Path $ToolsDir '1c-role-edit\scripts\role-edit.ps1'
+$RoleValidate = Join-Path $ToolsDir '1c-role-validate\scripts\role-validate.ps1'
+
+# A config-dump copy with one compiled role "RegrRole" (view rights on TestCatalog).
+function New-RoleFixture([string]$Work, [string]$ToolsRoot = $ToolsDir) {
+    $dump = Join-Path $Work 'dump'
+    Copy-Fixture 'config-dump' $dump "`n"
+    $json = Join-Path $Work 'role.json'
+    [IO.File]::WriteAllText($json, '{"name":"RegrRole","synonym":"Regression role","objects":["Catalog.TestCatalog: @view"]}', (New-Object Text.UTF8Encoding($false)))
+    $run = Invoke-Tool (Join-Path $ToolsRoot '1c-role-compile\scripts\role-compile.ps1') @('-JsonPath', $json, '-OutputDir', $dump) $Work
+    Assert-Equal 0 $run.ExitCode "role-compile (stderr: $($run.StdErr))"
+    return [pscustomobject]@{
+        Dump    = $dump
+        RoleXml = Join-Path $dump 'Roles\RegrRole.xml'
+        Rights  = Join-Path $dump 'Roles\RegrRole\Ext\Rights.xml'
+    }
+}
+
+function Get-RoleUuid([string]$RoleXml) {
+    $m = [regex]::Match((Get-FileFacts $RoleXml).Text, '<Role uuid="([0-9a-fA-F-]{36})"')
+    Assert-True $m.Success "no <Role uuid> in $RoleXml"
+    return $m.Groups[1].Value
+}
+
+Register-Case 'role-validate: a second positional argument is refused, not written over' {
+    param($Work)
+    $role = New-RoleFixture $Work
+    $hash = (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash
+    # Upstream before 83d63fac bound the second positional to -OutFile and replaced
+    # Roles/X.xml with the validation report.
+    $run = Invoke-Tool $RoleValidate @($role.Rights, $role.RoleXml) $Work
+    Assert-True ($run.ExitCode -ne 0) "two positional arguments were accepted (stdout: $($run.StdOut))"
+    Assert-Equal $hash (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash 'Roles/RegrRole.xml was overwritten'
+    Assert-True ((Get-FileFacts $role.RoleXml).Text -match '<Role uuid=') 'Roles/RegrRole.xml no longer holds the role'
+    $ok = Invoke-Tool $RoleValidate @($role.Rights) $Work
+    Assert-Equal 0 $ok.ExitCode "role-validate of the compiled role: $($ok.StdOut)"
+}
+
+Register-Case 'role-compile: an existing role is refused without -Force, its uuid kept' {
+    param($Work)
+    $role = New-RoleFixture $Work
+    $uuid = Get-RoleUuid $role.RoleXml
+    $before = Get-TreeSnapshot $role.Dump
+    $json = Join-Path $Work 'role.json'
+    $run = Invoke-Tool $RoleCompile @('-JsonPath', $json, '-OutputDir', $role.Dump) $Work
+    Assert-True ($run.ExitCode -ne 0) "a recompile of an existing role was accepted (stdout: $($run.StdOut))"
+    Assert-True ($run.StdErr -match 'role-edit') "the refusal does not point to role-edit: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $role.Dump) 'refused role-compile'
+    $forced = Invoke-Tool $RoleCompile @('-JsonPath', $json, '-OutputDir', $role.Dump, '-Force') $Work
+    Assert-Equal 0 $forced.ExitCode "role-compile -Force (stderr: $($forced.StdErr))"
+    Assert-True ((Get-RoleUuid $role.RoleXml) -ne $uuid) 'role-compile -Force kept the old uuid - the case no longer pins the replacement'
+}
+
+Register-Case 'role-compile: rights on an Enum are refused before anything is written' {
+    param($Work)
+    $dump = Join-Path $Work 'dump'
+    Copy-Fixture 'config-dump' $dump "`n"
+    $before = Get-TreeSnapshot $dump
+    $json = Join-Path $Work 'bad-role.json'
+    [IO.File]::WriteAllText($json, '{"name":"RegrBadRole","objects":["Catalog.TestCatalog: @view","Enum.RegrProbe: Read"]}', (New-Object Text.UTF8Encoding($false)))
+    $run = Invoke-Tool $RoleCompile @('-JsonPath', $json, '-OutputDir', $dump) $Work
+    Assert-True ($run.ExitCode -ne 0) "rights on an Enum were compiled (stdout: $($run.StdOut))"
+    Assert-True ($run.StdErr -match 'Enum') "the refusal does not name the Enum entry: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $dump) 'refused role-compile'
+}
+
+Register-Case 'role-edit: add-rights keeps the role UUID and passes role-validate' {
+    param($Work)
+    $role = New-RoleFixture $Work
+    $uuid = Get-RoleUuid $role.RoleXml
+    $roleHash = (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash
+    $rightsBefore = Get-FileFacts $role.Rights
+    $run = Invoke-Tool $RoleEdit @('-RolePath', (Split-Path $role.Rights -Parent | Split-Path -Parent), '-Operation', 'add-rights', '-Value', 'Catalog.TestCatalog: Insert') $Work
+    Assert-Equal 0 $run.ExitCode "role-edit (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    Assert-True ($run.StdOut -match 'Running role-validate') 'role-validate did not run after the edit'
+    Assert-Equal $uuid (Get-RoleUuid $role.RoleXml) 'role UUID'
+    Assert-Equal $roleHash (Get-FileHash -LiteralPath $role.RoleXml -Algorithm SHA256).Hash 'Roles/RegrRole.xml changed on a rights-only edit'
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($role.Rights)
+    $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+    $ns.AddNamespace('r', 'http://v8.1c.ru/8.2/roles')
+    $obj = $xml.SelectSingleNode("/r:Rights/r:object[r:name='Catalog.TestCatalog']", $ns)
+    Assert-True ($null -ne $obj) 'Catalog.TestCatalog entry lost'
+    foreach ($right in @('Read', 'View', 'InputByString', 'Insert')) {
+        Assert-Equal 'true' $obj.SelectSingleNode("r:right[r:name='$right']/r:value", $ns).InnerText "right $right"
+    }
+    $after = Get-FileFacts $role.Rights
+    Assert-Equal $rightsBefore.Bom $after.Bom 'Rights.xml BOM changed'
+    Assert-Equal ($rightsBefore.Crlf -gt 0) ($after.Crlf -gt 0) 'Rights.xml EOL style changed'
+    Assert-Equal 0 $after.LooseClose 'role-edit wrote <Tag /> instead of <Tag/>'
+    $check = Invoke-Tool $RoleValidate @('-RightsPath', $role.Rights) $Work
+    Assert-Equal 0 $check.ExitCode "role-validate after role-edit: $($check.StdOut)"
+}
+
+Register-Case 'role-edit: a missing role-validate is refused before the edit is written' {
+    param($Work)
+    $broken = New-BrokenToolTree $Work 'no-role-validator' { param($Root)
+        Remove-Item -LiteralPath (Join-Path $Root '1c-role-validate\scripts\role-validate.ps1') -Force
+    }
+    $role = New-RoleFixture $Work $broken
+    $before = Get-TreeSnapshot $role.Dump
+    $run = Invoke-Tool (Join-Path $broken '1c-role-edit\scripts\role-edit.ps1') @('-RolePath', $role.Rights, '-Operation', 'add-rights', '-Value', 'Catalog.TestCatalog: Insert') $Work
+    Assert-True ($run.ExitCode -ne 0) "a missing validator exited 0 (stdout: $($run.StdOut))"
+    Assert-True ($run.StdErr -match 'role-validate') "the refusal does not name the missing validator: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $role.Dump) 'role-edit with no validator available'
 }
 
 # ---------------------------------------------------------------- Complete dump integrity (read-only)
@@ -1609,6 +2089,284 @@ Register-Case 'dump-validate: missing composition, invalid metadata root and uns
     Assert-DumpFinding $result 'composition-missing'
     Assert-DumpFinding $result 'metadata-root-invalid' 'Language.Test'
     Assert-DumpFinding $result 'dump-format-unsupported'
+}
+
+# ---------------------------------------------------------------- SKD: XSD order, default variant, XSD directory
+
+$SkdCompile  = Join-Path $ToolsDir '1c-skd-compile\scripts\skd-compile.ps1'
+$SkdEdit     = Join-Path $ToolsDir '1c-skd-edit\scripts\skd-edit.ps1'
+$SkdValidate = Join-Path $ToolsDir '1c-skd-validate\scripts\skd-validate.ps1'
+$XsdFetch    = Join-Path $ToolsDir '1c-v8-xsd-fetch\scripts\v8-xsd-fetch.ps1'
+
+# Compiles a DCS definition (JSON text, ASCII with \u escapes) into $Work\<Tag>\Template.xml.
+function Invoke-SkdCompile([string]$Work, [string]$Tag, [string]$Json) {
+    $dir = Join-Path $Work $Tag
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $def = Join-Path $dir 'def.json'
+    [IO.File]::WriteAllText($def, $Json, (New-Object Text.UTF8Encoding($false)))
+    $out = Join-Path $dir 'Template.xml'
+    $run = Invoke-Tool $SkdCompile @('-DefinitionFile', $def, '-OutputPath', $out) $dir
+    Assert-Equal 0 $run.ExitCode "skd-compile: $($run.StdErr)"
+    return [pscustomobject]@{ Run = $run; Path = $out }
+}
+
+function Get-ChildElementNames($Node) {
+    return @($Node.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.LocalName })
+}
+
+$script:SkdDefinition = '{"dataSets":[{"name":"DS","query":"SELECT 1 AS A, 2 AS B","fields":["A: decimal(10,0)","B: decimal(10,0)"]}],' +
+    '"calculatedFields":[{"dataPath":"Total","expression":"A * 2","title":"Total","type":"decimal(15,2)","restrict":["noGroup","noField"],' +
+    '"appearance":{"\u0424\u043e\u0440\u043c\u0430\u0442":"\u0427\u0414\u0426=2"}}],"parameters":["P: decimal(10,0) = 1"],' +
+    '"settingsVariants":[{"name":"V","settings":{"selection":["A","Total"],"filter":["A = 1 @user"],"dataParameters":["P = 1 @user"],"structure":"details"}}]}'
+
+Register-Case 'skd-compile: a calculated field with type and format is emitted in XSD order' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'calc' $script:SkdDefinition
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($c.Path)
+    $cf = $xml.SelectSingleNode("//*[local-name()='calculatedField']")
+    Assert-True ($null -ne $cf) 'no calculatedField emitted'
+    # XSD CalculatedField: dataPath, expression, title, useRestriction, ..., appearance, availableValue, valueType.
+    Assert-Equal 'dataPath|expression|title|useRestriction|appearance|valueType' ((Get-ChildElementNames $cf) -join '|') 'calculatedField child order'
+    $flags = $cf.SelectSingleNode("*[local-name()='useRestriction']")
+    Assert-Equal 'field|group' ((Get-ChildElementNames $flags) -join '|') 'useRestriction flag order'
+}
+
+Register-Case 'skd-compile: without settingsVariants the default variant selects the declared fields' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'default' '{"dataSets":[{"name":"DS","query":"SELECT 1 AS A, 2 AS B","fields":["A","B #noField"]}]}'
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($c.Path)
+    $settings = $xml.SelectSingleNode("//*[local-name()='settingsVariant']/*[local-name()='settings']")
+    Assert-True ($null -ne $settings) 'no default variant'
+    $fields = @($settings.SelectNodes("*[local-name()='selection']/*[local-name()='item']/*[local-name()='field']") | ForEach-Object { $_.InnerText })
+    Assert-Equal 'A' ($fields -join '|') 'default selection (B is #noField)'
+    $group = $settings.SelectSingleNode("*[local-name()='item']")
+    Assert-True ($null -ne $group -and $group.GetAttribute('type', 'http://www.w3.org/2001/XMLSchema-instance') -eq 'dcsset:StructureItemGroup') 'default structure is not a detail-records group'
+    Assert-True ($null -eq $group.SelectSingleNode("*[local-name()='groupItems']")) 'detail records must have no groupItems'
+    Assert-True ($c.Run.StdOut -match '\[INFO\]') "no [INFO] hint about the built variant: $($c.Run.StdOut)"
+}
+
+Register-Case 'skd-edit: modify-filter and modify-dataParameter keep XSD order and replace every list value' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'edit' $script:SkdDefinition
+    foreach ($step in @(@('modify-filter', 'A = 2 @off'), @('modify-dataParameter', 'P = 5, 6, 7 @off'))) {
+        $run = Invoke-Tool $SkdEdit @('-TemplatePath', $c.Path, '-Operation', $step[0], '-Value', $step[1]) $work
+        Assert-Equal 0 $run.ExitCode "skd-edit $($step[0]): $($run.StdErr)"
+    }
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($c.Path)
+    $filter = $xml.SelectSingleNode("//*[local-name()='filter']/*[local-name()='item']")
+    Assert-Equal 'use|left|comparisonType|right|userSettingID' ((Get-ChildElementNames $filter) -join '|') 'filter item order'
+    $dp = $xml.SelectSingleNode("//*[local-name()='dataParameters']/*[local-name()='item']")
+    Assert-Equal 'use|parameter|value|value|value|userSettingID' ((Get-ChildElementNames $dp) -join '|') 'data parameter order with a list'
+    $types = @($dp.SelectNodes("*[local-name()='value']") | ForEach-Object { $_.GetAttribute('type', 'http://www.w3.org/2001/XMLSchema-instance') + '=' + $_.InnerText })
+    Assert-Equal 'xs:decimal=5|xs:decimal=6|xs:decimal=7' ($types -join '|') 'list values, one element each, typed by the schema parameter'
+    $run = Invoke-Tool $SkdEdit @('-TemplatePath', $c.Path, '-Operation', 'modify-dataParameter', '-Value', 'P = 8') $work
+    Assert-Equal 0 $run.ExitCode "skd-edit modify-dataParameter: $($run.StdErr)"
+    $xml.Load($c.Path)
+    $values = @($xml.SelectNodes("//*[local-name()='dataParameters']/*[local-name()='item']/*[local-name()='value']") | ForEach-Object { $_.InnerText })
+    Assert-Equal '8' ($values -join '|') 'every previous list value is removed'
+}
+
+Register-Case 'skd-validate: XSD directory from .dev.env V8_XSD_PATH, "XSD not checked" without schemas' {
+    param($work)
+    $c = Invoke-SkdCompile $work 'tmp' $script:SkdDefinition
+    $tplDir = Join-Path $work 'src\Reports\R\Templates\T\Ext'
+    New-Item -ItemType Directory -Path $tplDir -Force | Out-Null
+    Copy-Item -LiteralPath $c.Path -Destination (Join-Path $tplDir 'Template.xml')
+    [IO.File]::WriteAllText((Join-Path $work 'src\Configuration.xml'), '<?xml version="1.0" encoding="UTF-8"?><MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.20"><Configuration/></MetaDataObject>', (New-Object Text.UTF8Encoding($true)))
+    $tpl = 'src\Reports\R\Templates\T'
+    Write-DevEnv $work "PREFIX=`n"
+    $run = Invoke-Tool $SkdValidate @('-TemplatePath', $tpl) $work
+    Assert-Equal 0 $run.ExitCode "skd-validate without schemas: $($run.StdOut)"
+    Assert-True ($run.StdOut.Contains("XSD not checked: no schemas in '$(Join-Path $work '.v8-xsd')'")) "default directory not reported: $($run.StdOut)"
+    # A permissive stand-in schema (not the platform XSD): enough to prove the directory is used.
+    $xsdDir = Join-Path $work 'xsd\2.20'
+    New-Item -ItemType Directory -Path $xsdDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $xsdDir 'dcs.xsd'), '<?xml version="1.0" encoding="UTF-8"?><xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://v8.1c.ru/8.1/data-composition-system/schema" elementFormDefault="qualified"><xs:complexType name="DataCompositionSchema"><xs:sequence><xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType></xs:schema>', (New-Object Text.UTF8Encoding($false)))
+    Write-DevEnv $work "V8_XSD_PATH=xsd`n"
+    $run = Invoke-Tool $SkdValidate @('-TemplatePath', $tpl, '-Detailed') $work
+    Assert-Equal 0 $run.ExitCode "skd-validate with schemas: $($run.StdOut)"
+    Assert-True ($run.StdOut -match 'XSD 2\.20: order, types and values OK') "the V8_XSD_PATH schemas were not used: $($run.StdOut)"
+    Assert-True (-not $run.StdOut.Contains('XSD not checked')) "XSD reported as not checked: $($run.StdOut)"
+}
+
+Register-Case 'v8-xsd-fetch: the target comes from .dev.env V8_XSD_PATH and is checked before any network call' {
+    param($work)
+    $blocked = Join-Path $work 'blocked'
+    [IO.File]::WriteAllText($blocked, 'x')
+    Write-DevEnv $work "V8_XSD_PATH=blocked`n"
+    $run = Invoke-Tool $XsdFetch @('-Versions', '2.20') $work
+    Assert-Equal 1 $run.ExitCode "v8-xsd-fetch on a file target: $($run.StdOut)"
+    Assert-True ($run.StdOut.Contains($blocked)) "the .dev.env target is not named: $($run.StdOut)"
+    $run = Invoke-Tool $XsdFetch @('-Versions', '2.x') $work
+    Assert-Equal 1 $run.ExitCode 'an invalid format version is refused'
+    Assert-True ($run.StdOut.Contains('2.x')) "the invalid version is not named: $($run.StdOut)"
+}
+
+# ---------------------------------------------------------------- MXL: spreadsheet layouts
+
+$MxlCompile   = Join-Path $ToolsDir '1c-mxl-compile\scripts\mxl-compile.ps1'
+$MxlDecompile = Join-Path $ToolsDir '1c-mxl-decompile\scripts\mxl-decompile.ps1'
+$MxlValidate  = Join-Path $ToolsDir '1c-mxl-validate\scripts\mxl-validate.ps1'
+
+function Write-MxlJson([string]$Path, [string]$Json) {
+    New-Item -ItemType Directory -Path (Split-Path $Path -Parent) -Force | Out-Null
+    [System.IO.File]::WriteAllText($Path, $Json, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Read-MxlXml([string]$Path) {
+    $doc = New-Object System.Xml.XmlDocument
+    try { $doc.Load($Path) } catch { Fail "$Path is not well-formed XML: $($_.Exception.Message)" }
+    $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+    $ns.AddNamespace('d', 'http://v8.1c.ru/8.2/data/spreadsheet')
+    return [pscustomobject]@{ Doc = $doc; Ns = $ns }
+}
+
+Register-Case 'mxl-compile: parameter, detail, area name and font face are XML-escaped (#121)' {
+    param($Work)
+    $json = Join-Path $Work 'escape.json'
+    Write-MxlJson $json @'
+{ "columns": 2,
+  "fonts": { "odd": { "face": "Face \"Q\" & <Co>", "size": 9 } },
+  "styles": { "s": { "font": "odd" } },
+  "areas": [ { "name": "Area&<1>", "rows": [
+    [ { "style": "s", "param": "Discount <> 0 & Total", "detail": "Ref<&>" }, { "detail": "A & B" } ] ] } ] }
+'@
+    $out = Join-Path $Work 'Tpl\Ext\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', $json, '-OutputPath', $out) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stderr: $($run.StdErr))"
+    $x = Read-MxlXml $out
+    Assert-Equal 'Discount <> 0 & Total' $x.Doc.SelectSingleNode('//d:parameter', $x.Ns).InnerText 'parameter'
+    $details = @($x.Doc.SelectNodes('//d:detailParameter', $x.Ns) | ForEach-Object { $_.InnerText })
+    Assert-Equal 'Ref<&>|A & B' ($details -join '|') 'detailParameter (the second one is a details-only cell)'
+    Assert-Equal 'Area&<1>' $x.Doc.SelectSingleNode('//d:namedItem/d:name', $x.Ns).InnerText 'area name'
+    Assert-Equal 'Face "Q" & <Co>' $x.Doc.SelectSingleNode('//d:font', $x.Ns).GetAttribute('faceName') 'faceName'
+    $val = Invoke-Tool $MxlValidate @('-TemplatePath', $out) $Work
+    Assert-Equal 0 $val.ExitCode "mxl-validate (stdout: $($val.StdOut))"
+}
+
+Register-Case 'mxl-compile: a missing destination directory is created' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'small.json') '{ "columns": 1, "areas": [ { "name": "A", "rows": [ ["x"] ] } ] }'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', 'Templates\New\Ext\Template.xml') $Work
+    Assert-Equal 0 $run.ExitCode "relative path into a new tree (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'Templates\New\Ext\Template.xml')) 'relative output not written'
+    $abs = Join-Path $Work 'deep\a\b\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', $abs) $Work
+    Assert-Equal 0 $run.ExitCode "absolute path into a new tree (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath $abs) 'absolute output not written'
+}
+
+Register-Case 'mxl-decompile: an absolute -OutputPath is written where it points' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'small.json') '{ "columns": 2, "areas": [ { "name": "A", "rows": [ ["x", "{P}"] ] } ] }'
+    $tpl = Join-Path $Work 'Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', $tpl) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stderr: $($run.StdErr))"
+    # Run from a different directory: the old code glued the absolute path onto the cwd.
+    $cwd = Join-Path $Work 'elsewhere'
+    New-Item -ItemType Directory -Path $cwd -Force | Out-Null
+    $outJson = Join-Path $Work 'decompiled.json'
+    $run = Invoke-Tool $MxlDecompile @('-TemplatePath', $tpl, '-OutputPath', $outJson) $cwd
+    Assert-Equal 0 $run.ExitCode "mxl-decompile (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath $outJson) 'JSON not written at the absolute path'
+    $dsl = Get-Content -LiteralPath $outJson -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Equal 2 $dsl.columns 'decompiled columns'
+}
+
+Register-Case 'mxl round trip: header/footer, input-field cells and one row group rebuild byte-for-byte' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'layout.json') @'
+{ "columns": 3,
+  "header": { "center": "Page [&PageNumber] of [&PagesTotal]" },
+  "footer": { "right": "Signed", "startPage": 2 },
+  "printSettings": { "pageOrientation": "Landscape" },
+  "areas": [
+    { "name": "Head", "rows": [ ["Item", "Qty", "Done"] ] },
+    { "name": "Row", "rows": [ [ "{Item}",
+        { "valueType": "Number(10,2)", "value": 1.5 },
+        { "valueType": "Boolean", "controlType": "checkbox" } ] ] } ],
+  "rowGroups": [ { "rows": 2 } ] }
+'@
+    $first = Join-Path $Work 'first\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'layout.json', '-OutputPath', $first) $Work
+    Assert-Equal 0 $run.ExitCode "first compile (stderr: $($run.StdErr))"
+    $back = Join-Path $Work 'back.json'
+    $run = Invoke-Tool $MxlDecompile @('-TemplatePath', $first, '-OutputPath', $back) $Work
+    Assert-Equal 0 $run.ExitCode "decompile (a single row group used to throw; stderr: $($run.StdErr))"
+    $dsl = Get-Content -LiteralPath $back -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Equal 'Page [&PageNumber] of [&PagesTotal]' $dsl.header.center 'header kept'
+    Assert-Equal 'Signed' $dsl.footer.right 'footer kept'
+    $cells = @($dsl.areas | Where-Object { $_.name -eq 'Row' } | ForEach-Object { $_.rows } | ForEach-Object { $_ } | Where-Object { $_.valueType })
+    Assert-Equal 'Number(10,2)|Boolean' (($cells | ForEach-Object { $_.valueType }) -join '|') 'input-field types kept'
+    Assert-Equal 'checkbox' ($cells | Where-Object { $_.valueType -eq 'Boolean' }).controlType 'controlType kept'
+    Assert-Equal 1 @($dsl.rowGroups).Count 'row group kept'
+    $second = Join-Path $Work 'second\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', $back, '-OutputPath', $second) $Work
+    Assert-Equal 0 $run.ExitCode "second compile (stderr: $($run.StdErr))"
+    Assert-Equal ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($first))) `
+        ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($second))) 'decompile -> compile changed the bytes'
+}
+
+Register-Case 'mxl-compile: printSettings sits after the named items, where the platform writes it' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'print.json') @'
+{ "columns": 2, "printSettings": { "topMargin": 500 },
+  "areas": [ { "name": "A", "rows": [ [ { "span": 2, "text": "x" } ] ] } ] }
+'@
+    $out = Join-Path $Work 'Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'print.json', '-OutputPath', $out) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stderr: $($run.StdErr))"
+    $names = @((Read-MxlXml $out).Doc.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.LocalName })
+    $at = [array]::IndexOf($names, 'printSettings')
+    Assert-True ($at -gt [array]::LastIndexOf($names, 'merge')) "printSettings before merge: $($names -join ',')"
+    Assert-True ($at -gt [array]::LastIndexOf($names, 'namedItem')) "printSettings before namedItem: $($names -join ',')"
+    Assert-True ($at -lt [array]::IndexOf($names, 'format')) "printSettings after the format palette: $($names -join ',')"
+}
+
+Register-Case 'mxl-compile: enums are checked case-insensitively, legacy style keys still map' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'bad.json') '{ "columns": 1, "styles": { "s": { "valign": "middle" } }, "areas": [ { "rows": [ [ { "style": "s", "text": "x" } ] ] } ] }'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'bad.json', '-OutputPath', 'bad\Template.xml') $Work
+    Assert-Equal 1 $run.ExitCode 'an unknown enum value must fail'
+    Assert-True ($run.StdErr -match 'verticalAlignment') "stderr does not name the property: $($run.StdErr)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'bad\Template.xml'))) 'a failed compile wrote a file'
+
+    Write-MxlJson (Join-Path $Work 'legacy.json') @'
+{ "columns": 1,
+  "styles": { "old": { "align": "right", "valign": "bottom", "wrap": true, "border": "all", "borderWidth": "thick" },
+              "new": { "horizontalAlignment": "CENTER" } },
+  "areas": [ { "rows": [ [ { "style": "old", "text": "a" } ], [ { "style": "new", "text": "b" } ] ] } ] }
+'@
+    $out = Join-Path $Work 'legacy\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'legacy.json', '-OutputPath', $out) $Work
+    Assert-Equal 0 $run.ExitCode "legacy spellings (stderr: $($run.StdErr))"
+    $text = [System.IO.File]::ReadAllText($out)
+    foreach ($want in @('<horizontalAlignment>Right</horizontalAlignment>', '<verticalAlignment>Bottom</verticalAlignment>',
+            '<textPlacement>Wrap</textPlacement>', '<horizontalAlignment>Center</horizontalAlignment>', '<line width="2" gap="false">')) {
+        Assert-True ($text.Contains($want)) "missing $want"
+    }
+}
+
+Register-Case 'mxl-compile: a control kind in the base64 control key is refused' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'ctl.json') '{ "columns": 1, "areas": [ { "rows": [ [ { "valueType": "Boolean", "control": "checkbox" } ] ] } ] }'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'ctl.json', '-OutputPath', 'ctl\Template.xml') $Work
+    Assert-Equal 1 $run.ExitCode 'control: checkbox must fail'
+    Assert-True ($run.StdErr -match 'controlType') "stderr does not point at controlType: $($run.StdErr)"
+}
+
+Register-Case 'support guard: mxl-compile refuses a locked owner before creating the template directory' {
+    param($Work)
+    Copy-Fixture 'on-support' $Work "`n"
+    Write-MxlJson (Join-Path $Work 'small.json') '{ "columns": 1, "areas": [ { "rows": [ ["x"] ] } ] }'
+    $out = Join-Path $Work 'Catalogs\Locked\Templates\Print\Ext\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', $out) $Work
+    Assert-True ($run.ExitCode -ne 0) 'guard let a compile under a locked object through'
+    Assert-True ($run.StdErr -match 'support-guard') "stderr does not name the guard: $($run.StdErr)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Catalogs\Locked'))) 'the refused compile created the template directory'
 }
 
 # ---------------------------------------------------------------- run

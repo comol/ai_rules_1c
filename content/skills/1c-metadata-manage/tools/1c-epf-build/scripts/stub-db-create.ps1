@@ -1,5 +1,9 @@
-﻿# stub-db-create v1.7 — Create temp 1C infobase with metadata stubs for EPF/ERF build
+﻿# stub-db-create v1.17 — Create temp 1C infobase with metadata stubs for EPF/ERF build
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (1c-rules): .dev.env PLATFORM_ARGS / IBCMD_ARGS before v8args / ibcmdargs; /ConfigurationRepositoryP
+#   is masked like /P; /DumpResult on the Designer launches (load, update); common forms named by
+#   DefaultForm / DefaultSettingsForm / DefaultVariantForm (CommonForm.X) get empty managed stubs
+#   (Local fix 2026-10-07).
 param(
 	[Parameter(Mandatory)]
 	[string]$SourceDir,
@@ -9,10 +13,23 @@ param(
 
 	[string]$TempBasePath,
 
+	# XML проверяемой обработки/отчёта: объект кладётся в конфигурацию-заглушку, чтобы платформа
+	# смогла проверить его штатными проверками. Без параметра стаб работает как раньше.
+	[string]$EmbedSourceFile,
+
+	# Выгрузка целевой конфигурации: общие модули, к которым обращается код, получают в заглушке
+	# пустых двойников с настоящими флагами контекста.
+	[string]$ConfigSrc,
+
 	[string[]]$AdditionalV8Arguments = @(),
 
 	[string[]]$AdditionalIbcmdArguments = @()
 )
+
+# Необработанная ошибка (напр. привязка параметра) внутри try/finally без catch завершала
+# скрипт с кодом 0 — ложный успех без запуска платформы. Любая такая ошибка — код 1.
+# py-порт: необработанное исключение и так даёт код 1.
+trap { Write-Host "Error: $($_.Exception.Message) ($($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber))" -ForegroundColor Red; exit 1 }
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -28,6 +45,13 @@ function ConvertTo-CleanPath {
     if ($v.Length -ge 2 -and $v[0] -eq $v[-1] -and ($v[0] -eq '"' -or $v[0] -eq "'")) {
         $v = $v.Substring(1, $v.Length - 2).Trim()
     }
+    # «C:x» — от текущего каталога диска C, своего у каждого процесса: смысл не угадать, почти
+    # всегда это опечатка в «C:\x». Отказ с подсказкой, а не путь «где-то» у платформы.
+    if ($v -match '^[A-Za-z]:(?![\\/])') {
+        $drive = $v.Substring(0, 2)
+        Write-Host "Error: $ParamName is relative to the current directory of drive $drive ($Value) - use $drive\$($v.Substring(2)) or a path without a drive" -ForegroundColor Red
+        exit 1
+    }
     if ($v.Length -gt 3 -and ($v[-1] -eq '\' -or $v[-1] -eq '/')) { $v = $v.Substring(0, $v.Length - 1) }
     if ($v.Contains('"')) {
         Write-Host "Error: $ParamName contains a quote character: $Value" -ForegroundColor Red
@@ -39,6 +63,7 @@ function ConvertTo-CleanPath {
 $SourceDir = ConvertTo-CleanPath $SourceDir '-SourceDir'
 $V8Path = ConvertTo-CleanPath $V8Path '-V8Path'
 $TempBasePath = ConvertTo-CleanPath $TempBasePath '-TempBasePath'
+$ConfigSrc = ConvertTo-CleanPath $ConfigSrc '-ConfigSrc'
 
 # --- Additional platform arguments ---
 $script:V8OwnedKeys = @(
@@ -49,12 +74,23 @@ $script:V8OwnedKeys = @(
     '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg',
     '/DumpExternalDataProcessorOrReportToFiles', '/LoadExternalDataProcessorOrReportFromFiles'
 )
+# Пакетные команды платформы. В одной командной строке DESIGNER выполняет ТОЛЬКО ПОСЛЕДНЮЮ,
+# остальные молча отбрасывает (проверено на 8.3.24: /LoadConfigFromFiles вместе с
+# /CheckCanApplyConfigurationExtensions завершились кодом 0 с пустым логом, и загрузка НЕ
+# состоялась). Такая команда в дополнительных аргументах подменяет собой операцию навыка, а навык
+# отчитывается успехом. Дополнительные аргументы — это опции, а не режимы.
+$script:V8BatchKeys = @(
+    '/CheckConfig', '/CheckModules', '/CheckCanApplyConfigurationExtensions',
+    '/DumpDBCfgList', '/DeleteCfg', '/UpdateCfg', '/CompareCfg', '/MergeCfg',
+    '/ManageCfgSupport', '/RollbackCfg', '/ConvertFiles'
+)
+
 $script:IbcmdOwnedKeys = @(
     '--db-path', '--data', '--out', '--file', '--load', '--restore',
     '--import', '--export', '--apply', '--force', '--create-database',
     '--user', '--password'
 )
-$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP')
+$script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP', '/ConfigurationRepositoryP')
 $script:IbcmdSecretKeys = @('--password', '--token', '--db-pwd')
 
 function Test-ArgKeyMatch {
@@ -79,7 +115,7 @@ function Get-ProjectExtraArgs {
         $__devEnvArgs = @(Get-1CDevEnvArgs $__devEnvKey)
         if ($__devEnvArgs.Count -gt 0) { return $__devEnvArgs }
     }
-    $dir = (Get-Location).Path
+    $dir = (Get-Location).ProviderPath
     while ($dir) {
         $pf = Join-Path $dir ".v8-project.json"
         if (Test-Path $pf) {
@@ -106,6 +142,14 @@ function Assert-ExtraArgs {
         if ($Engine -eq 'ibcmd' -and $tok -notmatch '^-') {
             Write-Host "Error: '$tok' is a positional token — pass values as --key=value ($paramName cannot extend the ibcmd command)" -ForegroundColor Red
             exit 1
+        }
+        if ($Engine -ne 'ibcmd') {
+            foreach ($b in $script:V8BatchKeys) {
+                if (Test-ArgKeyMatch $tok $b) {
+                    Write-Host "Error: $b is a batch command; passed via $paramName it would replace the skill's own operation (a command line runs only its last batch command)" -ForegroundColor Red
+                    exit 1
+                }
+            }
         }
         foreach ($k in $owned) {
             if (Test-ArgKeyMatch $tok $k) {
@@ -171,13 +215,34 @@ function Format-ArgsForDisplay {
 }
 
 
+# Версия формата как число: "2.20" → 220. Строковое сравнение неверно ("2.9" > "2.17").
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
 # --- 1. Scan XML files for reference types ---
 
 $typeMap = @{}  # MetadataType -> @(Name1, Name2, ...)
 
+# Версия формата заглушечной конфигурации. Платформа грузит формат не новее себя, поэтому зашитая
+# версия ломала бы сборку исходников более старого формата на соответствующей ей платформе. Берём
+# версию из корня собираемого объекта (ExternalDataProcessor/ExternalReport); вложенные файлы —
+# запасной вариант, если корень почему-то не попался.
+$srcRootVersion = ""
+$srcAnyVersion = ""
+
 $xmlFiles = Get-ChildItem -Path $SourceDir -Filter "*.xml" -Recurse -File
 foreach ($f in $xmlFiles) {
 	$content = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8)
+
+	if ($content -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') {
+		$ver = $Matches[1]
+		if (-not $srcAnyVersion) { $srcAnyVersion = $ver }
+		if (-not $srcRootVersion -and $content -match '<(ExternalDataProcessor|ExternalReport)[ >]') {
+			$srcRootVersion = $ver
+		}
+	}
 
 	# Ref types: cfg:CatalogRef.XXX or d5p1:CatalogRef.XXX (and similar depth prefixes d4p1, d3p1, etc.)
 	$refPattern = '(?:cfg:|d\dp1:)(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|ExchangePlanRef|BusinessProcessRef|TaskRef)\.([A-Za-z\u0400-\u04FF\d_]+)'
@@ -326,11 +391,71 @@ foreach ($f in $xmlFiles) {
 	}
 }
 
+# --- 1c. Общие модули целевой конфигурации, к которым обращается код ---
+# Проверка модулей (замер 8.3.24, 8.3.27) требует от общего модуля только двух вещей: чтобы он
+# существовал и был доступен в контексте вызова. Методы, их экспорт и число параметров она не
+# сверяет. Поэтому двойнику хватает имени и флагов контекста из настоящей выгрузки, тело пустое,
+# и зависимости модуля за ним не тянутся. Двойник получает только имя, которое есть в выгрузке:
+# неизвестное имя остаётся ошибкой проверки, а не угадывается.
+
+# Код без строковых литералов и комментариев: слова в них — не обращения к модулям.
+function Remove-BslNoise {
+	param([string]$Code)
+	$out = New-Object System.Text.StringBuilder
+	foreach ($line in ($Code -split "`r?`n")) {
+		# Продолжение многострочной строки («|ВЫБРАТЬ …»): литерал до закрывающей кавычки, после
+		# неё может идти код («|ГДЕ …"; Х = Модуль.Метод();»).
+		$l = [regex]::Replace($line, '^\s*\|(?:[^"]|"")*("|$)', '""')
+		# Литерал до закрывающей кавычки или, если строка продолжится ниже, до конца строки.
+		$l = [regex]::Replace($l, '"(?:[^"]|"")*("|$)', '""')
+		$ci = $l.IndexOf('//')
+		if ($ci -ge 0) { $l = $l.Substring(0, $ci) }
+		[void]$out.AppendLine($l)
+	}
+	return $out.ToString()
+}
+
+$commonModuleFlags = @('Global', 'ClientManagedApplication', 'Server', 'ExternalConnection', 'ClientOrdinaryApplication', 'ServerCall', 'Privileged')
+$commonModules = [ordered]@{}   # имя из выгрузки -> @{ флаг = 'true'|'false' }
+if ($ConfigSrc) {
+	$cmDir = Join-Path $ConfigSrc "CommonModules"
+	if (-not (Test-Path -LiteralPath $cmDir -PathType Container)) {
+		Write-Host "WARNING: в -ConfigSrc нет каталога CommonModules: $ConfigSrc" -ForegroundColor Yellow
+	} else {
+		# Идентификаторы 1С регистронезависимы — и имена модулей в коде тоже.
+		$known = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
+		foreach ($f in (Get-ChildItem -LiteralPath $cmDir -Filter "*.xml" -File)) { $known[$f.BaseName] = $f.FullName }
+		$used = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+		foreach ($f in (Get-ChildItem -LiteralPath $SourceDir -Filter "*.bsl" -Recurse -File)) {
+			$code = Remove-BslNoise ([System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8))
+			foreach ($m in [regex]::Matches($code, '(?<![\w.])([^\W\d]\w*)\s*\.')) { [void]$used.Add($m.Groups[1].Value) }
+		}
+		$names = @($used | Where-Object { $known.ContainsKey($_) } | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($known[$_]) })
+		[Array]::Sort($names, [StringComparer]::Ordinal)
+		foreach ($n in $names) {
+			$t = [System.IO.File]::ReadAllText($known[$n], [System.Text.Encoding]::UTF8)
+			$flags = @{}
+			foreach ($fl in $commonModuleFlags) {
+				$flags[$fl] = if ($t -match "<$fl>(true|false)</$fl>") { $Matches[1].ToLower() } else { 'false' }
+			}
+			$commonModules[$n] = $flags
+		}
+		if ($commonModules.Count -gt 0) {
+			Write-Host "Общие модули из configSrc: $(@($commonModules.Keys) -join ', ')"
+		} else {
+			Write-Host "Общие модули из configSrc: не понадобились"
+		}
+	}
+}
+
 $hasRefTypes = $typeMap.Count -gt 0
+# Конфигурация нужна и тогда, когда ссылочных типов нет: в неё кладётся сам объект.
+$embedRequested = -not [string]::IsNullOrWhiteSpace($EmbedSourceFile)
+$needCfg = $hasRefTypes -or $embedRequested -or $commonModules.Count -gt 0
 
 # --- 2. Determine TempBasePath ---
 if (-not $TempBasePath) {
-	$TempBasePath = Join-Path $env:TEMP "epf_stub_db_$(Get-Random)"
+	$TempBasePath = Join-Path ([IO.Path]::GetTempPath()) "epf_stub_db_$(Get-Random)"
 }
 
 # --- 3. If registers need a registrator, add stub document ---
@@ -347,14 +472,138 @@ if ($needsRegistrator) {
 	$typeMap["Document"]["ЗаглушкаРегистратора"] = $true
 }
 
+# --- Внедрение проверяемого объекта в конфигурацию-заглушку ---
+# Платформа не умеет проверять внешнюю обработку: /LoadExternalDataProcessorOrReportFromFiles
+# только упаковывает XML и модули не компилирует. Зато она проверяет объект КОНФИГУРАЦИИ, а
+# внешняя обработка отличается от него немногим (замер 8.3.24): корневым тегом, именем
+# порождаемого объектного типа и отсутствием типа менеджера. Правим ровно эти точки и переносим
+# остальное как есть — под проверку попадает всё, что написал автор, включая реквизиты, формы и
+# макеты, а формат может расти без правок здесь.
+#
+# Подстановка типа делается ТОЛЬКО в .xml (это DefaultForm и основной реквизит формы); в .bsl
+# такой же текст был бы кодом, и трогать его нельзя.
+function Convert-RefTags {
+	param([string]$Text, [string]$ExtTag, [string]$CfgTag)
+
+	# Только префикс вида объекта в начале квалифицированного имени. Глобальная замена подстроки
+	# резала бы и имя самого объекта, если оно оканчивается так же (ПриёмкаExternalReport), —
+	# ссылка расходилась с именем, и заглушка не грузилась. [regex]::Replace, а не -replace:
+	# оператор регистронезависим, а теги 1С регистрозависимы.
+	return [regex]::Replace($Text, "(?<![\w.])$ExtTag(Object)?\.", ($CfgTag + '$1.'))
+}
+
+function Add-SourceObjectToConfig {
+	param([string]$SourceXml, [string]$CfgDir)
+
+	# Копия объекта живёт в конфигурации базы, а следом в ту же базу грузится исходник как ВНЕШНЯЯ
+	# обработка. С одинаковыми идентификаторами платформа путает их и через раз отвечает «Исключение
+	# XDTO при чтении файла» на исправном исходнике — поэтому у копии все GUID свои, но согласованные
+	# между её файлами (ссылки внутри объекта идут по идентификатору).
+	$guidMap = @{}
+	$reGuid = [regex]'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+	$reissue = {
+		param($m)
+		$k = $m.Value.ToLower()
+		if (-not $guidMap.ContainsKey($k)) { $guidMap[$k] = [guid]::NewGuid().ToString() }
+		$guidMap[$k]
+	}
+
+	$text = [IO.File]::ReadAllText($SourceXml, [Text.Encoding]::UTF8)
+	if ($text -match '<ExternalDataProcessor[\s>]') {
+		$extTag = 'ExternalDataProcessor'; $cfgTag = 'DataProcessor'; $folder = 'DataProcessors'
+	} elseif ($text -match '<ExternalReport[\s>]') {
+		$extTag = 'ExternalReport'; $cfgTag = 'Report'; $folder = 'Reports'
+	} else {
+		return $null
+	}
+
+	$name = if ($text -match '<Name>([^<]+)</Name>') { $Matches[1] } else { [IO.Path]::GetFileNameWithoutExtension($SourceXml) }
+
+	$conv = $reGuid.Replace($text, $reissue)
+	$conv = $conv.Replace("<$extTag ", "<$cfgTag ").Replace("<$extTag>", "<$cfgTag>").Replace("</$extTag>", "</$cfgTag>")
+	$conv = Convert-RefTags $conv $extTag $cfgTag
+
+	# Тип менеджера у внешней обработки не объявлен, а объекту конфигурации он обязателен:
+	# без него платформа отвечает «отсутствует один или более типов объекта».
+	$mgr = "`t`t`t<xr:GeneratedType name=`"${cfgTag}Manager.$name`" category=`"Manager`">`r`n" +
+	       "`t`t`t`t<xr:TypeId>$([guid]::NewGuid().ToString())</xr:TypeId>`r`n" +
+	       "`t`t`t`t<xr:ValueId>$([guid]::NewGuid().ToString())</xr:ValueId>`r`n" +
+	       "`t`t`t</xr:GeneratedType>`r`n"
+	if ($conv -match '</InternalInfo>') {
+		$conv = [regex]::Replace($conv, '(\s*)</InternalInfo>', ("`r`n" + $mgr + "`t`t</InternalInfo>"), 1)
+	} else {
+		$objType = "`t`t`t<xr:GeneratedType name=`"${cfgTag}Object.$name`" category=`"Object`">`r`n" +
+		           "`t`t`t`t<xr:TypeId>$([guid]::NewGuid().ToString())</xr:TypeId>`r`n" +
+		           "`t`t`t`t<xr:ValueId>$([guid]::NewGuid().ToString())</xr:ValueId>`r`n" +
+		           "`t`t`t</xr:GeneratedType>`r`n"
+		$conv = [regex]::Replace($conv, "(<$cfgTag[^>]*>)", ("`$1`r`n`t`t<InternalInfo>`r`n" + $objType + $mgr + "`t`t</InternalInfo>"), 1)
+	}
+
+	$objDir = Join-Path $CfgDir $folder
+	New-Item -ItemType Directory -Path $objDir -Force | Out-Null
+	$encBom = New-Object System.Text.UTF8Encoding($true)
+	[IO.File]::WriteAllText((Join-Path $objDir "$name.xml"), $conv, $encBom)
+
+	# Содержимое объекта — как есть; в XML та же подстановка типа, .bsl копируются байт в байт.
+	$srcContent = Join-Path (Split-Path $SourceXml -Parent) $name
+	if (Test-Path $srcContent) {
+		# Длину префикса берём у РАЗРЕШЁННОГО пути, а не у переданной строки: путь может
+		# прийти с коротким именем (C:\Users\NSHIRO~1\…), а Get-ChildItem отдаёт полное — тогда
+		# отрезание по длине исходной строки оставляет в относительном пути чужие символы.
+		$srcRoot = (Get-Item -LiteralPath $srcContent).FullName.TrimEnd('\', '/')
+		$dstContent = Join-Path $objDir $name
+		foreach ($f in (Get-ChildItem -LiteralPath $srcRoot -Recurse -File)) {
+			$rel = $f.FullName.Substring($srcRoot.Length).TrimStart('\', '/')
+			$dst = Join-Path $dstContent $rel
+			New-Item -ItemType Directory -Path (Split-Path $dst -Parent) -Force | Out-Null
+			if ($f.Extension -ieq '.xml') {
+				$t = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8)
+				$t = $reGuid.Replace($t, $reissue)
+				$t = Convert-RefTags $t $extTag $cfgTag
+				[IO.File]::WriteAllText($dst, $t, $encBom)
+			} else {
+				Copy-Item -Path $f.FullName -Destination $dst -Force
+			}
+		}
+	}
+
+	return @{ Tag = $cfgTag; Name = $name }
+}
+
 # --- 4. Generate configuration XML ---
 
-if ($hasRefTypes) {
+if ($needCfg) {
 	$enc = New-Object System.Text.UTF8Encoding($true)
 	$cfgDir = Join-Path $TempBasePath "cfg"
 	New-Item -ItemType Directory -Path $cfgDir -Force | Out-Null
 
-	$ns = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="2.17"'
+	$embedded = $null
+	if ($embedRequested) {
+		$embedded = Add-SourceObjectToConfig $EmbedSourceFile $cfgDir
+		if (-not $embedded) {
+			Write-Host "Error: $EmbedSourceFile is neither ExternalDataProcessor nor ExternalReport" -ForegroundColor Red
+			exit 1
+		}
+	}
+
+	# Заглушке нужна САМАЯ НИЗКАЯ работающая версия, а не версия исходников: ограничение платформы
+	# одностороннее — она читает формат не новее себя. Отсюда min(версия исходников, 2.17): на 2.17+
+	# заглушка остаётся 2.17 (как было), а под исходники 2.13-2.16 опускается до их версии, иначе
+	# конфигурация не загрузится платформой, которая эти исходники и выгрузила («Неизвестная версия
+	# формата 2.17 загружаемого файла», замерено на 8.3.20).
+	#
+	$srcVersion = if ($srcRootVersion) { $srcRootVersion } elseif ($srcAnyVersion) { $srcAnyVersion } else { "2.17" }
+	$srcRank = Get-FormatRank $srcVersion
+	$stubFormatVersion = if ($srcRank -gt 0 -and $srcRank -lt (Get-FormatRank "2.17")) { $srcVersion } else { "2.17" }
+	# Режим совместимости заглушки — по той же логике. Платформа отказывается работать с
+	# конфигурацией, чей режим выше её самой («Для работы с конфигурацией необходима версия
+	# платформы не меньше, чем 8.3.24»), и тогда объекты заглушки в базу не попадают: загрузка
+	# рапортует успех, а сборка падает на «Неизвестное имя типа». Ступени — лестница версий
+	# формата из docs/1c-configuration-spec.md.
+	$compatByFormat = @{ "2.13" = "Version8_3_20"; "2.14" = "Version8_3_21"; "2.15" = "Version8_3_22"; "2.16" = "Version8_3_23" }
+	$stubCompatMode = if ($compatByFormat.ContainsKey($stubFormatVersion)) { $compatByFormat[$stubFormatVersion] } else { "Version8_3_24" }
+
+	$ns = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="' + $stubFormatVersion + '"'
 
 	# GeneratedType definitions per metadata type
 	$gtDefs = @{
@@ -520,6 +769,7 @@ if ($hasRefTypes) {
 
 	# ChildObjects entries
 	$childXml = "`r`n`t`t`t<Language>Русский</Language>"
+	foreach ($cmName in $commonModules.Keys) { $childXml += "`r`n`t`t`t<CommonModule>$cmName</CommonModule>" }
 	foreach ($metaType in $typeMap.Keys) {
 		if (-not $metaInfo.ContainsKey($metaType)) { continue }
 		$tag = $metaInfo[$metaType].tag
@@ -527,6 +777,7 @@ if ($hasRefTypes) {
 			$childXml += "`r`n`t`t`t<$tag>$name</$tag>"
 		}
 	}
+	if ($embedded) { $childXml += "`r`n`t`t`t<$($embedded.Tag)>$($embedded.Name)</$($embedded.Tag)>" }
 
 	$cfgXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -539,7 +790,7 @@ if ($hasRefTypes) {
 			<Synonym/>
 			<Comment/>
 			<NamePrefix/>
-			<ConfigurationExtensionCompatibilityMode>Version8_3_24</ConfigurationExtensionCompatibilityMode>
+			<ConfigurationExtensionCompatibilityMode>$stubCompatMode</ConfigurationExtensionCompatibilityMode>
 			<DefaultRunMode>ManagedApplication</DefaultRunMode>
 			<UsePurposes>
 				<v8:Value xsi:type="app:ApplicationUsePurpose">PlatformApplication</v8:Value>
@@ -590,7 +841,7 @@ if ($hasRefTypes) {
 			<SynchronousPlatformExtensionAndAddInCallUseMode>DontUse</SynchronousPlatformExtensionAndAddInCallUseMode>
 			<InterfaceCompatibilityMode>Taxi</InterfaceCompatibilityMode>
 			<DatabaseTablespacesUseMode>DontUse</DatabaseTablespacesUseMode>
-			<CompatibilityMode>Version8_3_24</CompatibilityMode>
+			<CompatibilityMode>$stubCompatMode</CompatibilityMode>
 			<DefaultConstantsForm/>
 		</Properties>
 		<ChildObjects>$childXml
@@ -624,6 +875,34 @@ if ($hasRefTypes) {
 </MetaDataObject>
 "@
 	[System.IO.File]::WriteAllText((Join-Path $langDir "Русский.xml"), $langXml, $enc)
+
+	# --- 4b'. Common modules: пустые двойники с флагами контекста из выгрузки ---
+	if ($commonModules.Count -gt 0) {
+		$cmOutDir = Join-Path $cfgDir "CommonModules"
+		New-Item -ItemType Directory -Path $cmOutDir -Force | Out-Null
+		foreach ($cmName in $commonModules.Keys) {
+			$flags = $commonModules[$cmName]
+			$flagXml = ""
+			foreach ($fl in $commonModuleFlags) { $flagXml += "`r`n`t`t`t<$fl>$($flags[$fl])</$fl>" }
+			$cmXml = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject $ns>
+	<CommonModule uuid="$([guid]::NewGuid().ToString())">
+		<Properties>
+			<Name>$cmName</Name>
+			<Synonym/>
+			<Comment/>$flagXml
+			<ReturnValuesReuse>DontUse</ReturnValuesReuse>
+		</Properties>
+	</CommonModule>
+</MetaDataObject>
+"@
+			[System.IO.File]::WriteAllText((Join-Path $cmOutDir "$cmName.xml"), $cmXml, $enc)
+			$cmExt = Join-Path $cmOutDir (Join-Path $cmName "Ext")
+			New-Item -ItemType Directory -Path $cmExt -Force | Out-Null
+			[System.IO.File]::WriteAllText((Join-Path $cmExt "Module.bsl"), "", $enc)
+		}
+	}
 
 	# --- 4c. Metadata object stubs ---
 	foreach ($metaType in $typeMap.Keys) {
@@ -1223,7 +1502,7 @@ $stdAttrs			<Characteristics/>
 					# An empty managed form body: the platform loads the object only with one.
 					$cfExtDir = Join-Path (Join-Path $objDir $objName) "Ext"
 					New-Item -ItemType Directory -Path $cfExtDir -Force | Out-Null
-					$cfFormXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<Form xmlns=`"http://v8.1c.ru/8.3/xcf/logform`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"2.17`">`r`n`t<AutoCommandBar name=`"ФормаКоманднаяПанель`" id=`"-1`">`r`n`t`t<Autofill>true</Autofill>`r`n`t</AutoCommandBar>`r`n`t<ChildItems/>`r`n</Form>`r`n"
+					$cfFormXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<Form xmlns=`"http://v8.1c.ru/8.3/xcf/logform`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"$stubFormatVersion`">`r`n`t<AutoCommandBar name=`"ФормаКоманднаяПанель`" id=`"-1`">`r`n`t`t<Autofill>true</Autofill>`r`n`t</AutoCommandBar>`r`n`t<ChildItems/>`r`n</Form>`r`n"
 					[System.IO.File]::WriteAllText((Join-Path $cfExtDir "Form.xml"), $cfFormXml, $enc)
 				}
 			}
@@ -1455,6 +1734,165 @@ function ConvertFrom-PlatformBytes {
     }
 }
 
+function Initialize-PlatformProcess {
+    # Process.Start hands the child EVERY inheritable handle we hold, not only the pipes made
+    # for it, and PowerShell keeps copies of its own stdout among them. A process the platform
+    # leaves behind (crashpad_handler on 8.5) would then hold our caller's pipe open long after
+    # we exit, and the caller hangs. PlatformProcess starts the platform the way Python does:
+    # with an explicit list of the three handles it may inherit. Compiled once per run; if the
+    # compiler is unavailable, $false sends the caller back to Process.Start.
+    if ($null -ne $script:platformProcessReady) { return $script:platformProcessReady }
+    $script:platformProcessReady = $false
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+
+public static class PlatformProcess {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO {
+        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct SECURITY_ATTRIBUTES { public int nLength; public IntPtr lpSecurityDescriptor; public bool bInheritHandle; }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CreatePipe(out IntPtr read, out IntPtr write, ref SECURITY_ATTRIBUTES sa, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool UpdateProcThreadAttribute(IntPtr list, int flags, IntPtr attr, IntPtr value, IntPtr size, IntPtr prev, IntPtr retSize);
+    [DllImport("kernel32.dll")]
+    static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern int WaitForSingleObject(IntPtr h, int ms);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetExitCodeProcess(IntPtr h, out int code);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
+
+    const int HANDLE_FLAG_INHERIT = 1;
+    const int STARTF_USESTDHANDLES = 0x100;
+    const int EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+    const int CREATE_NO_WINDOW = 0x8000000;
+    static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = (IntPtr)0x20002;
+
+    // Runs "exe" arguments with stdin at EOF and both output pipes captured. Waits for the
+    // process itself, then gives the readers drainMs to collect what is already buffered.
+    public static int Run(string exe, string arguments, int drainMs, out byte[] stdout, out byte[] stderr) {
+        var sa = new SECURITY_ATTRIBUTES();
+        sa.nLength = Marshal.SizeOf(sa);
+        sa.bInheritHandle = true;
+        IntPtr inR = IntPtr.Zero, inW = IntPtr.Zero, outR = IntPtr.Zero, outW = IntPtr.Zero, errR = IntPtr.Zero, errW = IntPtr.Zero;
+        IntPtr attrs = IntPtr.Zero, handles = IntPtr.Zero;
+        bool attrsReady = false, started = false;
+        var pi = new PROCESS_INFORMATION();
+        try {
+            if (!CreatePipe(out inR, out inW, ref sa, 0) || !CreatePipe(out outR, out outW, ref sa, 0)
+                || !CreatePipe(out errR, out errW, ref sa, 0)) throw new Win32Exception();
+            // Our ends of the pipes stay with us
+            SetHandleInformation(inW, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(errR, HANDLE_FLAG_INHERIT, 0);
+
+            var size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            attrs = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(attrs, 1, 0, ref size)) throw new Win32Exception();
+            attrsReady = true;
+            handles = Marshal.AllocHGlobal(3 * IntPtr.Size);
+            Marshal.WriteIntPtr(handles, 0, inR);
+            Marshal.WriteIntPtr(handles, IntPtr.Size, outW);
+            Marshal.WriteIntPtr(handles, 2 * IntPtr.Size, errW);
+            if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles,
+                (IntPtr)(3 * IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+
+            var si = new STARTUPINFOEX();
+            si.StartupInfo.cb = Marshal.SizeOf(si);
+            si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            si.StartupInfo.hStdInput = inR;
+            si.StartupInfo.hStdOutput = outW;
+            si.StartupInfo.hStdError = errW;
+            si.lpAttributeList = attrs;
+            // Same command line as Process.Start builds: quoted program (left as is if already
+            // quoted), then the arguments
+            var program = exe.Length > 1 && exe[0] == '"' && exe[exe.Length - 1] == '"' ? exe : "\"" + exe + "\"";
+            var cmd = new StringBuilder(program + (string.IsNullOrEmpty(arguments) ? "" : " " + arguments));
+            if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, true,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, IntPtr.Zero, null, ref si, out pi)) {
+                // System messages for a bad executable carry a %1 placeholder for its name
+                var e = new Win32Exception();
+                throw new Win32Exception(e.NativeErrorCode, e.Message.Replace("%1", exe));
+            }
+            started = true;
+        } finally {
+            // The child's ends are its own now; closing stdin's write end gives it EOF
+            foreach (var h in new[] { inR, outW, errW, inW }) if (h != IntPtr.Zero) CloseHandle(h);
+            if (!started) {
+                if (outR != IntPtr.Zero) CloseHandle(outR);
+                if (errR != IntPtr.Zero) CloseHandle(errR);
+            }
+            if (attrsReady) DeleteProcThreadAttributeList(attrs);
+            if (attrs != IntPtr.Zero) Marshal.FreeHGlobal(attrs);
+            if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
+        }
+        CloseHandle(pi.hThread);
+
+        var outBuf = new MemoryStream();
+        var errBuf = new MemoryStream();
+        var readers = new[] { Drain(outR, outBuf), Drain(errR, errBuf) };
+        int code;
+        try {
+            WaitForSingleObject(pi.hProcess, -1);
+            if (!GetExitCodeProcess(pi.hProcess, out code)) throw new Win32Exception();
+        } finally {
+            CloseHandle(pi.hProcess);
+        }
+        var deadline = DateTime.UtcNow.AddMilliseconds(drainMs);
+        foreach (var t in readers) t.Join(Math.Max(0, (int)(deadline - DateTime.UtcNow).TotalMilliseconds));
+        lock (outBuf) stdout = outBuf.ToArray();
+        lock (errBuf) stderr = errBuf.ToArray();
+        return code;
+    }
+
+    // Reads in chunks: a held pipe never reaches EOF, so whatever arrived must already be in buf
+    static Thread Drain(IntPtr handle, MemoryStream buf) {
+        var t = new Thread(() => {
+            try {
+                using (var fs = new FileStream(new SafeFileHandle(handle, true), FileAccess.Read, 4096, false)) {
+                    var chunk = new byte[65536];
+                    int n;
+                    while ((n = fs.Read(chunk, 0, chunk.Length)) > 0) lock (buf) buf.Write(chunk, 0, n);
+                }
+            } catch (Exception) { }   // anything escaping a background thread kills powershell
+        });
+        t.IsBackground = true;
+        t.Start();
+        return t;
+    }
+}
+'@
+        $script:platformProcessReady = $true
+    } catch { }
+    return $script:platformProcessReady
+}
+
 function Invoke-PlatformProcess {
     # Run the platform non-interactively and capture its console output. A closed stdin pipe
     # (EOF) makes an auth prompt fast-fail instead of hanging; capturing keeps the child's
@@ -1466,32 +1904,47 @@ function Invoke-PlatformProcess {
     #   1cv8     — -PreQuoted: the caller already put quotes inside the token (File="C:\a b"),
     #              which is where 1C's own parser expects them; quoting again breaks the value.
     param([string]$Exe, [string[]]$ProcArgs, [switch]$PreQuoted)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $Exe
-    $psi.Arguments = if ($PreQuoted) {
+    $arguments = if ($PreQuoted) {
         $ProcArgs -join ' '
     } else {
         ($ProcArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
     }
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $p.StandardInput.Close()
-    # stderr is drained in parallel: reading the streams one after another deadlocks
-    # as soon as the other one fills its pipe buffer.
-    $errMs = New-Object System.IO.MemoryStream
-    $errTask = $p.StandardError.BaseStream.CopyToAsync($errMs)
-    $outMs = New-Object System.IO.MemoryStream
-    $p.StandardOutput.BaseStream.CopyTo($outMs)
-    $errTask.Wait()
-    $p.WaitForExit()
-    $out = ConvertFrom-PlatformBytes $outMs.ToArray()
-    $err = ConvertFrom-PlatformBytes $errMs.ToArray()
+    # Wait for the process, not for EOF: a child it leaves behind (crashpad_handler on 8.5)
+    # inherits the pipes and keeps them open. By the time the platform exits, what it wrote
+    # is already buffered and drains at once; the 1 s only covers a held pipe.
+    if (Initialize-PlatformProcess) {
+        $outBytes = $null
+        $errBytes = $null
+        $code = [PlatformProcess]::Run($Exe, $arguments, 1000, [ref]$outBytes, [ref]$errBytes)
+    } else {
+        # No compiler: Process.Start leaks our handles to the platform, but we still never
+        # hang on a held pipe ourselves.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $Exe
+        $psi.Arguments = $arguments
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $p.StandardInput.Close()
+        # Both streams are drained in parallel: reading them one after another deadlocks
+        # as soon as the other one fills its pipe buffer.
+        $errMs = New-Object System.IO.MemoryStream
+        $errTask = $p.StandardError.BaseStream.CopyToAsync($errMs)
+        $outMs = New-Object System.IO.MemoryStream
+        $outTask = $p.StandardOutput.BaseStream.CopyToAsync($outMs)
+        $p.WaitForExit()
+        [void][System.Threading.Tasks.Task]::WaitAll(@($outTask, $errTask), 1000)
+        $outBytes = $outMs.ToArray()
+        $errBytes = $errMs.ToArray()
+        $code = $p.ExitCode
+    }
+    $out = ConvertFrom-PlatformBytes $outBytes
+    $err = ConvertFrom-PlatformBytes $errBytes
     if ($err) { $out += $err }
-    return [pscustomobject]@{ Output = $out; ExitCode = $p.ExitCode }
+    return [pscustomobject]@{ Output = $out; ExitCode = $code }
 }
 
 function Write-PlatformOutput {
@@ -1510,6 +1963,22 @@ function Write-PlatformOutput {
     Write-Host "--- End ---"
 }
 
+# 1c-rules: batch verdict. /DumpResult receives the result of the batch command (0 = success).
+# Read it before trusting exit code 0: a batch command can fail while 1cv8 exits 0, and a missing
+# file means the command never completed (content/rules/designer-batch-checks.md -> The verdict is
+# three signals). Returns '' on success, otherwise the reason to report.
+function Get-DumpResultError {
+    param([string]$ResultFile)
+    $code = ''
+    if ($ResultFile -and (Test-Path -LiteralPath $ResultFile)) {
+        $text = Get-Content -LiteralPath $ResultFile -Raw -ErrorAction SilentlyContinue
+        if ($text) { $code = ($text -replace '[^\d\-]', '') }
+    }
+    if ($code -eq '0') { return '' }
+    if ($code) { return "batch result $code reported by /DumpResult (0 = success)" }
+    return "/DumpResult wrote no result - the batch command did not complete"
+}
+
 
 $stubEngine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
 
@@ -1526,10 +1995,10 @@ function Format-ArgToken {
 $extraArgString = -join ($extraArgs | ForEach-Object { Format-ArgToken $_ })
 if ($stubEngine -eq "ibcmd") {
 	Write-Host "Creating infobase (ibcmd): $TempBasePath"
-	$ibData = Join-Path $env:TEMP "stub_data_$(Get-Random)"
+	$ibData = Join-Path ([IO.Path]::GetTempPath()) "stub_data_$(Get-Random)"
 	New-Item -ItemType Directory -Path $ibData -Force | Out-Null
 	$ibArgs = @("infobase", "create", "--db-path=$TempBasePath", "--create-database")
-	if ($hasRefTypes) { $ibArgs += "--import=$(Join-Path $TempBasePath 'cfg')", "--apply", "--force" }
+	if ($needCfg) { $ibArgs += "--import=$(Join-Path $TempBasePath 'cfg')", "--apply", "--force" }
 	$ibArgs += "--data=$ibData"
 	$ibArgs += $extraArgs
 	$__ib = Invoke-PlatformProcess $V8Path $ibArgs
@@ -1541,7 +2010,7 @@ if ($stubEngine -eq "ibcmd") {
 		Write-Error "Failed to create stub infobase (code: $ibRc)"
 		exit 1
 	}
-	if ($hasRefTypes) { Remove-Item -Path (Join-Path $TempBasePath "cfg") -Recurse -Force -ErrorAction SilentlyContinue }
+	if ($needCfg) { Remove-Item -Path (Join-Path $TempBasePath "cfg") -Recurse -Force -ErrorAction SilentlyContinue }
 	Write-Host "[OK] Stub database created: $TempBasePath"
 	Write-Host $TempBasePath
 	exit 0
@@ -1557,29 +2026,35 @@ if ($proc.ExitCode -ne 0) {
 	exit 1
 }
 
-# --- 6. Load config and update DB if ref types exist ---
-if ($hasRefTypes) {
+# --- 6. Load config and update DB if there is one ---
+if ($needCfg) {
 	$cfgDir = Join-Path $TempBasePath "cfg"
 	# LoadConfigFromFiles
 	Write-Host "Loading configuration from files..."
-	$loadLog = Join-Path $env:TEMP "stub_load_log.txt"
-	$loadArgs = "DESIGNER /F`"$TempBasePath`" /LoadConfigFromFiles `"$cfgDir`" /Out `"$loadLog`" /DisableStartupDialogs" + $extraArgString
+	$loadLog = Join-Path $TempBasePath "load_log.txt"
+	$loadResult = Join-Path $TempBasePath "load_result.txt"
+	$loadArgs = "DESIGNER /F`"$TempBasePath`" /LoadConfigFromFiles `"$cfgDir`" /Out `"$loadLog`" /DumpResult `"$loadResult`" /DisableStartupDialogs" + $extraArgString
 	$proc = Invoke-PlatformProcess $V8Path @($loadArgs) -PreQuoted
-	if ($proc.ExitCode -ne 0) {
+	$dumpError = if ($proc.ExitCode -eq 0) { Get-DumpResultError $loadResult } else { '' }
+	if ($proc.ExitCode -ne 0 -or $dumpError) {
 		if (Test-Path $loadLog) { Get-Content $loadLog -Raw -ErrorAction SilentlyContinue | Write-Host }
 		Write-PlatformOutput $proc.Output
+		if ($dumpError) { Write-Host "[error] $dumpError" -ForegroundColor Red }
 		Write-Error "Failed to load config (code: $($proc.ExitCode))"
 		exit 1
 	}
 
 	# UpdateDBCfg
 	Write-Host "Updating database configuration..."
-	$updateLog = Join-Path $env:TEMP "stub_update_log.txt"
-	$updateArgs = "DESIGNER /F`"$TempBasePath`" /UpdateDBCfg /Out `"$updateLog`" /DisableStartupDialogs" + $extraArgString
+	$updateLog = Join-Path $TempBasePath "update_log.txt"
+	$updateResult = Join-Path $TempBasePath "update_result.txt"
+	$updateArgs = "DESIGNER /F`"$TempBasePath`" /UpdateDBCfg /Out `"$updateLog`" /DumpResult `"$updateResult`" /DisableStartupDialogs" + $extraArgString
 	$proc = Invoke-PlatformProcess $V8Path @($updateArgs) -PreQuoted
-	if ($proc.ExitCode -ne 0) {
+	$dumpError = if ($proc.ExitCode -eq 0) { Get-DumpResultError $updateResult } else { '' }
+	if ($proc.ExitCode -ne 0 -or $dumpError) {
 		if (Test-Path $updateLog) { Get-Content $updateLog -Raw -ErrorAction SilentlyContinue | Write-Host }
 		Write-PlatformOutput $proc.Output
+		if ($dumpError) { Write-Host "[error] $dumpError" -ForegroundColor Red }
 		Write-Error "Failed to update DB config (code: $($proc.ExitCode))"
 		exit 1
 	}

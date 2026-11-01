@@ -1,6 +1,6 @@
 # JSON DSL для схемы компоновки данных (СКД)
 
-> Vendored verbatim from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (MIT), Russian original, upstream sync `2026-07-30`. Upstream slash-command names (`/form-compile`, `/meta-compile`, `/skd-compile`, `/xdto-*`, …) map to this skill's tools under `tools/1c-skd-compile/scripts/` — invocation and paths are documented in the corresponding `docs/*-manage.md`.
+> Vendored verbatim from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (MIT), Russian original, upstream sync `2026-11-01` (`2e75b0f`). Upstream slash-command names (`/form-compile`, `/meta-compile`, `/skd-compile`, `/xdto-*`, …) map to this skill's tools under `tools/1c-skd-compile/scripts/` — invocation and paths are documented in the corresponding `docs/*-manage.md`.
 
 Компактный JSON-формат для описания `DataCompositionSchema` (Template.xml).
 Компилируется навыком `/skd-compile` в XML, валидируется `/skd-validate`.
@@ -92,6 +92,7 @@
 | `items` | да* | Вложенные наборы (DataSetUnion) |
 | `fields` | нет | Массив полей |
 | `autoFillFields` | нет | `false` — отключить автозаполнение (по умолчанию не выводится = true) |
+| `useQueryGroupIfPossible` | нет | `false` — не дописывать в запрос `СГРУППИРОВАТЬ ПО` по группировкам настроек: запрос читает детальные строки, итоги считает компоновка (по умолчанию не выводится = true) |
 
 ### Ссылка на внешний файл запроса (@file)
 
@@ -154,7 +155,7 @@
 }
 ```
 
-`availableValues` — список допустимых значений поля с (опциональной multilang) подписью. Типы значений автоопределяются (`bool`/`decimal`/`dateTime`/`string`); можно указать `valueType` явно. Аналогичное поле существует на `parameters` — см. раздел 6.
+`availableValues` — список допустимых значений поля с (опциональной multilang) подписью. Типы значений автоопределяются (`bool`/`decimal`/`dateTime`/`string`, ссылка `Справочник.X.Y` и др. → `dcscor:DesignTimeValue`); `"value": null` — пустое значение (`xsi:nil`). Тип можно указать явно `valueType` — строкой (`"xs:string"` для строки вида ссылки или даты) или `{uri, name}` (тип с локальным xmlns). Аналогичное поле существует на `calculatedFields` (раздел 7) и `parameters` (раздел 6).
 
 ### Парсинг shorthand
 
@@ -414,8 +415,8 @@ XML-маппинг — по `<group>` на каждый элемент:
 | `useRestriction` | `true` — скрыть от пользователя |
 | `use` | `"Always"`, `"Auto"` |
 | `denyIncompleteValues` | `true` — запретить произвольные значения (только из availableValues) |
-| `availableValues` | Массив `[{value, presentation}]` — допустимые значения с представлениями. Типы (bool/int/decimal) сохраняются нативно в JSON |
-| `inputParameters` | Параметры ввода (например `ФорматРедактирования`) — массив `[{parameter, value, valueType?, choiceParameters?, choiceParameterLinks?}]`. `valueType: {uri, name}` сохраняет кастомный xsi:type с локальным xmlns (например `d6p1:FoldersAndItemsUse`). В `choiceParameters[i].values` элементы — bool/int/double/string; compile эмитит соответствующий xsi:type (`xs:boolean` / `xs:decimal` / `dcscor:DesignTimeValue`) |
+| `availableValues` | Массив `[{value, presentation, valueType?}]` — допустимые значения с представлениями. Типы (bool/int/decimal) сохраняются нативно в JSON; `null` — пустое значение (`xsi:nil`), пустая строка — пустое значение типа параметра; `valueType` — как у поля набора (раздел 4), дата по виду не угадывается |
+| `inputParameters` | Параметры ввода (например `ФорматРедактирования`) — массив `[{parameter, value, valueType?, choiceParameters?, choiceParameterLinks?, typeLink?}]`. `typeLink: {field, linkItem}` — связь по типу (`dcscor:TypeLink`, параметр `СвязьПоТипу`), оба поля необязательны. `valueType: {uri, name}` сохраняет кастомный xsi:type с локальным xmlns (например `d6p1:FoldersAndItemsUse`). В `choiceParameters[i].values` элементы — bool/int/double/string; compile эмитит соответствующий xsi:type (`xs:boolean` / `xs:decimal` / `dcscor:DesignTimeValue`) |
 | `nilValue` | `true` — эмитить `<value xsi:nil="true"/>` для параметров с явным типом (decimal/string/dateTime), где XML-сериализатор обычно ставит типизированный default. Bit-perfect round-trip |
 
 ### availableValues
@@ -474,9 +475,12 @@ XML-маппинг — по `<group>` на каждый элемент:
   "title": "Итого",
   "type": "decimal(15,2)",
   "restrict": ["noGroup"],
-  "appearance": { "Формат": "ЧДЦ=2" }
+  "appearance": { "Формат": "ЧДЦ=2" },
+  "availableValues": [{ "value": 1, "presentation": "Да" }, { "value": null, "presentation": "Нет" }]
 }
 ```
+
+`availableValues` — как у поля набора данных (раздел 4).
 
 Ключ `field` — алиас для `dataPath` (используется если `dataPath` не указан).
 
@@ -626,6 +630,8 @@ decompile эмитит длинные имена (`sourceDataSet` и т.д.); co
 - Скаляр (`"X"`, `5`, `true`, `"2024-01-01T00:00:00"`) — single `<right>` (стандартный случай). Тип определяется автоматически: bool / число / дата / строка.
 - Массив `[a, b, c]` — несколько `<right>` подряд (для `in`/`notIn` с конкретными значениями).
 - Пустой массив `[]` — `<right xsi:type="v8:ValueListType">` placeholder (типичный паттерн для `in` с пользовательскими настройками — значения заполнит пользователь через UI).
+- Объект `{variant, ...}` — `v8:StandardPeriod` / `v8:StandardBeginningDate`, тип по форме, как у [dataParameters](#standardperiod--standardbeginningdate--shape-inference): `{ "variant": "BeginningOfThisMonth" }`, `{ "variant": "Custom", "date": "2024-01-01T00:00:00" }`, `{ "variant": "Custom", "startDate": "…", "endDate": "…" }`.
+- Объект `{uri, name}` в `valueType` — тип из пространства имён, которого нет в корне схемы (`d8p1:AccountType`): xmlns объявляется на самом `<right>`. Так его отдаёт decompile; вручную не нужен.
 
 Операторы:
 

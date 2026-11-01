@@ -13,6 +13,10 @@
 
 Флаги: `req` — обязательное заполнение; `index` — индексировать; `master` — ведущее измерение (только dimensions); `mainFilter` — основной отбор (только dimensions).
 
+Значения свойств-перечислений (`FillChecking`, `Indexing`, `Use`, …) приводятся к канону: алиас и регистр
+исправляются молча, неизвестное значение — отказ со списком допустимых до записи файла. Ключ в другом
+регистре пишется каноническим именем тега.
+
 **Позиционная вставка**: `>> after ИмяЭлемента` или `<< before ИмяЭлемента`:
 ```powershell
 -Operation add-attribute -Value "Склад: CatalogRef.Склады >> after Организация"
@@ -113,6 +117,9 @@ JSON — строки и/или объекты (для групп с вложе�
 -Operation add-command -Value "Команда1"
 ```
 
+Команда создаётся вместе с заготовкой модуля `Commands/<Имя>/Ext/CommandModule.bsl`. Имя, совпадающее
+со стандартной командой объекта, — отказ (то же правило проверяет meta-validate, проверка 15).
+
 ## add-template — use the template scaffold
 
 `meta-edit -Operation add-template` exits `2` before any write. The generic child builder does not create the descriptor and template content. The same refusal covers JSON `add/templates`, accepted aliases such as `добавить/макеты`, and the whole mixed definition.
@@ -149,7 +156,12 @@ python3 skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.py \
 что там сейчас, прежде чем запускать. Batch (`;;`) у `form-add` нет: формы создаются
 по одной, каждая своим запуском.
 
-`remove-form` в `meta-edit` не затронут и работает как раньше.
+## remove-form / remove-template — тоже другими инструментами
+
+Удаление формы или макета через `meta-edit` (`-Operation remove-form` / `remove-template`, JSON
+`remove.forms` / `remove.templates`) отклоняется с кодом `1`, файлы не меняются: снять одну регистрацию
+мало, у формы и макета есть собственные файлы. Форму удаляет `remove-form` из `1c-form-scaffold`
+(сначала `-DryRun`, затем `-Force`), макет — `remove-template` из `1c-template-manage`.
 
 ## remove-*
 
@@ -159,6 +171,9 @@ python3 skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.py \
 -Operation remove-ts -Value "УстаревшаяТЧ"
 -Operation remove-enumValue -Value "НеиспользуемоеЗначение"
 ```
+
+Удалять нечего (элемента нет) — предупреждение и код `0`. Изменить несуществующий элемент
+(`modify-*`) — отказ с кодом `1`, файл не меняется.
 
 ## modify-attribute / modify-dimension / modify-resource / modify-enumValue / modify-column
 
@@ -195,3 +210,36 @@ python3 skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.py \
 - `ChoiceParameters` value — булево/число/строка/ссылочный путь или массив; укажите `type` (напр.
   `EnumRef.СтавкиНДС`), чтобы задавать значения короткими именами (`"Оптовая"` вместо полного пути).
 - В путях данных (`LinkByType`/`ChoiceParameterLinks`) можно писать короткое имя реквизита вместо полного пути.
+
+## Внешние источники данных
+
+Точечные правки внутри уже созданного источника (только JSON DSL). Источник целиком собирает
+`meta-compile`; повторная сборка поверх существующего источника выдала бы новый uuid и оставила бы
+сиротами таблицы, которых нет в описании, поэтому без `-Force` она отклоняется.
+
+**Поле таблицы** — правится файл `ExternalDataSources/<Источник>/Tables/<Таблица>.xml`. Поле задаётся
+как обычный реквизит плюс ключи `nameInDataSource` (по умолчанию — имя поля), `readOnly`, `allowNull`;
+флаги строковой формы — `readonly`, `nullable`:
+```json
+{ "add": { "fields": [
+  "barcode: String(20) | nullable",
+  { "name": "cost", "type": "Number(15,2)", "nameInDataSource": "cost_net", "readOnly": true }
+] } }
+```
+Типы поля: `Number`, `String`, `Date`, `Boolean`, `UUID`, `BinaryData` и ссылка на таблицу того же
+источника — `ExternalDataSourceTableRef.<Источник>.<Таблица>`. Составной тип платформа запрещает.
+
+**Таблица и функция** — правится файл `ExternalDataSources/<Источник>.xml`. Таблица — единственная
+операция `meta-edit`, создающая файл: `<Источник>/Tables/<Имя>.xml` плюс имя в `ChildObjects` источника.
+Синтаксис тот же, что у `meta-compile`:
+```json
+{ "add": {
+  "tables": { "sales": { "keyFields": ["id"], "fields": ["id: Number(10,0)", "summa: Number(15,2)"] } },
+  "functions": { "nextKey": "NEXT VALUE FOR public.seq_key" }
+} }
+```
+Ключи `characteristics` и `default*Form` при добавлении таблицы отклоняются (код `1`): характеристики
+задаются при сборке источника `meta-compile`, форму назначает `form-add`.
+
+**Удаление** — `meta-remove`: `ExternalDataSource.<Источник>.Table.<Таблица>` (файл и запись в
+`ChildObjects`) или весь источник `ExternalDataSource.<Источник>`.

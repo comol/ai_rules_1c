@@ -11,8 +11,9 @@ Takes a JSON definition of a metadata object and generates XML + modules in the 
 
 | Parameter | Description |
 |-----------|-------------|
-| `JsonPath` | Path to the JSON definition file |
+| `JsonPath` | Path to the JSON definition file (one object, or a JSON array of objects — batch mode) |
 | `OutputDir` | Root directory of the configuration export (where `Catalogs/`, `Documents/`, etc. are located) |
+| `Force` | Replace an object whose XML already exists (see below). Without it such an object is refused |
 
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-compile/scripts/meta-compile.ps1 -JsonPath "<json>" -OutputDir "<ConfigDir>"
@@ -20,7 +21,16 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-compile/
 
 `OutputDir` — directory containing type subfolders (`Catalogs/`, `Documents/`, ...) and `Configuration.xml`.
 
-## Supported Types (23)
+## Existing objects are refused (local, stronger than upstream)
+
+`meta-compile` creates objects; it does not update them. If `<TypePlural>/<Name>.xml` already exists, the tool **exits 1 before writing anything** and names `meta-edit`. A recompile would replace the file whole and give the object a **new uuid**: the link to the object already in the infobase and every reference to it (code, subsystem content, attribute types) break, and files of children the new JSON does not name stay behind as orphans. Upstream only warns here.
+
+- Change an existing object — `meta-edit` (attributes, tabular sections, properties, external-data-source tables and functions).
+- Replace it deliberately (a throwaway object that is not yet in any infobase) — pass `-Force`; the warning about the new uuid is still printed. In batch mode `-Force` applies to every item.
+
+Exit codes: `0` — compiled and registered; `1` — refused or failed (existing object without `-Force`, unknown type name, invalid DSL value, support guard), nothing written; `3` — files written but **not registered** (no `Configuration.xml` / `<ChildObjects>` under `OutputDir`) — not a success.
+
+## Supported Types (38)
 
 ### Reference Types
 Catalog, Document, Enum, ExchangePlan, ChartOfAccounts, ChartOfCharacteristicTypes, ChartOfCalculationTypes, BusinessProcess, Task
@@ -32,7 +42,12 @@ InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegist
 Report, DataProcessor
 
 ### Service Types
-Constant, DefinedType, CommonModule, ScheduledJob, EventSubscription, DocumentJournal, HTTPService, WebService
+Constant, DefinedType, CommonModule, ScheduledJob, EventSubscription, DocumentJournal, HTTPService, WebService, FunctionalOption, FunctionalOptionsParameter, Sequence, FilterCriterion, DocumentNumerator, SettingsStorage, CommonForm, SessionParameter, CommonCommand, CommandGroup, CommonAttribute, WSReference, CommonPicture, CommonTemplate
+
+### External Data Sources
+ExternalDataSource — the source, its tables (`<Source>/Tables/<Table>.xml`, one file per table) and functions in one definition (spec §18). The source is described **whole**: tables and functions are added to an existing source with `meta-edit` (`add.tables` / `add.functions`), a table is removed with `meta-remove ExternalDataSource.<Source>.Table.<Table>`.
+
+Format versions 2.17–2.21 are written (taken from the nearest `Configuration.xml`; 2.21 = platform 8.5, adds the palette namespace and a few 8.5-only properties).
 
 ## JSON DSL — Quick Reference
 
@@ -63,7 +78,13 @@ The **complete `meta-compile` DSL grammar** — every object type with its type-
 
 Types: `String(100)`, `Number(15,2)`, `Boolean`, `Date`, `DateTime`, `CatalogRef.Xxx`, `DocumentRef.Xxx`, `EnumRef.Xxx`, `ChartOfAccountsRef.Xxx`, `ChartOfCharacteristicTypesRef.Xxx`, `ChartOfCalculationTypesRef.Xxx`, `ExchangePlanRef.Xxx`, `BusinessProcessRef.Xxx`, `TaskRef.Xxx`, `DefinedType.Xxx`.
 
-Russian type synonyms: `Строка`, `Число`, `Булево`, `Дата`, `СправочникСсылка.Xxx`, `ДокументСсылка.Xxx`, `ПланСчетовСсылка.Xxx`.
+Russian type synonyms: `Строка`, `Число`, `Булево`, `Дата`, `СправочникСсылка.Xxx`, `ДокументСсылка.Xxx`, `ПланСчетовСсылка.Xxx`. The labels `meta-info` prints are accepted as input too (`ДокументОбъект.Заказ`, `ПВХСсылка.ВидыСубконто`, `Характеристика.Виды`, `НаборЗаписейРС.X`, …), so its output can be carried back into a definition.
+
+Type-name rules:
+- A bare name that is not a known form (a typo such as `Nubmer(15,2)`) is **refused** with the list of valid forms; nothing is written. A name with a namespace prefix (`v8:ValueTable`, `ent:AccountType`, `v8ui:Color`) passes as is and is judged by `meta-validate` check 22.
+- DBMS spellings are translated: `integer`/`int`/`int4` → `Number(10,0)`, `bigint` → `Number(19,0)`, `smallint` → `Number(5,0)`, `numeric(p,s)` → `Number(p,s)`, `varchar(n)` / `character varying(n)` → `String(n)`, `timestamp` → `DateTime`, `bytea` → `BinaryData` (`ДвоичныеДанные` / `BinaryData` is its own type, not `ValueStorage`; `base64Binary` still means `ValueStorage`).
+- A `Constant` without `valueType` is `String(10)` (the object kind no longer leaks into the value type).
+- `numberLength: 0` on a document, business process or task drops `Number` from the default `InputByString`.
 
 Flags: `req`, `index`, `indexAdditional`, `nonneg`, `master`, `mainFilter`, `denyIncomplete`, `useInTotals`.
 
@@ -171,6 +192,7 @@ Context shortcuts: `"server"` → Server+ServerCall, `"client"` → ClientManage
 - `{OutputDir}/{TypePlural}/{Name}/Ext/Module.bsl` — module (CommonModule, HTTPService, WebService)
 - `{OutputDir}/{TypePlural}/{Name}/Ext/Content.xml` — exchange plan content (ExchangePlan)
 - `{OutputDir}/{TypePlural}/{Name}/Ext/Flowchart.xml` — route map (BusinessProcess)
+- `{OutputDir}/ExternalDataSources/{Name}/Tables/{Table}.xml` — one file per external-source table
 - `Configuration.xml` — automatic registration in `<ChildObjects>`
 
 ## Placement in `Configuration.xml`
@@ -216,7 +238,15 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-edit/scr
 | Operation | Inline operation (alternative to DefinitionFile) |
 | Value | Value for inline operation |
 | DefinitionFile | JSON file with operations (alternative to Operation) |
-| NoValidate | Skip meta-validate after editing |
+| NoValidate | Skip the automatic validation after editing — the only opt-out |
+
+## Results, Refusals and Validation
+
+- **A failed operation is exit 1 with nothing written** (upstream 1.73): editing or removing an element that does not exist, an invalid enum value, a property the object kind does not have, a list property on a borrowed object of an extension. The whole definition is refused, not applied partly. `[WARN]` with exit 0 remains only for no-op cases — already added, nothing to delete, `>> after` / `before` anchor not found.
+- `add-form` / `add-template` are refused (exit 2) before any write; removing a form or template through `meta-edit` is refused too (exit 1) — use `form-add` / `remove-form` and `add-template` / `remove-template`.
+- After a successful edit the validator runs automatically and **its exit code is the run's result**: `meta-validate` from `1c-meta-validate` for configuration objects, `epf-validate` from `1c-epf-validate` for an external data processor / report. A missing validator is a refusal raised before the edit is written, never a silent skip. The Python runtime has no `epf-validate.py`: for an EPF / ERF it runs `epf-validate.ps1` through `pwsh` (or Windows PowerShell) and refuses before the write when no PowerShell host exists.
+- `modify-property` writes canonical XML: enum values are normalized (synonyms, case) and unknown ones rejected, the key is matched case-insensitively and written in its canonical case, an empty multilingual property is written as XML, `CodeLength` / `NumberLength` `0` also drops `Code` / `Number` from `InputByString`. In an extension a missing `RegisterRecords` is created on a borrowed document.
+- **External data sources**: on a source file `meta-edit` adds fields, tables (`add.tables` creates `<Source>/Tables/<Table>.xml` and registers it) and functions with the `meta-compile` syntax; removing a table is `meta-remove ExternalDataSource.<Source>.Table.<Table>`. Re-running `meta-compile` over an existing source is refused without `-Force` (it would give the source a new uuid).
 
 ## Operations — Summary Table
 
@@ -316,14 +346,22 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-info/scr
 | `brief` | Everything in one-two lines: field names, counters |
 | `full` | Everything expanded: TS columns, subscription sources, register records, forms |
 
-`-Name` — drill-down: expand a specific object element (tabular section, attribute, URL template, web service operation).
+`-Name` — drill-down: expand a specific object element (tabular section, attribute, **standard attribute**, URL template, web service operation, external-source table). A composite type is folded into a counter in the summary; the drill-down lists every type (`-Name ТипЗначения` on a chart of characteristic types, `-Name Владелец` on a subordinate catalog).
 
-## Supported Types (23)
+What the summary shows (upstream 1.16):
+- **Standard attributes** block in the same `name — type — [flags]` form as attributes: `Владелец`, `Код`, `Наименование`, `Дата`, `Номер`, `ТипЗначения` in `overview`; `Ссылка`, `ПометкаУдаления`, `Родитель`, `ЭтоГруппа` in `full`. Code / number type and length are visible, so code written from the summary sets the owner and the right key.
+- **Type sets** (`v8:TypeSet`) are printed as types: a subscription whose source is a defined type or a whole class ("all documents") has a source line, a defined type shows its composition, and a single-member defined type shows the member (`ОпределяемыйТип.ДенежнаяСумма` → `Число(15,2)`).
+- Command names are clean (no glued XML); `xs:base64Binary` prints as `ДвоичныеДанные`, storage as `ХранилищеЗначения`.
+- **External data sources**: the source shows its lock mode, tables and functions; a table shows its kind, source name, key / presentation / parent fields and the field list.
+
+The type labels it prints (`ДокументОбъект.Заказ`, `ПВХСсылка.X`, `НаборЗаписейРС.X`, `Характеристика.X`, …) are accepted as input by `meta-compile` and `meta-edit`.
+
+## Supported Types
 
 **Reference:** Catalog, Document, Enum, BusinessProcess, Task, ExchangePlan, ChartOfAccounts, ChartOfCharacteristicTypes, ChartOfCalculationTypes
 **Registers:** InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegister
 **Service:** Report, DataProcessor, HTTPService, WebService, CommonModule, ScheduledJob, EventSubscription
-**Other:** Constant, DocumentJournal, DefinedType
+**Other:** Constant, DocumentJournal, DefinedType, ExternalDataSource (and its tables)
 
 ## Examples
 
@@ -366,10 +404,10 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-remove/s
 | Parameter | Required | Description |
 |-----------|:--------:|-------------|
 | ConfigDir | yes | Root directory of the export (where Configuration.xml is) |
-| Object | yes | Type and name: `Catalog.Товары`, `Document.Заказ`, etc. |
+| Object | yes | Type and name: `Catalog.Товары`, `Document.Заказ`, etc. An external-source table takes four parts: `ExternalDataSource.PG.Table.products` |
 | DryRun | no | Only show what would be deleted, no changes |
 | KeepFiles | no | Don't delete files, only unregister |
-| Force | no | Delete despite found references |
+| Force | no | Delete despite found references; form slots that point at the removed object's forms are cleared |
 
 ## What It Does
 
@@ -384,7 +422,9 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-remove/s
 
 ## Supported Types
 
-Catalog, Document, Enum, Constant, InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegister, ChartOfAccounts, ChartOfCharacteristicTypes, ChartOfCalculationTypes, BusinessProcess, Task, ExchangePlan, DocumentJournal, Report, DataProcessor, CommonModule, ScheduledJob, EventSubscription, HTTPService, WebService, DefinedType, Role, Subsystem, CommonForm, CommonTemplate, CommonPicture, CommonAttribute, SessionParameter, FunctionalOption, FunctionalOptionsParameter, Sequence, FilterCriterion, SettingsStorage, XDTOPackage, WSReference, StyleItem, Language
+Catalog, Document, Enum, Constant, InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegister, ChartOfAccounts, ChartOfCharacteristicTypes, ChartOfCalculationTypes, BusinessProcess, Task, ExchangePlan, DocumentJournal, Report, DataProcessor, CommonModule, ScheduledJob, EventSubscription, HTTPService, WebService, DefinedType, Role, Subsystem, CommonForm, CommonTemplate, CommonPicture, CommonAttribute, SessionParameter, FunctionalOption, FunctionalOptionsParameter, Sequence, FilterCriterion, SettingsStorage, XDTOPackage, WSReference, StyleItem, Language, ExternalDataSource (whole source or one table)
+
+The support guard applies: an object of a vendor configuration "on the lock" is not removed (`SUPPORT_GUARD` in `.dev.env`, fail-closed on an unreadable support state) — see [support-manage.md](support-manage.md).
 
 ## Reference Check Categories
 
@@ -395,7 +435,7 @@ Catalog, Document, Enum, Constant, InformationRegister, AccumulationRegister, Ac
 | BSL code (English) | `Catalogs.Name`, `Documents.Name`, `Enums.Name`, etc. |
 | Common modules | `Name.` (method calls), `<Handler>Name.`, `<MethodName>Name.` |
 
-References from Configuration.xml, ConfigDumpInfo.xml, and subsystems are NOT blocking — they are cleaned automatically.
+`Configuration.xml` is scanned like any other file: configuration-level slots (`DefaultReportForm` and its neighbours, home-page items) that name the object or its forms are **listed as references** and cleared only with `-Force` — before, the file was skipped and such slots stayed dangling, so the configuration no longer loaded. The `<ChildObjects>` entry, `ConfigDumpInfo.xml` and subsystem content are not blocking — they are cleaned automatically. Type references and `.bsl` calls are never rewritten.
 
 ## Examples
 
@@ -418,7 +458,7 @@ Exit code: 0 = success, 1 = errors or references found.
 ---
 ## 5. Validate — Check Correctness
 
-Checks a metadata object XML from a configuration export for structural errors: root structure, InternalInfo, properties, allowed values, StandardAttributes, ChildObjects, name uniqueness, tabular sections, cross-properties, nested HTTP/Web service structures.
+Checks a metadata object XML from a configuration export for structural errors: root structure, InternalInfo, properties, allowed values, StandardAttributes, ChildObjects, forms, name uniqueness, tabular sections, cross-properties, nested HTTP/Web service structures, references, type names and format versions.
 
 ## Parameters and Command
 
@@ -434,39 +474,48 @@ Checks a metadata object XML from a configuration export for structural errors: 
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1 -ObjectPath "<path>"
 ```
 
-## Supported Types (23)
+## Supported Types
 
-**Reference:** Catalog, Document, Enum, ExchangePlan, ChartOfAccounts, ChartOfCharacteristicTypes, ChartOfCalculationTypes, BusinessProcess, Task
-**Registers:** InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegister
-**Reports/DataProcessors:** Report, DataProcessor
-**Service:** CommonModule, ScheduledJob, EventSubscription, HTTPService, WebService
-**Other:** Constant, DocumentJournal, DefinedType
+**Deep-checked (25):** Catalog, Document, Enum, ExchangePlan, ChartOfAccounts, ChartOfCharacteristicTypes, ChartOfCalculationTypes, BusinessProcess, Task, InformationRegister, AccumulationRegister, AccountingRegister, CalculationRegister, Report, DataProcessor, CommonModule, ScheduledJob, EventSubscription, HTTPService, WebService, Constant, DocumentJournal, DefinedType, ExternalDataSource and its tables.
+**Structural only** (root, uuid, Name): the remaining valid kinds, including IntegrationService and Bot — they are no longer an "Unrecognized metadata type" error.
 
 ## Checks Performed
 
 | # | Check | Severity |
 |---|-------|----------|
-| 1 | XML well-formedness + root structure | ERROR |
-| 1e | Root `version` equals `Configuration.xml` (when one is found above the object) | ERROR |
-| 2 | InternalInfo / GeneratedType — every category of the kind present, name exactly `<Type><Category>.<Name>` | ERROR / WARN |
-| 3 | Properties — Name, Synonym | ERROR / WARN |
-| 4 | Properties — enum property values | ERROR |
+| 1 | XML well-formed, root structure; a version outside the tested 2.17–2.21 range is a warning | ERROR / WARN |
+| 2 | InternalInfo / GeneratedType: every category present, name exactly `<Type><Category>.<Name>` (external-source table: `ExternalDataSourceTable<Cat>.<Source>.<Table>`, a missing category only warns) | ERROR / WARN |
+| 3 | Properties: Name, Synonym; `FormType` / `TemplateType` of form and template descriptors | ERROR / WARN |
+| 4 | Enum property values (root, attributes, tabular sections, common-attribute content); scalar root `<Type>` | ERROR |
 | 5 | StandardAttributes | ERROR / WARN |
-| 6 | ChildObjects — allowed element types | ERROR |
-| 6a–6d | Form registrations — scalar reference, descriptor on disk, parseable, same name | ERROR |
-| 6e | Form descriptors and `Ext/Form.xml` carry the `Configuration.xml` version | ERROR |
-| 6f | `Default*Form` / `Auxiliary*Form` — `<Kind>.<Name>.Form.<Form>` of a declared form (or an existing `CommonForm`); object, folder, record and list slots point at a form of that role | ERROR |
-| 6g | A form of the object binds `Description` / `Code` only when `DescriptionLength` / `CodeLength` > 0 | ERROR |
-| 6h | The default object form shows a mandatory `Description` (length > 0, `ShowError`) or some module assigns it | WARN |
-| 7 | Attributes/Dimensions/Resources — UUID, Name, Type | ERROR |
-| 8 | Name uniqueness — case-insensitive; attributes, tabular sections, dimensions and resources share one namespace | ERROR |
-| 9 | TabularSections — internal structure | ERROR / WARN |
+| 6 | ChildObjects: allowed element types and order | ERROR / WARN |
+| 6a–6d | Form registrations: scalar reference, descriptor on disk, parseable, same name | ERROR |
+| 6f | Default / auxiliary object, folder, record and list forms of this object have that role (main attribute type); whether the reference resolves is check 20 | ERROR |
+| 6g | A form binds `Description` / `Code` only when the length is > 0 | ERROR |
+| 6h | The default object form shows a mandatory `Description`, or a module assigns it | WARN |
+| 7 | Attributes / dimensions / resources / enum values / columns: uuid, Name, Type (an empty `<Type/>` is valid; no Type block warns) | ERROR / WARN |
+| 7b | Own name equals a standard attribute of the kind (EN/RU); tabular-section column `LineNumber` / `Ref` | ERROR |
+| 8 | Name uniqueness, case-insensitive; attributes, tabular sections, dimensions, resources, addressing attributes and accounting flags share one namespace; each clash reported once | ERROR |
+| 9 | Tabular sections: internal structure | ERROR / WARN |
 | 10 | Cross-property consistency | ERROR / WARN |
-| 11 | HTTPService/WebService — nested structure | ERROR |
+| 11 | HTTPService / WebService nested structure (`ReuseSessions` = `DontUse` / `Use` / `AutoUse`) | ERROR / WARN |
 | 12 | Forbidden properties per kind (InformationRegister: `Periodicity`, `DefaultRecordSetForm`) | ERROR |
-| 16a | Type spelled with an export folder name (`cfg:Catalogs.X` instead of `cfg:CatalogRef.X`) | ERROR |
+| 13 | `EventSubscription.Handler` / `ScheduledJob.MethodName` resolve to a common module and an export method | ERROR / WARN |
+| 14 | DocumentJournal column content | ERROR |
+| 15 | Commands: uuid, group set and valid, no parameter type in a section group, name not equal to a standard command | ERROR |
+| 16 | `CatalogRef.X`-style types resolve: absent from the configuration is ERROR, registered but missing from the dump is WARN; subscription sources given as a type set (`v8:TypeSet`) and `xr:Item` journal content are understood | ERROR / WARN |
+| 16a | Export folder name used as a type (`cfg:Catalogs.X`) | ERROR |
+| 17 | `MDObjectRef` names an object, not a type (`CatalogRef.X`) | ERROR / WARN |
+| 18 | A property newer than the file's format version (`TypeReductionMode` 2.18, `LineNumberLength` 2.20, 2.21 properties) | ERROR |
+| 19 | `LineNumberLength` within 5..9 | ERROR |
+| 20 | `Default*Form` / `Auxiliary*Form` / `ChoiceForm` references resolve (own, foreign, common, external-source forms) | ERROR / WARN |
+| 21 | External-source table: field references and key fields | ERROR / WARN |
+| 22 | Type-name grammar (missing prefix, DBMS type name) is ERROR; an unknown or non-storable type for the owner is WARN | ERROR / WARN |
+| 23 | Type set inside a defined type is ERROR; a bare metatype in a characteristic-types chart or a composite defined type / characteristic warns | ERROR / WARN |
+| 24 | A body (`Ext/*.xml`, Help, Predefined, Rights, Form, `<BaseForm>`) stamped with a version different from its descriptor is ERROR; an object or form whose version differs from the dump (`Configuration.xml` or the EPF/ERF root) is WARN — measured on 8.3.27: a whole object in another format version loads, a body out of step with its descriptor does not | ERROR / WARN |
+| 25 | Multilingual string holding plain text instead of `<v8:item>` | ERROR |
 
-Checks 13–19 are not listed individually: method references, journal columns, commands, reference-type existence, `MDObjectRef` shape, version-dependent properties, `LineNumberLength`. Both runtimes (`.ps1` / `.py`) print the same messages.
+Local checks (not in upstream): 6a–6d, 6f, 6g, 6h, 12, 16a, and the stricter 2 and 8. The former local 1e / 6e ("every file carries the `Configuration.xml` version", ERROR) are retired in favour of 24. Both runtimes (`.ps1` / `.py`) print the same messages; the Python runtime takes named arguments (`-ObjectPath <path>`).
 
 Exit code: 0 = all checks passed, 1 = errors found.
 

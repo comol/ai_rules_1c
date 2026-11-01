@@ -6,6 +6,22 @@
 				<xr:TypeId>e0e0e0e0-0000-4000-8000-0000000000e2</xr:TypeId>
 				<xr:ValueId>e0e0e0e0-0000-4000-8000-0000000000e3</xr:ValueId>
 			</xr:GeneratedType>
+			<xr:GeneratedType name="CatalogRef.Zeta" category="Ref">
+				<xr:TypeId>e0e0e0e0-0000-4000-8000-0000000000e4</xr:TypeId>
+				<xr:ValueId>e0e0e0e0-0000-4000-8000-0000000000e5</xr:ValueId>
+			</xr:GeneratedType>
+			<xr:GeneratedType name="CatalogSelection.Zeta" category="Selection">
+				<xr:TypeId>e0e0e0e0-0000-4000-8000-0000000000e6</xr:TypeId>
+				<xr:ValueId>e0e0e0e0-0000-4000-8000-0000000000e7</xr:ValueId>
+			</xr:GeneratedType>
+			<xr:GeneratedType name="CatalogList.Zeta" category="List">
+				<xr:TypeId>e0e0e0e0-0000-4000-8000-0000000000e8</xr:TypeId>
+				<xr:ValueId>e0e0e0e0-0000-4000-8000-0000000000e9</xr:ValueId>
+			</xr:GeneratedType>
+			<xr:GeneratedType name="CatalogManager.Zeta" category="Manager">
+				<xr:TypeId>e0e0e0e0-0000-4000-8000-0000000000ea</xr:TypeId>
+				<xr:ValueId>e0e0e0e0-0000-4000-8000-0000000000eb</xr:ValueId>
+			</xr:GeneratedType>
 		</InternalInfo>
 		<Properties>
 			<ObjectBelonging>Adopted</ObjectBelonging>

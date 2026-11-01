@@ -1,11 +1,16 @@
-﻿# form-compile v1.176 — Compile 1C managed form from JSON or object metadata
+﻿# form-compile v1.224 — Compile 1C managed form from JSON or object metadata
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: from-object — a document choice form gets ChoiceMode like the catalog
 # one, the document item preset writes AutoTime=CurrentOrLast /
 # UsePostingMode=Auto / RepostOnWrite=true, and `Description` is bound only when
-# DescriptionLength > 0. windowOpeningMode / autoTime / usePostingMode accept only
-# the platform enum values, and a missing Configuration.xml is reported instead of
-# silently assuming 2.17. Same deltas as form-compile.py.
+# DescriptionLength > 0. A missing Configuration.xml is reported instead of
+# silently assuming 2.17. Events: one normalizer for the three DSL spellings
+# (events / on + handlers / handlers alone) with a refusal on two spellings at
+# once, on a `handlers` key absent from `on` and on an event name the platform
+# does not have at all (not in the event catalog of any element). Support guard
+# from .dev.env SUPPORT_GUARD, fail-closed; the guard inspects Ext/Form.xml of a
+# -FromObject directory. Same deltas as form-compile.py.
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[string]$JsonPath,
 
@@ -20,6 +25,79 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# --- Разбор пользовательского JSON ---
+# Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
+# идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
+# для полиморфного входа: у файла подсказка была бы наполнителем. -Inline печатает ещё и то,
+# что доехало: у файла такого вопроса нет — путь назван, позицию дал парсер, файл на диске.
+# Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
+# вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
+# и одиночный объект (issue #136).
+function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
+	try {
+		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
+		# тогда как py-порт падал. Проверяем сами, чтобы порты вели себя одинаково.
+		if ([string]::IsNullOrWhiteSpace($text)) { throw 'input is empty' }
+		# pwsh 7+ сам разворачивает массив верхнего уровня ([x] → x, [] → $null). Ключ -NoEnumerate
+		# появился там же: в 5.1 и pwsh 6 его нет, поэтому спрашиваем командлет, а не версию.
+		$cfj = @{}
+		$cfjKeys = (Get-Command ConvertFrom-Json).Parameters
+		if ($cfjKeys.ContainsKey('NoEnumerate')) { $cfj.NoEnumerate = $true }
+		# pwsh 7.5+ без -DateKind String превращает ISO-строки дат в DateTime, и в XML уходит формат
+		# локали; в 5.1 и pwsh до 7.5 ключа нет (5.1 даты и так не трогает).
+		if ($cfjKeys.ContainsKey('DateKind')) { $cfj.DateKind = 'String' }
+		$parsed = $text | ConvertFrom-Json @cfj
+	} catch {
+		$what = if ($expected) { "$source expects $expected" } else { "Invalid JSON in $source" }
+		if ($Inline) {
+			$got = ($text -replace '\s+', ' ').Trim()
+			$label = 'got'
+			if (-not $got) { $got = '(empty)' }
+			elseif ($got.Length -gt 60) { $label = 'got (first 60 chars)'; $got = $got.Substring(0, 60) }
+			$what = "${what}, ${label}: ${got}"
+		}
+		[Console]::Error.WriteLine("[ERROR] ${what} ($($_.Exception.Message))")
+		exit 1
+	}
+	return ,$parsed
+}
+
+# --- Чтение входного JSON-файла ---
+# Кодировку берём из BOM — это объявление самого файла, а не догадка. Без BOM ждём строгий UTF-8:
+# Get-Content -Encoding UTF8 на файле в cp1251 тихо меняет кириллицу на U+FFFD, JSON после этого
+# разбирается успешно, и в конфигурацию уезжает имя из «замен». Кодовую страницу не подбираем:
+# угаданное имя уйдёт в метаданные так же молча.
+function Read-JsonInputFile([string]$path) {
+	# Проверка здесь, а не по навыкам: часть навыков проверяла путь сама, часть — нет, и один и тот
+	# же промах давал то внятную строку, то дамп MethodInvocationException. Навыки со своей
+	# проверкой срабатывают раньше и сохраняют свой текст.
+	if (-not (Test-Path -LiteralPath $path)) {
+		[Console]::Error.WriteLine("[ERROR] File not found: $path")
+		exit 1
+	}
+	if (Test-Path -LiteralPath $path -PathType Container) {
+		[Console]::Error.WriteLine("[ERROR] Expected a JSON file, got a directory: $path")
+		exit 1
+	}
+	$bytes = [System.IO.File]::ReadAllBytes($path)
+	if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+		return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+		return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+		return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	try {
+		return (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes)
+	} catch {
+		$detail = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+		[Console]::Error.WriteLine("[ERROR] ${path} is not valid UTF-8: ${detail} - save the file as UTF-8, or add a BOM if it is UTF-16")
+		exit 1
+	}
+}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -306,7 +384,7 @@ function Load-Preset([string]$PresetName, [string]$ScriptDir) {
 	$presetDir = Join-Path (Split-Path $ScriptDir -Parent) "presets"
 	$builtInPath = Join-Path $presetDir "$PresetName.json"
 	if (Test-Path $builtInPath) {
-		$presetJson = Get-Content -Raw -Encoding UTF8 $builtInPath | ConvertFrom-Json
+		$presetJson = ConvertFrom-JsonInput (Read-JsonInputFile $builtInPath) $builtInPath
 		# Convert PSCustomObject to hashtable recursively
 		$toHash = {
 			param($obj)
@@ -333,7 +411,7 @@ function Load-Preset([string]$PresetName, [string]$ScriptDir) {
 	while ($scanDir) {
 		$projPreset = Join-Path (Join-Path (Join-Path (Join-Path $scanDir "presets") "skills") "form") "$PresetName.json"
 		if (Test-Path $projPreset) {
-			$projJson = Get-Content -Raw -Encoding UTF8 $projPreset | ConvertFrom-Json
+			$projJson = ConvertFrom-JsonInput (Read-JsonInputFile $projPreset) $projPreset
 			$projHash = & $toHash $projJson
 			foreach ($k in @($projHash.Keys)) {
 				$defaults[$k] = & $deepMerge $defaults[$k] $projHash[$k]
@@ -630,7 +708,7 @@ function Generate-CatalogItemDSL($meta, [hashtable]$p, [hashtable]$fd) {
 	# BSP group
 	$bspGroup = if ($p.additional -and $null -ne $p.additional.bspGroup) { $p.additional.bspGroup } else { $true }
 	if ($bspGroup) {
-		$rootElements += [ordered]@{ group = "vertical"; name = "ГруппаДополнительныеРеквизиты" }
+		$rootElements += [ordered]@{ group = "vertical"; name = "ГруппаДополнительныеРеквизиты"; showTitle = $true }
 	}
 
 	# Properties
@@ -862,7 +940,7 @@ function Generate-DocumentItemDSL($meta, [hashtable]$p, [hashtable]$fd) {
 			$addPageChildren += @($addLeftEls + $addRightEls)
 		}
 		if ($addBspGroup) {
-			$addPageChildren += [ordered]@{ group = "vertical"; name = "ГруппаДополнительныеРеквизиты" }
+			$addPageChildren += [ordered]@{ group = "vertical"; name = "ГруппаДополнительныеРеквизиты"; showTitle = $true }
 		}
 		$additionalPage = [ordered]@{ page = "ГруппаДополнительно"; title = "Дополнительно"; children = $addPageChildren }
 	}
@@ -893,7 +971,7 @@ function Generate-DocumentItemDSL($meta, [hashtable]$p, [hashtable]$fd) {
 		$rootElements += $headerGroup
 		if ($footerElements.Count -gt 0) { $rootElements += $footerElements }
 		if ($addBspGroup -and $addPos -ne "none") {
-			$rootElements += [ordered]@{ group = "vertical"; name = "ГруппаДополнительныеРеквизиты" }
+			$rootElements += [ordered]@{ group = "vertical"; name = "ГруппаДополнительныеРеквизиты"; showTitle = $true }
 		}
 	} else {
 		# Pages form
@@ -1250,7 +1328,7 @@ function Generate-ChartOfAccountsItemDSL($meta, [hashtable]$p, [hashtable]$fd, [
 			$flagChildren += [ordered]@{ check = $flag.Name; path = "Объект.$($flag.Name)" }
 		}
 		$elements += [ordered]@{
-			group = "vertical"; name = "ГруппаПризнакиУчета"; title = "Признаки учета"
+			group = "vertical"; name = "ГруппаПризнакиУчета"; showTitle = $true; title = "Признаки учета"
 			children = $flagChildren
 		}
 	}
@@ -1363,9 +1441,20 @@ function Generate-ChartOfAccountsChoiceDSL($meta, [hashtable]$presetData) {
 function Detect-FormatVersion([string]$dir) {
 	$d = $dir
 	while ($d) {
+		# Автономная внешняя обработка/отчёт: своего Configuration.xml у неё нет, версию несёт
+		# корень самой обработки. Без этого форма и макет внутри обработки 2.21 писались бы 2.17.
+		$extPath = "$d.xml"
+		if (Test-Path $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]' -and $extHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
 		$cfgPath = Join-Path $d "Configuration.xml"
 		if (Test-Path $cfgPath) {
-			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			$cfgText = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			# Длину среза берём по СТРОКЕ, а не по размеру файла: размер в БАЙТАХ, Substring считает
+			# СИМВОЛЫ, и на кириллице байт больше — короткий Configuration.xml ронял навык исключением.
+			$head = $cfgText.Substring(0, [Math]::Min(2000, $cfgText.Length))
 			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
 		}
 		$parent = Split-Path $d -Parent
@@ -1376,6 +1465,69 @@ function Detect-FormatVersion([string]$dir) {
 	# from Configuration.xml is refused on load.
 	Write-Host "[WARN] Configuration.xml not found above the output path — Form.xml version 2.17 assumed; check it against the target configuration"
 	return "2.17"
+}
+
+# Префикс имён расширения — <NamePrefix> ближайшего вверх Configuration.xml; "" — не расширение или не задан.
+function Get-ExtensionNamePrefix([string]$dir) {
+	$d = $dir
+	while ($d) {
+		$cfg = Join-Path $d 'Configuration.xml'
+		if (Test-Path -LiteralPath $cfg) {
+			$m = [regex]::Match([System.IO.File]::ReadAllText($cfg), '<NamePrefix>([^<]*)</NamePrefix>')
+			if ($m.Success) { return $m.Groups[1].Value }
+			return ''
+		}
+		$parent = Split-Path $d -Parent
+		if (-not $parent -or $parent -eq $d) { break }
+		$d = $parent
+	}
+	return ''
+}
+
+# Версия формата как число для сравнений: "2.20" → 220, "2.9" → 209.
+# Строковое сравнение здесь неверно ("2.9" > "2.17" лексикографически) — известная ловушка.
+function Get-FormatRank([string]$ver) {
+	if ($ver -match '^(\d+)\.(\d+)$') { return [int]$Matches[1] * 100 + [int]$Matches[2] }
+	return 0
+}
+
+# Режим совместимости конфигурации ($null — не определён). От него зависит xmlns:dcssch в шапке:
+# при режиме < 8.3.19 платформа не объявляет его никогда и не выгружает поля/параметры динамического
+# списка (в базе они хранятся). Подъём останавливается на корне внешней обработки/отчёта: её форму
+# режим базы не меняет, а Configuration.xml выше по дереву (src/cf рядом с src/epf) — чужой.
+# <CompatibilityMode> лежит ~11-12 КБ от начала — читаем 64 КБ.
+function Detect-CompatibilityMode([string]$dir) {
+	$d = $dir
+	while ($d) {
+		$extPath = "$d.xml"
+		if (Test-Path -LiteralPath $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]') { return $null }
+		}
+		$cfgPath = Join-Path $d "Configuration.xml"
+		if (Test-Path -LiteralPath $cfgPath) {
+			$text = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			$head = $text.Substring(0, [Math]::Min(65536, $text.Length))
+			if ($head -match '<CompatibilityMode>([^<]+)</CompatibilityMode>') { return $Matches[1].Trim() }
+			# Расширение: своего CompatibilityMode нет, форму ведёт его собственный режим. В основной
+			# конфигурации этот тег — режим для её расширений, не её собственный: только для расширения.
+			if ($head -match '<ConfigurationExtensionPurpose>' -and $head -match '<ConfigurationExtensionCompatibilityMode>([^<]+)</ConfigurationExtensionCompatibilityMode>') { return $Matches[1].Trim() }
+			return $null
+		}
+		$parent = Split-Path $d -Parent
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+# Номер режима совместимости для сравнений: "Version8_3_27" → 80327, "Version8_5_1" → 80501.
+function Get-CompatModeRank([string]$mode) {
+	if ($mode -match '^Version(\d+)_(\d+)(?:_(\d+))?$') {   # и двухчастный Version8_1
+		return [int]$Matches[1] * 10000 + [int]$Matches[2] * 100 + [int]$Matches[3]
+	}
+	return 0
 }
 
 # --- Support guard (Ext/ParentConfigurations.bin) ---
@@ -1425,16 +1577,20 @@ function Get-EditMode([string]$cfgDir) {
 		    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
 		    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
 		}
-		$pj = Find-V8Project (Get-Location).Path
-		if (-not $pj) { $pj = Find-V8Project $cfgDir }
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
 		if (-not $pj) { return 'deny' }
-		$proj = Get-Content -Raw $pj | ConvertFrom-Json
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		# configSrc — от каталога .v8-project.json, а не от рабочего каталога: иначе из подкаталога
+		# проекта база не сопоставляется и берётся правило проекта.
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
 		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
 		if ($proj.databases) {
 			foreach ($db in $proj.databases) {
 				if ($db.configSrc) {
-					$src = [System.IO.Path]::GetFullPath($db.configSrc).TrimEnd('\', '/')
-					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar)) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
 						if ($db.editingAllowedCheck) { return $db.editingAllowedCheck }
 					}
 				}
@@ -1447,7 +1603,7 @@ function Get-EditMode([string]$cfgDir) {
 function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	try {
 		$rp = $targetPath
-		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).Path } catch {}
+		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).ProviderPath } catch {}
 		# Autonomous external object (EPF/ERF): never part of a config on support (issue #39).
 		if (Test-ExternalObjectRoot $rp) { return }
 		$elemUuid = Get-RootUuid $rp
@@ -1473,6 +1629,8 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 		$G = 0; $K = 0; $text = $null; $parseOk = $false
 		try {
 			$bytes = [System.IO.File]::ReadAllBytes($binPath)
+			# A state of 32 bytes or less is the empty container a configuration keeps when vendor support was removed completely (docs/1c-support-state-spec.md upstream: ~16 bytes) - nothing is on support, so it is not 'unreadable'.
+			if ($bytes.Length -le 32) { $parseOk = $true }
 			if ($bytes.Length -gt 32) {
 				$start = 0
 				if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
@@ -1537,7 +1695,7 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	}
 }
 
-$script:outPathResolved = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location) $OutputPath }
+$script:outPathResolved = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location).ProviderPath $OutputPath }
 # -FromObject accepts a form directory; the real edit target is Ext/Form.xml
 # inside it. Normalize the guard target the same way the mode dispatch below
 # normalizes OutputPath, so the support guard inspects the actual file.
@@ -1548,6 +1706,23 @@ if ($FromObject -and $script:guardTarget -notmatch '[/\\]Ext[/\\]Form\.xml$') {
 }
 Assert-EditAllowed $script:guardTarget 'editable'
 $script:formatVersion = Detect-FormatVersion ([System.IO.Path]::GetDirectoryName($script:outPathResolved))
+$script:extNamePrefix = Get-ExtensionNamePrefix ([System.IO.Path]::GetDirectoryName($script:outPathResolved))
+$script:compatMode = Detect-CompatibilityMode ([System.IO.Path]::GetDirectoryName($script:outPathResolved))
+# Режим ниже 8.3.19: dcssch в шапке — только при использовании, поля/параметры списка не выгружаются.
+# Нераспознанный режим (DontUse и т.п. — ранг 0) — как текущая платформа, то есть не старый.
+$script:compatRank = Get-CompatModeRank $script:compatMode
+$script:isCompatPre8319 = ($script:compatRank -gt 0 -and $script:compatRank -lt 80319)
+
+# Объявления пространств имён — одной переменной: место эмиссии её только интерполирует.
+# Правки шапки (как xmlns:pal в формате 2.21) делаются здесь, в одном месте.
+$script:formNsDecl = 'xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+
+# 2.21 (8.5) добавила в шапку пространство палитры — ради <Color> у значений перечисления.
+# Вставляем НА МЕСТО (после lf, перед style): платформа держит объявления по алфавиту,
+# дописать в конец нельзя.
+if ((Get-FormatRank $script:formatVersion) -ge 221) {
+	$script:formNsDecl = $script:formNsDecl -replace ' xmlns:style=', ' xmlns:pal="http://v8.1c.ru/8.1/data/ui/colors/palette" xmlns:style='
+}
 
 # --- 0. Path normalization and mode dispatch ---
 
@@ -1586,7 +1761,7 @@ if ($FromObject) {
 
 	# Resolve object path and purpose from OutputPath convention:
 	# .../TypePlural/ObjectName/Forms/FormName/Ext/Form.xml
-	$outAbs = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location) $OutputPath }
+	$outAbs = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location).ProviderPath $OutputPath }
 	$pathParts = $outAbs -split '[/\\]'
 	# Find "Forms" segment
 	$formsIdx = -1
@@ -1617,7 +1792,7 @@ if ($FromObject) {
 	# Apply: explicit -ObjectPath / -Purpose override resolved values
 	$fromObjPath = $null
 	if ($ObjectPath) {
-		$fromObjPath = if ([System.IO.Path]::IsPathRooted($ObjectPath)) { $ObjectPath } else { Join-Path (Get-Location) $ObjectPath }
+		$fromObjPath = if ([System.IO.Path]::IsPathRooted($ObjectPath)) { $ObjectPath } else { Join-Path (Get-Location).ProviderPath $ObjectPath }
 		# Append .xml if missing
 		if (-not $fromObjPath.EndsWith(".xml")) { $fromObjPath = "$fromObjPath.xml" }
 	} elseif ($resolvedObjectPath) {
@@ -1676,7 +1851,7 @@ if ($FromObject) {
 	# Emit DSL if requested
 	if ($EmitDsl) {
 		$dslJson = $dsl | ConvertTo-Json -Depth 20
-		$dslPath = if ([System.IO.Path]::IsPathRooted($EmitDsl)) { $EmitDsl } else { Join-Path (Get-Location) $EmitDsl }
+		$dslPath = if ([System.IO.Path]::IsPathRooted($EmitDsl)) { $EmitDsl } else { Join-Path (Get-Location).ProviderPath $EmitDsl }
 		$enc = New-Object System.Text.UTF8Encoding($true)
 		[System.IO.File]::WriteAllText($dslPath, $dslJson, $enc)
 		Write-Host "[from-object] DSL saved: $dslPath"
@@ -1684,7 +1859,7 @@ if ($FromObject) {
 
 	# Feed DSL into existing compiler
 	$dslJson = $dsl | ConvertTo-Json -Depth 20
-	$def = $dslJson | ConvertFrom-Json
+	$def = ConvertFrom-JsonInput $dslJson 'generated DSL'
 } else {
 	# --- 1. Load and validate JSON (original mode) ---
 
@@ -1693,23 +1868,30 @@ if ($FromObject) {
 		exit 1
 	}
 
-	$json = Get-Content -Raw -Encoding UTF8 $JsonPath
-	$def = $json | ConvertFrom-Json
+	$json = Read-JsonInputFile $JsonPath
+	$def = ConvertFrom-JsonInput $json $JsonPath
 }
 
 # Базовая директория для @file-ссылок в query динсписка (зеркало skd-compile)
-$script:queryBaseDir = if ($JsonPath) { [System.IO.Path]::GetDirectoryName((Resolve-Path $JsonPath).Path) } else { (Get-Location).Path }
-function Resolve-QueryValue {
+$script:queryBaseDir = if ($JsonPath) { [System.IO.Path]::GetDirectoryName((Resolve-Path $JsonPath).ProviderPath) } else { (Get-Location).ProviderPath }
+function Resolve-TextFromFile {
 	param([string]$val, [string]$baseDir)
 	if (-not $val.StartsWith("@")) { return $val }
 	$filePath = $val.Substring(1)
 	if ([System.IO.Path]::IsPathRooted($filePath)) {
 		$candidates = @($filePath)
 	} else {
-		$candidates = @((Join-Path $baseDir $filePath), (Join-Path (Get-Location).Path $filePath))
+		$candidates = @(
+			(Join-Path $baseDir $filePath),
+			(Join-Path (Get-Location).ProviderPath $filePath)
+		)
 	}
-	foreach ($c in $candidates) { if (Test-Path $c) { return (Get-Content -Raw -Encoding UTF8 $c).TrimEnd() } }
-	Write-Error "Query file not found: $filePath (searched: $($candidates -join ', '))"
+	foreach ($c in $candidates) {
+		if (Test-Path $c) {
+			return (Get-Content -Raw -Encoding UTF8 $c).TrimEnd()
+		}
+	}
+	Write-Error "Файл значения не найден: $filePath (искали: $($candidates -join ', '))"
 	exit 1
 }
 
@@ -1743,6 +1925,12 @@ function X {
 }
 
 function Esc-Xml {
+	param([string]$s)
+	# Эскейп ЗНАЧЕНИЯ АТРИБУТА: & < > и кавычка — внутри "..." литеральная " невалидна.
+	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
+}
+
+function Esc-XmlText {
 	# Экранирование ТЕКСТА элемента (<v8:content>, <Value>): только & < > .
 	# Кавычки/апострофы в тексте экранировать НЕ нужно (1С их не экранирует — пишет литерально);
 	# &quot; ломал бы раундтрип. Кавычки спецсимвольны лишь в значениях атрибутов.
@@ -1757,14 +1945,14 @@ function Emit-MLItems {
 	param($val, [string]$indent)
 	if ($val -is [System.Collections.IDictionary]) {
 		foreach ($k in $val.Keys) {
-			X "$indent<v8:item>"; X "$indent`t<v8:lang>$k</v8:lang>"; X "$indent`t<v8:content>$(Esc-Xml "$($val[$k])")</v8:content>"; X "$indent</v8:item>"
+			X "$indent<v8:item>"; X "$indent`t<v8:lang>$k</v8:lang>"; X "$indent`t<v8:content>$(Esc-XmlText "$($val[$k])")</v8:content>"; X "$indent</v8:item>"
 		}
 	} elseif ($val -is [System.Management.Automation.PSCustomObject]) {
 		foreach ($p in $val.PSObject.Properties) {
-			X "$indent<v8:item>"; X "$indent`t<v8:lang>$($p.Name)</v8:lang>"; X "$indent`t<v8:content>$(Esc-Xml "$($p.Value)")</v8:content>"; X "$indent</v8:item>"
+			X "$indent<v8:item>"; X "$indent`t<v8:lang>$($p.Name)</v8:lang>"; X "$indent`t<v8:content>$(Esc-XmlText "$($p.Value)")</v8:content>"; X "$indent</v8:item>"
 		}
 	} else {
-		X "$indent<v8:item>"; X "$indent`t<v8:lang>ru</v8:lang>"; X "$indent`t<v8:content>$(Esc-Xml "$val")</v8:content>"; X "$indent</v8:item>"
+		X "$indent<v8:item>"; X "$indent`t<v8:lang>ru</v8:lang>"; X "$indent`t<v8:content>$(Esc-XmlText "$val")</v8:content>"; X "$indent</v8:item>"
 	}
 }
 
@@ -1783,7 +1971,7 @@ function Emit-USPresentation {
 	param($val, [string]$tag, [string]$indent)
 	if ($null -eq $val) { return }
 	if ($val -is [string]) {
-		X "$indent<$tag xsi:type=`"xs:string`">$(Esc-Xml $val)</$tag>"
+		X "$indent<$tag xsi:type=`"xs:string`">$(Esc-XmlText $val)</$tag>"
 	} else {
 		Emit-MLText -tag $tag -text $val -indent $indent -xsiType "v8:LocalStringType"
 	}
@@ -1867,7 +2055,7 @@ function Parse-FilterShorthand {
 			if ($valPart -eq "true" -or $valPart -eq "false") { $result.value = [bool]($valPart -eq "true"); $result["valueType"] = "xs:boolean" }
 			elseif ($valPart -match '^\d{4}-\d{2}-\d{2}T') { $result.value = $valPart }  # дата без valueType → Emit-FilterItem выведет StandardBeginningDate Custom (дефолт даты в фильтре)
 			elseif ($valPart -match '^\d+(\.\d+)?$') { $result.value = $valPart; $result["valueType"] = "xs:decimal" }
-			elseif ($valPart -match '^(Перечисление|Справочник|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета)\.') { $result.value = $valPart; $result["valueType"] = "dcscor:DesignTimeValue" }
+			elseif ($valPart -match '^(Перечисление|Справочник|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|ПланОбмена|Enum|Catalog|Document|ChartOfAccounts|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|ExchangePlan)\.[^.]+\.[^.]+') { $result.value = $valPart; $result["valueType"] = "dcscor:DesignTimeValue" }
 			else { $result.value = $valPart; $result["valueType"] = "xs:string" }
 		}
 	} else { $result.field = $s }
@@ -1912,10 +2100,10 @@ function Emit-FilterItem {
 			}
 		}
 		if ($item.presentation) { Emit-USPresentation -val $item.presentation -tag "dcsset:presentation" -indent "$indent`t" }
-		if ($item.viewMode) { X "$indent`t<dcsset:viewMode>$(Esc-Xml "$($item.viewMode)")</dcsset:viewMode>" }
+		if ($item.viewMode) { X "$indent`t<dcsset:viewMode>$(Esc-XmlText "$($item.viewMode)")</dcsset:viewMode>" }
 		if ($item.userSettingID) {
 			$guid = if ("$($item.userSettingID)" -eq "auto") { New-Guid-String } else { "$($item.userSettingID)" }
-			X "$indent`t<dcsset:userSettingID>$(Esc-Xml $guid)</dcsset:userSettingID>"
+			X "$indent`t<dcsset:userSettingID>$(Esc-XmlText $guid)</dcsset:userSettingID>"
 		}
 		if ($item.userSettingPresentation) { Emit-USPresentation -val $item.userSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t" }
 		X "$indent</dcsset:item>"
@@ -1923,10 +2111,10 @@ function Emit-FilterItem {
 	}
 	X "$indent<dcsset:item xsi:type=`"dcsset:FilterItemComparison`">"
 	if ($item.use -eq $false) { X "$indent`t<dcsset:use>false</dcsset:use>" }
-	X "$indent`t<dcsset:left xsi:type=`"dcscor:Field`">$(Esc-Xml "$($item.field)")</dcsset:left>"
+	X "$indent`t<dcsset:left xsi:type=`"dcscor:Field`">$(Esc-XmlText "$($item.field)")</dcsset:left>"
 	$compType = $script:comparisonTypes["$($item.op)"]
 	if (-not $compType) { $compType = "$($item.op)" }
-	X "$indent`t<dcsset:comparisonType>$(Esc-Xml $compType)</dcsset:comparisonType>"
+	X "$indent`t<dcsset:comparisonType>$(Esc-XmlText $compType)</dcsset:comparisonType>"
 	$valIsArray = ($item.value -is [array]) -or ($item.value -is [System.Collections.IList] -and $item.value -isnot [string])
 	if ($valIsArray) {
 		if (@($item.value).Count -eq 0) {
@@ -1945,7 +2133,7 @@ function Emit-FilterItem {
 					elseif ("$v" -match '^(Перечисление|Справочник|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена|Catalog|Enum|Document|ChartOfAccounts|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') { $vt = 'dcscor:DesignTimeValue' }
 					else { $vt = 'xs:string' }
 				}
-				$vStr = if ($v -is [bool]) { "$v".ToLower() } else { Esc-Xml "$v" }
+				$vStr = if ($v -is [bool]) { "$v".ToLower() } elseif ($vt -eq 'dcscor:DesignTimeValue') { Esc-XmlText (Normalize-DesignTimeValue "$v") } else { Esc-XmlText "$v" }
 				$nsAttr = Get-ValueTypeNsAttr -valueType $vt -value "$v"
 				X "$indent`t<dcsset:right$nsAttr xsi:type=`"$vt`">$vStr</dcsset:right>"
 			}
@@ -1971,8 +2159,8 @@ function Emit-FilterItem {
 			$variant = "$sv"; $hasDate = $false; $dateV = $null
 		}
 		X "$indent`t<dcsset:right xsi:type=`"v8:$sdType`">"
-		X "$indent`t`t<v8:variant xsi:type=`"v8:${sdType}Variant`">$(Esc-Xml $variant)</v8:variant>"
-		if ($hasDate) { X "$indent`t`t<v8:date>$(Esc-Xml $dateV)</v8:date>" }
+		X "$indent`t`t<v8:variant xsi:type=`"v8:${sdType}Variant`">$(Esc-XmlText $variant)</v8:variant>"
+		if ($hasDate) { X "$indent`t`t<v8:date>$(Esc-XmlText $dateV)</v8:date>" }
 		X "$indent`t</dcsset:right>"
 	} elseif ("$($item.value)" -eq '_') {
 		# "_" — маркер пустого значения: платформа эмитит пустой self-closing <dcsset:right>
@@ -1990,15 +2178,15 @@ function Emit-FilterItem {
 			elseif ("$v" -match '^(Перечисление|Справочник|ПланСчетов|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена|Catalog|Enum|Document|ChartOfAccounts|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') { $vt = "dcscor:DesignTimeValue" }
 			else { $vt = "xs:string" }
 		}
-		$vStr = if ($item.value -is [bool]) { "$($item.value)".ToLower() } else { Esc-Xml "$($item.value)" }
+		$vStr = if ($item.value -is [bool]) { "$($item.value)".ToLower() } elseif ($vt -eq 'dcscor:DesignTimeValue') { Esc-XmlText (Normalize-DesignTimeValue "$($item.value)") } else { Esc-XmlText "$($item.value)" }
 		$nsAttr = Get-ValueTypeNsAttr -valueType $vt -value "$($item.value)"
 		X "$indent`t<dcsset:right$nsAttr xsi:type=`"$vt`">$vStr</dcsset:right>"
 	}
 	if ($item.presentation) { Emit-USPresentation -val $item.presentation -tag "dcsset:presentation" -indent "$indent`t" }
-	if ($item.viewMode) { X "$indent`t<dcsset:viewMode>$(Esc-Xml "$($item.viewMode)")</dcsset:viewMode>" }
+	if ($item.viewMode) { X "$indent`t<dcsset:viewMode>$(Esc-XmlText "$($item.viewMode)")</dcsset:viewMode>" }
 	if ($item.userSettingID) {
 		$uid = if ("$($item.userSettingID)" -eq "auto") { New-Guid-String } else { "$($item.userSettingID)" }
-		X "$indent`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>"
+		X "$indent`t<dcsset:userSettingID>$(Esc-XmlText $uid)</dcsset:userSettingID>"
 	}
 	if ($item.userSettingPresentation) { Emit-USPresentation -val $item.userSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t" }
 	X "$indent</dcsset:item>"
@@ -2022,10 +2210,10 @@ function Emit-Filter {
 			Emit-FilterItem -item ([pscustomobject]$obj) -indent "$indent`t"
 		} else { Emit-FilterItem -item $item -indent "$indent`t" }
 	}
-	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-Xml "$blockViewMode")</dcsset:viewMode>" }
+	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-XmlText "$blockViewMode")</dcsset:viewMode>" }
 	if ($null -ne $blockUserSettingID) {
 		$uid = if ("$blockUserSettingID" -eq 'auto') { New-Guid-String } else { "$blockUserSettingID" }
-		X "$indent`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>"
+		X "$indent`t<dcsset:userSettingID>$(Esc-XmlText $uid)</dcsset:userSettingID>"
 	}
 	if ($null -ne $blockUserSettingPresentation) { Emit-USPresentation -val $blockUserSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t" }
 	X "$indent</dcsset:filter>"
@@ -2047,7 +2235,7 @@ function Emit-Order {
 				if ($parts.Count -gt 1 -and $parts[1] -match '^(?i)(desc|убыв)') { $dir = "Desc" }
 				elseif ($parts.Count -gt 1 -and $parts[1] -match '^(?i)(asc|возр)') { $dir = "Asc" }
 				X "$indent`t<dcsset:item xsi:type=`"dcsset:OrderItemField`">"
-				X "$indent`t`t<dcsset:field>$(Esc-Xml $field)</dcsset:field>"
+				X "$indent`t`t<dcsset:field>$(Esc-XmlText $field)</dcsset:field>"
 				X "$indent`t`t<dcsset:orderType>$dir</dcsset:orderType>"
 				X "$indent`t</dcsset:item>"
 			}
@@ -2057,16 +2245,16 @@ function Emit-Order {
 			if ($dir -match '^(?i)(desc|убыв)') { $dir = "Desc" } elseif ($dir -match '^(?i)(asc|возр)') { $dir = "Asc" }
 			X "$indent`t<dcsset:item xsi:type=`"dcsset:OrderItemField`">"
 			if ($item.use -eq $false) { X "$indent`t`t<dcsset:use>false</dcsset:use>" }
-			X "$indent`t`t<dcsset:field>$(Esc-Xml "$($item.field)")</dcsset:field>"
+			X "$indent`t`t<dcsset:field>$(Esc-XmlText "$($item.field)")</dcsset:field>"
 			X "$indent`t`t<dcsset:orderType>$dir</dcsset:orderType>"
-			if ($item.viewMode) { X "$indent`t`t<dcsset:viewMode>$(Esc-Xml "$($item.viewMode)")</dcsset:viewMode>" }
+			if ($item.viewMode) { X "$indent`t`t<dcsset:viewMode>$(Esc-XmlText "$($item.viewMode)")</dcsset:viewMode>" }
 			X "$indent`t</dcsset:item>"
 		}
 	}
-	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-Xml "$blockViewMode")</dcsset:viewMode>" }
+	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-XmlText "$blockViewMode")</dcsset:viewMode>" }
 	if ($null -ne $blockUserSettingID) {
 		$uid = if ("$blockUserSettingID" -eq 'auto') { New-Guid-String } else { "$blockUserSettingID" }
-		X "$indent`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>"
+		X "$indent`t<dcsset:userSettingID>$(Esc-XmlText $uid)</dcsset:userSettingID>"
 	}
 	if ($null -ne $blockUserSettingPresentation) { Emit-USPresentation -val $blockUserSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t" }
 	X "$indent</dcsset:order>"
@@ -2098,7 +2286,7 @@ function Emit-AppearanceValue {
 		if (_HasKey $val 'items') { $nestedItems = (_Get $val 'items') }
 	}
 	if ($useWrapper) { X "$indent`t<dcscor:use>false</dcscor:use>" }
-	X "$indent`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
+	X "$indent`t<dcscor:parameter>$(Esc-XmlText $key)</dcscor:parameter>"
 	$isFontDict = $false
 	if ($innerVal -is [PSCustomObject]) {
 		$tProp = $innerVal.PSObject.Properties['@type']
@@ -2114,7 +2302,7 @@ function Emit-AppearanceValue {
 		$lg = if (_HasKey $innerVal 'gap') { if ((_Get $innerVal 'gap')) { 'true' } else { 'false' } } else { 'false' }
 		$ls = if (_HasKey $innerVal 'style') { "$(_Get $innerVal 'style')" } else { 'None' }
 		X "$indent`t<dcscor:value xsi:type=`"v8ui:Line`" width=`"$lw`" gap=`"$lg`">"
-		X "$indent`t`t<v8ui:style xsi:type=`"v8ui:SpreadsheetDocumentCellLineType`">$(Esc-Xml $ls)</v8ui:style>"
+		X "$indent`t`t<v8ui:style xsi:type=`"v8ui:SpreadsheetDocumentCellLineType`">$(Esc-XmlText $ls)</v8ui:style>"
 		X "$indent`t</dcscor:value>"
 	} elseif ($isFontDict) {
 		$attrParts = @()
@@ -2127,7 +2315,7 @@ function Emit-AppearanceValue {
 		X "$indent`t<dcscor:value xsi:type=`"v8ui:Font`" $($attrParts -join ' ')/>"
 	} elseif ($isDict -and (_HasKey $innerVal 'field')) {
 		# Ссылка на поле (dcscor:Field) — значение параметра оформления = поле компоновки
-		X "$indent`t<dcscor:value xsi:type=`"dcscor:Field`">$(Esc-Xml "$(_Get $innerVal 'field')")</dcscor:value>"
+		X "$indent`t<dcscor:value xsi:type=`"dcscor:Field`">$(Esc-XmlText "$(_Get $innerVal 'field')")</dcscor:value>"
 	} elseif ($isDict) {
 		# Локализуемый текст параметра оформления: платформа объявляет xsi:type на dcscor:value
 		Emit-MLText -tag "dcscor:value" -text $innerVal -indent "$indent`t" -xsiType "v8:LocalStringType"
@@ -2142,19 +2330,19 @@ function Emit-AppearanceValue {
 			'ТипМакета'            = 'dcsset:DataCompositionGroupTemplateType'
 		}
 		$keyType = $keyTypeMap[$key]
-		if ($keyType) { X "$indent`t<dcscor:value xsi:type=`"$keyType`">$(Esc-Xml $actualVal)</dcscor:value>" }
-		elseif ($actualVal -match '^(style|web|win):') { X "$indent`t<dcscor:value xsi:type=`"v8ui:Color`">$(Esc-Xml $actualVal)</dcscor:value>" }
+		if ($keyType) { X "$indent`t<dcscor:value xsi:type=`"$keyType`">$(Esc-XmlText $actualVal)</dcscor:value>" }
+		elseif ($actualVal -match '^(style|web|win):') { X "$indent`t<dcscor:value xsi:type=`"v8ui:Color`">$(Esc-XmlText $actualVal)</dcscor:value>" }
 		elseif ($actualVal -eq "true" -or $actualVal -eq "false") { X "$indent`t<dcscor:value xsi:type=`"xs:boolean`">$actualVal</dcscor:value>" }
 		elseif ($key -eq "Текст" -or $key -eq "Заголовок" -or $key -eq "Формат") {
 			# Текст/Заголовок/Формат: голая строка = плоский xs:string (так платформа хранит
 			# нелокализованный литерал). Локализуемый текст → объект {ru,en} (ветка isDict выше).
 			# Пустая строка → самозакрывающийся тег (как у платформы).
 			if ($actualVal -eq '') { X "$indent`t<dcscor:value xsi:type=`"xs:string`"/>" }
-			else { X "$indent`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml $actualVal)</dcscor:value>" }
+			else { X "$indent`t<dcscor:value xsi:type=`"xs:string`">$(Esc-XmlText $actualVal)</dcscor:value>" }
 		}
 		elseif ($actualVal -match '^-?\d+(\.\d+)?$') { X "$indent`t<dcscor:value xsi:type=`"xs:decimal`">$actualVal</dcscor:value>" }
-		elseif ($key -eq 'ЦветТекста' -or $key -eq 'ЦветФона' -or $key -eq 'ЦветГраницы') { X "$indent`t<dcscor:value xsi:type=`"v8ui:Color`">$(Esc-Xml $actualVal)</dcscor:value>" }
-		else { X "$indent`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml $actualVal)</dcscor:value>" }
+		elseif ($key -eq 'ЦветТекста' -or $key -eq 'ЦветФона' -or $key -eq 'ЦветГраницы') { X "$indent`t<dcscor:value xsi:type=`"v8ui:Color`">$(Esc-XmlText $actualVal)</dcscor:value>" }
+		else { X "$indent`t<dcscor:value xsi:type=`"xs:string`">$(Esc-XmlText $actualVal)</dcscor:value>" }
 	}
 	if ($nestedItems) {
 		$niProps = if ($nestedItems -is [PSCustomObject]) { $nestedItems.PSObject.Properties } else { $null }
@@ -2177,7 +2365,7 @@ function Emit-ConditionalAppearance {
 			X "$indent`t`t<dcsset:selection>"
 			foreach ($sel in $ca.selection) {
 				X "$indent`t`t`t<dcsset:item>"
-				X "$indent`t`t`t`t<dcsset:field>$(Esc-Xml "$sel")</dcsset:field>"
+				X "$indent`t`t`t`t<dcsset:field>$(Esc-XmlText "$sel")</dcsset:field>"
 				X "$indent`t`t`t</dcsset:item>"
 			}
 			X "$indent`t`t</dcsset:selection>"
@@ -2196,12 +2384,12 @@ function Emit-ConditionalAppearance {
 				Emit-MLItems -val $ca.presentation -indent "$indent`t`t`t"
 				X "$indent`t`t</dcsset:presentation>"
 			}
-			else { X "$indent`t`t<dcsset:presentation xsi:type=`"xs:string`">$(Esc-Xml "$($ca.presentation)")</dcsset:presentation>" }
+			else { X "$indent`t`t<dcsset:presentation xsi:type=`"xs:string`">$(Esc-XmlText "$($ca.presentation)")</dcsset:presentation>" }
 		}
-		if ($ca.viewMode) { X "$indent`t`t<dcsset:viewMode>$(Esc-Xml "$($ca.viewMode)")</dcsset:viewMode>" }
+		if ($ca.viewMode) { X "$indent`t`t<dcsset:viewMode>$(Esc-XmlText "$($ca.viewMode)")</dcsset:viewMode>" }
 		if ($ca.userSettingID) {
 			$uid = if ("$($ca.userSettingID)" -eq "auto") { New-Guid-String } else { "$($ca.userSettingID)" }
-			X "$indent`t`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>"
+			X "$indent`t`t<dcsset:userSettingID>$(Esc-XmlText $uid)</dcsset:userSettingID>"
 		}
 		if ($ca.userSettingPresentation) { Emit-USPresentation -val $ca.userSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t`t" }
 		if ($ca.useInDontUse -and $ca.useInDontUse.Count -gt 0) {
@@ -2217,10 +2405,10 @@ function Emit-ConditionalAppearance {
 		}
 		X "$indent`t</dcsset:item>"
 	}
-	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-Xml "$blockViewMode")</dcsset:viewMode>" }
+	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-XmlText "$blockViewMode")</dcsset:viewMode>" }
 	if ($null -ne $blockUserSettingID) {
 		$uid = if ("$blockUserSettingID" -eq 'auto') { New-Guid-String } else { "$blockUserSettingID" }
-		X "$indent`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>"
+		X "$indent`t<dcsset:userSettingID>$(Esc-XmlText $uid)</dcsset:userSettingID>"
 	}
 	if ($null -ne $blockUserSettingPresentation) { Emit-USPresentation -val $blockUserSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t" }
 	X "$indent</$wrapTag>"
@@ -2259,14 +2447,14 @@ function Emit-GroupItemField {
 		$pae = if ($level.periodAdditionEnd)   { "$($level.periodAdditionEnd)"   } else { '0001-01-01T00:00:00' }
 	}
 	X "$indent<dcsset:item xsi:type=`"dcsset:GroupItemField`">"
-	X "$indent`t<dcsset:field>$(Esc-Xml $field)</dcsset:field>"
-	X "$indent`t<dcsset:groupType>$(Esc-Xml $gt)</dcsset:groupType>"
-	X "$indent`t<dcsset:periodAdditionType>$(Esc-Xml $pat)</dcsset:periodAdditionType>"
+	X "$indent`t<dcsset:field>$(Esc-XmlText $field)</dcsset:field>"
+	X "$indent`t<dcsset:groupType>$(Esc-XmlText $gt)</dcsset:groupType>"
+	X "$indent`t<dcsset:periodAdditionType>$(Esc-XmlText $pat)</dcsset:periodAdditionType>"
 	# Авто-детект: ISO-дата → xs:dateTime, иначе путь → dcscor:Field.
 	$pabT = if ($pab -match '^\d{4}-\d{2}-\d{2}T') { 'xs:dateTime' } else { 'dcscor:Field' }
 	$paeT = if ($pae -match '^\d{4}-\d{2}-\d{2}T') { 'xs:dateTime' } else { 'dcscor:Field' }
-	X "$indent`t<dcsset:periodAdditionBegin xsi:type=`"$pabT`">$(Esc-Xml $pab)</dcsset:periodAdditionBegin>"
-	X "$indent`t<dcsset:periodAdditionEnd xsi:type=`"$paeT`">$(Esc-Xml $pae)</dcsset:periodAdditionEnd>"
+	X "$indent`t<dcsset:periodAdditionBegin xsi:type=`"$pabT`">$(Esc-XmlText $pab)</dcsset:periodAdditionBegin>"
+	X "$indent`t<dcsset:periodAdditionEnd xsi:type=`"$paeT`">$(Esc-XmlText $pae)</dcsset:periodAdditionEnd>"
 	X "$indent</dcsset:item>"
 }
 
@@ -2335,22 +2523,22 @@ function Emit-CalcFields {
 		}
 		$ci = "$indent`t"
 		X "$indent<CalculatedField>"
-		X "$ci<dcssch:dataPath>$(Esc-Xml $dataPath)</dcssch:dataPath>"
-		X "$ci<dcssch:expression>$(Esc-Xml $expression)</dcssch:expression>"
+		X "$ci<dcssch:dataPath>$(Esc-XmlText $dataPath)</dcssch:dataPath>"
+		X "$ci<dcssch:expression>$(Esc-XmlText $expression)</dcssch:expression>"
 		if ($title) { Emit-MLText -tag 'dcssch:title' -text $title -indent $ci -xsiType 'v8:LocalStringType' }
 		if ($restrict.Count -gt 0) {
 			X "$ci<dcssch:useRestriction>"
 			foreach ($r in @('field','condition','group','order')) { if ($restrict -contains $r) { X "$ci`t<dcssch:$r>true</dcssch:$r>" } }
 			X "$ci</dcssch:useRestriction>"
 		}
-		if ($pres) { X "$ci<dcssch:presentationExpression>$(Esc-Xml "$pres")</dcssch:presentationExpression>" }
+		if ($pres) { X "$ci<dcssch:presentationExpression>$(Esc-XmlText "$pres")</dcssch:presentationExpression>" }
 		if ($orderExpr) {
 			$oeList = if ($orderExpr -is [System.Collections.IList]) { $orderExpr } else { @($orderExpr) }
 			foreach ($oe in $oeList) {
 				if ($oe -is [string]) { $exprV = $oe; $oType = 'Asc'; $auto = 'false' }
 				else { $exprV = "$($oe.expression)"; $oType = if ($oe.orderType) { "$($oe.orderType)" } else { 'Asc' }; $auto = if ($oe.autoOrder) { 'true' } else { 'false' } }
 				X "$ci<dcssch:orderExpression>"
-				X "$ci`t<expression xmlns=`"$($script:dcsCommonNs)`">$(Esc-Xml $exprV)</expression>"
+				X "$ci`t<expression xmlns=`"$($script:dcsCommonNs)`">$(Esc-XmlText $exprV)</expression>"
 				X "$ci`t<orderType xmlns=`"$($script:dcsCommonNs)`">$oType</orderType>"
 				X "$ci`t<autoOrder xmlns=`"$($script:dcsCommonNs)`">$auto</autoOrder>"
 				X "$ci</dcssch:orderExpression>"
@@ -2435,26 +2623,57 @@ $script:knownInvalidTypes = @{
 	"FormTable"             = "UI element type, not a data type"
 }
 
+# Алиас на локальный словарь: тело Resolve-TypeStr ниже — общая реализация,
+# одинаковая во всех навыках (реестр в tests/skills/check-inline-drift.mjs).
+$script:typeSynonyms = $script:formTypeSynonyms
+
 function Resolve-TypeStr {
 	param([string]$typeStr)
 	if (-not $typeStr) { return $typeStr }
-	# Lenient: strip leading cfg: prefix if user passed it (canonical form is without prefix)
-	if ($typeStr -match '^cfg:(.+)$') { $typeStr = $Matches[1] }
+
+	# Прощающий ввод: ведущий префикс приходит копипастой из выгрузки. Без срезания он ломает
+	# поиск в словаре — русское имя типа остаётся непереведённым, и платформа отвечает
+	# «Неизвестное имя типа». cfg: снимаем всегда — он однозначно означает текущую конфигурацию.
+	# Сгенерированный dNpM: (в корпусе на этом URI встречаются d4p1, d5p1, d6p1 — имя префикса
+	# платформа выдаёт по порядку объявления) снимаем ТОЛЬКО у ссылочных типов, с точкой:
+	# сам по себе префикс многозначен — в формах d5p1:Chart, d5p1:TextDocument,
+	# d5p1:GeographicalSchema адресуют чужие пространства имён, и там он часть значения.
+	if ($typeStr.StartsWith('cfg:')) {
+		$typeStr = $typeStr.Substring(4)
+	} elseif ($typeStr.Contains('.') -and $typeStr -match '^d\d+p\d+:') {
+		$typeStr = $typeStr.Substring($typeStr.IndexOf(':') + 1)
+	}
+
+	# Хвосты, которые дописывает вывод meta-info к множествам типов: суффикс обобщённого метатипа
+	# и счётчик состава. Копипаста строки оттуда — обычный путь, поэтому хвост снимаем молча.
+	# Срезаем ТОЛЬКО эти известные формы: круглые скобки заняты параметризованными типами
+	# (Число(15,2)), слепой срез скобок сломал бы их.
+	$typeStr = ($typeStr -replace '\s*\((?:все|all)\)\s*$', '').Trim()
+	$typeStr = ($typeStr -replace '\s*[—-]\s*(?:типов|types):\s*\d+\s*$', '').Trim()
+	$typeStr = ($typeStr -replace '\s*\((?:типов|types):\s*\d+\)\s*$', '').Trim()
+
+	# Параметризованные типы: Number(15,2), Строка(100)
 	if ($typeStr -match '^([^(]+)\((.+)\)$') {
-		$base = $Matches[1].Trim(); $params = $Matches[2]
-		$r = $script:formTypeSynonyms[$base.ToLower()]
-		if ($r) { return "$r($params)" }
+		$baseName = $Matches[1].Trim()
+		$params = $Matches[2]
+		$resolved = $script:typeSynonyms[$baseName.ToLower()]
+		if ($resolved) { return "$resolved($params)" }
 		return $typeStr
 	}
+
+	# Ссылочные типы: СправочникСсылка.Организации → CatalogRef.Организации
 	if ($typeStr.Contains('.')) {
-		$i = $typeStr.IndexOf('.')
-		$prefix = $typeStr.Substring(0, $i); $suffix = $typeStr.Substring($i)
-		$r = $script:formTypeSynonyms[$prefix.ToLower()]
-		if ($r) { return "$r$suffix" }
+		$dotIdx = $typeStr.IndexOf('.')
+		$prefix = $typeStr.Substring(0, $dotIdx)
+		$suffix = $typeStr.Substring($dotIdx)  # includes the dot
+		$resolved = $script:typeSynonyms[$prefix.ToLower()]
+		if ($resolved) { return "$resolved$suffix" }
 		return $typeStr
 	}
-	$r = $script:formTypeSynonyms[$typeStr.ToLower()]
-	if ($r) { return $r }
+
+	# Простое имя
+	$resolved = $script:typeSynonyms[$typeStr.ToLower()]
+	if ($resolved) { return $resolved }
 	return $typeStr
 }
 
@@ -2645,45 +2864,213 @@ function Emit-SingleType {
 
 # --- 6. Event handler name generator ---
 
-$script:eventSuffixMap = @{
-	"OnChange"             = "ПриИзменении"
-	"StartChoice"          = "НачалоВыбора"
-	"ChoiceProcessing"     = "ОбработкаВыбора"
-	"AutoComplete"         = "АвтоПодбор"
-	"Clearing"             = "Очистка"
-	"Opening"              = "Открытие"
-	"Click"                = "Нажатие"
-	"OnActivateRow"        = "ПриАктивизацииСтроки"
-	"BeforeAddRow"         = "ПередНачаломДобавления"
-	"BeforeDeleteRow"      = "ПередУдалением"
-	"BeforeRowChange"      = "ПередНачаломИзменения"
-	"OnStartEdit"          = "ПриНачалеРедактирования"
-	# Local: the platform event is OnEditEnd — upstream spells the key OnEndEdit,
-	# so every OnEditEnd handler fell through to the literal fallback name.
-	"OnEditEnd"            = "ПриОкончанииРедактирования"
-	# Local: typovaya Selection handlers are …Выбор, not …ВыборСтроки.
-	# DragEnd is the platform event (…ОкончаниеПеретаскивания); upstream spelled
-	# the key Drop, so every DragEnd handler fell through to a literal name.
-	"Selection"            = "Выбор"
-	"OnCurrentPageChange"  = "ПриСменеСтраницы"
-	"TextEditEnd"          = "ОкончаниеВводаТекста"
-	"URLProcessing"        = "ОбработкаНавигационнойСсылки"
-	"DragStart"            = "НачалоПеретаскивания"
-	"Drag"                 = "Перетаскивание"
-	"DragCheck"            = "ПроверкаПеретаскивания"
-	"DragEnd"              = "ОкончаниеПеретаскивания"
-	"AfterDeleteRow"       = "ПослеУдаления"
-	"Tuning"               = "Регулирование"
-	"StartListChoice"      = "НачалоВыбораИзСписка"
+# --- Каталог событий формы (генерируется) ---
+# Тег элемента («Form» — сама форма) → событие → @(суффикс имени обработчика, директива компиляции,
+# параметры, с какой платформы событие есть ("" — с 8.3.24), только для таблицы с таким источником).
+# Источник — типовые конфигурации (БП, ERP, УНФ, УТ: 28.5 тыс. форм) и замер загрузкой в 8.3.24/8.3.27/8.5.
+# Перегенерировать: python debug/form-handlers/gen_event_catalog.py
+function Get-FormEventCatalog {
+	return @{
+		"CalendarField" = @{
+			"OnActivateDate" = @("ПриАктивизацииДаты", "НаКлиенте", "Элемент", "", "")
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+			"OnPeriodOutput" = @("ПриВыводеПериода", "НаКлиенте", "Элемент, ОформлениеПериода", "", "")
+			"Selection" = @("Выбор", "НаКлиенте", "Элемент, ВыбраннаяДата", "", "")
+		}
+		"ChartField" = @{
+			"DetailProcessing" = @("ОбработкаРасшифровки", "НаКлиенте", "Элемент, Расшифровка, СтандартнаяОбработка", "", "")
+			"Selection" = @("Выбор", "НаКлиенте", "Элемент, ЗначениеДиаграммы, СтандартнаяОбработка", "", "")
+		}
+		"CheckBoxField" = @{
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+		}
+		"ExtendedTooltip" = @{
+			"Click" = @("Нажатие", "НаКлиенте", "Элемент", "", "")
+			"URLProcessing" = @("ОбработкаНавигационнойСсылки", "НаКлиенте", "Элемент, НавигационнаяСсылкаФорматированнойСтроки, СтандартнаяОбработка", "", "")
+		}
+		"Form" = @{
+			"AfterWrite" = @("ПослеЗаписи", "НаКлиенте", "ПараметрыЗаписи", "", "")
+			"AfterWriteAtServer" = @("ПослеЗаписиНаСервере", "НаСервере", "ТекущийОбъект, ПараметрыЗаписи", "", "")
+			"BeforeClose" = @("ПередЗакрытием", "НаКлиенте", "Отказ, ЗавершениеРаботы, ТекстПредупреждения, СтандартнаяОбработка", "", "")
+			"BeforeLoadDataFromSettingsAtServer" = @("ПередЗагрузкойДанныхИзНастроекНаСервере", "НаСервере", "Настройки", "", "")
+			"BeforeLoadUserSettingsAtServer" = @("ПередЗагрузкойПользовательскихНастроекНаСервере", "НаСервере", "НовыеПользовательскиеНастройкиКД", "", "")
+			"BeforeLoadVariantAtServer" = @("ПередЗагрузкойВариантаНаСервере", "НаСервере", "НовыеНастройкиКД", "", "")
+			"BeforeWrite" = @("ПередЗаписью", "НаКлиенте", "Отказ, ПараметрыЗаписи", "", "")
+			"BeforeWriteAtServer" = @("ПередЗаписьюНаСервере", "НаСервере", "Отказ, ТекущийОбъект, ПараметрыЗаписи", "", "")
+			"ChoiceProcessing" = @("ОбработкаВыбора", "НаКлиенте", "ВыбранноеЗначение, ИсточникВыбора", "", "")
+			"ExternalEvent" = @("ВнешнееСобытие", "НаКлиенте", "Источник, Событие, Данные", "", "")
+			"FillCheckProcessingAtServer" = @("ОбработкаПроверкиЗаполненияНаСервере", "НаСервере", "Отказ, ПроверяемыеРеквизиты", "", "")
+			"NavigationProcessing" = @("ОбработкаПерехода", "НаКлиенте", "ОбъектПерехода, СтандартнаяОбработка", "", "")
+			"NewWriteProcessing" = @("ОбработкаЗаписиНового", "НаКлиенте", "НовыйОбъект, Источник, СтандартнаяОбработка", "", "")
+			"NotificationProcessing" = @("ОбработкаОповещения", "НаКлиенте", "ИмяСобытия, Параметр, Источник", "", "")
+			"OnChangeDisplaySettings" = @("ПриИзмененииПараметровЭкрана", "НаКлиенте", "", "", "")
+			"OnClose" = @("ПриЗакрытии", "НаКлиенте", "ЗавершениеРаботы", "", "")
+			"OnCreateAtServer" = @("ПриСозданииНаСервере", "НаСервере", "Отказ, СтандартнаяОбработка", "", "")
+			"OnLoadDataFromSettingsAtServer" = @("ПриЗагрузкеДанныхИзНастроекНаСервере", "НаСервере", "Настройки", "", "")
+			"OnLoadUserSettingsAtServer" = @("ПриЗагрузкеПользовательскихНастроекНаСервере", "НаСервере", "Настройки, ИспользуютсяСтандартныеНастройки", "", "")
+			"OnLoadVariantAtServer" = @("ПриЗагрузкеВариантаНаСервере", "НаСервере", "Настройки", "", "")
+			"OnMainServerAvailabilityChange" = @("ПриИзмененииДоступностиОсновногоСервера", "НаКлиенте", "СтандартнаяОбработка", "", "")
+			"OnOpen" = @("ПриОткрытии", "НаКлиенте", "Отказ", "", "")
+			"OnReadAtServer" = @("ПриЧтенииНаСервере", "НаСервере", "ТекущийОбъект", "", "")
+			"OnReopen" = @("ПриПовторномОткрытии", "НаКлиенте", "", "", "")
+			"OnSaveDataInSettingsAtServer" = @("ПриСохраненииДанныхВНастройкахНаСервере", "НаСервере", "Настройки", "", "")
+			"OnSaveUserSettingsAtServer" = @("ПриСохраненииПользовательскихНастроекНаСервере", "НаСервере", "Настройки", "", "")
+			"OnSaveVariantAtServer" = @("ПриСохраненииВариантаНаСервере", "НаСервере", "НастройкиКД", "", "")
+			"OnUpdateUserSettingSetAtServer" = @("ПриОбновленииСоставаПользовательскихНастроекНаСервере", "НаСервере", "СтандартнаяОбработка", "", "")
+			"OnWriteAtServer" = @("ПриЗаписиНаСервере", "НаСервере", "Отказ, ТекущийОбъект, ПараметрыЗаписи", "", "")
+			"URLGetProcessing" = @("ОбработкаПолученияНавигационнойСсылки", "НаКлиенте", "Ключ, Представление, НавигационнаяСсылка, СтандартнаяОбработка", "", "")
+			"URLListGetProcessing" = @("ОбработкаПолученияСпискаНавигационныхСсылок", "НаКлиенте", "СписокНавигационыхСсылок, КлючПоУмолчанию", "", "")
+			"URLProcessing" = @("ОбработкаНавигационнойСсылки", "НаКлиенте", "НавигационнаяСсылкаФорматированнойСтроки, СтандартнаяОбработка", "", "")
+		}
+		"FormattedDocumentField" = @{
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+		}
+		"GanttChartField" = @{
+			"DetailProcessing" = @("ОбработкаРасшифровки", "НаКлиенте", "Элемент, Расшифровки, СтандартнаяОбработка, Дата", "", "")
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+		}
+		"GraphicalSchemaField" = @{
+			"OnActivate" = @("ПриАктивизации", "НаКлиенте", "Элемент", "", "")
+			"Selection" = @("Выбор", "НаКлиенте", "Элемент", "", "")
+		}
+		"HTMLDocumentField" = @{
+			"DocumentComplete" = @("ДокументСформирован", "НаКлиенте", "Элемент", "", "")
+			"OnClick" = @("ПриНажатии", "НаКлиенте", "Элемент, ДанныеСобытия, СтандартнаяОбработка", "", "")
+		}
+		"InputField" = @{
+			"AutoComplete" = @("АвтоПодбор", "НаКлиенте", "Элемент, Текст, ДанныеВыбора, ПараметрыПолученияДанных, Ожидание, СтандартнаяОбработка", "", "")
+			"ChoiceProcessing" = @("ОбработкаВыбора", "НаКлиенте", "Элемент, ВыбранноеЗначение, СтандартнаяОбработка", "", "")
+			"Clearing" = @("Очистка", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"Creating" = @("Создание", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"EditTextChange" = @("ИзменениеТекстаРедактирования", "НаКлиенте", "Элемент, Текст, СтандартнаяОбработка", "", "")
+			"MultipleValueOpening" = @("ОткрытиеМножественногоЗначения", "НаКлиенте", "Элемент, Идентификатор, СтандартнаяОбработка", "", "")
+			"MultipleValueURLProcessing" = @("ОбработкаНавигационнойСсылкиМножественногоЗначения", "НаКлиенте", "Элемент, Идентификатор, НавигационнаяСсылкаФорматированнойСтроки, СтандартнаяОбработка", "", "")
+			"MultipleValuesAdd" = @("", "НаКлиенте", "Элемент, Значения, СтандартнаяОбработка", "", "")
+			"MultipleValuesDelete" = @("УдалениеМножественныхЗначений", "НаКлиенте", "Элемент, Идентификаторы, СтандартнаяОбработка", "", "")
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+			"Opening" = @("Открытие", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"StartChoice" = @("НачалоВыбора", "НаКлиенте", "Элемент, ДанныеВыбора, СтандартнаяОбработка", "", "")
+			"StartListChoice" = @("НачалоВыбораИзСписка", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"TextEditEnd" = @("ОкончаниеВводаТекста", "НаКлиенте", "Элемент, Текст, ДанныеВыбора, ПараметрыПолученияДанных, СтандартнаяОбработка", "", "")
+			"Tuning" = @("Регулирование", "НаКлиенте", "Элемент, Направление, СтандартнаяОбработка", "", "")
+		}
+		"LabelDecoration" = @{
+			"Click" = @("Нажатие", "НаКлиенте", "Элемент", "", "")
+			"URLProcessing" = @("ОбработкаНавигационнойСсылки", "НаКлиенте", "Элемент, НавигационнаяСсылкаФорматированнойСтроки, СтандартнаяОбработка", "", "")
+		}
+		"LabelField" = @{
+			"Click" = @("Нажатие", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+			"URLProcessing" = @("ОбработкаНавигационнойСсылки", "НаКлиенте", "Элемент, НавигационнаяСсылкаФорматированнойСтроки, СтандартнаяОбработка", "", "")
+		}
+		"Pages" = @{
+			"OnCurrentPageChange" = @("ПриСменеСтраницы", "НаКлиенте", "Элемент, ТекущаяСтраница", "", "")
+		}
+		"PictureDecoration" = @{
+			"Click" = @("Нажатие", "НаКлиенте", "Элемент", "", "")
+			"Drag" = @("Перетаскивание", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка", "", "")
+			"DragCheck" = @("ПроверкаПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка", "", "")
+		}
+		"PictureField" = @{
+			"Click" = @("Нажатие", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"Drag" = @("Перетаскивание", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка", "", "")
+			"DragCheck" = @("ПроверкаПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка", "", "")
+			"OnChange" = @("", "НаКлиенте", "Элемент", "", "")
+		}
+		"PlannerField" = @{
+			"BeforeCreate" = @("ПередСозданием", "НаКлиенте", "Элемент, Начало, Конец, ЗначенияИзмерений, Текст, СтандартнаяОбработка", "", "")
+			"BeforeDelete" = @("ПередУдалением", "НаКлиенте", "Элемент, Отказ", "", "")
+			"BeforeStartEdit" = @("ПередНачаломРедактирования", "НаКлиенте", "Элемент, НовыйЭлемент, СтандартнаяОбработка", "", "")
+			"BeforeStartQuickEdit" = @("ПередНачаломБыстрогоРедактирования", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+			"CommandGenerateProcessing" = @("ОбработкаФормированияКоманд", "НаКлиенте", "Элемент, ПараметрыКоманд, Команды, КомандаПоУмолчанию", "", "")
+			"Drag" = @("Перетаскивание", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка, Дата, Значения", "", "")
+			"DragCheck" = @("ПроверкаПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка, Дата, Значения", "", "")
+			"OnActivate" = @("ПриАктивизации", "НаКлиенте", "Элемент", "", "")
+			"OnCurrentRepresentationPeriodChange" = @("ПриСменеТекущегоПериодаОтображения", "НаКлиенте", "Элемент, ТекущиеПериодыОтображения, СтандартнаяОбработка", "", "")
+			"OnEditEnd" = @("ПриОкончанииРедактирования", "НаКлиенте", "Элемент, НовыйЭлемент, ОтменаРедактирования", "", "")
+			"Selection" = @("Выбор", "НаКлиенте", "Элемент, СтандартнаяОбработка", "", "")
+		}
+		"RadioButtonField" = @{
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+		}
+		"SpreadSheetDocumentField" = @{
+			"AdditionalDetailProcessing" = @("ОбработкаДополнительнойРасшифровки", "НаКлиенте", "Элемент, Расшифровка, СтандартнаяОбработка", "", "")
+			"BeforePrint" = @("", "НаКлиенте", "Элемент, ДиалогПечати, Отказ", "", "")
+			"BeforeWrite" = @("ПередЗаписью", "НаКлиенте", "Элемент, Копирование, Отказ", "", "")
+			"DetailProcessing" = @("ОбработкаРасшифровки", "НаКлиенте", "Элемент, Расшифровка, СтандартнаяОбработка", "", "")
+			"Drag" = @("Перетаскивание", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка, Область", "", "")
+			"DragCheck" = @("ПроверкаПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка, Область", "", "")
+			"OnActivate" = @("ПриАктивизации", "НаКлиенте", "Элемент", "", "")
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+			"OnChangeAreaContent" = @("ПриИзмененииСодержимогоОбласти", "НаКлиенте", "Элемент, Область", "", "")
+			"Selection" = @("Выбор", "НаКлиенте", "Элемент, Область, СтандартнаяОбработка", "", "")
+			"URLProcessing" = @("ОбработкаНавигационнойСсылки", "НаКлиенте", "Элемент, НавигационнаяСсылкаФорматированнойСтроки, СтандартнаяОбработка", "", "")
+		}
+		"Table" = @{
+			"AfterDeleteRow" = @("ПослеУдаления", "НаКлиенте", "Элемент", "", "")
+			"BeforeAddRow" = @("ПередНачаломДобавления", "НаКлиенте", "Элемент, Отказ, Копирование, Родитель, Группа, Параметр", "", "")
+			"BeforeCollapse" = @("ПередСворачиванием", "НаКлиенте", "Элемент, Строка, Отказ", "", "")
+			"BeforeDeleteRow" = @("ПередУдалением", "НаКлиенте", "Элемент, Отказ", "", "")
+			"BeforeEditEnd" = @("ПередОкончаниемРедактирования", "НаКлиенте", "Элемент, НоваяСтрока, ОтменаРедактирования, Отказ", "", "")
+			"BeforeExpand" = @("ПередРазворачиванием", "НаКлиенте", "Элемент, Строка, Отказ", "", "")
+			"BeforeLoadUserSettingsAtServer" = @("ПередЗагрузкойПользовательскихНастроекНаСервере", "НаСервере", "Элемент, Настройки", "", "DynamicList")
+			"BeforeRowChange" = @("ПередНачаломИзменения", "НаКлиенте", "Элемент, Отказ", "", "")
+			"ChoiceProcessing" = @("ОбработкаВыбора", "НаКлиенте", "Элемент, ВыбранноеЗначение, СтандартнаяОбработка", "", "")
+			"Drag" = @("Перетаскивание", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка, Строка, Поле", "", "")
+			"DragCheck" = @("ПроверкаПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка, Строка, Поле", "", "")
+			"DragEnd" = @("ОкончаниеПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, СтандартнаяОбработка", "", "")
+			"DragStart" = @("НачалоПеретаскивания", "НаКлиенте", "Элемент, ПараметрыПеретаскивания, Выполнение", "", "")
+			"NewWriteProcessing" = @("ОбработкаЗаписиНового", "НаКлиенте", "НовыйОбъект, Источник, СтандартнаяОбработка", "", "")
+			"OnActivateCell" = @("ПриАктивизацииЯчейки", "НаКлиенте", "Элемент", "", "")
+			"OnActivateField" = @("ПриАктивизацииПоля", "НаКлиенте", "Элемент", "", "")
+			"OnActivateRow" = @("ПриАктивизацииСтроки", "НаКлиенте", "Элемент", "", "")
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+			"OnCurrentParentChange" = @("ПриСменеТекущегоРодителя", "НаКлиенте", "Элемент", "", "")
+			"OnEditEnd" = @("ПриОкончанииРедактирования", "НаКлиенте", "Элемент, НоваяСтрока, ОтменаРедактирования", "", "")
+			"OnGetDataAtServer" = @("ПриПолученииДанныхНаСервере", "НаСервереБезКонтекста", "ИмяЭлемента, Настройки, Строки", "", "DynamicList")
+			"OnHover" = @("ПриНаведении", "НаКлиенте", "Элемент, Строка, Поле", "8.5", "")
+			"OnLoadUserSettingsAtServer" = @("ПриЗагрузкеПользовательскихНастроекНаСервере", "НаСервере", "Элемент, Настройки", "", "DynamicList")
+			"OnSaveUserSettingsAtServer" = @("ПриСохраненииПользовательскихНастроекНаСервере", "НаСервере", "Элемент, Настройки", "", "DynamicList")
+			"OnSelectedRowsSetChange" = @("ПриИзмененииСоставаВыделенныхСтрок", "НаКлиенте", "Элемент", "8.5", "")
+			"OnStartEdit" = @("ПриНачалеРедактирования", "НаКлиенте", "Элемент, НоваяСтрока, Копирование", "", "")
+			"OnUpdateUserSettingSetAtServer" = @("ПриОбновленииСоставаПользовательскихНастроекНаСервере", "НаСервере", "СтандартнаяОбработка", "", "DynamicList")
+			"RefreshRequestProcessing" = @("ОбработкаЗапросаОбновления", "НаКлиенте", "", "", "")
+			"Selection" = @("Выбор", "НаКлиенте", "Элемент, ВыбраннаяСтрока, Поле, СтандартнаяОбработка", "", "")
+			"URLGetProcessing" = @("ОбработкаПолученияНавигационнойСсылки", "НаКлиенте", "Элемент, Ключ, Представление, НавигационнаяСсылка, СтандартнаяОбработка", "", "DynamicList")
+			"ValueChoice" = @("ВыборЗначения", "НаКлиенте", "Элемент, Значение, СтандартнаяОбработка", "", "")
+		}
+		"TextDocumentField" = @{
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+		}
+		"TrackBarField" = @{
+			"OnChange" = @("ПриИзменении", "НаКлиенте", "Элемент", "", "")
+		}
+		"UsualGroup" = @{
+			"Click" = @("Нажатие", "НаКлиенте", "Элемент", "8.5", "")
+		}
+	}
+}
+# --- конец каталога событий формы ---
+$script:eventCatalog = Get-FormEventCatalog
+
+# Запись каталога для события тега (имя события — с учётом регистра: платформа иного не примет).
+function Get-EventEntry([string]$xmlTag, [string]$eventName) {
+	if (-not $xmlTag -or -not $script:eventCatalog.ContainsKey($xmlTag)) { return $null }
+	$evs = $script:eventCatalog[$xmlTag]
+	foreach ($k in $evs.Keys) { if ($k -ceq $eventName) { return ,$evs[$k] } }
+	return $null
 }
 
+# Имя обработчика по конвенции типовых: <Элемент><Суффикс>, у события формы — сам суффикс.
+# Событие не из каталога — <Элемент><Событие>.
 function Get-HandlerName {
-	param([string]$elementName, [string]$eventName)
-	$suffix = $script:eventSuffixMap[$eventName]
-	if ($suffix) {
-		return "$elementName$suffix"
-	}
-	return "$elementName$eventName"
+	param([string]$elementName, [string]$eventName, [string]$xmlTag, [string]$callType = '')
+	$entry = Get-EventEntry $xmlTag $eventName
+	$name = if ($entry -and $entry[0]) { "$elementName$($entry[0])" } else { "$elementName$eventName" }
+	# Обработчик с видом вызова (расширение) — как называет Конфигуратор: префикс расширения + имя + вид вызова.
+	# Без этого имя совпало бы с процедурой исходной формы.
+	if ($callType) { $name = "$($script:extNamePrefix)$name$(@{ Before = 'Перед'; After = 'После'; Override = 'Вместо' }[$callType])" }
+	return $name
 }
 
 # --- 7. Element emitters ---
@@ -2694,29 +3081,10 @@ function Get-ElementName {
 	return "$($el.$typeKey)"
 }
 
-$script:knownEvents = @{
-	"input"     = @("OnChange","StartChoice","StartListChoice","ChoiceProcessing","AutoComplete","TextEditEnd","Clearing","Creating","EditTextChange","Tuning","Opening")
-	"check"     = @("OnChange")
-	"radio"     = @("OnChange")
-	"label"     = @("Click","URLProcessing")
-	"labelField"= @("OnChange","StartChoice","ChoiceProcessing","Click","URLProcessing","Clearing")
-	"table"     = @("Selection","BeforeAddRow","AfterDeleteRow","BeforeDeleteRow","OnActivateRow","OnEditEnd","OnStartEdit","BeforeRowChange","BeforeEditEnd","ValueChoice","OnActivateCell","OnActivateField","Drag","DragStart","DragCheck","DragEnd","OnGetDataAtServer","BeforeLoadUserSettingsAtServer","OnUpdateUserSettingSetAtServer","OnChange")
-	"pages"     = @("OnCurrentPageChange")
-	"page"      = @("OnCurrentPageChange")
-	"button"    = @("Click")
-	"picField"  = @("OnChange","StartChoice","ChoiceProcessing","Click","Clearing")
-	"calendar"  = @("OnChange","OnActivate")
-	"picture"   = @("Click")
-	"cmdBar"    = @()
-	"popup"     = @()
-	"group"     = @()
-}
-$script:knownFormEvents = @("OnCreateAtServer","OnOpen","BeforeClose","OnClose","NotificationProcessing","ChoiceProcessing","OnReadAtServer","AfterWriteAtServer","BeforeWriteAtServer","AfterWrite","BeforeWrite","OnWriteAtServer","FillCheckProcessingAtServer","OnLoadDataFromSettingsAtServer","BeforeLoadDataFromSettingsAtServer","OnSaveDataInSettingsAtServer","ExternalEvent","OnReopen","Opening")
-
 # Собрать упорядоченный список событий элемента (имя, обработчик) из DSL.
 #
-# Один нормализатор на все три формы записи — и эмиттер, и Test-ElementEvent
-# смотрят ровно на его результат, поэтому «событие подключено» и «событие попало
+# Один нормализатор на все три формы записи — эмиттер и проверка по каталогу
+# (Test-EventPairs) смотрят ровно на его результат, поэтому «событие подключено» и «событие попало
 # в XML» не могут разойтись:
 #
 #   * канонический     $el.events   = { Событие: ИмяОбработчика|null }
@@ -2741,7 +3109,7 @@ function Deny-EventConflict {
 }
 
 function Get-EventPairs {
-	param($el, [string]$elementName)
+	param($el, [string]$elementName, [string]$xmlTag)
 	$pairs = New-Object System.Collections.ArrayList
 	$hasEvents = [bool]$el.events
 	$hasOn = [bool]$el.on
@@ -2754,73 +3122,387 @@ function Get-EventPairs {
 		Deny-EventConflict $elementName "одновременно заданы канонический ключ 'events' и legacy-ключ(и) '$($legacy -join "' и '")'." "Оставьте один формат: либо 'events': {Событие: ИмяОбработчика}, либо 'on' + 'handlers'."
 	}
 
-	# Нормализованный источник: упорядоченный список пар (событие, заданное имя|null).
-	$source = New-Object System.Collections.ArrayList
 	if ($hasEvents) {
 		foreach ($p in $el.events.PSObject.Properties) {
-			[void]$source.Add([pscustomobject]@{ name = "$($p.Name)"; value = $p.Value })
+			# Значение — имя обработчика; null — имя по шаблону; объект { handler, callType } или массив
+			# таких объектов (в расширении на одно событие вешают и Before, и After)
+			$vals = @($p.Value)   # массив — как есть, одно значение (в т.ч. null) — один элемент
+			foreach ($v in $vals) {
+				$h = ""; $ct = ""
+				if ($v -is [System.Management.Automation.PSCustomObject]) { $h = "$($v.handler)"; $ct = Normalize-CallType "$($v.callType)" $elementName $p.Name } else { $h = "$v" }
+				if ([string]::IsNullOrEmpty($h)) { $h = Get-HandlerName -elementName $elementName -eventName $p.Name -xmlTag $xmlTag -callType $ct }
+				[void]$pairs.Add([pscustomobject]@{ name = $p.Name; handler = $h; callType = $ct })
+			}
 		}
 	} elseif ($hasOn) {
-		$onNames = @($el.on | ForEach-Object { "$_" })
+		$onNames = @(foreach ($evt in $el.on) { if ($evt -is [System.Management.Automation.PSCustomObject]) { "$($evt.event)" } else { "$evt" } })
 		if ($hasHandlers) {
 			$unknown = @($el.handlers.PSObject.Properties | Where-Object { $onNames -notcontains "$($_.Name)" } | ForEach-Object { "$($_.Name)" })
 			if ($unknown.Count -gt 0) {
 				Deny-EventConflict $elementName "'handlers' переопределяет события, которых нет в 'on': $($unknown -join ', ')." "Добавьте их в 'on' или уберите из 'handlers' — молча отбросить их нельзя, это и есть опечатка, из-за которой обработчик не попадает в форму."
 			}
 		}
-		foreach ($evtName in $onNames) {
-			$given = if ($hasHandlers) { $el.handlers.$evtName } else { $null }
-			[void]$source.Add([pscustomobject]@{ name = $evtName; value = $given })
+		foreach ($evt in $el.on) {
+			if ($evt -is [System.Management.Automation.PSCustomObject]) {
+				$evtName = "$($evt.event)"; $h = "$($evt.handler)"; $ct = Normalize-CallType "$($evt.callType)" $elementName $evtName
+			} else {
+				$evtName = "$evt"; $h = ""; $ct = ""
+			}
+			if (-not $h) { $h = if ($hasHandlers -and $el.handlers.$evtName) { "$($el.handlers.$evtName)" } else { Get-HandlerName -elementName $elementName -eventName $evtName -xmlTag $xmlTag -callType $ct } }
+			[void]$pairs.Add([pscustomobject]@{ name = $evtName; handler = $h; callType = $ct })
 		}
 	} elseif ($hasHandlers) {
 		# Legacy-одиночный handlers: тот же смысл, что events.
 		foreach ($p in $el.handlers.PSObject.Properties) {
-			[void]$source.Add([pscustomobject]@{ name = "$($p.Name)"; value = $p.Value })
+			$h = "$($p.Value)"
+			if ([string]::IsNullOrEmpty($h)) { $h = Get-HandlerName -elementName $elementName -eventName $p.Name -xmlTag $xmlTag }
+			[void]$pairs.Add([pscustomobject]@{ name = "$($p.Name)"; handler = $h; callType = '' })
 		}
-	}
-
-	foreach ($item in $source) {
-		$h = "$($item.value)"
-		if ([string]::IsNullOrEmpty($h)) { $h = Get-HandlerName -elementName $elementName -eventName $item.name }
-		[void]$pairs.Add([pscustomobject]@{ name = $item.name; handler = $h })
 	}
 	return $pairs
 }
 
-# Проверить, подключено ли событие к элементу (в любом из форматов).
-# Namesake of the Python test_element_event: same normalization, so a format the
-# emitter understands can never be invisible here (or the other way round).
-function Test-ElementEvent {
-	param($el, [string]$eventName)
-	foreach ($pr in (Get-EventPairs -el $el -elementName "$($el.name)")) {
-		if ($pr.name -eq $eventName) { return $true }
+# Local: every event name of the catalog, whatever the element. An event outside it is
+# not a platform event at all (OnEndEdit for OnEditEnd, the obsolete Drop) and is refused
+# before Form.xml is written; an event of another element only gets upstream's [WARN].
+$script:allCatalogEvents = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+foreach ($__tag in $script:eventCatalog.Keys) { foreach ($__ev in $script:eventCatalog[$__tag].Keys) { [void]$script:allCatalogEvents.Add($__ev) } }
+
+# Вид вызова обработчика в расширении: Before / After / Override (регистр не важен); пусто — не указан.
+function Normalize-CallType([string]$raw, [string]$elementName, [string]$eventName) {
+	if ([string]::IsNullOrEmpty($raw)) { return '' }
+	foreach ($v in @('Before','After','Override')) { if ($raw -eq $v) { return $v } }
+	Write-Error "Element '$elementName', event '$eventName': callType '$raw' — expected Before, After or Override"
+	exit 1
+}
+
+# Сверка событий с каталогом. Событие, которого у элемента нет, платформа при загрузке отбрасывает
+# (с записью в лог) — предупреждаем, но пишем: каталог собран по типовым и редкое событие может в нём отсутствовать.
+# $source — тип реквизита, к которому привязана таблица ("" — неизвестен, источник не сверяется).
+function Test-EventPairs {
+	param($pairs, [string]$xmlTag, [string]$elementName, [string]$source = '')
+	$what = if ($xmlTag -eq 'Form') { 'the form' } else { "$xmlTag '$elementName'" }
+	$evs = $script:eventCatalog[$xmlTag]
+	foreach ($pr in $pairs) {
+		$ev = "$($pr.name)"
+		if (-not $script:allCatalogEvents.Contains($ev)) {
+			$known = if ($evs) { [string[]]@($evs.Keys) } else { [string[]]@() }
+			[Array]::Sort($known, [StringComparer]::Ordinal)
+			$knownText = if ($known.Count -gt 0) { $known -join ', ' } else { 'none' }
+			[Console]::Error.WriteLine("[ERROR] Неизвестное событие '$ev' для $what — такого события нет у элементов формы платформы. Известные: $knownText")
+			exit 1
+		}
+		if (-not $evs) {
+			Write-Host "[WARN] $what has no events in standard configurations — the platform may drop '$ev' on load"
+			continue
+		}
+		$entry = Get-EventEntry $xmlTag $ev
+		if (-not $entry) {
+			$known = [string[]]@($evs.Keys); [Array]::Sort($known, [StringComparer]::Ordinal)
+			Write-Host "[WARN] Unknown event '$ev' for $what — the platform may drop it on load. Known: $($known -join ', ')"
+			continue
+		}
+		$since = "$($entry[3])"
+		if ($since -and (Get-FormatRank $script:formatVersion) -lt $script:platformFormatRank[$since]) {
+			Write-Host "[WARN] Event '$ev' of $what exists since platform $since — earlier platforms drop it on load"
+		}
+		$only = "$($entry[4])"
+		if ($only -and $source -and $source -ne $only) {
+			Write-Host "[WARN] Event '$ev' of $what exists only for a table bound to $only (bound to $source) — the platform drops it on load"
+		}
 	}
-	return $false
+}
+
+# Тип реквизита, к которому привязана таблица ("" — не определить: пути нет или реквизит не из DSL).
+function Get-TableSource($el) {
+	if ($el.PSObject.Properties["_dynList"] -and $el._dynList) { return 'DynamicList' }
+	$root = ("$($el.path)" -split '\.')[0]
+	if (-not $root) { return '' }
+	foreach ($a in @($def.attributes)) { if ("$($a.name)" -eq $root) { return "$($a.type)" } }
+	return ''
+}
+
+# У элемента этого вида событий нет: заданные events/on не пишутся — предупредить, а не потерять молча.
+function Warn-EventsIgnored($el, [string]$xmlTag, [string]$elementName) {
+	$names = @()
+	if ($el.events) { $names += @($el.events.PSObject.Properties | ForEach-Object { $_.Name }) }
+	foreach ($evt in @($el.on)) { if ($null -ne $evt) { $names += if ($evt -is [System.Management.Automation.PSCustomObject]) { "$($evt.event)" } else { "$evt" } } }
+	if ($names.Count -gt 0) {
+		Write-Host "[WARN] $xmlTag '$elementName' has no events — ignored: $($names -join ', ')"
+	}
+}
+
+# Первая версия формата выгрузки платформы, на которой появилось событие каталога.
+$script:platformFormatRank = @{ "8.3.25" = 218; "8.3.26" = 219; "8.3.27" = 220; "8.5" = 221 }
+
+# --- Заготовки обработчиков в модуле формы ---
+# Привязки, которые затронул запуск, собираются в $script:handlerBindings; после записи Form.xml
+# Update-FormModule дописывает в модуль процедуры, которых там ещё нет, — в области по стандарту БСП.
+$script:handlerBindings = New-Object System.Collections.ArrayList
+$script:handlerTable = ''   # таблица, колонки которой сейчас эмитятся
+
+# kind: form | element | command; table — таблица, внутри которой элемент (область «…ТаблицыФормы<Имя>»).
+# Одно имя на несколько событий — одна процедура: сигнатуру даёт первая привязка.
+function Register-Handler([string]$handler, [string]$kind, [string]$xmlTag = '', [string]$eventName = '', [string]$table = '') {
+	if (-not $handler) { return }
+	foreach ($b in $script:handlerBindings) { if ($b.handler -eq $handler) { return } }
+	[void]$script:handlerBindings.Add([pscustomobject]@{ handler = $handler; kind = $kind; xmlTag = $xmlTag; eventName = $eventName; table = $table })
+}
+
+# Пустой модуль формы. Табличных областей нет: имя таблицы при создании формы неизвестно.
+function Get-FormModuleTemplate {
+	$out = @()
+	foreach ($r in @('ОбработчикиСобытийФормы', 'ОбработчикиСобытийЭлементовШапкиФормы', 'ОбработчикиКомандФормы', 'ОбработчикиОповещений', 'СлужебныеПроцедурыИФункции')) {
+		if ($out.Count -gt 0) { $out += '' }
+		$out += @("#Область $r", '', '#КонецОбласти')
+	}
+	return $out
+}
+
+# Сканер BSL: строковые литералы (с "" и многострочными продолжениями «|») и комментарии // отделяются
+# от кода, номера строк сохраняются. Lines — строки текста; Code — они же без комментариев, литерал
+# заменён на ""; Mask — строки той же длины, литералы и комментарии — пробелами (позиции в маске —
+# позиции в тексте); Literals — @{ Line; Text; Prefix — код этой строки слева от литерала; Col — начало
+# текста литерала в строке, -1 у многострочного }.
+function Get-BslScan([string]$text) {
+	$lines = $text -replace "`r", "" -split "`n"
+	$code = New-Object System.Collections.ArrayList
+	$mask = New-Object System.Collections.ArrayList
+	$lits = New-Object System.Collections.ArrayList
+	$inStr = $false; $cur = $null; $curLine = 0; $curPrefix = ""; $curCol = -1
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$line = $lines[$i]
+		# строка без кавычек вне литерала — только отрезать комментарий (посимвольный разбор в PS медленный)
+		if (-not $inStr -and $line.IndexOf('"') -lt 0) {
+			$k = $line.IndexOf('//')
+			[void]$code.Add($(if ($k -ge 0) { $line.Substring(0, $k) } else { $line }))
+			[void]$mask.Add($(if ($k -ge 0) { $line.Substring(0, $k) + (' ' * ($line.Length - $k)) } else { $line }))
+			continue
+		}
+		$sb = New-Object System.Text.StringBuilder
+		$mk = $line.ToCharArray()
+		$j = 0
+		if ($inStr) {
+			# продолжение многострочного литерала: пробелы, затем «|»
+			while ($j -lt $line.Length -and ($line[$j] -eq ' ' -or $line[$j] -eq "`t")) { $j++ }
+			# строка «//…» между строками литерала — комментарий, литерал продолжается на следующей
+			if ($j + 1 -lt $line.Length -and $line[$j] -eq '/' -and $line[$j + 1] -eq '/') { [void]$code.Add(""); [void]$mask.Add(' ' * $line.Length); continue }
+			if ($j -lt $line.Length -and $line[$j] -eq '|') { $mk[$j] = ' '; $j++ }
+			$cur += "`n"
+			$curCol = -1
+		}
+		while ($j -lt $line.Length) {
+			$c = $line[$j]
+			if ($inStr) {
+				if ($c -eq '"') {
+					if ($j + 1 -lt $line.Length -and $line[$j + 1] -eq '"') { $cur += '"'; $mk[$j] = ' '; $mk[$j + 1] = ' '; $j += 2; continue }
+					$inStr = $false
+					[void]$lits.Add(@{ Line = $curLine; Text = $cur; Prefix = $curPrefix; Col = $curCol })
+					[void]$sb.Append('""')
+					$j++
+					continue
+				}
+				$cur += $c; $mk[$j] = ' '; $j++; continue
+			}
+			if ($c -eq '/' -and $j + 1 -lt $line.Length -and $line[$j + 1] -eq '/') { for ($q = $j; $q -lt $mk.Length; $q++) { $mk[$q] = ' ' }; break }
+			if ($c -eq '"') { $inStr = $true; $cur = ""; $curLine = $i + 1; $curPrefix = $sb.ToString(); $curCol = $j + 1; $j++; continue }
+			[void]$sb.Append($c); $j++
+		}
+		[void]$code.Add($sb.ToString())
+		[void]$mask.Add([string]::new($mk))
+	}
+	return @{ Lines = $lines; Code = $code.ToArray(); Mask = $mask.ToArray(); Literals = $lits.ToArray() }
+}
+
+# Процедуры и функции модуля (имя, первая и последняя строка; первая — с аннотациями над заголовком)
+# и области (имя, строки #Область и #КонецОбласти, вложенность). Строки нумеруются с 1.
+# Заголовок — только в начале строки: продолжение литерала («|…») и комментарий заголовком не станут.
+function Get-ModuleOutline([string[]]$lines) {
+	$procs = New-Object System.Collections.ArrayList
+	$regions = New-Object System.Collections.ArrayList
+	$open = New-Object System.Collections.ArrayList
+	$cur = $null
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$l = $lines[$i]
+		if ($null -ne $cur) {
+			# конец процедуры — в начале строки или после «;» (`Возврат Х;КонецФункции`)
+			if ($l -match '(^|;)\s*(КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)(?![\w])') { $cur.end = $i + 1; [void]$procs.Add($cur); $cur = $null }
+			continue
+		}
+		$m = [regex]::Match($l, '^\s*(?:(?:Асинх|Async)\s+)?(?:Процедура|Функция|Procedure|Function)\s+(\w+)\s*\(', 'IgnoreCase')
+		if ($m.Success) {
+			$s = $i
+			while ($s -gt 0 -and $lines[$s - 1] -match '^\s*&') { $s-- }
+			$cur = [pscustomobject]@{ name = $m.Groups[1].Value; start = $s + 1; end = $i + 1 }
+			continue
+		}
+		$m = [regex]::Match($l, '^\s*#(?:Область|Region)\s+(\S+)', 'IgnoreCase')
+		if ($m.Success) { [void]$open.Add([pscustomobject]@{ name = $m.Groups[1].Value; start = $i + 1; end = 0; depth = $open.Count }); continue }
+		if ($l -match '^\s*#(КонецОбласти|EndRegion)(?![\w])' -and $open.Count -gt 0) {
+			$r = $open[$open.Count - 1]; $open.RemoveAt($open.Count - 1)
+			$r.end = $i + 1; [void]$regions.Add($r)
+		}
+	}
+	return @{ procs = $procs; regions = $regions }
+}
+
+# Разметка модуля по коду без литералов и комментариев: «;КонецПроцедуры» в строке не закроет процедуру.
+function Get-ModuleCodeOutline([string[]]$lines) {
+	return Get-ModuleOutline (Get-BslScan ($lines -join "`n")).Code
+}
+
+# Текст заготовки: директива и параметры — из каталога событий, у команды — (Команда) на клиенте.
+# $null — событие вне каталога, сигнатура неизвестна.
+function Get-HandlerStub($b) {
+	if ($b.kind -eq 'command') { $dir = 'НаКлиенте'; $params = 'Команда' }
+	else {
+		$entry = Get-EventEntry $b.xmlTag $b.eventName
+		if (-not $entry) { return $null }
+		$dir = "$($entry[1])"; $params = "$($entry[2])"
+	}
+	return @("&$dir", "Процедура $($b.handler)($params)", "`t// Вставить содержимое обработчика.", 'КонецПроцедуры')
+}
+
+# Порядок областей модуля формы по стандарту (типовые): куда встаёт новая область.
+function Get-RegionRank([string]$name) {
+	$n = $name.ToLower()
+	if ($n -eq 'описаниепеременных') { return 0 }
+	if ($n -eq 'обработчикисобытийформы') { return 1 }
+	if ($n -eq 'обработчикисобытийэлементовшапкиформы' -or $n -eq 'обработчикисобытийэлементовформы') { return 2 }
+	if ($n.StartsWith('обработчикисобытийэлементовтаблицыформы')) { return 3 }
+	if ($n -eq 'обработчикикомандформы') { return 4 }
+	if ($n -eq 'обработчикиоповещений') { return 5 }
+	if ($n -eq 'служебныепроцедурыифункции') { return 6 }
+	return -1
+}
+
+# Область для привязки. Общая область элементов (без «шапки») — для всех элементов, и табличных тоже:
+# модуль уже так устроен.
+function Get-HandlerRegionName($b, $regions) {
+	if ($b.kind -eq 'form') { return 'ОбработчикиСобытийФормы' }
+	if ($b.kind -eq 'command') { return 'ОбработчикиКомандФормы' }
+	$has = @{}
+	foreach ($r in $regions) { $has[$r.name.ToLower()] = $true }
+	# своя область таблицы, если она уже есть, — важнее общей
+	if ($b.table -and $has["обработчикисобытийэлементовтаблицыформы$($b.table)".ToLower()]) { return "ОбработчикиСобытийЭлементовТаблицыФормы$($b.table)" }
+	if ($has['обработчикисобытийэлементовформы'] -and -not $has['обработчикисобытийэлементовшапкиформы']) { return 'ОбработчикиСобытийЭлементовФормы' }
+	if ($b.table) { return "ОбработчикиСобытийЭлементовТаблицыФормы$($b.table)" }
+	return 'ОбработчикиСобытийЭлементовШапкиФормы'
+}
+
+# Вставить заготовку в модуль (список строк): в конец своей области, нет области — создать её на месте
+# по порядку областей, нет областей вообще — в конец модуля. Отделяется одной пустой строкой.
+function Add-StubToModule([System.Collections.ArrayList]$lines, [string[]]$stub, $b) {
+	$outline = Get-ModuleCodeOutline $lines.ToArray()
+	if ($outline.regions.Count -eq 0) {
+		while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1].Trim()) { $lines.RemoveAt($lines.Count - 1) }
+		if ($lines.Count -gt 0) { [void]$lines.Add('') }
+		$lines.AddRange($stub)
+		return
+	}
+	$name = Get-HandlerRegionName $b $outline.regions
+	$target = $null
+	foreach ($r in $outline.regions) { if ($r.name -eq $name -and ($null -eq $target -or $r.start -lt $target.start)) { $target = $r } }
+	if ($null -ne $target) {
+		# перед #КонецОбласти, сняв пустые строки над ним
+		$k = $target.end - 1
+		while ($k - 1 -gt $target.start - 1 -and -not $lines[$k - 1].Trim()) { $k--; $lines.RemoveAt($k) }
+		$lines.InsertRange($k, [string[]](@('') + $stub + @('')))
+		return
+	}
+	$block = [string[]](@("#Область $name", '') + $stub + @('', '#КонецОбласти'))
+	$rank = Get-RegionRank $name
+	$top = @($outline.regions | Where-Object { $_.depth -eq 0 } | Sort-Object start)
+	$after = $null; $before = $null
+	foreach ($r in $top) {
+		$rr = Get-RegionRank $r.name
+		if ($rr -lt 0) { continue }
+		if ($rr -le $rank) { $after = $r } elseif ($null -eq $before) { $before = $r }
+	}
+	if ($null -ne $after) { $lines.InsertRange($after.end, [string[]](@('') + $block)); return }
+	if ($null -ne $before) { $lines.InsertRange($before.start - 1, [string[]]($block + @(''))); return }
+	while ($lines.Count -gt 0 -and -not $lines[$lines.Count - 1].Trim()) { $lines.RemoveAt($lines.Count - 1) }
+	$lines.InsertRange($lines.Count, [string[]](@('') + $block))
+}
+
+# Дописать в модуль формы процедуры для привязок, которых в нём нет. Модуль — <каталог Form.xml>/Form/Module.bsl;
+# нет модуля — создаётся из шаблона, но только в раскладке выгрузки (Form.xml в каталоге Ext).
+# Кодировка и переводы строк существующего модуля сохраняются; новый — UTF-8 с BOM, CRLF, как у form-add.
+# Возвращает строки отчёта: что добавлено, что уже было, с диапазонами строк по итоговому тексту.
+function Update-FormModule([string]$formXmlPath, [string]$shownFormPath) {
+	if ($script:handlerBindings.Count -eq 0) { return @() }
+	$xmlDir = [System.IO.Path]::GetDirectoryName($formXmlPath)
+	$path = [System.IO.Path]::Combine($xmlDir, 'Form', 'Module.bsl')
+	# путь для вывода — в том же виде, что путь к Form.xml в выводе навыка
+	$sep = if ($shownFormPath.Contains('\') -and -not $shownFormPath.Contains('/')) { '\' } else { '/' }
+	$shown = ($shownFormPath -replace '[^\\/]+$', '') + "Form${sep}Module.bsl"
+	$created = $false
+	if (Test-Path -LiteralPath $path) {
+		$bytes = [System.IO.File]::ReadAllBytes($path)
+		$bom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+		# строго: модуль не в UTF-8 перезапись испортила бы — такой не трогаем
+		try { $text = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes) }
+		catch { return @("[WARN] Form module is not UTF-8: $shown — handler stubs not created") }
+		if ($bom) { $text = $text.Substring(1) }
+		$eol = if ($text.Contains("`r`n") -or -not $text.Contains("`n")) { "`r`n" } else { "`n" }
+		$norm = $text -replace "`r`n", "`n"
+		# сколько переводов строк в конце — столько и запишем: модуль не должен меняться вне вставок
+		$tail = $norm.Length - $norm.TrimEnd("`n").Length
+		$src = @($norm.TrimEnd("`n") -split "`n")
+		if (-not $text.Trim()) { $src = Get-FormModuleTemplate }
+	} elseif ([System.IO.Path]::GetFileName($xmlDir) -eq 'Ext') {
+		$created = $true; $bom = $true; $eol = "`r`n"; $tail = 0
+		$src = Get-FormModuleTemplate
+	} else {
+		return @("[WARN] Form module not found: $shown — handler stubs not created")
+	}
+	$lines = New-Object System.Collections.ArrayList
+	$lines.AddRange([string[]]$src)
+	$status = @{}
+	$changed = $false
+	foreach ($b in $script:handlerBindings) {
+		$outline = Get-ModuleCodeOutline $lines.ToArray()
+		if (@($outline.procs | Where-Object { $_.name -eq $b.handler }).Count -gt 0) { $status[$b.handler] = 'exists'; continue }
+		$stub = Get-HandlerStub $b
+		if ($null -eq $stub) { $status[$b.handler] = "not added: no signature known for event '$($b.eventName)' of $($b.xmlTag)"; continue }
+		Add-StubToModule $lines $stub $b
+		$status[$b.handler] = 'added'
+		$changed = $true
+	}
+	if ($changed -or $created) {
+		$dir = [System.IO.Path]::GetDirectoryName($path)
+		if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+		$out = ($lines.ToArray() -join $eol) + ($eol * $tail)
+		[System.IO.File]::WriteAllText($path, $out, (New-Object System.Text.UTF8Encoding($bom)))
+	}
+	$outline = Get-ModuleCodeOutline $lines.ToArray()
+	# в порядке строк модуля; не добавленные — в конце
+	$rows = @()
+	foreach ($b in $script:handlerBindings) {
+		$st = $status[$b.handler]
+		$p = @($outline.procs | Where-Object { $_.name -eq $b.handler })[0]
+		if ($st -eq 'added') { $rows += [pscustomobject]@{ line = $p.start; n = $rows.Count; text = "  + $($b.handler) — added, lines $($p.start)-$($p.end)" } }
+		elseif ($st -eq 'exists') { $rows += [pscustomobject]@{ line = $p.start; n = $rows.Count; text = "  = $($b.handler) — exists, lines $($p.start)-$($p.end)" } }
+		else { $rows += [pscustomobject]@{ line = [int]::MaxValue; n = $rows.Count; text = "  ? $($b.handler) — $st" } }
+	}
+	$report = @(if ($created) { "Handlers ($shown, module created):" } else { "Handlers ($shown):" })
+	foreach ($r in @($rows | Sort-Object line, n)) { $report += $r.text }
+	return $report
 }
 
 function Emit-Events {
-	param($el, [string]$elementName, [string]$indent, [string]$typeKey)
+	param($el, [string]$elementName, [string]$indent, [string]$xmlTag, [string]$source = '')
 
-	$pairs = Get-EventPairs -el $el -elementName $elementName
+	$pairs = Get-EventPairs -el $el -elementName $elementName -xmlTag $xmlTag
 	if ($pairs.Count -eq 0) { return }
-
-	# Validate event names.
-	# Local: upstream printed a [WARN] and compiled anyway, so a misspelled event
-	# (`OnEndEdit` for `OnEditEnd`, say) ended up in Form.xml as a platform event
-	# that does not exist — visible only when the Configurator loads the form.
-	if ($typeKey -and $script:knownEvents.ContainsKey($typeKey)) {
-		$allowed = $script:knownEvents[$typeKey]
-		foreach ($pr in $pairs) {
-			if ($allowed.Count -gt 0 -and $allowed -notcontains "$($pr.name)") {
-				[Console]::Error.WriteLine("[ERROR] Неизвестное событие '$($pr.name)' для $typeKey '$elementName'. Известные: $($allowed -join ', ')")
-				exit 1
-			}
-		}
-	}
+	Test-EventPairs -pairs $pairs -xmlTag $xmlTag -elementName $elementName -source $source
+	$table = if ($xmlTag -eq 'Table') { $elementName } else { $script:handlerTable }
+	foreach ($pr in $pairs) { Register-Handler $pr.handler 'element' $xmlTag $pr.name $table }
 
 	X "$indent<Events>"
 	foreach ($pr in $pairs) {
-		X "$indent`t<Event name=`"$($pr.name)`">$($pr.handler)</Event>"
+		$ctAttr = if ($pr.callType) { " callType=`"$($pr.callType)`"" } else { "" }
+		X "$indent`t<Event name=`"$($pr.name)`"$ctAttr>$($pr.handler)</Event>"
 	}
 	X "$indent</Events>"
 }
@@ -2885,7 +3567,7 @@ function Emit-Companion {
 		# ToolTip компаньона (подсказка самой расширенной подсказки) — после Title (порядок схемы LabelDecoration)
 		if ($content.tooltip) { Emit-MLText -tag "ToolTip" -text $content.tooltip -indent $inner }
 		# События компаньона (ExtendedTooltip = LabelDecoration: напр. URLProcessing у hyperlink-подсказки)
-		Emit-Events -el $content -elementName $name -indent $inner -typeKey 'label'
+		Emit-Events -el $content -elementName $name -indent $inner -xmlTag 'ExtendedTooltip'
 	} else {
 		Emit-CompanionTitle -content $content -indent $inner
 	}
@@ -3008,101 +3690,1035 @@ function Get-AdditionOverride {
 	return $null
 }
 
+# Silent synonyms: model often writes XML name or Russian (ПолеПереключателя/RadioButtonField → radio).
+# Maps any synonym to canonical short DSL key.
+# commandBar/autoCommandBar/КоманднаяПанель → тип-элемент ТОЛЬКО при строковом значении (имя);
+# объект/массив уже отнесён к панель-свойству выше.
+$script:elementTypeStrOnlyKeys = @('commandBar','autoCommandBar','КоманднаяПанель')
+$script:elementTypeSynonyms = @{
+	"commandBar"        = "cmdBar"
+	"autoCommandBar"    = "autoCmdBar"
+	"КоманднаяПанель"   = "cmdBar"
+	"InputField"        = "input"
+	"ПолеВвода"         = "input"
+	"CheckBoxField"     = "check"
+	"ПолеФлажка"        = "check"
+	"RadioButtonField"  = "radio"
+	"ПолеПереключателя" = "radio"
+	"radioButton"       = "radio"
+	"PictureField"      = "picField"
+	"ПолеКартинки"      = "picField"
+	"LabelField"        = "labelField"
+	"ПолеНадписи"       = "labelField"
+	"CalendarField"     = "calendar"
+	"ПолеКалендаря"     = "calendar"
+	"LabelDecoration"   = "label"
+	"Надпись"           = "label"
+	"PictureDecoration" = "picture"
+	"Картинка"          = "picture"
+	"UsualGroup"        = "group"
+	"Группа"            = "group"
+	"ОбычнаяГруппа"     = "group"
+	"ColumnGroup"       = "columnGroup"
+	"ГруппаКолонок"     = "columnGroup"
+	"Pages"             = "pages"
+	"ГруппаСтраниц"     = "pages"
+	"Page"              = "page"
+	"Страница"          = "page"
+	"Table"             = "table"
+	"Таблица"           = "table"
+	"Button"            = "button"
+	"Кнопка"            = "button"
+	"Popup"             = "popup"
+	"ВсплывающееМеню"   = "popup"
+	# Дополнения командной панели таблицы (тип-как-ключ) — forgiving: XML-тег/Type/рус.имя → канон
+	"SearchStringAddition"       = "searchString"
+	"SearchStringRepresentation" = "searchString"
+	"строкаПоиска"               = "searchString"
+	"отображениеСтрокиПоиска"    = "searchString"
+	"Отображение строки поиска"  = "searchString"
+	"ViewStatusAddition"         = "viewStatus"
+	"ViewStatusRepresentation"   = "viewStatus"
+	"состояниеПросмотра"         = "viewStatus"
+	"Состояние просмотра"        = "viewStatus"
+	"SearchControlAddition"      = "searchControl"
+	"SearchControl"              = "searchControl"
+	"управлениеПоиском"          = "searchControl"
+	"Управление поиском"         = "searchControl"
+	# Спец-поля (документ/датчик) — XML-имя/рус. → канон
+	"SpreadSheetDocumentField"   = "spreadsheet"
+	"ПолеТабличногоДокумента"    = "spreadsheet"
+	"HTMLDocumentField"          = "html"
+	"ПолеHTMLДокумента"          = "html"
+	"TextDocumentField"          = "textDoc"
+	"ПолеТекстовогоДокумента"    = "textDoc"
+	"FormattedDocumentField"     = "formattedDoc"
+	"ПолеФорматированногоДокумента" = "formattedDoc"
+	"ProgressBarField"           = "progressBar"
+	"ПолеИндикатора"             = "progressBar"
+	"TrackBarField"              = "trackBar"
+	"ПолеПолосыРегулирования"    = "trackBar"
+	"ChartField"                 = "chart"
+	"ПолеДиаграммы"              = "chart"
+	"GanttChartField"            = "ganttChart"
+	"ПолеДиаграммыГанта"         = "ganttChart"
+	"GraphicalSchemaField"       = "graphicalSchema"
+	"ПолеГрафическойСхемы"       = "graphicalSchema"
+	"PlannerField"               = "planner"
+	"ПолеПланировщика"           = "planner"
+	"PeriodField"                = "periodField"
+	"ПолеПериода"                = "periodField"
+	"DendrogramField"            = "dendrogram"
+	"ПолеДендрограммы"           = "dendrogram"
+}
+
+function Normalize-ElementTypeSynonyms {
+	param($el)
+	foreach ($pair in $script:elementTypeSynonyms.GetEnumerator()) {
+		if ($null -ne $el.PSObject.Properties[$pair.Key] -and $null -eq $el.PSObject.Properties[$pair.Value]) {
+			if ($script:elementTypeStrOnlyKeys -contains $pair.Key -and -not ($el.($pair.Key) -is [string])) { continue }
+			$val = $el.($pair.Key)
+			$el.PSObject.Properties.Remove($pair.Key) | Out-Null
+			$el | Add-Member -NotePropertyName $pair.Value -NotePropertyValue $val -Force
+		}
+	}
+}
+
+# --- Перечисления свойств формы (генерируется) ---
+# Значения свойств-перечислений элементов формы и корня (ключ «Тип.Свойство» или общий «Свойство»).
+# Источник — XSD xcf-logform 2.10–2.21, сверено с корпусом БП/ERP 8.3.24 (17036 форм, расхождений нет)
+# и загрузкой в 8.3.24. Перегенерировать: python debug/form-dsl-revision/gen_enum_table.py
+$script:validEnumValues = @{
+	"ActionPurpose" = @("Usual","Create","Finish")
+	"AppearanceInCard" = @("Auto","Extended")
+	"AppearanceMode" = @("Auto","CommandBar","UsualGroup")
+	"AutoAddIncomplete" = @("true","false","auto")
+	"AutoCapitalizationOnTextInput" = @("Auto","None","Words","Sentences","AllCharacters")
+	"AutoChoiceIncomplete" = @("true","false","auto")
+	"AutoCorrectionOnTextInput" = @("Auto","Use","DontUse")
+	"AutoMarkIncomplete" = @("true","false","auto")
+	"AutoSaveDataInSettings" = @("DontUse","Use")
+	"AutoShowClearButtonMode" = @("Auto","Always","FilledOnly")
+	"AutoShowOpenButtonMode" = @("Auto","Always","FilledOnly")
+	"AutoShowState" = @("Auto","DontShow","Show","ShowOnComposition")
+	"AutoTime" = @("DontUse","Last","First","CurrentOrLast","CurrentOrFirst")
+	"AutoWidthInTable" = @("Auto","ByData","None","ByDataAndTitle")
+	"AutofillHint" = @("DontUse","FullName","GivenName","FamilyName","MiddleName","NamePrefix","NameSuffix","Street","City","Region","Country","PostalCode","UserName","Password","NewPassword","OneTimeCode","Email","PhoneNumber","CreditCardNumber")
+	"BackPictureEffect" = @("Auto","None","Semitransparency","SemitransparencyAndBlur")
+	"BackgroundShowMode" = @("Auto","DontShow","ShowAndIncreaseSize","ShowAndDontIncreaseSize")
+	"Behavior" = @("Usual","Collapsible","PopUp","Auto")
+	"BehaviorOnHorizontalCompression" = @("Auto","HideItemsByImportance","MoveItemsByImportance")
+	"ButtonImportance" = @("Main","Normal","Supplementary")
+	"CardBehaviorOnVerticalCompression" = @("Auto","MoveItemsToSwipeablePages","HideItems")
+	"CardPictureAndTitleAlign" = @("Auto","LeftHorizontallySidesVertically","CenterHorizontallySidesVertically","CenterHorizontallyCenterVertically")
+	"CardRepresentationType" = @("Usual","Group")
+	"CellActionsButtonViewMode" = @("Auto","DontShow","ShowOnHover")
+	"CellHyperlinkDisplayVariant" = @("Auto","Always","OnRowHover")
+	"CellHyperlinkRepresentation" = @("Auto","Show","DontShow")
+	"CellHyperlinksRepresentation" = @("Auto","AutoForSingle","ForAll","DontShow")
+	"CellMark" = @("None","ShapeUnderTextOval","IconCircle")
+	"CheckBoxType" = @("Auto","CheckBox","Tumbler","Switcher")
+	"ChildItemsTitleLocation" = @("Auto","Left","LeftIfPossible","Top")
+	"ChildItemsWidth" = @("Auto","Equal","LeftWide","LeftWidest","LeftNarrow","LeftNarrowest")
+	"ChildrenAlign" = @("Auto","None","ItemsLeftTitlesLeft","ItemsRightTitlesLeft","ItemsLeftTitlesRight","ItemsRightTitlesRight","TitlesLeftDataLeft","TitlesLeftDataRight","TitlesRightDataLeft","TitlesRightDataRight","TitlesLeftDataAuto")
+	"ChoiceButton" = @("true","false","auto")
+	"ChoiceButtonRepresentation" = @("Auto","ShowInDropList","ShowInDropListAndInInputField","ShowInInputField")
+	"InputField.ChoiceFoldersAndItems" = @("Items","Folders","FoldersAndItems","Auto")
+	"Table.ChoiceFoldersAndItems" = @("Items","Folders","FoldersAndItems")
+	"ChoiceHistoryOnInput" = @("Auto","DontUse")
+	"ChoiceListButton" = @("true","false","auto")
+	"ClearButton" = @("true","false","auto")
+	"CollapseItemsByImportanceVariant" = @("Auto","Use","DontUse")
+	"CommandBarLocation" = @("None","Auto","Top","Bottom")
+	"ComplexSettingsViewMode" = @("Show","DontShow")
+	"ControlRepresentation" = @("TitleHyperlink","Picture","Button","ButtonInParentElement")
+	"ConversationsRepresentation" = @("Auto","Show","DontShow")
+	"CreateButton" = @("true","false","auto")
+	"Command.CurrentRowUse" = @("Use","DontUse","Auto")
+	"Pages.CurrentRowUse" = @("Use","DontUse","Auto")
+	"Table.CurrentRowUse" = @("Auto","Choice","SelectionPresentation","SelectionPresentationAndChoice")
+	"UsualGroup.CurrentRowUse" = @("Use","DontUse","Auto")
+	"DisplayImportance" = @("Auto","VeryHigh","High","Usual","Low","VeryLow")
+	"DrawingSelectionShowMode" = @("Show","DontShow","Auto")
+	"DropListButton" = @("true","false","auto")
+	"EditMode" = @("Directly","Enter","EnterOnInput","Auto")
+	"EditTextUpdate" = @("Auto","DontUse","OnValueChange","Always")
+	"EnterKeyBehavior" = @("ControlNavigation","DefaultButton")
+	"EqualColumnsWidth" = @("true","false","auto")
+	"EqualItemsWidth" = @("true","false","auto")
+	"ExtendedEdit" = @("true","false","auto")
+	"FileDragMode" = @("AsFile","AsFileRef")
+	"FillCheck" = @("DontCheck","ShowError")
+	"FixInCard" = @("true","false","auto")
+	"FixingInTable" = @("None","Left","Right")
+	"FooterHorizontalAlign" = @("Left","Center","Right","Auto")
+	"ColumnGroup.Group" = @("Horizontal","Vertical","InCell")
+	"Form.Group" = @("Horizontal","Vertical","HorizontalIfPossible","AlwaysHorizontal","Auto","AutoScreenTypeSensitive")
+	"Page.Group" = @("Horizontal","Vertical","HorizontalIfPossible","AlwaysHorizontal","Auto","AutoScreenTypeSensitive")
+	"UsualGroup.Group" = @("Horizontal","Vertical","HorizontalIfPossible","AlwaysHorizontal","Auto","AutoScreenTypeSensitive")
+	"GroupHorizontalAlign" = @("Left","Center","Right","Auto")
+	"GroupVerticalAlign" = @("Top","Center","Bottom","Auto")
+	"HeaderHorizontalAlign" = @("Left","Center","Right","Auto")
+	"InputField.HeightControlVariant" = @("Auto","UseHeightInFormRows","UseContentHeight")
+	"Table.HeightControlVariant" = @("Auto","UseHeightInFormRows","UseHeightInTableRows","UseContentHeight")
+	"HierarchyPanelLocation" = @("Auto","None")
+	"HorizontalAlign" = @("Left","Center","Right","Auto")
+	"HorizontalLinesBWA" = @("true","false","auto")
+	"HorizontalLocation" = @("Left","Center","Right","Auto")
+	"Table.HorizontalScrollBar" = @("DontUse","UseAlways","AutoUse")
+	"HorizontalSpacing" = @("Auto","None","Half","Single","OneAndHalf","Double")
+	"AutoCommandBar.HorizontalStretch" = @("true","false","auto")
+	"ButtonGroup.HorizontalStretch" = @("true","false","auto")
+	"CheckBoxField.HorizontalStretch" = @("true","false","auto")
+	"ColumnGroup.HorizontalStretch" = @("true","false","auto")
+	"CommandBar.HorizontalStretch" = @("true","false","auto")
+	"ContextMenu.HorizontalStretch" = @("true","false","auto")
+	"ExtendedTooltip.HorizontalStretch" = @("true","false","auto")
+	"InputField.HorizontalStretch" = @("true","false","auto")
+	"LabelDecoration.HorizontalStretch" = @("true","false","auto")
+	"LabelField.HorizontalStretch" = @("true","false","auto")
+	"Page.HorizontalStretch" = @("true","false","auto")
+	"Pages.HorizontalStretch" = @("true","false","auto")
+	"PictureDecoration.HorizontalStretch" = @("true","false","auto")
+	"Popup.HorizontalStretch" = @("true","false","auto")
+	"RadioButtonField.HorizontalStretch" = @("true","false","auto")
+	"SearchControlAddition.HorizontalStretch" = @("true","false","auto")
+	"SearchStringAddition.HorizontalStretch" = @("true","false","auto")
+	"UsualGroup.HorizontalStretch" = @("true","false","auto")
+	"ViewStatusAddition.HorizontalStretch" = @("true","false","auto")
+	"Importance" = @("Main","Normal","Supplementary")
+	"IncompleteChoiceMode" = @("OnEnterPressed","OnActivate")
+	"InitialListView" = @("Beginning","End","Auto")
+	"InitialRowActivation" = @("Auto","Activate","NoActivate")
+	"InitialTreeView" = @("NoExpand","ExpandTopLevel","ExpandAllLevels")
+	"IntervalsSelectionMode" = @("Auto","Multiple","Single","None")
+	"KeyType" = @("Auto","FieldValue","RowKey","RowNumber")
+	"LocationInCommandBar" = @("Auto","InAdditionalSubmenu","InCommandBar","InCommandBarAndInAdditionalSubmenu")
+	"MarkNegatives" = @("true","false","auto")
+	"MarkRequiredComplete" = @("true","false","auto")
+	"MarkingAppearance" = @("DontShow","TopLeft","BottomRight","BothSides")
+	"MobileDeviceTableType" = @("Auto","List","Cards")
+	"MultiLine" = @("true","false","auto")
+	"MultipleValuePictureShape" = @("Auto","Rect","Circle","Square")
+	"MultipleValuePictureSize" = @("Auto","Small","Medium","Large")
+	"MultipleValuesHyperlink" = @("true","false","auto")
+	"OnMainServerUnavalableBehavior" = @("Auto","MakeDisable","DontChangeBehavior")
+	"OnScreenKeyboardReturnKeyText" = @("Auto","Return","Go","Join","Next","Search","Send","Done","Continue")
+	"OnlyInAllActions" = @("true","false","auto")
+	"OpenButton" = @("true","false","auto")
+	"Orientation" = @("Horizontal","Vertical","HorizontalIfPossible")
+	"Output" = @("Auto","Enable","Disable")
+	"PagesRepresentation" = @("None","TabsOnTop","TabsOnBottom","TabsOnLeftHorizontal","TabsOnRightHorizontal","Swipe","Auto")
+	"PasswordMode" = @("true","false","auto")
+	"PictureLocation" = @("Auto","Left","Right","Top","Bottom")
+	"PictureSize" = @("RealSize","Stretch","Proportionally","Tile","AutoSize","RealSizeIgnoreScale","AutoSizeIgnoreScale","ByFontSize")
+	"PlacementArea" = @("mainCmdsLeft","autoCmds","userCmds","mainCmdsRight")
+	"PointerType" = @("Special","Regular")
+	"QuickChoice" = @("true","false","auto")
+	"RadioButtonType" = @("Auto","RadioButtons","Tumbler")
+	"RefreshRequest" = @("None","PullFromTop","PullFromBottom","PullFromTopOrBottom")
+	"ReportFormType" = @("Main","Settings","Variant")
+	"ReportResultViewMode" = @("Auto","Default","Compact")
+	"Button.Representation" = @("Text","Picture","PictureAndText","Auto")
+	"ButtonGroup.Representation" = @("Auto","Usual","Compact")
+	"Command.Representation" = @("Text","Picture","TextPicture","Auto")
+	"Popup.Representation" = @("Text","Picture","PictureAndText","Auto")
+	"ProgressBarField.Representation" = @("Smooth","Broken","BrokenTilt")
+	"Table.Representation" = @("List","HierarchicalList","Tree")
+	"UsualGroup.Representation" = @("Auto","None","StrongSeparation","WeakSeparation","NormalSeparation","GroupBox","Line","Margin")
+	"RepresentationInContextMenu" = @("None","AdditionalInContextMenu","OnlyInContextMenu","Auto")
+	"RowActionsShowType" = @("Auto","DontShow","ShowOnHover","ShowAlways")
+	"RowInputMode" = @("EndOfList","EndOfWindow","AfterCurrentRow","BeforeCurrentRow")
+	"RowSelectionMode" = @("Auto","Cell","Row")
+	"SaveColors" = @("Auto","ForUser","ByKeyForUser","DontUse")
+	"SaveDataInSettings" = @("DontUse","UseList")
+	"ScaleVariant" = @("Auto","Normal","Compact","NormalIfPossible")
+	"ScalingMode" = @("Auto","Normal","Compact")
+	"Page.ScrollOnCompress" = @("true","false","auto")
+	"UsualGroup.ScrollOnCompress" = @("true","false","auto")
+	"SearchControlLocation" = @("Auto","None","CommandBar")
+	"SearchOnInput" = @("Use","DontUse","Auto")
+	"SearchStringLocation" = @("Auto","None","CommandBar","Top","Bottom","FormCaption","PullFromTop")
+	"SelectedRowsUse" = @("Use","DontUse","Auto")
+	"CalendarField.SelectionMode" = @("Single","Multiple","Interval")
+	"Table.SelectionMode" = @("SingleRow","MultiRow")
+	"SelectionShowMode" = @("WhenActive","Always","DontShow","WhenMultipleCellsSelected","WhenMultipleCellsSelectedWhenActive")
+	"Shape" = @("Auto","Usual","Oval")
+	"ShapeRepresentation" = @("Auto","Always","WhenActive","None")
+	"ShowCheckBoxesInDropList" = @("true","false","auto")
+	"ShowCommandBar" = @("true","false","auto")
+	"ShowHorizontalLinesFlag" = @("true","false","auto")
+	"ColumnGroup.ShowTitle" = @("true","false","auto")
+	"Form.ShowTitle" = @("true","false","auto")
+	"Page.ShowTitle" = @("true","false","auto")
+	"UsualGroup.ShowTitle" = @("true","false","auto")
+	"ShowTitleInCard" = @("true","false","auto")
+	"ShowVerticalLinesFlag" = @("true","false","auto")
+	"SkipOnInput" = @("true","false","auto")
+	"SpecialTextInputMode" = @("Auto","None","DigitsAndPunctuation","URL","Email","PhoneNumber","Digits")
+	"SpellCheckingOnTextInput" = @("Auto","Use","DontUse")
+	"SpinButton" = @("true","false","auto")
+	"SpreadsheetDocumentMultipleSelectionPanelViewMode" = @("Auto","DontShow","ShowOnMultipleSelection","ShowAlways")
+	"TableLocation" = @("Auto","Left","Right","None")
+	"TextSize" = @("Enlarged","Normal","Reduced")
+	"ThroughAlign" = @("Use","DontUse","Auto")
+	"TimeChoiceMode" = @("Auto","DontChoose","CustomTime","Interval1Minute","Interval5Minutes","Interval10Minutes","Interval15Minutes","Interval15And20Minutes","Interval20Minutes","Interval30Minutes","Interval60Minutes")
+	"TitleLocation" = @("None","Auto","Left","Top","Right","Bottom")
+	"ToolTipRepresentation" = @("Auto","None","Balloon","Button","ShowAuto","ShowTop","ShowLeft","ShowBottom","ShowRight")
+	"TumblerRepresentation" = @("Text","Picture","Auto")
+	"Button.Type" = @("CommandBarButton","UsualButton","Hyperlink","CommandBarHyperlink")
+	"UpdateOnDataChange" = @("Auto","DontUpdate")
+	"UseAlternationRowColorBWA" = @("true","false","auto")
+	"UseCopy" = @("true","false","auto")
+	"UseForFoldersAndItems" = @("Items","Folders","FoldersAndItems")
+	"UsePostingMode" = @("Regular","RealTime","Ask","Auto")
+	"ValuesSelectionMode" = @("Auto","Multiple","Single","None")
+	"VerticalAlign" = @("Top","Center","Bottom","Auto")
+	"VerticalLinesBWA" = @("true","false","auto")
+	"VerticalScroll" = @("auto","use","useIfNecessary","useWithoutStretch")
+	"Table.VerticalScrollBar" = @("DontUse","UseAlways","AutoUse")
+	"VerticalSpacing" = @("Auto","None","Half","Single","OneAndHalf","Double")
+	"AutoCommandBar.VerticalStretch" = @("true","false","auto")
+	"ButtonGroup.VerticalStretch" = @("true","false","auto")
+	"ColumnGroup.VerticalStretch" = @("true","false","auto")
+	"CommandBar.VerticalStretch" = @("true","false","auto")
+	"ContextMenu.VerticalStretch" = @("true","false","auto")
+	"ExtendedTooltip.VerticalStretch" = @("true","false","auto")
+	"InputField.VerticalStretch" = @("true","false","auto")
+	"LabelDecoration.VerticalStretch" = @("true","false","auto")
+	"LabelField.VerticalStretch" = @("true","false","auto")
+	"Page.VerticalStretch" = @("true","false","auto")
+	"Pages.VerticalStretch" = @("true","false","auto")
+	"PictureDecoration.VerticalStretch" = @("true","false","auto")
+	"Popup.VerticalStretch" = @("true","false","auto")
+	"UsualGroup.VerticalStretch" = @("true","false","auto")
+	"ViewMode" = @("All","QuickAccess")
+	"ViewModeApplicationOnSetReportResult" = @("Auto","Apply","DontApply")
+	"ViewScalingMode" = @("Auto","Normal","Large")
+	"ViewStatusLocation" = @("Auto","None","Top","Bottom")
+	"WarningOnEditRepresentation" = @("Show","DontShow","Auto")
+	"WidthInCard" = @("Auto","Full","Half")
+	"WindowOpeningMode" = @("Auto","DontBlock","LockOwner","LockWholeInterface","Independent","LockOwnerWindow")
+}
+# Старые имена значений, которые платформа принимает и переводит в современные (замер выгрузки 8.3.24)
+$script:enumValueAliases = @{
+	"TitlesLeftDataLeft" = "ItemsLeftTitlesLeft"
+	"TitlesLeftDataRight" = "ItemsRightTitlesLeft"
+	"TitlesRightDataLeft" = "ItemsLeftTitlesRight"
+	"TitlesRightDataRight" = "ItemsRightTitlesRight"
+	"GroupBox" = "StrongSeparation"
+	"Margin" = "NormalSeparation"
+	"Square" = "Rect"
+}
+# Умолчания: значение, которое платформа у этого типа не пишет (выброшено при загрузке-выгрузке 8.3.24
+# и ни разу не встречается в корпусе) — тег с ним не пишется
+$script:enumDefaultValues = @{
+	"Attribute.FillCheck" = "DontCheck"
+	"AutoCommandBar.GroupHorizontalAlign" = "Auto"
+	"AutoCommandBar.GroupVerticalAlign" = "Auto"
+	"AutoCommandBar.HorizontalAlign" = "Left"
+	"AutoCommandBar.HorizontalStretch" = "auto"
+	"AutoCommandBar.ToolTipRepresentation" = "Auto"
+	"AutoCommandBar.VerticalStretch" = "auto"
+	"Button.GroupHorizontalAlign" = "Auto"
+	"Button.GroupVerticalAlign" = "Auto"
+	"Button.LocationInCommandBar" = "Auto"
+	"Button.OnMainServerUnavalableBehavior" = "Auto"
+	"Button.PictureLocation" = "Auto"
+	"Button.PlacementArea" = "userCmds"
+	"Button.Representation" = "Auto"
+	"Button.RepresentationInContextMenu" = "Auto"
+	"Button.Shape" = "Auto"
+	"Button.ShapeRepresentation" = "Auto"
+	"Button.SkipOnInput" = "auto"
+	"Button.ToolTipRepresentation" = "Auto"
+	"ButtonGroup.GroupHorizontalAlign" = "Auto"
+	"ButtonGroup.GroupVerticalAlign" = "Auto"
+	"ButtonGroup.HorizontalStretch" = "auto"
+	"ButtonGroup.PlacementArea" = "userCmds"
+	"ButtonGroup.Representation" = "Auto"
+	"ButtonGroup.ToolTipRepresentation" = "Auto"
+	"ButtonGroup.VerticalStretch" = "auto"
+	"CalendarField.EditMode" = "Enter"
+	"CalendarField.FixingInTable" = "None"
+	"CalendarField.FooterHorizontalAlign" = "Auto"
+	"CalendarField.GroupHorizontalAlign" = "Auto"
+	"CalendarField.GroupVerticalAlign" = "Auto"
+	"CalendarField.HeaderHorizontalAlign" = "Left"
+	"CalendarField.HorizontalAlign" = "Auto"
+	"CalendarField.OnMainServerUnavalableBehavior" = "Auto"
+	"CalendarField.SelectionMode" = "Single"
+	"CalendarField.SkipOnInput" = "auto"
+	"CalendarField.TitleLocation" = "Auto"
+	"CalendarField.ToolTipRepresentation" = "Auto"
+	"CalendarField.VerticalAlign" = "Auto"
+	"CalendarField.WarningOnEditRepresentation" = "Auto"
+	"ChartField.EditMode" = "Enter"
+	"ChartField.FixingInTable" = "None"
+	"ChartField.FooterHorizontalAlign" = "Auto"
+	"ChartField.GroupHorizontalAlign" = "Auto"
+	"ChartField.GroupVerticalAlign" = "Auto"
+	"ChartField.HeaderHorizontalAlign" = "Left"
+	"ChartField.HorizontalAlign" = "Auto"
+	"ChartField.OnMainServerUnavalableBehavior" = "Auto"
+	"ChartField.SkipOnInput" = "auto"
+	"ChartField.TitleLocation" = "Auto"
+	"ChartField.ToolTipRepresentation" = "Auto"
+	"ChartField.VerticalAlign" = "Auto"
+	"ChartField.WarningOnEditRepresentation" = "Auto"
+	"CheckBoxField.EditMode" = "Enter"
+	"CheckBoxField.EqualItemsWidth" = "auto"
+	"CheckBoxField.FixingInTable" = "None"
+	"CheckBoxField.FooterHorizontalAlign" = "Auto"
+	"CheckBoxField.GroupHorizontalAlign" = "Auto"
+	"CheckBoxField.GroupVerticalAlign" = "Auto"
+	"CheckBoxField.HeaderHorizontalAlign" = "Left"
+	"CheckBoxField.HorizontalAlign" = "Auto"
+	"CheckBoxField.OnMainServerUnavalableBehavior" = "Auto"
+	"CheckBoxField.SkipOnInput" = "auto"
+	"CheckBoxField.TitleLocation" = "Auto"
+	"CheckBoxField.ToolTipRepresentation" = "Auto"
+	"CheckBoxField.VerticalAlign" = "Auto"
+	"CheckBoxField.WarningOnEditRepresentation" = "Auto"
+	"Column.FillCheck" = "DontCheck"
+	"ColumnGroup.FixingInTable" = "None"
+	"ColumnGroup.Group" = "Vertical"
+	"ColumnGroup.GroupHorizontalAlign" = "Auto"
+	"ColumnGroup.GroupVerticalAlign" = "Auto"
+	"ColumnGroup.HeaderHorizontalAlign" = "Auto"
+	"ColumnGroup.HorizontalStretch" = "auto"
+	"ColumnGroup.ToolTipRepresentation" = "Auto"
+	"ColumnGroup.VerticalStretch" = "auto"
+	"Command.CurrentRowUse" = "Auto"
+	"Command.Representation" = "Auto"
+	"CommandBar.GroupHorizontalAlign" = "Auto"
+	"CommandBar.GroupVerticalAlign" = "Auto"
+	"CommandBar.HorizontalLocation" = "Left"
+	"CommandBar.HorizontalStretch" = "auto"
+	"CommandBar.ToolTipRepresentation" = "Auto"
+	"CommandBar.VerticalStretch" = "auto"
+	"ContextMenu.GroupHorizontalAlign" = "Auto"
+	"ContextMenu.GroupVerticalAlign" = "Auto"
+	"ContextMenu.HorizontalStretch" = "auto"
+	"ContextMenu.ToolTipRepresentation" = "Auto"
+	"ContextMenu.VerticalStretch" = "auto"
+	"ExtendedTooltip.GroupHorizontalAlign" = "Auto"
+	"ExtendedTooltip.GroupVerticalAlign" = "Auto"
+	"ExtendedTooltip.HorizontalAlign" = "Left"
+	"ExtendedTooltip.HorizontalStretch" = "auto"
+	"ExtendedTooltip.OnMainServerUnavalableBehavior" = "Auto"
+	"ExtendedTooltip.SkipOnInput" = "auto"
+	"ExtendedTooltip.ToolTipRepresentation" = "Auto"
+	"ExtendedTooltip.VerticalAlign" = "Auto"
+	"ExtendedTooltip.VerticalStretch" = "auto"
+	"Form.AutoSaveDataInSettings" = "DontUse"
+	"Form.ChildItemsWidth" = "Auto"
+	"Form.ChildrenAlign" = "Auto"
+	"Form.CollapseItemsByImportanceVariant" = "Auto"
+	"Form.CommandBarLocation" = "Auto"
+	"Form.ConversationsRepresentation" = "Auto"
+	"Form.EnterKeyBehavior" = "ControlNavigation"
+	"Form.Group" = "Vertical"
+	"Form.HorizontalAlign" = "Auto"
+	"Form.HorizontalSpacing" = "Auto"
+	"Form.SaveDataInSettings" = "DontUse"
+	"Form.ScalingMode" = "Auto"
+	"Form.VerticalAlign" = "Auto"
+	"Form.VerticalScroll" = "auto"
+	"Form.VerticalSpacing" = "Auto"
+	"Form.WindowOpeningMode" = "Independent"
+	"FormattedDocumentField.EditMode" = "Enter"
+	"FormattedDocumentField.FixingInTable" = "None"
+	"FormattedDocumentField.FooterHorizontalAlign" = "Auto"
+	"FormattedDocumentField.GroupHorizontalAlign" = "Auto"
+	"FormattedDocumentField.GroupVerticalAlign" = "Auto"
+	"FormattedDocumentField.HeaderHorizontalAlign" = "Left"
+	"FormattedDocumentField.HorizontalAlign" = "Auto"
+	"FormattedDocumentField.OnMainServerUnavalableBehavior" = "Auto"
+	"FormattedDocumentField.Output" = "Auto"
+	"FormattedDocumentField.SkipOnInput" = "auto"
+	"FormattedDocumentField.TitleLocation" = "Auto"
+	"FormattedDocumentField.ToolTipRepresentation" = "Auto"
+	"FormattedDocumentField.VerticalAlign" = "Auto"
+	"FormattedDocumentField.WarningOnEditRepresentation" = "Auto"
+	"GraphicalSchemaField.EditMode" = "Enter"
+	"GraphicalSchemaField.FixingInTable" = "None"
+	"GraphicalSchemaField.FooterHorizontalAlign" = "Auto"
+	"GraphicalSchemaField.GroupHorizontalAlign" = "Auto"
+	"GraphicalSchemaField.GroupVerticalAlign" = "Auto"
+	"GraphicalSchemaField.HeaderHorizontalAlign" = "Left"
+	"GraphicalSchemaField.HorizontalAlign" = "Auto"
+	"GraphicalSchemaField.OnMainServerUnavalableBehavior" = "Auto"
+	"GraphicalSchemaField.Output" = "Auto"
+	"GraphicalSchemaField.SkipOnInput" = "auto"
+	"GraphicalSchemaField.TitleLocation" = "Auto"
+	"GraphicalSchemaField.ToolTipRepresentation" = "Auto"
+	"GraphicalSchemaField.VerticalAlign" = "Auto"
+	"GraphicalSchemaField.WarningOnEditRepresentation" = "Auto"
+	"HTMLDocumentField.EditMode" = "Enter"
+	"HTMLDocumentField.FixingInTable" = "None"
+	"HTMLDocumentField.FooterHorizontalAlign" = "Auto"
+	"HTMLDocumentField.GroupHorizontalAlign" = "Auto"
+	"HTMLDocumentField.GroupVerticalAlign" = "Auto"
+	"HTMLDocumentField.HeaderHorizontalAlign" = "Left"
+	"HTMLDocumentField.HorizontalAlign" = "Auto"
+	"HTMLDocumentField.OnMainServerUnavalableBehavior" = "Auto"
+	"HTMLDocumentField.Output" = "Auto"
+	"HTMLDocumentField.SkipOnInput" = "auto"
+	"HTMLDocumentField.TitleLocation" = "Auto"
+	"HTMLDocumentField.ToolTipRepresentation" = "Auto"
+	"HTMLDocumentField.VerticalAlign" = "Auto"
+	"HTMLDocumentField.WarningOnEditRepresentation" = "Auto"
+	"InputField.AutoCapitalizationOnTextInput" = "Auto"
+	"InputField.AutoChoiceIncomplete" = "auto"
+	"InputField.AutoCorrectionOnTextInput" = "Auto"
+	"InputField.AutoMarkIncomplete" = "auto"
+	"InputField.AutoShowClearButtonMode" = "Auto"
+	"InputField.AutoShowOpenButtonMode" = "Auto"
+	"InputField.AutofillHint" = "DontUse"
+	"InputField.ChoiceButton" = "auto"
+	"InputField.ChoiceButtonRepresentation" = "Auto"
+	"InputField.ChoiceFoldersAndItems" = "Auto"
+	"InputField.ChoiceHistoryOnInput" = "Auto"
+	"InputField.ChoiceListButton" = "auto"
+	"InputField.ClearButton" = "auto"
+	"InputField.CreateButton" = "auto"
+	"InputField.DropListButton" = "auto"
+	"InputField.EditMode" = "Enter"
+	"InputField.EditTextUpdate" = "Auto"
+	"InputField.ExtendedEdit" = "auto"
+	"InputField.FixingInTable" = "None"
+	"InputField.FooterHorizontalAlign" = "Auto"
+	"InputField.GroupHorizontalAlign" = "Auto"
+	"InputField.GroupVerticalAlign" = "Auto"
+	"InputField.HeaderHorizontalAlign" = "Left"
+	"InputField.HeightControlVariant" = "Auto"
+	"InputField.HorizontalAlign" = "Auto"
+	"InputField.HorizontalStretch" = "auto"
+	"InputField.IncompleteChoiceMode" = "OnEnterPressed"
+	"InputField.MarkNegatives" = "auto"
+	"InputField.MultiLine" = "auto"
+	"InputField.MultipleValuePictureShape" = "Auto"
+	"InputField.MultipleValuePictureSize" = "Auto"
+	"InputField.MultipleValuesHyperlink" = "auto"
+	"InputField.OnMainServerUnavalableBehavior" = "Auto"
+	"InputField.OnScreenKeyboardReturnKeyText" = "Auto"
+	"InputField.OpenButton" = "auto"
+	"InputField.PasswordMode" = "auto"
+	"InputField.QuickChoice" = "auto"
+	"InputField.ShowCheckBoxesInDropList" = "auto"
+	"InputField.SkipOnInput" = "auto"
+	"InputField.SpecialTextInputMode" = "Auto"
+	"InputField.SpellCheckingOnTextInput" = "Auto"
+	"InputField.SpinButton" = "auto"
+	"InputField.TitleLocation" = "Auto"
+	"InputField.ToolTipRepresentation" = "Auto"
+	"InputField.VerticalAlign" = "Auto"
+	"InputField.VerticalStretch" = "auto"
+	"InputField.WarningOnEditRepresentation" = "Auto"
+	"LabelDecoration.GroupHorizontalAlign" = "Auto"
+	"LabelDecoration.GroupVerticalAlign" = "Auto"
+	"LabelDecoration.HorizontalAlign" = "Left"
+	"LabelDecoration.HorizontalStretch" = "auto"
+	"LabelDecoration.OnMainServerUnavalableBehavior" = "Auto"
+	"LabelDecoration.SkipOnInput" = "auto"
+	"LabelDecoration.ToolTipRepresentation" = "Auto"
+	"LabelDecoration.VerticalAlign" = "Auto"
+	"LabelDecoration.VerticalStretch" = "auto"
+	"LabelField.EditMode" = "Enter"
+	"LabelField.FixingInTable" = "None"
+	"LabelField.FooterHorizontalAlign" = "Auto"
+	"LabelField.GroupHorizontalAlign" = "Auto"
+	"LabelField.GroupVerticalAlign" = "Auto"
+	"LabelField.HeaderHorizontalAlign" = "Left"
+	"LabelField.HorizontalAlign" = "Auto"
+	"LabelField.HorizontalStretch" = "auto"
+	"LabelField.MarkNegatives" = "auto"
+	"LabelField.OnMainServerUnavalableBehavior" = "Auto"
+	"LabelField.PasswordMode" = "auto"
+	"LabelField.SkipOnInput" = "auto"
+	"LabelField.TitleLocation" = "Auto"
+	"LabelField.ToolTipRepresentation" = "Auto"
+	"LabelField.VerticalAlign" = "Auto"
+	"LabelField.VerticalStretch" = "auto"
+	"LabelField.WarningOnEditRepresentation" = "Auto"
+	"Page.ChildItemsWidth" = "Auto"
+	"Page.ChildrenAlign" = "Auto"
+	"Page.Group" = "Vertical"
+	"Page.GroupHorizontalAlign" = "Auto"
+	"Page.GroupVerticalAlign" = "Auto"
+	"Page.HorizontalAlign" = "Auto"
+	"Page.HorizontalSpacing" = "Auto"
+	"Page.HorizontalStretch" = "auto"
+	"Page.ToolTipRepresentation" = "Auto"
+	"Page.VerticalAlign" = "Auto"
+	"Page.VerticalSpacing" = "Auto"
+	"Page.VerticalStretch" = "auto"
+	"Pages.CurrentRowUse" = "Auto"
+	"Pages.GroupHorizontalAlign" = "Auto"
+	"Pages.GroupVerticalAlign" = "Auto"
+	"Pages.HorizontalStretch" = "auto"
+	"Pages.PagesRepresentation" = "Auto"
+	"Pages.ToolTipRepresentation" = "Auto"
+	"Pages.VerticalStretch" = "auto"
+	"PeriodField.EditMode" = "Enter"
+	"PeriodField.FixingInTable" = "None"
+	"PeriodField.FooterHorizontalAlign" = "Auto"
+	"PeriodField.GroupHorizontalAlign" = "Auto"
+	"PeriodField.GroupVerticalAlign" = "Auto"
+	"PeriodField.HeaderHorizontalAlign" = "Left"
+	"PeriodField.HorizontalAlign" = "Auto"
+	"PeriodField.OnMainServerUnavalableBehavior" = "Auto"
+	"PeriodField.SkipOnInput" = "auto"
+	"PeriodField.TitleLocation" = "Auto"
+	"PeriodField.ToolTipRepresentation" = "Auto"
+	"PeriodField.VerticalAlign" = "Auto"
+	"PeriodField.WarningOnEditRepresentation" = "Auto"
+	"PictureDecoration.FileDragMode" = "AsFileRef"
+	"PictureDecoration.GroupHorizontalAlign" = "Auto"
+	"PictureDecoration.GroupVerticalAlign" = "Auto"
+	"PictureDecoration.HorizontalStretch" = "auto"
+	"PictureDecoration.OnMainServerUnavalableBehavior" = "Auto"
+	"PictureDecoration.PictureSize" = "RealSize"
+	"PictureDecoration.SkipOnInput" = "auto"
+	"PictureDecoration.ToolTipRepresentation" = "Auto"
+	"PictureDecoration.VerticalStretch" = "auto"
+	"PictureField.EditMode" = "Enter"
+	"PictureField.FileDragMode" = "AsFileRef"
+	"PictureField.FixingInTable" = "None"
+	"PictureField.FooterHorizontalAlign" = "Auto"
+	"PictureField.GroupHorizontalAlign" = "Auto"
+	"PictureField.GroupVerticalAlign" = "Auto"
+	"PictureField.HeaderHorizontalAlign" = "Left"
+	"PictureField.HorizontalAlign" = "Auto"
+	"PictureField.OnMainServerUnavalableBehavior" = "Auto"
+	"PictureField.PictureSize" = "RealSize"
+	"PictureField.SkipOnInput" = "auto"
+	"PictureField.TitleLocation" = "Auto"
+	"PictureField.ToolTipRepresentation" = "Auto"
+	"PictureField.VerticalAlign" = "Auto"
+	"PictureField.WarningOnEditRepresentation" = "Auto"
+	"PlannerField.EditMode" = "Enter"
+	"PlannerField.FixingInTable" = "None"
+	"PlannerField.FooterHorizontalAlign" = "Auto"
+	"PlannerField.GroupHorizontalAlign" = "Auto"
+	"PlannerField.GroupVerticalAlign" = "Auto"
+	"PlannerField.HeaderHorizontalAlign" = "Left"
+	"PlannerField.HorizontalAlign" = "Auto"
+	"PlannerField.OnMainServerUnavalableBehavior" = "Auto"
+	"PlannerField.SkipOnInput" = "auto"
+	"PlannerField.TitleLocation" = "Auto"
+	"PlannerField.ToolTipRepresentation" = "Auto"
+	"PlannerField.VerticalAlign" = "Auto"
+	"PlannerField.WarningOnEditRepresentation" = "Auto"
+	"Popup.GroupHorizontalAlign" = "Auto"
+	"Popup.GroupVerticalAlign" = "Auto"
+	"Popup.HorizontalStretch" = "auto"
+	"Popup.PlacementArea" = "userCmds"
+	"Popup.Representation" = "Auto"
+	"Popup.Shape" = "Auto"
+	"Popup.ShapeRepresentation" = "Auto"
+	"Popup.ToolTipRepresentation" = "Auto"
+	"Popup.VerticalStretch" = "auto"
+	"ProgressBarField.EditMode" = "Enter"
+	"ProgressBarField.FixingInTable" = "None"
+	"ProgressBarField.FooterHorizontalAlign" = "Auto"
+	"ProgressBarField.GroupHorizontalAlign" = "Auto"
+	"ProgressBarField.GroupVerticalAlign" = "Auto"
+	"ProgressBarField.HeaderHorizontalAlign" = "Left"
+	"ProgressBarField.HorizontalAlign" = "Auto"
+	"ProgressBarField.OnMainServerUnavalableBehavior" = "Auto"
+	"ProgressBarField.Orientation" = "Horizontal"
+	"ProgressBarField.Representation" = "Smooth"
+	"ProgressBarField.SkipOnInput" = "auto"
+	"ProgressBarField.TitleLocation" = "Auto"
+	"ProgressBarField.ToolTipRepresentation" = "Auto"
+	"ProgressBarField.VerticalAlign" = "Auto"
+	"ProgressBarField.WarningOnEditRepresentation" = "Auto"
+	"RadioButtonField.EditMode" = "Enter"
+	"RadioButtonField.EqualColumnsWidth" = "auto"
+	"RadioButtonField.FixingInTable" = "None"
+	"RadioButtonField.FooterHorizontalAlign" = "Auto"
+	"RadioButtonField.GroupHorizontalAlign" = "Auto"
+	"RadioButtonField.GroupVerticalAlign" = "Auto"
+	"RadioButtonField.HeaderHorizontalAlign" = "Left"
+	"RadioButtonField.HorizontalAlign" = "Auto"
+	"RadioButtonField.OnMainServerUnavalableBehavior" = "Auto"
+	"RadioButtonField.SkipOnInput" = "auto"
+	"RadioButtonField.TitleLocation" = "Auto"
+	"RadioButtonField.ToolTipRepresentation" = "Auto"
+	"RadioButtonField.VerticalAlign" = "Auto"
+	"RadioButtonField.WarningOnEditRepresentation" = "Auto"
+	"SearchControlAddition.GroupHorizontalAlign" = "Auto"
+	"SearchControlAddition.GroupVerticalAlign" = "Auto"
+	"SearchControlAddition.HorizontalStretch" = "auto"
+	"SearchControlAddition.PlacementArea" = "userCmds"
+	"SearchControlAddition.ToolTipRepresentation" = "Auto"
+	"SearchStringAddition.GroupHorizontalAlign" = "Auto"
+	"SearchStringAddition.GroupVerticalAlign" = "Auto"
+	"SearchStringAddition.HorizontalStretch" = "auto"
+	"SearchStringAddition.PlacementArea" = "userCmds"
+	"SearchStringAddition.ToolTipRepresentation" = "Auto"
+	"Settings.KeyType" = "Auto"
+	"SpreadSheetDocumentField.DrawingSelectionShowMode" = "Auto"
+	"SpreadSheetDocumentField.EditMode" = "Enter"
+	"SpreadSheetDocumentField.FixingInTable" = "None"
+	"SpreadSheetDocumentField.FooterHorizontalAlign" = "Auto"
+	"SpreadSheetDocumentField.GroupHorizontalAlign" = "Auto"
+	"SpreadSheetDocumentField.GroupVerticalAlign" = "Auto"
+	"SpreadSheetDocumentField.HeaderHorizontalAlign" = "Left"
+	"SpreadSheetDocumentField.HorizontalAlign" = "Auto"
+	"SpreadSheetDocumentField.OnMainServerUnavalableBehavior" = "Auto"
+	"SpreadSheetDocumentField.Output" = "Auto"
+	"SpreadSheetDocumentField.PointerType" = "Special"
+	"SpreadSheetDocumentField.SelectionShowMode" = "Always"
+	"SpreadSheetDocumentField.SkipOnInput" = "auto"
+	"SpreadSheetDocumentField.TitleLocation" = "Auto"
+	"SpreadSheetDocumentField.ToolTipRepresentation" = "Auto"
+	"SpreadSheetDocumentField.VerticalAlign" = "Auto"
+	"SpreadSheetDocumentField.ViewScalingMode" = "Auto"
+	"SpreadSheetDocumentField.WarningOnEditRepresentation" = "Auto"
+	"Table.AutoAddIncomplete" = "auto"
+	"Table.AutoMarkIncomplete" = "auto"
+	"Table.BehaviorOnHorizontalCompression" = "Auto"
+	"Table.CommandBarLocation" = "Auto"
+	"Table.CurrentRowUse" = "Auto"
+	"Table.FileDragMode" = "AsFileRef"
+	"Table.GroupHorizontalAlign" = "Auto"
+	"Table.GroupVerticalAlign" = "Auto"
+	"Table.HeightControlVariant" = "Auto"
+	"Table.HorizontalScrollBar" = "AutoUse"
+	"Table.InitialListView" = "Auto"
+	"Table.InitialTreeView" = "NoExpand"
+	"Table.OnMainServerUnavalableBehavior" = "Auto"
+	"Table.Output" = "Auto"
+	"Table.RefreshRequest" = "None"
+	"Table.Representation" = "HierarchicalList"
+	"Table.RowInputMode" = "EndOfList"
+	"Table.RowSelectionMode" = "Cell"
+	"Table.SearchControlLocation" = "Auto"
+	"Table.SearchOnInput" = "Auto"
+	"Table.SearchStringLocation" = "Auto"
+	"Table.SelectionMode" = "MultiRow"
+	"Table.SkipOnInput" = "auto"
+	"Table.TitleLocation" = "None"
+	"Table.ToolTipRepresentation" = "Auto"
+	"Table.VerticalScrollBar" = "AutoUse"
+	"Table.ViewStatusLocation" = "Auto"
+	"TextDocumentField.EditMode" = "Enter"
+	"TextDocumentField.FixingInTable" = "None"
+	"TextDocumentField.FooterHorizontalAlign" = "Auto"
+	"TextDocumentField.GroupHorizontalAlign" = "Auto"
+	"TextDocumentField.GroupVerticalAlign" = "Auto"
+	"TextDocumentField.HeaderHorizontalAlign" = "Left"
+	"TextDocumentField.HorizontalAlign" = "Auto"
+	"TextDocumentField.OnMainServerUnavalableBehavior" = "Auto"
+	"TextDocumentField.Output" = "Auto"
+	"TextDocumentField.SkipOnInput" = "auto"
+	"TextDocumentField.TitleLocation" = "Auto"
+	"TextDocumentField.ToolTipRepresentation" = "Auto"
+	"TextDocumentField.VerticalAlign" = "Auto"
+	"TextDocumentField.WarningOnEditRepresentation" = "Auto"
+	"TrackBarField.EditMode" = "Enter"
+	"TrackBarField.FixingInTable" = "None"
+	"TrackBarField.FooterHorizontalAlign" = "Auto"
+	"TrackBarField.GroupHorizontalAlign" = "Auto"
+	"TrackBarField.GroupVerticalAlign" = "Auto"
+	"TrackBarField.HeaderHorizontalAlign" = "Left"
+	"TrackBarField.HorizontalAlign" = "Auto"
+	"TrackBarField.MarkingAppearance" = "BottomRight"
+	"TrackBarField.OnMainServerUnavalableBehavior" = "Auto"
+	"TrackBarField.Orientation" = "Horizontal"
+	"TrackBarField.SkipOnInput" = "auto"
+	"TrackBarField.TitleLocation" = "Auto"
+	"TrackBarField.ToolTipRepresentation" = "Auto"
+	"TrackBarField.VerticalAlign" = "Auto"
+	"TrackBarField.WarningOnEditRepresentation" = "Auto"
+	"UsualGroup.Behavior" = "Auto"
+	"UsualGroup.ChildItemsWidth" = "Auto"
+	"UsualGroup.ChildrenAlign" = "Auto"
+	"UsualGroup.ControlRepresentation" = "TitleHyperlink"
+	"UsualGroup.CurrentRowUse" = "Auto"
+	"UsualGroup.Group" = "HorizontalIfPossible"
+	"UsualGroup.GroupHorizontalAlign" = "Auto"
+	"UsualGroup.GroupVerticalAlign" = "Auto"
+	"UsualGroup.HorizontalAlign" = "Auto"
+	"UsualGroup.HorizontalSpacing" = "Auto"
+	"UsualGroup.HorizontalStretch" = "auto"
+	"UsualGroup.Representation" = "WeakSeparation"
+	"UsualGroup.ThroughAlign" = "Auto"
+	"UsualGroup.ToolTipRepresentation" = "Auto"
+	"UsualGroup.VerticalAlign" = "Auto"
+	"UsualGroup.VerticalSpacing" = "Auto"
+	"UsualGroup.VerticalStretch" = "auto"
+	"ViewStatusAddition.GroupHorizontalAlign" = "Auto"
+	"ViewStatusAddition.GroupVerticalAlign" = "Auto"
+	"ViewStatusAddition.HorizontalLocation" = "Auto"
+	"ViewStatusAddition.HorizontalStretch" = "auto"
+	"ViewStatusAddition.PlacementArea" = "userCmds"
+	"ViewStatusAddition.ToolTipRepresentation" = "Auto"
+}
+# Узлы, у которых проверяются и приводятся значения перечислений (тег узла)
+$script:enumScopeTypes = @{
+	'Attribute' = $true
+	'AutoCommandBar' = $true
+	'Button' = $true
+	'ButtonGroup' = $true
+	'CalendarField' = $true
+	'ChartField' = $true
+	'CheckBoxField' = $true
+	'Column' = $true
+	'ColumnGroup' = $true
+	'Command' = $true
+	'CommandBar' = $true
+	'ContextMenu' = $true
+	'ExtendedTooltip' = $true
+	'Form' = $true
+	'FormattedDocumentField' = $true
+	'GanttChartField' = $true
+	'GraphicalSchemaField' = $true
+	'HTMLDocumentField' = $true
+	'InputField' = $true
+	'LabelDecoration' = $true
+	'LabelField' = $true
+	'Page' = $true
+	'Pages' = $true
+	'PeriodField' = $true
+	'PictureDecoration' = $true
+	'PictureField' = $true
+	'PlannerField' = $true
+	'Popup' = $true
+	'ProgressBarField' = $true
+	'RadioButtonField' = $true
+	'SearchControlAddition' = $true
+	'SearchStringAddition' = $true
+	'Settings' = $true
+	'SpreadSheetDocumentField' = $true
+	'Table' = $true
+	'TextDocumentField' = $true
+	'TrackBarField' = $true
+	'UsualGroup' = $true
+	'ViewStatusAddition' = $true
+}
+# Значение из соседнего перечисления того же свойства → значение этого типа (ввод DSL; в XML — ошибка)
+$script:enumInputSynonyms = @{
+	"Command.Representation" = @{ "PictureAndText" = "TextPicture" }
+	"Button.Representation" = @{ "TextPicture" = "PictureAndText" }
+	"Popup.Representation" = @{ "TextPicture" = "PictureAndText" }
+	"Table.SelectionMode" = @{ "Single" = "SingleRow"; "Multiple" = "MultiRow" }
+	"CalendarField.SelectionMode" = @{ "SingleRow" = "Single"; "MultiRow" = "Multiple" }
+}
+# --- /Перечисления свойств формы ---
+$script:objType = $null
+
+function Normalize-EnumValue {
+	param([string]$propName, [string]$value)
+	$valid = $script:validEnumValues["$script:objType.$propName"]
+	if (-not $valid) { $valid = $script:validEnumValues[$propName] }
+	# 1. Check alias dictionary — silent auto-correct. Словарь общий для всех свойств: у свойства со
+	# списком алиас берётся, только если его результат в списке (иначе «None» дало бы Nonperiodical везде)
+	if ($script:enumValueAliases.ContainsKey($value)) {
+		$aliased = $script:enumValueAliases[$value]
+		if (-not $valid -or $valid -ccontains $aliased) { return $aliased }
+	}
+	# 2. Case-insensitive match against valid values — silent. Список вида объекта — раньше общего.
+	if ($valid) {
+		foreach ($v in $valid) {
+			if ($v -ieq $value) { return $v }
+		}
+		# 3. Known property, unknown value — error with hint
+		Write-Error "Invalid value '$value' for property '$propName'. Valid values: $($valid -join ', ')"
+		exit 1
+	}
+	# 4. Unknown property — pass-through (no validation data)
+	return $value
+}
+
+# Значение из соседнего перечисления того же свойства (у кнопки PictureAndText, у команды TextPicture) →
+# значение этого типа. Только ввод DSL: в XML такое значение платформа не загружает
+function Resolve-EnumInputSynonym([string]$type, [string]$tag, [string]$value) {
+	$syn = $script:enumInputSynonyms["$type.$tag"]
+	if ($syn) { foreach ($k in $syn.Keys) { if ($k -ieq $value) { return $syn[$k] } } }
+	return $value
+}
+
+# Значения перечислений в выводе эмиттера — к каноническому виду (Normalize-EnumValue): простой тег
+# элемента формы известного типа или корня формы. Регистр и старые имена исправляются молча,
+# неизвестное значение — ошибка с перечнем допустимых. $rootType — тип для тегов прямо под корнем
+# фрагмента (свойства формы во фрагменте form-edit). Значение-умолчание типа ($script:enumDefaultValues) — тег
+# не пишется, как не пишет его платформа; $keepDefaults оставляет такие теги (проба set в form-edit).
+function Normalize-EnumTags([string]$text, [string]$rootType = '', [bool]$keepDefaults = $false) {
+	$crlf = $text.Contains("`r`n")
+	$lines = $text.Replace("`r`n", "`n") -split "`n"
+	$stack = New-Object System.Collections.ArrayList
+	$drop = @{}
+	for ($i = 0; $i -lt $lines.Count; $i++) {
+		$line = $lines[$i]
+		if ($line -cmatch '^\t*</([A-Za-z_][\w.:-]*)>$') {
+			if ($stack.Count -gt 0 -and $stack[$stack.Count - 1].Name -ceq $Matches[1]) { $stack.RemoveAt($stack.Count - 1) }
+			continue
+		}
+		if ($line -cmatch '^(\t*)<([A-Za-z_][\w.:-]*)(\s[^>]*)?>$' -and -not $line.EndsWith('/>')) {
+			[void]$stack.Add(@{ Name = $Matches[2]; Ind = $Matches[1].Length; Attrs = $Matches[3] })
+			continue
+		}
+		if ($stack.Count -eq 0) { continue }
+		$m = [regex]::Match($line, '^(\t*)<([A-Za-z]\w*)>([^<]+)</([A-Za-z]\w*)>$')
+		if (-not $m.Success -or $m.Groups[2].Value -cne $m.Groups[4].Value) { continue }
+		$top = $stack[$stack.Count - 1]
+		if ($m.Groups[1].Value.Length -ne $top.Ind + 1) { continue }
+		$ptype = if ($stack.Count -eq 1) { if ($top.Name -ceq 'Form') { 'Form' } else { $rootType } } else { $top.Name }
+		if (-not $ptype -or -not $script:enumScopeTypes.ContainsKey($ptype)) { continue }
+		# Settings — только настройки динамического списка (у ValueList/Planner/Chart свои), как в form-validate
+		if ($ptype -ceq 'Settings' -and "$($top.Attrs)" -cnotmatch 'xsi:type="DynamicList"') { continue }
+		$script:objType = $ptype
+		$tag = $m.Groups[2].Value
+		$v = Normalize-EnumValue $tag (Resolve-EnumInputSynonym $ptype $tag $m.Groups[3].Value)
+		if (-not $keepDefaults -and $script:enumDefaultValues.ContainsKey("$ptype.$tag") -and $script:enumDefaultValues["$ptype.$tag"] -ceq $v) { $drop[$i] = $true; continue }
+		if ($v -cne $m.Groups[3].Value) { $lines[$i] = "$($m.Groups[1].Value)<$tag>$v</$tag>" }
+	}
+	# Строки-умолчания пропускаются по номеру: $null в строковом массиве PS 5.1 становится пустой строкой
+	$keep = New-Object System.Collections.Generic.List[string]
+	for ($i = 0; $i -lt $lines.Count; $i++) { if (-not $drop.ContainsKey($i)) { $keep.Add($lines[$i]) } }
+	$out = $keep -join "`n"
+	if ($crlf) { $out = $out.Replace("`n", "`r`n") }
+	return $out
+}
+
+# --- Канонический порядок дочерних тегов элемента ---
+# В каком порядке платформа пишет свойства и вложенные узлы элемента формы. Построено по корпусу
+# выгрузок (БП и ERP, 8.3.24, 17036 форм): для каждого типа элемента — граф «тег A раньше тега B»,
+# противоречий нет. Эмиттер пишет теги в этом порядке — иначе первая же выгрузка из базы их переставит.
+$script:childTagOrder = @{
+	'AutoCommandBar' = 'HorizontalAlign Autofill ChildItems'
+	'Button' = 'Type Visible TitleHeight UserVisible Representation DefaultButton SkipOnInput Enabled DefaultItem Width AutoMaxWidth MaxWidth Height AutoMaxHeight HorizontalStretch MaxHeight VerticalStretch GroupHorizontalAlign Check GroupVerticalAlign CommandName Parameter DataPath TextColor BackColor BorderColor Font Picture Title Shape ToolTipRepresentation RepresentationInContextMenu ShapeRepresentation PictureLocation LocationInCommandBar CommandUniqueness ExtendedTooltip'
+	'ButtonGroup' = 'EnableContentChange Visible Title GroupVerticalAlign ToolTip HorizontalStretch GroupHorizontalAlign ToolTipRepresentation CommandSource Representation VerticalStretch ExtendedTooltip ChildItems'
+	'CalendarField' = 'DataPath SkipOnInput Title TitleLocation ToolTip ToolTipRepresentation Width AutoMaxWidth Height HorizontalStretch SelectionMode ShowCurrentDate ShowMonthsPanel WidthInMonths HeightInMonths ContextMenu ExtendedTooltip Events'
+	'ChartField' = 'DataPath Enabled Title TitleFont Visible TitleLocation GroupHorizontalAlign Width AutoMaxWidth MaxHeight MaxWidth Height AutoMaxHeight HorizontalStretch VerticalStretch ContextMenu ExtendedTooltip Events'
+	'CheckBoxField' = 'DataPath Visible Enabled UserVisible DefaultItem ReadOnly SkipOnInput Title TitleTextColor TitleFont TitleLocation TitleHeight ToolTip FooterHorizontalAlign HorizontalAlign ToolTipRepresentation Shortcut GroupHorizontalAlign VerticalAlign GroupVerticalAlign WarningOnEditRepresentation WarningOnEdit EditMode AutoCellHeight CellHyperlink FixingInTable ShowInHeader FooterDataPath HeaderPicture HeaderHorizontalAlign ShowInFooter CheckBoxType EditFormat ItemHeight ItemTitleHeight ItemWidth EqualItemsWidth ThreeState ContextMenu ExtendedTooltip Events'
+	'ColumnGroup' = 'Visible Enabled ReadOnly UserVisible EnableContentChange Title GroupVerticalAlign TitleFont TitleTextColor ToolTip ToolTipRepresentation Width Height HorizontalStretch GroupHorizontalAlign VerticalStretch Group ShowTitle ShowInHeader HeaderDataPath HeaderHorizontalAlign HeaderFormat HeaderPicture FixingInTable ExtendedTooltip ChildItems'
+	'CommandBar' = 'Enabled Visible EnableContentChange Title ToolTip ToolTipRepresentation Width Height HorizontalStretch VerticalStretch GroupHorizontalAlign GroupVerticalAlign HorizontalLocation CommandSource ExtendedTooltip ChildItems'
+	'FormattedDocumentField' = 'DataPath DefaultItem Enabled ReadOnly SkipOnInput Title TitleLocation CommandSet Font ToolTip EditMode Width AutoMaxWidth Height AutoMaxHeight BorderColor HorizontalStretch MaxWidth ContextMenu ExtendedTooltip Events'
+	'GanttChartField' = 'DataPath DefaultItem TitleLocation Width Height HorizontalStretch VerticalStretch ContextMenu ExtendedTooltip Table Events'
+	'GraphicalSchemaField' = 'DataPath DefaultItem ReadOnly Title TitleLocation WarningOnEditRepresentation Width Height Edit ContextMenu ExtendedTooltip Events'
+	'HTMLDocumentField' = 'DataPath DefaultItem Enabled ReadOnly SkipOnInput Title TitleTextColor TitleFont TitleLocation ToolTipRepresentation Visible WarningOnEditRepresentation Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch VerticalStretch Output BorderColor ContextMenu ExtendedTooltip Events'
+	'InputField' = 'DataPath Visible UserVisible DefaultItem Enabled ReadOnly SkipOnInput Title TitleBackColor TitleTextColor TitleFont TitleLocation TitleHeight ToolTip ToolTipRepresentation WarningOnEditRepresentation WarningOnEdit Shortcut HorizontalAlign VerticalAlign GroupHorizontalAlign GroupVerticalAlign EditMode CellHyperlink FixingInTable AutoCellHeight ShowInHeader HeaderHorizontalAlign HeaderPicture ShowInFooter FooterDataPath FooterText FooterTextColor FooterFont FooterHorizontalAlign FooterPicture Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch AllowInputEmptyMultipleValues MultipleValuesFont MultipleValuesTextColor MultipleValuesBackColor VerticalStretch Wrap MarkNegatives PasswordMode MultiLine ExtendedEdit DropListButton ChoiceButton ChoiceButtonRepresentation ClearButton SpinButton OpenButton CreateButton Mask ListChoiceMode ExtendedEditMultipleValues AutoChoiceIncomplete Format MultipleValuePictureShape QuickChoice ChoiceFoldersAndItems EditFormat AutoMarkIncomplete ChooseType AutoShowOpenButtonMode IncompleteChoiceMode ShowCheckBoxesInDropList MultipleValueDataPath MultipleValuePictureDataPath MultipleValuePresentDataPath SpellCheckingOnTextInput TypeDomainEnabled TextEdit AvailableTypes ChoiceForm ChoiceParameterLinks ChoiceParameters EditTextUpdate MinValue ChoiceButtonPicture MaxValue ChoiceList AutoCorrectionOnTextInput AutoShowClearButtonMode ChoiceListButton ChoiceListHeight DropListWidth TextColor BackColor BorderColor Font HeightControlVariant SpecialTextInputMode InputHint ChoiceHistoryOnInput TypeLink ContextMenu ExtendedTooltip Events'
+	'LabelDecoration' = 'UserVisible Visible Enabled Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch VerticalStretch SkipOnInput TextColor Font Shortcut Title ToolTip ToolTipRepresentation GroupHorizontalAlign GroupVerticalAlign Hyperlink HorizontalAlign VerticalAlign BackColor BorderColor Border TitleHeight ContextMenu ExtendedTooltip Events'
+	'LabelField' = 'DataPath Visible Enabled UserVisible DefaultItem ReadOnly SkipOnInput Title TitleTextColor TitleFont TitleLocation TitleHeight ToolTip ToolTipRepresentation HorizontalAlign VerticalAlign GroupHorizontalAlign GroupVerticalAlign WarningOnEditRepresentation WarningOnEdit EditMode FixingInTable CellHyperlink AutoCellHeight FooterText ShowInHeader HeaderHorizontalAlign FooterDataPath HeaderPicture ShowInFooter FooterHorizontalAlign Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch MarkNegatives VerticalStretch Format Border BorderColor Hiperlink PasswordMode TextColor BackColor Font ContextMenu ExtendedTooltip Events'
+	'Page' = 'Visible Enabled ReadOnly EnableContentChange UserVisible Title GroupVerticalAlign Shortcut TitleTextColor TitleFont ToolTip ToolTipRepresentation Width Height HorizontalStretch VerticalStretch ChildrenAlign Picture Format Group ChildItemsWidth HorizontalSpacing VerticalSpacing HorizontalAlign VerticalAlign ShowTitle BackColor TitleDataPath ScrollOnCompress ExtendedTooltip ChildItems'
+	'Pages' = 'Enabled ReadOnly EnableContentChange UserVisible Visible Title TitleFont ToolTip ToolTipRepresentation Width Height HorizontalStretch VerticalStretch GroupHorizontalAlign GroupVerticalAlign PagesRepresentation CurrentRowUse ExtendedTooltip Events ChildItems'
+	'PeriodField' = 'DataPath TitleLocation ContextMenu ExtendedTooltip'
+	'PictureDecoration' = 'Enabled Visible Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch VerticalStretch SkipOnInput TextColor Font Title ToolTip ToolTipRepresentation GroupHorizontalAlign GroupVerticalAlign Hyperlink PictureSize Zoomable ImageScale NonselectedPictureText EnableStartDrag EnableDrag Picture BorderColor Border FileDragMode ContextMenu ExtendedTooltip Events'
+	'PictureField' = 'DataPath TitleBackColor UserVisible Visible Enabled ReadOnly SkipOnInput Title TitleTextColor TitleLocation TitleHeight ToolTip GroupHorizontalAlign GroupVerticalAlign Shortcut ToolTipRepresentation HorizontalAlign WarningOnEditRepresentation EditMode AutoCellHeight FixingInTable CellHyperlink ShowInHeader FooterDataPath HeaderPicture FooterText HeaderHorizontalAlign ShowInFooter FooterHorizontalAlign Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch VerticalStretch PictureSize Zoomable Hyperlink NonselectedPictureText EnableDrag TextColor ValuesPicture BorderColor Border Font FileDragMode ContextMenu ExtendedTooltip Events'
+	'PlannerField' = 'DataPath TitleLocation ContextMenu ExtendedTooltip Events'
+	'Popup' = 'UserVisible Visible EnableContentChange Title Shape TitleTextColor TitleFont ToolTip ToolTipRepresentation VerticalStretch Width HorizontalStretch Picture CommandSource Representation BackColor ShapeRepresentation BorderColor ExtendedTooltip ChildItems'
+	'ProgressBarField' = 'DataPath Title Visible ReadOnly TitleLocation ToolTip ToolTipRepresentation Width AutoMaxHeight AutoMaxWidth HorizontalStretch MaxValue ShowPercent ContextMenu ExtendedTooltip'
+	'RadioButtonField' = 'DataPath DefaultItem Enabled SkipOnInput UserVisible Visible ReadOnly Title TitleTextColor TitleFont TitleLocation FooterHorizontalAlign TitleHeight ToolTip ToolTipRepresentation EditMode GroupHorizontalAlign Shortcut VerticalAlign GroupVerticalAlign WarningOnEditRepresentation WarningOnEdit RadioButtonType ItemHeight ItemTitleHeight ItemWidth ColumnsCount EqualColumnsWidth ChoiceList Font TextColor ContextMenu ExtendedTooltip Events'
+	'SpreadSheetDocumentField' = 'DataPath Enabled ReadOnly SkipOnInput UserVisible Visible DefaultItem Title TitleLocation DrawingSelectionShowMode FooterHorizontalAlign GroupHorizontalAlign ToolTip ToolTipRepresentation CommandSet Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HorizontalStretch VerticalStretch ShowGrid ShowHeaders VerticalScrollBar HorizontalScrollBar Protection SelectionShowMode Edit Output PointerType ShowGroups EnableStartDrag EnableDrag BorderColor ShowCellNames ShowRowAndColumnNames ViewScalingMode ContextMenu ExtendedTooltip Events'
+	'Table' = 'Representation Visible UserVisible TitleLocation CommandBarLocation Autofill Enabled TitleHeight ReadOnly SkipOnInput DefaultItem ChangeRowSet ChangeRowOrder Width AutoMaxWidth MaxWidth Height AutoMaxHeight MaxHeight HeightInTableRows HeightControlVariant AutoMaxRowsCount MaxRowsCount ChoiceMode MultipleChoice RowInputMode SelectionMode RowSelectionMode Header FooterHeight HeaderHeight Footer HorizontalScrollBar VerticalScrollBar HorizontalLines VerticalLines UseAlternationRowColor AutoInsertNewRow AutoAddIncomplete AutoMarkIncomplete SearchOnInput InitialListView InitialTreeView HorizontalStretch Output VerticalStretch EnableStartDrag EnableDrag FileDragMode DataPath Font RowPictureDataPath RowsPicture BackColor BorderColor TextColor Title BehaviorOnHorizontalCompression GroupVerticalAlign Shortcut TitleTextColor TitleFont CommandSet ToolTip ToolTipRepresentation SearchStringLocation ViewStatusLocation SearchControlLocation GroupHorizontalAlign CurrentRowUse RefreshRequest AutoRefresh AutoRefreshPeriod Period ChoiceFoldersAndItems RestoreCurrentRow RowFilter TopLevelParent ShowRoot AllowRootChoice UpdateOnDataChange UserSettingsGroup AllowGettingCurrentRowURL ViewMode SettingsNamedItemDetailedRepresentation ContextMenu AutoCommandBar ExtendedTooltip SearchStringAddition ViewStatusAddition SearchControlAddition Events ChildItems'
+	'TextDocumentField' = 'DataPath DefaultItem ReadOnly Title TitleFont TitleLocation EditMode ToolTip Width AutoMaxWidth Font MaxWidth Height AutoMaxHeight ContextMenu ExtendedTooltip Events'
+	'TrackBarField' = 'DataPath Title TitleLocation HorizontalAlign ToolTip ToolTipRepresentation Width AutoMaxWidth HorizontalStretch MaxWidth Height AutoMaxHeight MinValue MarkingAppearance MaxValue LargeStep Step MarkingStep ContextMenu ExtendedTooltip Events'
+	'UsualGroup' = 'UserVisible Visible Enabled ReadOnly EnableContentChange Title TitleTextColor TitleFont ToolTip ToolTipRepresentation Shortcut Width Height HorizontalStretch VerticalStretch GroupHorizontalAlign GroupVerticalAlign Group ChildrenAlign HorizontalSpacing VerticalSpacing HorizontalAlign VerticalAlign Behavior CollapsedRepresentationTitle Collapsed ControlRepresentation Representation CurrentRowUse Format ShowLeftMargin United ChildItemsWidth ShowTitle BackColor ThroughAlign TitleDataPath ExtendedTooltip Events ChildItems'
+}
+$script:childRank = $null
+
+function Get-ChildRank([string]$parentTag, [string]$childTag) {
+	if ($null -eq $script:childRank) {
+		$script:childRank = @{}
+		foreach ($t in $script:childTagOrder.Keys) {
+			$idx = @{}; $i = 0
+			foreach ($c in ($script:childTagOrder[$t] -split ' ')) { $idx[$c] = $i; $i++ }
+			$script:childRank[$t] = $idx
+		}
+	}
+	$idx = $script:childRank[$parentTag]
+	if ($idx -and $idx.ContainsKey($childTag)) { return $idx[$childTag] }
+	return -1
+}
+
+# Вывод эмиттера (тег на строке, вложенность — табами) — в порядок корпуса: дети каждого элемента
+# переставляются целыми блоками строк, содержимое блоков не меняется. Незнакомый тег идёт за
+# предыдущим знакомым.
+function Sort-ElementTagOrder([string]$text) {
+	$crlf = $text.Contains("`r`n")
+	$lines = New-Object System.Collections.Generic.List[string]
+	$lines.AddRange([string[]]($text.Replace("`r`n", "`n") -split "`n"))
+	Sort-TagBlocks $lines 0 $lines.Count ''
+	$out = $lines -join "`n"
+	if ($crlf) { $out = $out.Replace("`n", "`r`n") }
+	return $out
+}
+
+function Get-TagBlockEnd($lines, [int]$i, [string]$ind, [string]$name) {
+	$line = $lines[$i]
+	if ($line.EndsWith('/>') -and -not $line.Contains('</')) { return $i + 1 }
+	if ($line.EndsWith("</$name>")) { return $i + 1 }
+	if ($line -cmatch ('^\t*<' + [regex]::Escape($name) + '(\s[^>]*)?>$')) {
+		$close = "$ind</$name>"
+		$j = $i + 1
+		while ($j -lt $lines.Count -and $lines[$j] -cne $close) { $j++ }
+		return $j + 1
+	}
+	# многострочный текст — до строки, которая кончается закрывающим тегом
+	$j = $i + 1
+	while ($j -lt $lines.Count -and -not $lines[$j - 1].EndsWith("</$name>")) { $j++ }
+	return $j
+}
+
+function Sort-TagBlocks($lines, [int]$lo, [int]$hi, [string]$parent) {
+	$ind = $null
+	for ($i = $lo; $i -lt $hi; $i++) {
+		if ($lines[$i] -cmatch '^(\t*)<[A-Za-z_]') { $ind = $Matches[1]; break }
+	}
+	if ($null -eq $ind) { return }
+	$blocks = New-Object System.Collections.ArrayList
+	$i = $lo
+	while ($i -lt $hi) {
+		$m = [regex]::Match($lines[$i], '^(\t*)<([A-Za-z_][\w.:-]*)(?=[\s/>])')
+		if ($m.Success -and $m.Groups[1].Value -ceq $ind) {
+			$e = Get-TagBlockEnd $lines $i $ind $m.Groups[2].Value
+			[void]$blocks.Add(@{ Name = $m.Groups[2].Value; S = $i; E = $e })
+			$i = $e
+		} else { $i++ }
+	}
+	foreach ($b in $blocks) {
+		if ($b.E - $b.S -gt 2 -and $lines[$b.S] -cmatch ('^\t*<' + [regex]::Escape($b.Name) + '(\s[^>]*)?>$')) {
+			Sort-TagBlocks $lines ($b.S + 1) ($b.E - 1) $b.Name
+		}
+	}
+	if ($blocks.Count -lt 2 -or -not $parent) { return }
+	$ptag = ($parent -split ':')[-1]
+	if (-not $script:childTagOrder.ContainsKey($ptag)) { return }
+	$total = 0
+	foreach ($b in $blocks) { $total += $b.E - $b.S }
+	$a = $blocks[0].S; $z = $blocks[$blocks.Count - 1].E
+	if ($total -ne $z - $a) { return }   # между детьми есть посторонние строки — не трогаем
+	$last = -1
+	$keyed = New-Object System.Collections.ArrayList
+	for ($k = 0; $k -lt $blocks.Count; $k++) {
+		$r = Get-ChildRank $ptag (($blocks[$k].Name -split ':')[-1])
+		if ($r -lt 0) { $r = $last }
+		$last = $r
+		[void]$keyed.Add([pscustomobject]@{ Key = ($r + 1) * 100000 + $k; K = $k })
+	}
+	$sorted = @($keyed | Sort-Object Key)
+	$same = $true
+	for ($k = 0; $k -lt $sorted.Count; $k++) { if ($sorted[$k].K -ne $k) { $same = $false; break } }
+	if ($same) { return }
+	$seq = New-Object System.Collections.Generic.List[string]
+	foreach ($s in $sorted) { $b = $blocks[$s.K]; for ($x = $b.S; $x -lt $b.E; $x++) { $seq.Add($lines[$x]) } }
+	$lines.RemoveRange($a, $z - $a)
+	$lines.InsertRange($a, $seq)
+}
+
 function Emit-Element {
 	param($el, [string]$indent, [bool]$inCmdBar = $false)
 
 	# Companion-панели (объект/массив-значение) → commandBar/contextMenu, до тип-синонимов.
 	Normalize-PanelSynonyms $el
 
-	# Silent synonyms: model often writes XML name or Russian (ПолеПереключателя/RadioButtonField → radio).
-	# Maps any synonym to canonical short DSL key.
-	# commandBar/autoCommandBar/КоманднаяПанель → тип-элемент ТОЛЬКО при строковом значении (имя);
-	# объект/массив уже отнесён к панель-свойству выше.
-	$strOnlyKeys = @('commandBar','autoCommandBar','КоманднаяПанель')
-	$synonyms = @{
-		"commandBar"        = "cmdBar"
-		"autoCommandBar"    = "autoCmdBar"
-		"КоманднаяПанель"   = "cmdBar"
-		"InputField"        = "input"
-		"ПолеВвода"         = "input"
-		"CheckBoxField"     = "check"
-		"ПолеФлажка"        = "check"
-		"RadioButtonField"  = "radio"
-		"ПолеПереключателя" = "radio"
-		"radioButton"       = "radio"
-		"PictureField"      = "picField"
-		"ПолеКартинки"      = "picField"
-		"LabelField"        = "labelField"
-		"ПолеНадписи"       = "labelField"
-		"CalendarField"     = "calendar"
-		"ПолеКалендаря"     = "calendar"
-		"LabelDecoration"   = "label"
-		"Надпись"           = "label"
-		"PictureDecoration" = "picture"
-		"Картинка"          = "picture"
-		"UsualGroup"        = "group"
-		"Группа"            = "group"
-		"ОбычнаяГруппа"     = "group"
-		"ColumnGroup"       = "columnGroup"
-		"ГруппаКолонок"     = "columnGroup"
-		"Pages"             = "pages"
-		"ГруппаСтраниц"     = "pages"
-		"Page"              = "page"
-		"Страница"          = "page"
-		"Table"             = "table"
-		"Таблица"           = "table"
-		"Button"            = "button"
-		"Кнопка"            = "button"
-		"Popup"             = "popup"
-		"ВсплывающееМеню"   = "popup"
-		# Дополнения командной панели таблицы (тип-как-ключ) — forgiving: XML-тег/Type/рус.имя → канон
-		"SearchStringAddition"       = "searchString"
-		"SearchStringRepresentation" = "searchString"
-		"строкаПоиска"               = "searchString"
-		"отображениеСтрокиПоиска"    = "searchString"
-		"Отображение строки поиска"  = "searchString"
-		"ViewStatusAddition"         = "viewStatus"
-		"ViewStatusRepresentation"   = "viewStatus"
-		"состояниеПросмотра"         = "viewStatus"
-		"Состояние просмотра"        = "viewStatus"
-		"SearchControlAddition"      = "searchControl"
-		"SearchControl"              = "searchControl"
-		"управлениеПоиском"          = "searchControl"
-		"Управление поиском"         = "searchControl"
-		# Спец-поля (документ/датчик) — XML-имя/рус. → канон
-		"SpreadSheetDocumentField"   = "spreadsheet"
-		"ПолеТабличногоДокумента"    = "spreadsheet"
-		"HTMLDocumentField"          = "html"
-		"ПолеHTMLДокумента"          = "html"
-		"TextDocumentField"          = "textDoc"
-		"ПолеТекстовогоДокумента"    = "textDoc"
-		"FormattedDocumentField"     = "formattedDoc"
-		"ПолеФорматированногоДокумента" = "formattedDoc"
-		"ProgressBarField"           = "progressBar"
-		"ПолеИндикатора"             = "progressBar"
-		"TrackBarField"              = "trackBar"
-		"ПолеПолосыРегулирования"    = "trackBar"
-		"ChartField"                 = "chart"
-		"ПолеДиаграммы"              = "chart"
-		"GanttChartField"            = "ganttChart"
-		"ПолеДиаграммыГанта"         = "ganttChart"
-		"GraphicalSchemaField"       = "graphicalSchema"
-		"ПолеГрафическойСхемы"       = "graphicalSchema"
-		"PlannerField"               = "planner"
-		"ПолеПланировщика"           = "planner"
-		"PeriodField"                = "periodField"
-		"ПолеПериода"                = "periodField"
-		"DendrogramField"            = "dendrogram"
-		"ПолеДендрограммы"           = "dendrogram"
-	}
-	foreach ($pair in $synonyms.GetEnumerator()) {
-		if ($null -ne $el.PSObject.Properties[$pair.Key] -and $null -eq $el.PSObject.Properties[$pair.Value]) {
-			if ($strOnlyKeys -contains $pair.Key -and -not ($el.($pair.Key) -is [string])) { continue }
-			$val = $el.($pair.Key)
-			$el.PSObject.Properties.Remove($pair.Key) | Out-Null
-			$el | Add-Member -NotePropertyName $pair.Value -NotePropertyValue $val -Force
-		}
-	}
+	# Синонимы типа (XML-имя, русское имя) → канонический ключ DSL
+	Normalize-ElementTypeSynonyms $el
 
 	# Синонимы ключей-свойств (русские имена 1С → канон. англ.). Case/space-insensitive.
 	# Канон побеждает: если задан и русский, и англ. ключ — англ. остаётся, русский отбрасываем.
@@ -3233,9 +4849,8 @@ function Emit-Element {
 	foreach ($k in $script:appearanceSpec.Keys)     { $knownKeys[$k] = 1 }
 	foreach ($k in $script:appearanceSynonyms.Keys) { $knownKeys[$k] = 1 }
 	foreach ($k in $script:propSynonyms.Keys)       { $knownKeys[$k] = 1 }
-	# Local: pass-through scalars are emitted from $script:genericScalars — a key added there
-	# and not here (markNegatives, threeState, …) was written to Form.xml and still reported «ignored».
-	foreach ($s in $script:genericScalars)          { $knownKeys[$s.Key] = 1 }
+	# Простые скаляры (pass-through) — тоже из своей таблицы: компилятор их выводит, значит, они известны
+	foreach ($g in $script:genericScalars)          { $knownKeys[$g.Key] = 1 }
 	foreach ($p in $el.PSObject.Properties) {
 		if ($p.Name -like '_*') { continue }  # внутренние маркеры (напр. _dynList)
 		if (-not $knownKeys.ContainsKey($p.Name)) {
@@ -3341,7 +4956,7 @@ function Emit-CommonElementProps {
 		if ($null -ne $el.($p[0])) { X "$indent<$($p[1])>$(if ($el.($p[0])){'true'}else{'false'})</$($p[1])>" }
 	}
 	# Динамический заголовок колонки-группы из данных (HeaderDataPath) — перед HeaderHorizontalAlign (порядок XSD)
-	if ($el.headerDataPath) { X "$indent<HeaderDataPath>$(Esc-Xml "$($el.headerDataPath)")</HeaderDataPath>" }
+	if ($el.headerDataPath) { X "$indent<HeaderDataPath>$(Esc-XmlText "$($el.headerDataPath)")</HeaderDataPath>" }
 	if ($el.footerHorizontalAlign) { X "$indent<FooterHorizontalAlign>$($el.footerHorizontalAlign)</FooterHorizontalAlign>" }
 	if ($el.headerHorizontalAlign) { X "$indent<HeaderHorizontalAlign>$($el.headerHorizontalAlign)</HeaderHorizontalAlign>" }
 	# Формат заголовка колонки-группы (ML-текст) — после HeaderHorizontalAlign (порядок XSD)
@@ -3361,8 +4976,8 @@ function Emit-PictureRef {
 	if (-not $src) { return }
 	$srcStr = "$src"
 	X "$indent<$picTag>"
-	if ($srcStr -match '^abs:(.*)$') { X "$indent`t<xr:Abs>$(Esc-Xml $matches[1])</xr:Abs>" }
-	else { X "$indent`t<xr:Ref>$(Esc-Xml $srcStr)</xr:Ref>" }
+	if ($srcStr -match '^abs:(.*)$') { X "$indent`t<xr:Abs>$(Esc-XmlText $matches[1])</xr:Abs>" }
+	else { X "$indent`t<xr:Ref>$(Esc-XmlText $srcStr)</xr:Ref>" }
 	X "$indent`t<xr:LoadTransparent>$(if ($lt) { 'true' } else { 'false' })</xr:LoadTransparent>"
 	if ($tpx) { X "$indent`t<xr:TransparentPixel x=`"$($tpx.x)`" y=`"$($tpx.y)`"/>" }
 	X "$indent</$picTag>"
@@ -3391,8 +5006,8 @@ function Emit-CommandPicture {
 	if ($null -eq $lt -and $null -ne $elemLt) { $lt = [bool]$elemLt }
 	$srcStr = "$src"
 	X "$indent<Picture>"
-	if ($srcStr -match '^abs:(.*)$') { X "$indent`t<xr:Abs>$(Esc-Xml $matches[1])</xr:Abs>" }
-	else { X "$indent`t<xr:Ref>$(Esc-Xml $srcStr)</xr:Ref>" }
+	if ($srcStr -match '^abs:(.*)$') { X "$indent`t<xr:Abs>$(Esc-XmlText $matches[1])</xr:Abs>" }
+	else { X "$indent`t<xr:Ref>$(Esc-XmlText $srcStr)</xr:Ref>" }
 	X "$indent`t<xr:LoadTransparent>$(if ($lt -eq $false) { 'false' } else { 'true' })</xr:LoadTransparent>"
 	if ($tpx) { X "$indent`t<xr:TransparentPixel x=`"$($tpx.x)`" y=`"$($tpx.y)`"/>" }
 	X "$indent</Picture>"
@@ -3554,7 +5169,7 @@ function Emit-GenericScalars {
 			X "$indent<$($s.Tag)>$(if ($p.Value){'true'}else{'false'})</$($s.Tag)>"
 		} else {
 			$v = "$($p.Value)"; if ($v -eq '') { continue }
-			X "$indent<$($s.Tag)>$(Esc-Xml $v)</$($s.Tag)>"
+			X "$indent<$($s.Tag)>$(Esc-XmlText $v)</$($s.Tag)>"
 		}
 	}
 }
@@ -3601,7 +5216,7 @@ function Emit-BorderTag {
 	$width = if ($val.PSObject.Properties['width'] -and $null -ne $val.width) { $val.width } else { 1 }
 	$style = if ($val.PSObject.Properties['style']) { "$($val.style)" } else { $null }
 	X "$indent<Border width=`"$width`">"
-	if ($style) { X "$indent`t<v8ui:style xsi:type=`"v8ui:ControlBorderType`">$(Esc-Xml $style)</v8ui:style>" }
+	if ($style) { X "$indent`t<v8ui:style xsi:type=`"v8ui:ControlBorderType`">$(Esc-XmlText $style)</v8ui:style>" }
 	X "$indent</Border>"
 }
 
@@ -3628,13 +5243,13 @@ function PL-Bool {
 }
 function Emit-PlannerColor {
 	param([string]$tag, $o, [string]$key, [string]$ind)
-	X "$ind<pl:$tag>$(Esc-Xml "$(PL-Get $o $key 'auto')")</pl:$tag>"
+	X "$ind<pl:$tag>$(Esc-XmlText "$(PL-Get $o $key 'auto')")</pl:$tag>"
 }
 # <pl:text>/<pl:tooltip>… — пустое → самозакрывающийся тег (как в выгрузке платформы).
 function Emit-PlannerText {
 	param([string]$tag, $v, [string]$ind)
 	if ([string]::IsNullOrEmpty("$v")) { X "$ind<pl:$tag/>" }
-	else { X "$ind<pl:$tag>$(Esc-Xml "$v")</pl:$tag>" }
+	else { X "$ind<pl:$tag>$(Esc-XmlText "$v")</pl:$tag>" }
 }
 # Признак ссылочного значения (объект разреза/элемент-ссылка) → xsi:type="xr:DesignTimeRef";
 # иначе xs:string. Покрывает англ. (Enum.X.EnumValue.Y) и рус. (Справочник.X) метатипы.
@@ -3649,7 +5264,7 @@ function Emit-PlannerValue {
 	param($v, [string]$ind)
 	if ($null -eq $v -or "$v" -eq '') { X "$ind<pl:value xsi:nil=`"true`"/>"; return }
 	$t = if (Test-PlannerRef "$v") { 'xr:DesignTimeRef' } else { 'xs:string' }
-	X "$ind<pl:value xsi:type=`"$t`">$(Esc-Xml "$v")</pl:value>"
+	X "$ind<pl:value xsi:type=`"$t`">$(Esc-XmlText "$v")</pl:value>"
 }
 function Emit-PlannerFont {
 	param($o, [string]$ind)
@@ -3663,14 +5278,14 @@ function Emit-PlannerBorder {
 	$bw = if ($b) { PL-Get $b 'width' 1 } else { 1 }
 	$bs = if ($b) { PL-Get $b 'style' 'Single' } else { 'Single' }
 	X "$ind<pl:border width=`"$bw`">"
-	X "$ind`t<v8ui:style xsi:type=`"v8ui:ControlBorderType`">$(Esc-Xml "$bs")</v8ui:style>"
+	X "$ind`t<v8ui:style xsi:type=`"v8ui:ControlBorderType`">$(Esc-XmlText "$bs")</v8ui:style>"
 	X "$ind</pl:border>"
 }
 function Emit-PlannerLevel {
 	param($lv, [string]$cns, [string]$ind)
 	$li = "$ind`t"
 	X "$ind<level xmlns=`"$cns`">"
-	X "$li<measure>$(Esc-Xml "$(PL-Get $lv 'measure' 'Hour')")</measure>"
+	X "$li<measure>$(Esc-XmlText "$(PL-Get $lv 'measure' 'Hour')")</measure>"
 	X "$li<interval>$(PL-Get $lv 'interval' 1)</interval>"
 	X "$li<show>$(PL-Bool (PL-Get $lv 'show' $true))</show>"
 	$line = PL-Get $lv 'line' $null
@@ -3678,10 +5293,10 @@ function Emit-PlannerLevel {
 	$lg  = if ($line) { PL-Get $line 'gap' $false } else { $false }
 	$lst = if ($line) { PL-Get $line 'style' 'Solid' } else { 'Solid' }
 	X "$li<line width=`"$lw`" gap=`"$(PL-Bool $lg)`">"
-	X "$li`t<v8ui:style xsi:type=`"v8ui:ChartLineType`">$(Esc-Xml "$lst")</v8ui:style>"
+	X "$li`t<v8ui:style xsi:type=`"v8ui:ChartLineType`">$(Esc-XmlText "$lst")</v8ui:style>"
 	X "$li</line>"
-	X "$li<scaleColor>$(Esc-Xml "$(PL-Get $lv 'scaleColor' 'auto')")</scaleColor>"
-	X "$li<dayFormatRule>$(Esc-Xml "$(PL-Get $lv 'dayFormatRule' 'MonthDayWeekDay')")</dayFormatRule>"
+	X "$li<scaleColor>$(Esc-XmlText "$(PL-Get $lv 'scaleColor' 'auto')")</scaleColor>"
+	X "$li<dayFormatRule>$(Esc-XmlText "$(PL-Get $lv 'dayFormatRule' 'MonthDayWeekDay')")</dayFormatRule>"
 	$fmt = PL-Get $lv 'format' $null
 	if ($null -eq $fmt) { $fmt = [ordered]@{ '#' = 'DF="HH:mm"'; 'ru' = 'DF="HH:mm"' } }
 	X "$li<format>"
@@ -3692,8 +5307,8 @@ function Emit-PlannerLevel {
 	X "$li<labels>"
 	X "$li`t<ticks>$ticks</ticks>"
 	X "$li</labels>"
-	X "$li<backColor>$(Esc-Xml "$(PL-Get $lv 'backColor' 'auto')")</backColor>"
-	X "$li<textColor>$(Esc-Xml "$(PL-Get $lv 'textColor' 'auto')")</textColor>"
+	X "$li<backColor>$(Esc-XmlText "$(PL-Get $lv 'backColor' 'auto')")</backColor>"
+	X "$li<textColor>$(Esc-XmlText "$(PL-Get $lv 'textColor' 'auto')")</textColor>"
 	X "$li<showPereodicalLabels>$(PL-Bool (PL-Get $lv 'showPereodicalLabels' $true))</showPereodicalLabels>"
 	X "$ind</level>"
 }
@@ -3702,14 +5317,14 @@ function Emit-PlannerTimeScale {
 	$cns = $script:CHART_NS
 	$ci = "$ind`t"
 	X "$ind<pl:timeScale>"
-	X "$ci<placement xmlns=`"$cns`">$(Esc-Xml "$(if ($ts) { PL-Get $ts 'placement' 'Left' } else { 'Left' })")</placement>"
+	X "$ci<placement xmlns=`"$cns`">$(Esc-XmlText "$(if ($ts) { PL-Get $ts 'placement' 'Left' } else { 'Left' })")</placement>"
 	$levels = if ($ts) { @(PL-Get $ts 'levels' @()) } else { @() }
 	if (@($levels).Count -eq 0) { $levels = @($null) }   # один уровень-дефолт
 	foreach ($lv in $levels) { Emit-PlannerLevel $lv $cns $ci }
 	$transp = if ($ts) { PL-Get $ts 'transparent' $false } else { $false }
 	X "$ci<transparent xmlns=`"$cns`">$(PL-Bool $transp)</transparent>"
-	X "$ci<backColor xmlns=`"$cns`">$(Esc-Xml "$(if ($ts) { PL-Get $ts 'backColor' 'auto' } else { 'auto' })")</backColor>"
-	X "$ci<textColor xmlns=`"$cns`">$(Esc-Xml "$(if ($ts) { PL-Get $ts 'textColor' 'auto' } else { 'auto' })")</textColor>"
+	X "$ci<backColor xmlns=`"$cns`">$(Esc-XmlText "$(if ($ts) { PL-Get $ts 'backColor' 'auto' } else { 'auto' })")</backColor>"
+	X "$ci<textColor xmlns=`"$cns`">$(Esc-XmlText "$(if ($ts) { PL-Get $ts 'textColor' 'auto' } else { 'auto' })")</textColor>"
 	X "$ci<currentLevel xmlns=`"$cns`">$(if ($ts) { PL-Get $ts 'currentLevel' 0 } else { 0 })</currentLevel>"
 	X "$ind</pl:timeScale>"
 }
@@ -3734,7 +5349,7 @@ function Emit-PlannerItem {
 	X "$ii<pl:id>$id</pl:id>"
 	X "$ii<pl:textFormatted>$(PL-Bool (PL-Get $it 'textFormatted' $false))</pl:textFormatted>"
 	Emit-PlannerBorder $it $ii 'border'
-	X "$ii<pl:editMode>$(Esc-Xml "$(PL-Get $it 'editMode' 'EnableEdit')")</pl:editMode>"
+	X "$ii<pl:editMode>$(Esc-XmlText "$(PL-Get $it 'editMode' 'EnableEdit')")</pl:editMode>"
 	X "$ind</pl:item>"
 }
 # Элемент измерения (<pl:item> внутри <pl:dimension>) — рекурсивен: может нести вложенные
@@ -3789,7 +5404,7 @@ function Emit-PlannerSettings {
 	$wfmt = PL-Get $pl 'timeScaleWrapHeadersFormat' $null
 	if ($null -eq $wfmt) { $wfmt = [ordered]@{ '#' = 'DLF="DD"'; 'ru' = 'DLF="DD"' } }
 	Emit-MLText -tag 'pl:timeScaleWrapHeadersFormat' -text $wfmt -indent $si
-	X "$si<pl:periodicVariantUnit>$(Esc-Xml "$(PL-Get $pl 'periodicVariantUnit' 'Day')")</pl:periodicVariantUnit>"
+	X "$si<pl:periodicVariantUnit>$(Esc-XmlText "$(PL-Get $pl 'periodicVariantUnit' 'Day')")</pl:periodicVariantUnit>"
 	X "$si<pl:periodicVariantRepetition>$(PL-Get $pl 'periodicVariantRepetition' 1)</pl:periodicVariantRepetition>"
 	X "$si<pl:timeScaleWrapBeginIndent>$(PL-Get $pl 'timeScaleWrapBeginIndent' 0)</pl:timeScaleWrapBeginIndent>"
 	X "$si<pl:timeScaleWrapEndIndent>$(PL-Get $pl 'timeScaleWrapEndIndent' 0)</pl:timeScaleWrapEndIndent>"
@@ -3802,16 +5417,16 @@ function Emit-PlannerSettings {
 		X "$si</pl:period>"
 	}
 	X "$si<pl:displayCurrentDate>$(PL-Bool (PL-Get $pl 'displayCurrentDate' $true))</pl:displayCurrentDate>"
-	X "$si<pl:itemsTimeRepresentation>$(Esc-Xml "$(PL-Get $pl 'itemsTimeRepresentation' 'BeginTime')")</pl:itemsTimeRepresentation>"
-	X "$si<pl:itemsBehaviorWhenSpaceInsufficient>$(Esc-Xml "$(PL-Get $pl 'itemsBehaviorWhenSpaceInsufficient' 'CollapseItems')")</pl:itemsBehaviorWhenSpaceInsufficient>"
+	X "$si<pl:itemsTimeRepresentation>$(Esc-XmlText "$(PL-Get $pl 'itemsTimeRepresentation' 'BeginTime')")</pl:itemsTimeRepresentation>"
+	X "$si<pl:itemsBehaviorWhenSpaceInsufficient>$(Esc-XmlText "$(PL-Get $pl 'itemsBehaviorWhenSpaceInsufficient' 'CollapseItems')")</pl:itemsBehaviorWhenSpaceInsufficient>"
 	X "$si<pl:autoMinColumnWidth>$(PL-Bool (PL-Get $pl 'autoMinColumnWidth' $true))</pl:autoMinColumnWidth>"
 	X "$si<pl:autoMinRowHeight>$(PL-Bool (PL-Get $pl 'autoMinRowHeight' $true))</pl:autoMinRowHeight>"
 	X "$si<pl:minColumnWidth>$(PL-Get $pl 'minColumnWidth' 0)</pl:minColumnWidth>"
 	X "$si<pl:minRowHeight>$(PL-Get $pl 'minRowHeight' 0)</pl:minRowHeight>"
-	X "$si<pl:fixDimensionsHeader>$(Esc-Xml "$(PL-Get $pl 'fixDimensionsHeader' 'auto')")</pl:fixDimensionsHeader>"
-	X "$si<pl:fixTimeScaleHeader>$(Esc-Xml "$(PL-Get $pl 'fixTimeScaleHeader' 'auto')")</pl:fixTimeScaleHeader>"
+	X "$si<pl:fixDimensionsHeader>$(Esc-XmlText "$(PL-Get $pl 'fixDimensionsHeader' 'auto')")</pl:fixDimensionsHeader>"
+	X "$si<pl:fixTimeScaleHeader>$(Esc-XmlText "$(PL-Get $pl 'fixTimeScaleHeader' 'auto')")</pl:fixTimeScaleHeader>"
 	Emit-PlannerBorder $pl $si 'border'
-	X "$si<pl:newItemsTextType>$(Esc-Xml "$(PL-Get $pl 'newItemsTextType' 'String')")</pl:newItemsTextType>"
+	X "$si<pl:newItemsTextType>$(Esc-XmlText "$(PL-Get $pl 'newItemsTextType' 'String')")</pl:newItemsTextType>"
 	X "$ind</Settings>"
 }
 
@@ -3844,13 +5459,13 @@ function Emit-ChartNode {
 		if ($keys -contains 'gap') {
 			$w = Get-Prop $val 'width'; $g = Get-Prop $val 'gap'; $st = Get-Prop $val 'style'
 			X "$ind<d4p1:$name width=`"$w`" gap=`"$(PL-Bool $g)`">"
-			X "$ind`t<v8ui:style xsi:type=`"v8ui:ChartLineType`">$(Esc-Xml "$st")</v8ui:style>"
+			X "$ind`t<v8ui:style xsi:type=`"v8ui:ChartLineType`">$(Esc-XmlText "$st")</v8ui:style>"
 			X "$ind</d4p1:$name>"; return
 		}
 		if (($keys -contains 'style') -and ($keys -contains 'width')) {
 			$w = Get-Prop $val 'width'; $st = Get-Prop $val 'style'
 			X "$ind<d4p1:$name width=`"$w`">"
-			X "$ind`t<v8ui:style xsi:type=`"v8ui:ControlBorderType`">$(Esc-Xml "$st")</v8ui:style>"
+			X "$ind`t<v8ui:style xsi:type=`"v8ui:ControlBorderType`">$(Esc-XmlText "$st")</v8ui:style>"
 			X "$ind</d4p1:$name>"; return
 		}
 		$isFont = $false; foreach ($fk in $script:CHART_FONT_KEYS) { if ($keys -contains $fk) { $isFont = $true; break } }
@@ -3866,7 +5481,7 @@ function Emit-ChartNode {
 	}
 	if ($null -eq $val -or "$val" -eq '') { X "$ind<d4p1:$name/>"; return }
 	if ($val -is [bool]) { X "$ind<d4p1:$name>$(PL-Bool $val)</d4p1:$name>"; return }
-	X "$ind<d4p1:$name>$(Esc-Xml "$val")</d4p1:$name>"
+	X "$ind<d4p1:$name>$(Esc-XmlText "$val")</d4p1:$name>"
 }
 function Emit-ChartSettings {
 	param($chart, [string]$ind, [string]$ctype = 'd4p1:Chart')
@@ -3888,7 +5503,7 @@ function Emit-Appearance {
 		if ($null -eq $val -or ($val -is [string] -and $val -eq '')) { continue }
 		$spec = $script:appearanceSpec[$key]
 		switch ($spec.kind) {
-			'color'  { X "$indent<$($spec.tag)>$(Esc-Xml "$val")</$($spec.tag)>" }
+			'color'  { X "$indent<$($spec.tag)>$(Esc-XmlText "$val")</$($spec.tag)>" }
 			'font'   { Emit-FontTag -tag $spec.tag -val $val -indent $indent }
 			'border' { Emit-BorderTag -val $val -indent $indent }
 		}
@@ -4005,7 +5620,7 @@ function Emit-Group {
 		"horizontal"       { "Horizontal" }
 		"vertical"         { "Vertical" }
 		"alwayshorizontal" { "AlwaysHorizontal" }
-		"alwaysvertical"   { "AlwaysVertical" }
+		"alwaysvertical"   { "Vertical" }   # старое написание; у группы такого значения нет
 		"horizontalifpossible" { "HorizontalIfPossible" }
 		"collapsible"      { "Vertical" }
 		default            { $null }
@@ -4041,7 +5656,14 @@ function Emit-Group {
 	if ($el.currentRowUse) { X "$inner<CurrentRowUse>$($el.currentRowUse)</CurrentRowUse>" }
 
 	# ShowTitle
-	if ($null -ne $el.showTitle) { X "$inner<ShowTitle>$(if ($el.showTitle){'true'}else{'false'})</ShowTitle>" }
+	# Обычная группа без showTitle: заголовок показан, если он задан (title или titleDataPath), иначе скрыт — служебная группа
+	# раскладки без заголовка давала бы пустую строку-заголовок (умолчание платформы — показан).
+	# У сворачиваемой/всплывающей заголовок — переключатель: умолчание платформы, пишется лишь явный false.
+	if (@('collapsible','popup') -contains $behaviorVal) {
+		if ($null -ne $el.showTitle -and -not $el.showTitle) { X "$inner<ShowTitle>false</ShowTitle>" }
+	} elseif ($null -ne $el.showTitle) {
+		if (-not ($el.showTitle -eq $true)) { X "$inner<ShowTitle>false</ShowTitle>" }
+	} elseif (-not $el.title -and -not $el.titleDataPath) { X "$inner<ShowTitle>false</ShowTitle>" }
 	# Заголовок свёрнутого представления (collapsible/popup) — мультиязычный текст
 	if ($el.collapsedTitle) { Emit-MLText -tag "CollapsedRepresentationTitle" -text $el.collapsedTitle -indent $inner }
 
@@ -4060,6 +5682,7 @@ function Emit-Group {
 
 	# Companion: ExtendedTooltip
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "UsualGroup"
 
 	# Children
 	if ($el.children -and $el.children.Count -gt 0) {
@@ -4078,6 +5701,7 @@ function Emit-ColumnGroup {
 
 	X "$indent<ColumnGroup name=`"$name`" id=`"$id`"$(DI-Attr $el)>"
 	$inner = "$indent`t"
+	Warn-EventsIgnored $el "ColumnGroup" $name
 
 	Emit-Title -el $el -name $name -indent $inner
 
@@ -4092,7 +5716,8 @@ function Emit-ColumnGroup {
 	if ($orientation) { X "$inner<Group>$orientation</Group>" }
 	elseif ($groupVal) { Warn-Unrecognized 'columnGroup orientation' $el.columnGroup @('vertical','horizontal','inCell') $name }
 
-	if ($null -ne $el.showTitle) { X "$inner<ShowTitle>$(if ($el.showTitle){'true'}else{'false'})</ShowTitle>" }
+	# ShowTitle=true — умолчание платформы (в корпусе только false): пишем лишь false
+	if ($null -ne $el.showTitle -and -not $el.showTitle) { X "$inner<ShowTitle>false</ShowTitle>" }
 	# showInHeader эмитится общим Emit-CommonElementProps (через Emit-Layout)
 
 	Emit-CommonFlags -el $el -indent $inner
@@ -4130,17 +5755,7 @@ function Emit-Input {
 	Emit-Title -el $el -name $name -indent $inner -auto:(-not $el.path)
 	Emit-CommonFlags -el $el -indent $inner
 
-	if ($el.titleLocation) {
-		$loc = switch ("$($el.titleLocation)") {
-			"none"   { "None" }
-			"left"   { "Left" }
-			"right"  { "Right" }
-			"top"    { "Top" }
-			"bottom" { "Bottom" }
-			default  { "$($el.titleLocation)" }
-		}
-		X "$inner<TitleLocation>$loc</TitleLocation>"
-	}
+	if ($el.titleLocation) { X "$inner<TitleLocation>$(Map-TitleLoc "$($el.titleLocation)")</TitleLocation>" }
 
 	if ($null -ne $el.multiLine) { X "$inner<MultiLine>$(if ($el.multiLine){'true'}else{'false'})</MultiLine>" }
 	if ($null -ne $el.passwordMode) { X "$inner<PasswordMode>$(if ($el.passwordMode){'true'}else{'false'})</PasswordMode>" }
@@ -4173,13 +5788,13 @@ function Emit-Input {
 		@('choiceForm','ChoiceForm'), @('choiceHistoryOnInput','ChoiceHistoryOnInput'),
 		@('choiceFoldersAndItems','ChoiceFoldersAndItems'), @('footerDataPath','FooterDataPath')
 	)) {
-		if ($el.($p[0])) { X "$inner<$($p[1])>$(Esc-Xml "$($el.($p[0]))")</$($p[1])>" }
+		if ($el.($p[0])) { X "$inner<$($p[1])>$(Esc-XmlText "$($el.($p[0]))")</$($p[1])>" }
 	}
 	# MinValue/MaxValue — типизированное. JSON-число → xs:decimal, строка → xs:string (тип сохранён декомпилятором).
 	foreach ($p in @(@('minValue','MinValue'), @('maxValue','MaxValue'))) {
 		if ($null -ne $el.($p[0])) {
 			$mvt = if ($el.($p[0]) -is [string]) { 'xs:string' } else { 'xs:decimal' }
-			X "$inner<$($p[1]) xsi:type=`"$mvt`">$(Esc-Xml "$($el.($p[0]))")</$($p[1])>"
+			X "$inner<$($p[1]) xsi:type=`"$mvt`">$(Esc-XmlText "$($el.($p[0]))")</$($p[1])>"
 		}
 	}
 	if ($el.choiceButtonRepresentation) { X "$inner<ChoiceButtonRepresentation>$($el.choiceButtonRepresentation)</ChoiceButtonRepresentation>" }
@@ -4210,7 +5825,7 @@ function Emit-Input {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "input"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "InputField"
 
 	X "$indent</InputField>"
 }
@@ -4242,7 +5857,7 @@ function Emit-Check {
 
 	if ($null -ne $el.warningOnEdit) { Emit-MLText -tag "WarningOnEdit" -text $el.warningOnEdit -indent $inner }
 	# FooterDataPath / FooterText — общие cell-свойства колонки (как у input/labelField)
-	if ($el.footerDataPath) { X "$inner<FooterDataPath>$(Esc-Xml "$($el.footerDataPath)")</FooterDataPath>" }
+	if ($el.footerDataPath) { X "$inner<FooterDataPath>$(Esc-XmlText "$($el.footerDataPath)")</FooterDataPath>" }
 	if ($null -ne $el.footerText) { Emit-MLText -tag "FooterText" -text $el.footerText -indent $inner }
 
 	# Формат / формат редактирования (LocalStringType — строка или {ru,en})
@@ -4256,7 +5871,7 @@ function Emit-Check {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "check"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "CheckBoxField"
 
 	X "$indent</CheckBoxField>"
 }
@@ -4283,6 +5898,25 @@ $script:refRootSynonyms = @{
 	"КритерийОтбора"          = "FilterCriterion"
 }
 $script:enumValueSynonyms = @("EnumValue","ЗначениеПеречисления")
+
+# Значение ссылки в dcscor:DesignTimeValue (отборы, параметры) — к виду Конфигуратора:
+# "Enum.X.EnumValue.Y" / "Enum.X.Y" → "Перечисление.X.Y", "Catalog.X.EmptyRef" → "Справочник.X.ПустаяСсылка".
+# Вид с сегментом EnumValue платформа не разрешает: сравнение с ним всегда ложно (замер 8.3.24).
+$script:designTimeRefRoots = @{
+	"Enum" = "Перечисление"; "Catalog" = "Справочник"; "Document" = "Документ"; "ChartOfAccounts" = "ПланСчетов"
+	"ChartOfCharacteristicTypes" = "ПланВидовХарактеристик"; "ChartOfCalculationTypes" = "ПланВидовРасчета"
+	"ExchangePlan" = "ПланОбмена"; "BusinessProcess" = "БизнесПроцесс"; "Task" = "Задача"
+}
+function Normalize-DesignTimeValue([string]$v) {
+	$parts = @($v -split '\.')
+	if ($parts.Count -lt 3) { return $v }
+	if ($script:designTimeRefRoots.ContainsKey($parts[0])) { $parts[0] = $script:designTimeRefRoots[$parts[0]] }
+	if ($parts[0] -ceq 'Перечисление' -and $parts.Count -ge 4 -and $script:enumValueSynonyms -contains $parts[2]) {
+		$parts = @($parts[0], $parts[1]) + $parts[3..($parts.Count - 1)]
+	}
+	if ($parts[-1] -ceq 'EmptyRef') { $parts[-1] = 'ПустаяСсылка' }
+	return ($parts -join '.')
+}
 
 # Нормализация типа таблицы динсписка: "Справочник.Контрагенты" → "Catalog.Контрагенты".
 # Прощающий ввод: принимаем рус-имя метаданных, переводим в платформенное. Уже англ — без изменений.
@@ -4399,7 +6033,7 @@ function Emit-ChoicePresentation {
 	foreach ($pair in $pairs) {
 		X "$indent`t<v8:item>"
 		X "$indent`t`t<v8:lang>$($pair[0])</v8:lang>"
-		X "$indent`t`t<v8:content>$(Esc-Xml $pair[1])</v8:content>"
+		X "$indent`t`t<v8:content>$(Esc-XmlText $pair[1])</v8:content>"
 		X "$indent`t</v8:item>"
 	}
 	X "$indent</Presentation>"
@@ -4409,7 +6043,7 @@ function Emit-ChoicePresentation {
 function Get-ChoiceValueTag {
 	param($norm)
 	if ([string]::IsNullOrEmpty($norm.Text)) { return "<Value xsi:type=`"$($norm.XsiType)`"/>" }
-	return "<Value xsi:type=`"$($norm.XsiType)`">$(Esc-Xml $norm.Text)</Value>"
+	return "<Value xsi:type=`"$($norm.XsiType)`">$(Esc-XmlText $norm.Text)</Value>"
 }
 
 # Emit <ChoiceList> (список выбора) — у RadioButtonField и InputField.
@@ -4622,8 +6256,8 @@ function Emit-ChoiceParameterLinks {
 			}
 		}
 		X "$indent`t<xr:Link>"
-		X "$indent`t`t<xr:Name>$(Esc-Xml "$name")</xr:Name>"
-		X "$indent`t`t<xr:DataPath xsi:type=`"xs:string`">$(Esc-Xml "$dp")</xr:DataPath>"
+		X "$indent`t`t<xr:Name>$(Esc-XmlText "$name")</xr:Name>"
+		X "$indent`t`t<xr:DataPath xsi:type=`"xs:string`">$(Esc-XmlText "$dp")</xr:DataPath>"
 		X "$indent`t`t<xr:ValueChange>$vc</xr:ValueChange>"
 		X "$indent`t</xr:Link>"
 	}
@@ -4640,7 +6274,7 @@ function Emit-TypeLink {
 	$li = Get-ElProp $tl @('linkItem','элементСвязи')
 	if ($null -eq $li) { $li = 0 }
 	X "$indent<TypeLink>"
-	X "$indent`t<xr:DataPath>$(Esc-Xml "$dp")</xr:DataPath>"
+	X "$indent`t<xr:DataPath>$(Esc-XmlText "$dp")</xr:DataPath>"
 	X "$indent`t<xr:LinkItem>$li</xr:LinkItem>"
 	X "$indent</TypeLink>"
 }
@@ -4686,7 +6320,7 @@ function Emit-Radio {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "radio"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "RadioButtonField"
 
 	X "$indent</RadioButtonField>"
 }
@@ -4728,7 +6362,7 @@ function Emit-Label {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "label"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "LabelDecoration"
 
 	X "$indent</LabelDecoration>"
 }
@@ -4747,7 +6381,7 @@ function Emit-LabelField {
 	if ($el.titleLocation) { X "$inner<TitleLocation>$(Map-TitleLoc "$($el.titleLocation)")</TitleLocation>" }
 	if ($el.editMode) { X "$inner<EditMode>$($el.editMode)</EditMode>" }
 	# FooterDataPath — путь данных подвала колонки (общий cell-prop, как у input); после EditMode
-	if ($el.footerDataPath) { X "$inner<FooterDataPath>$(Esc-Xml "$($el.footerDataPath)")</FooterDataPath>" }
+	if ($el.footerDataPath) { X "$inner<FooterDataPath>$(Esc-XmlText "$($el.footerDataPath)")</FooterDataPath>" }
 	# PasswordMode на LabelField — платформа эмитит явный false (редко); факт. значение
 	if ($null -ne $el.passwordMode) { X "$inner<PasswordMode>$(if ($el.passwordMode){'true'}else{'false'})</PasswordMode>" }
 	Emit-ColumnPics -el $el -indent $inner
@@ -4769,7 +6403,7 @@ function Emit-LabelField {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "labelField"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "LabelField"
 
 	X "$indent</LabelField>"
 }
@@ -4901,13 +6535,15 @@ function Emit-Table {
 	# Columns
 	if ($el.columns -and $el.columns.Count -gt 0) {
 		X "$inner<ChildItems>"
+		$prevTable = $script:handlerTable; $script:handlerTable = $name
 		foreach ($col in $el.columns) {
 			Emit-Element -el $col -indent "$inner`t"
 		}
+		$script:handlerTable = $prevTable
 		X "$inner</ChildItems>"
 	}
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "table"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "Table" -source (Get-TableSource $el)
 
 	X "$indent</Table>"
 }
@@ -4935,7 +6571,7 @@ function Emit-Pages {
 	# Companion
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "pages"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "Pages"
 
 	# Children (pages)
 	if ($el.children -and $el.children.Count -gt 0) {
@@ -4954,6 +6590,7 @@ function Emit-Page {
 
 	X "$indent<Page name=`"$name`" id=`"$id`"$(DI-Attr $el)>"
 	$inner = "$indent`t"
+	Warn-EventsIgnored $el "Page" $name
 
 	Emit-Title -el $el -name $name -indent $inner -auto
 	Emit-CommonFlags -el $el -indent $inner
@@ -4964,19 +6601,20 @@ function Emit-Page {
 
 	if ($el.group) {
 		# Доступные значения страницы/обычной группы: Vertical / HorizontalIfPossible / AlwaysHorizontal
-		# (InCell — только у columnGroup). Horizontal/AlwaysVertical оставлены forgiving (legacy).
+		# (InCell — только у columnGroup). Horizontal и старое alwaysVertical (→ Vertical) — прощающий ввод.
 		$orientation = switch ("$($el.group)") {
 			"horizontal"          { "Horizontal" }
 			"vertical"            { "Vertical" }
 			"alwaysHorizontal"    { "AlwaysHorizontal" }
-			"alwaysVertical"      { "AlwaysVertical" }
+			"alwaysVertical"      { "Vertical" }   # старое написание; у страницы такого значения нет
 			"horizontalIfPossible" { "HorizontalIfPossible" }
 			default               { $null }
 		}
 		if ($orientation) { X "$inner<Group>$orientation</Group>" }
 		else { Warn-Unrecognized 'page group orientation' $el.group @('vertical','horizontalIfPossible','alwaysHorizontal') $name }
 	}
-	if ($null -ne $el.showTitle) { X "$inner<ShowTitle>$(if ($el.showTitle){'true'}else{'false'})</ShowTitle>" }
+	# ShowTitle=true — умолчание платформы (в корпусе только false): пишем лишь false
+	if ($null -ne $el.showTitle -and -not $el.showTitle) { X "$inner<ShowTitle>false</ShowTitle>" }
 	# Формат значения пути к данным заголовка (<Format>; парный к titleDataPath страницы)
 	if ($el.format)     { Emit-MLText -tag "Format" -text $el.format -indent $inner }
 	if ($el.editFormat) { Emit-MLText -tag "EditFormat" -text $el.editFormat -indent $inner }
@@ -5070,7 +6708,7 @@ function Emit-Button {
 		if (($btnParam -is [System.Management.Automation.PSCustomObject] -or $btnParam -is [hashtable]) -and $btnParam.type) {
 			Emit-Type -typeStr "$($btnParam.type)" -indent $inner -tag "Parameter" -tagAttrs ' xsi:type="v8:TypeDescription"'
 		} else {
-			X "$inner<Parameter xsi:type=`"xr:MDObjectRef`">$(Esc-Xml "$btnParam")</Parameter>"
+			X "$inner<Parameter xsi:type=`"xr:MDObjectRef`">$(Esc-XmlText "$btnParam")</Parameter>"
 		}
 	}
 	# DataPath — привязка команды кнопки к контексту (Объект.Ref, Items.X.CurrentData.Поле)
@@ -5103,7 +6741,7 @@ function Emit-Button {
 	# Companion
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "button"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "Button"
 
 	X "$indent</Button>"
 }
@@ -5125,8 +6763,8 @@ function Emit-PictureDecoration {
 		$srcStr = "$($el.src)"
 		$lt = if ($el.loadTransparent -eq $true) { "true" } else { "false" }
 		X "$inner<Picture>"
-		if ($srcStr -match '^abs:(.*)$') { X "$inner`t<xr:Abs>$(Esc-Xml $matches[1])</xr:Abs>" }
-		else { X "$inner`t<xr:Ref>$(Esc-Xml $srcStr)</xr:Ref>" }
+		if ($srcStr -match '^abs:(.*)$') { X "$inner`t<xr:Abs>$(Esc-XmlText $matches[1])</xr:Abs>" }
+		else { X "$inner`t<xr:Ref>$(Esc-XmlText $srcStr)</xr:Ref>" }
 		X "$inner`t<xr:LoadTransparent>$lt</xr:LoadTransparent>"
 		if ($el.transparentPixel) { X "$inner`t<xr:TransparentPixel x=`"$($el.transparentPixel.x)`" y=`"$($el.transparentPixel.y)`"/>" }
 		X "$inner</Picture>"
@@ -5144,7 +6782,7 @@ function Emit-PictureDecoration {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "picture"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "PictureDecoration"
 
 	X "$indent</PictureDecoration>"
 }
@@ -5170,7 +6808,7 @@ function Emit-PictureField {
 	if ($null -ne $el.enableDrag) { X "$inner<EnableDrag>$(if ($el.enableDrag){'true'}else{'false'})</EnableDrag>" }
 
 	# FooterDataPath / FooterText — общие cell-свойства колонки (как у input/labelField)
-	if ($el.footerDataPath) { X "$inner<FooterDataPath>$(Esc-Xml "$($el.footerDataPath)")</FooterDataPath>" }
+	if ($el.footerDataPath) { X "$inner<FooterDataPath>$(Esc-XmlText "$($el.footerDataPath)")</FooterDataPath>" }
 	if ($null -ne $el.footerText) { Emit-MLText -tag "FooterText" -text $el.footerText -indent $inner }
 
 	# ValuesPicture — picture (collection) used to render the field's value.
@@ -5186,7 +6824,7 @@ function Emit-PictureField {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "picField"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "PictureField"
 
 	X "$indent</PictureField>"
 }
@@ -5203,15 +6841,7 @@ function Emit-Calendar {
 	Emit-CommonFlags -el $el -indent $inner
 
 	if ($el.titleLocation) {
-		$loc = switch ("$($el.titleLocation)") {
-			"none"   { "None" }
-			"left"   { "Left" }
-			"right"  { "Right" }
-			"top"    { "Top" }
-			"bottom" { "Bottom" }
-			"auto"   { "Auto" }
-			default  { "$($el.titleLocation)" }
-		}
+		$loc = Map-TitleLoc "$($el.titleLocation)"
 		X "$inner<TitleLocation>$loc</TitleLocation>"
 	}
 
@@ -5231,7 +6861,7 @@ function Emit-Calendar {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "calendar"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "CalendarField"
 
 	X "$indent</CalendarField>"
 }
@@ -5270,7 +6900,7 @@ function Emit-SimpleField {
 	Emit-CompanionPanel -tag "ContextMenu" -name "${name}КонтекстноеМеню" -indent $inner -panel $el.contextMenu
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey $typeKey
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag $xmlTag
 
 	X "$indent</$xmlTag>"
 }
@@ -5291,7 +6921,7 @@ function Emit-GanttChart {
 	Emit-Companion -tag "ExtendedTooltip" -name "${name}РасширеннаяПодсказка" -indent $inner -content $el.extendedTooltip
 	# Вложенная таблица диаграммы Ганта (стандартный Table — переиспользуем Emit-Element)
 	if ($el.ganttTable) { Emit-Element -el $el.ganttTable -indent $inner }
-	Emit-Events -el $el -elementName $name -indent $inner -typeKey "ganttChart"
+	Emit-Events -el $el -elementName $name -indent $inner -xmlTag "GanttChartField"
 	X "$indent</GanttChartField>"
 }
 
@@ -5300,6 +6930,7 @@ function Emit-CommandBar {
 
 	X "$indent<CommandBar name=`"$name`" id=`"$id`"$(DI-Attr $el)>"
 	$inner = "$indent`t"
+	Warn-EventsIgnored $el "CommandBar" $name
 
 	Emit-Title -el $el -name $name -indent $inner
 
@@ -5334,6 +6965,7 @@ function Emit-ButtonGroup {
 
 	X "$indent<ButtonGroup name=`"$name`" id=`"$id`"$(DI-Attr $el)>"
 	$inner = "$indent`t"
+	Warn-EventsIgnored $el "ButtonGroup" $name
 
 	Emit-Title -el $el -name $name -indent $inner
 
@@ -5366,6 +6998,7 @@ function Emit-Popup {
 
 	X "$indent<Popup name=`"$name`" id=`"$id`"$(DI-Attr $el)>"
 	$inner = "$indent`t"
+	Warn-EventsIgnored $el "Popup" $name
 
 	Emit-Title -el $el -name $name -indent $inner -auto
 	Emit-CommonFlags -el $el -indent $inner
@@ -5526,18 +7159,18 @@ function Emit-DLValue {
 		return
 	}
 	$valStr = if ($val -is [bool]) { if ($val) { 'true' } else { 'false' } } else { "$val" }
-	if ($type -match '^(date|dateTime|time)') { X "$indent<dcssch:value xsi:type=`"xs:dateTime`">$(Esc-Xml $valStr)</dcssch:value>" }
-	elseif ($type -eq "boolean") { X "$indent<dcssch:value xsi:type=`"xs:boolean`">$(Esc-Xml $valStr)</dcssch:value>" }
-	elseif ($type -eq 'v8:Type') { $nsAttr = Get-ValueTypeNsAttr -valueType 'v8:Type' -value $valStr; X "$indent<dcssch:value$nsAttr xsi:type=`"v8:Type`">$(Esc-Xml $valStr)</dcssch:value>" }
-	elseif ($type -match '^ent:') { X "$indent<dcssch:value xsi:type=`"$type`">$(Esc-Xml $valStr)</dcssch:value>" }   # системное перечисление (ent:X) — value несёт тот же xsi:type
-	elseif ($type -match '^decimal') { X "$indent<dcssch:value xsi:type=`"xs:decimal`">$(Esc-Xml $valStr)</dcssch:value>" }
-	elseif ($type -match '^string') { X "$indent<dcssch:value xsi:type=`"xs:string`">$(Esc-Xml $valStr)</dcssch:value>" }
-	elseif ($type -match '^(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|BusinessProcessRef|TaskRef|ExchangePlanRef)\.') { X "$indent<dcssch:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-Xml $valStr)</dcssch:value>" }
+	if ($type -match '^(date|dateTime|time)') { X "$indent<dcssch:value xsi:type=`"xs:dateTime`">$(Esc-XmlText $valStr)</dcssch:value>" }
+	elseif ($type -eq "boolean") { X "$indent<dcssch:value xsi:type=`"xs:boolean`">$(Esc-XmlText $valStr)</dcssch:value>" }
+	elseif ($type -eq 'v8:Type') { $nsAttr = Get-ValueTypeNsAttr -valueType 'v8:Type' -value $valStr; X "$indent<dcssch:value$nsAttr xsi:type=`"v8:Type`">$(Esc-XmlText $valStr)</dcssch:value>" }
+	elseif ($type -match '^ent:') { X "$indent<dcssch:value xsi:type=`"$type`">$(Esc-XmlText $valStr)</dcssch:value>" }   # системное перечисление (ent:X) — value несёт тот же xsi:type
+	elseif ($type -match '^decimal') { X "$indent<dcssch:value xsi:type=`"xs:decimal`">$(Esc-XmlText $valStr)</dcssch:value>" }
+	elseif ($type -match '^string') { X "$indent<dcssch:value xsi:type=`"xs:string`">$(Esc-XmlText $valStr)</dcssch:value>" }
+	elseif ($type -match '^(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|BusinessProcessRef|TaskRef|ExchangePlanRef)\.') { X "$indent<dcssch:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-XmlText (Normalize-DesignTimeValue $valStr))</dcssch:value>" }
 	else {
-		if ($valStr -match '^\d{4}-\d{2}-\d{2}T') { X "$indent<dcssch:value xsi:type=`"xs:dateTime`">$(Esc-Xml $valStr)</dcssch:value>" }
-		elseif ($valStr -eq "true" -or $valStr -eq "false") { X "$indent<dcssch:value xsi:type=`"xs:boolean`">$(Esc-Xml $valStr)</dcssch:value>" }
-		elseif ($valStr -match '^(ПланСчетов|Справочник|Перечисление|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена)\.' -or $valStr -match '^(ChartOfAccounts|Catalog|Enum|Document|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') { X "$indent<dcssch:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-Xml $valStr)</dcssch:value>" }
-		else { X "$indent<dcssch:value xsi:type=`"xs:string`">$(Esc-Xml $valStr)</dcssch:value>" }
+		if ($valStr -match '^\d{4}-\d{2}-\d{2}T') { X "$indent<dcssch:value xsi:type=`"xs:dateTime`">$(Esc-XmlText $valStr)</dcssch:value>" }
+		elseif ($valStr -eq "true" -or $valStr -eq "false") { X "$indent<dcssch:value xsi:type=`"xs:boolean`">$(Esc-XmlText $valStr)</dcssch:value>" }
+		elseif ($valStr -match '^(ПланСчетов|Справочник|Перечисление|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена)\.' -or $valStr -match '^(ChartOfAccounts|Catalog|Enum|Document|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') { X "$indent<dcssch:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-XmlText (Normalize-DesignTimeValue $valStr))</dcssch:value>" }
+		else { X "$indent<dcssch:value xsi:type=`"xs:string`">$(Esc-XmlText $valStr)</dcssch:value>" }
 	}
 }
 
@@ -5571,7 +7204,7 @@ function Emit-DLInputParameters {
 	foreach ($item in $items) {
 		X "$indent`t<dcscor:item>"
 		if ((Has-DLProp $item 'use') -and $null -ne $item.use -and -not $item.use) { X "$indent`t`t<dcscor:use>false</dcscor:use>" }
-		X "$indent`t`t<dcscor:parameter>$(Esc-Xml "$($item.parameter)")</dcscor:parameter>"
+		X "$indent`t`t<dcscor:parameter>$(Esc-XmlText "$($item.parameter)")</dcscor:parameter>"
 		if (Has-DLProp $item 'choiceParameters') {
 			$cpItems = if ($null -ne $item.choiceParameters) { @($item.choiceParameters) } else { @() }
 			if ($cpItems.Count -eq 0) { X "$indent`t`t<dcscor:value xsi:type=`"dcscor:ChoiceParameters`"/>" }
@@ -5579,11 +7212,11 @@ function Emit-DLInputParameters {
 				X "$indent`t`t<dcscor:value xsi:type=`"dcscor:ChoiceParameters`">"
 				foreach ($cpItem in $cpItems) {
 					X "$indent`t`t`t<dcscor:item>"
-					X "$indent`t`t`t`t<dcscor:choiceParameter>$(Esc-Xml "$($cpItem.name)")</dcscor:choiceParameter>"
+					X "$indent`t`t`t`t<dcscor:choiceParameter>$(Esc-XmlText "$($cpItem.name)")</dcscor:choiceParameter>"
 					foreach ($v in @($cpItem.values)) {
 						if ($v -is [bool]) { X "$indent`t`t`t`t<dcscor:value xsi:type=`"xs:boolean`">$(if ($v) { 'true' } else { 'false' })</dcscor:value>" }
 						elseif ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) { X "$indent`t`t`t`t<dcscor:value xsi:type=`"xs:decimal`">$v</dcscor:value>" }
-						else { X "$indent`t`t`t`t<dcscor:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-Xml "$v")</dcscor:value>" }
+						else { X "$indent`t`t`t`t<dcscor:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-XmlText (Normalize-DesignTimeValue "$v"))</dcscor:value>" }
 					}
 					X "$indent`t`t`t</dcscor:item>"
 				}
@@ -5596,8 +7229,8 @@ function Emit-DLInputParameters {
 				X "$indent`t`t<dcscor:value xsi:type=`"dcscor:ChoiceParameterLinks`">"
 				foreach ($cplItem in $cplItems) {
 					X "$indent`t`t`t<dcscor:item>"
-					X "$indent`t`t`t`t<dcscor:choiceParameter>$(Esc-Xml "$($cplItem.name)")</dcscor:choiceParameter>"
-					X "$indent`t`t`t`t<dcscor:value>$(Esc-Xml "$($cplItem.value)")</dcscor:value>"
+					X "$indent`t`t`t`t<dcscor:choiceParameter>$(Esc-XmlText "$($cplItem.name)")</dcscor:choiceParameter>"
+					X "$indent`t`t`t`t<dcscor:value>$(Esc-XmlText "$($cplItem.value)")</dcscor:value>"
 					$mode = if ($cplItem.mode) { "$($cplItem.mode)" } else { 'Auto' }
 					X "$indent`t`t`t`t<dcscor:mode xmlns:d8p1=`"http://v8.1c.ru/8.1/data/enterprise`" xsi:type=`"d8p1:LinkedValueChangeMode`">$mode</dcscor:mode>"
 					X "$indent`t`t`t</dcscor:item>"
@@ -5608,15 +7241,15 @@ function Emit-DLInputParameters {
 			# Связь по типу (dcscor:TypeLink) — field + linkItem (структурное значение параметра).
 			$tl = $item.typeLink
 			X "$indent`t`t<dcscor:value xsi:type=`"dcscor:TypeLink`">"
-			$tlf = Get-Prop $tl 'field'; if ($null -ne $tlf) { X "$indent`t`t`t<dcscor:field>$(Esc-Xml "$tlf")</dcscor:field>" }
-			$tli = Get-Prop $tl 'linkItem'; if ($null -ne $tli) { X "$indent`t`t`t<dcscor:linkItem>$(Esc-Xml "$tli")</dcscor:linkItem>" }
+			$tlf = Get-Prop $tl 'field'; if ($null -ne $tlf) { X "$indent`t`t`t<dcscor:field>$(Esc-XmlText "$tlf")</dcscor:field>" }
+			$tli = Get-Prop $tl 'linkItem'; if ($null -ne $tli) { X "$indent`t`t`t<dcscor:linkItem>$(Esc-XmlText "$tli")</dcscor:linkItem>" }
 			X "$indent`t`t</dcscor:value>"
 		} elseif (Has-DLProp $item 'value') {
 			$val = $item.value
 			if ($val -is [bool]) { X "$indent`t`t<dcscor:value xsi:type=`"xs:boolean`">$(if ($val) { 'true' } else { 'false' })</dcscor:value>" }
 			elseif ($val -is [int] -or $val -is [long] -or $val -is [double] -or $val -is [decimal]) { X "$indent`t`t<dcscor:value xsi:type=`"xs:decimal`">$val</dcscor:value>" }
 			elseif ($val -is [hashtable] -or $val -is [System.Collections.IDictionary] -or $val -is [PSCustomObject]) { Emit-DLMLText -tag "dcscor:value" -text $val -indent "$indent`t`t" }
-			else { X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml "$val")</dcscor:value>" }
+			else { X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-XmlText "$val")</dcscor:value>" }
 		}
 		X "$indent`t</dcscor:item>"
 	}
@@ -5691,16 +7324,16 @@ function Emit-DataParameters {
 		}
 		X "$indent`t<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
 		if ($dp.use -eq $false) { X "$indent`t`t<dcscor:use>false</dcscor:use>" }
-		X "$indent`t`t<dcscor:parameter>$(Esc-Xml "$($dp.parameter)")</dcscor:parameter>"
+		X "$indent`t`t<dcscor:parameter>$(Esc-XmlText "$($dp.parameter)")</dcscor:parameter>"
 		$dpValIsArr = ($dp.value -is [array]) -or ($dp.value -is [System.Collections.IList] -and $dp.value -isnot [string])
 		if ($dpValIsArr) {
 			# Список значений параметра (valueListAllowed) — отдельный <dcscor:value> на каждое.
 			$avtype = "$($dp.valueType)"
 			foreach ($v in @($dp.value)) {
 				$vStr = if ($v -is [bool]) { "$v".ToLower() } else { "$v" }
-				if ($avtype -match '^[a-zA-Z]+:') { X "$indent`t`t<dcscor:value xsi:type=`"$avtype`">$(Esc-Xml $vStr)</dcscor:value>" }
-				elseif ("$vStr" -match '^(ПланСчетов|Справочник|Перечисление|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена)\.' -or "$vStr" -match '^(ChartOfAccounts|Catalog|Enum|Document|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') { X "$indent`t`t<dcscor:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-Xml $vStr)</dcscor:value>" }
-				else { X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml $vStr)</dcscor:value>" }
+				if ($avtype -match '^[a-zA-Z]+:') { X "$indent`t`t<dcscor:value xsi:type=`"$avtype`">$(Esc-XmlText $(if ($avtype -eq 'dcscor:DesignTimeValue') { Normalize-DesignTimeValue $vStr } else { $vStr }))</dcscor:value>" }
+				elseif ("$vStr" -match '^(ПланСчетов|Справочник|Перечисление|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена)\.' -or "$vStr" -match '^(ChartOfAccounts|Catalog|Enum|Document|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') { X "$indent`t`t<dcscor:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-XmlText (Normalize-DesignTimeValue $vStr))</dcscor:value>" }
+				else { X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-XmlText $vStr)</dcscor:value>" }
 			}
 		} elseif ($dp.nilValue -eq $true) {
 			X "$indent`t`t<dcscor:value xsi:nil=`"true`"/>"
@@ -5723,41 +7356,41 @@ function Emit-DataParameters {
 					if ($dp.value -is [PSCustomObject] -and $dp.value.PSObject.Properties['date']) { $_d = "$($dp.value.date)" }
 					elseif (($dp.value -is [System.Collections.IDictionary]) -and $dp.value.Contains('date')) { $_d = "$($dp.value['date'])" }
 					X "$indent`t`t<dcscor:value xsi:type=`"v8:StandardBeginningDate`">"
-					X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardBeginningDateVariant`">$(Esc-Xml $_variantStr)</v8:variant>"
-					if ($_variantStr -eq 'Custom') { if (-not $_d) { $_d = '0001-01-01T00:00:00' }; X "$indent`t`t`t<v8:date>$(Esc-Xml $_d)</v8:date>" }
+					X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardBeginningDateVariant`">$(Esc-XmlText $_variantStr)</v8:variant>"
+					if ($_variantStr -eq 'Custom') { if (-not $_d) { $_d = '0001-01-01T00:00:00' }; X "$indent`t`t`t<v8:date>$(Esc-XmlText $_d)</v8:date>" }
 					X "$indent`t`t</dcscor:value>"
 				} else {
 					$_sd = $null; $_ed = $null
 					if ($dp.value -is [PSCustomObject]) { if ($dp.value.PSObject.Properties['startDate']) { $_sd = "$($dp.value.startDate)" }; if ($dp.value.PSObject.Properties['endDate']) { $_ed = "$($dp.value.endDate)" } }
 					else { if ($dp.value.Contains('startDate')) { $_sd = "$($dp.value['startDate'])" }; if ($dp.value.Contains('endDate')) { $_ed = "$($dp.value['endDate'])" } }
 					X "$indent`t`t<dcscor:value xsi:type=`"v8:StandardPeriod`">"
-					X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardPeriodVariant`">$(Esc-Xml $_variantStr)</v8:variant>"
-					if ($_variantStr -eq 'Custom') { if (-not $_sd) { $_sd = '0001-01-01T00:00:00' }; if (-not $_ed) { $_ed = '0001-01-01T00:00:00' }; X "$indent`t`t`t<v8:startDate>$(Esc-Xml $_sd)</v8:startDate>"; X "$indent`t`t`t<v8:endDate>$(Esc-Xml $_ed)</v8:endDate>" }
+					X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardPeriodVariant`">$(Esc-XmlText $_variantStr)</v8:variant>"
+					if ($_variantStr -eq 'Custom') { if (-not $_sd) { $_sd = '0001-01-01T00:00:00' }; if (-not $_ed) { $_ed = '0001-01-01T00:00:00' }; X "$indent`t`t`t<v8:startDate>$(Esc-XmlText $_sd)</v8:startDate>"; X "$indent`t`t`t<v8:endDate>$(Esc-XmlText $_ed)</v8:endDate>" }
 					X "$indent`t`t</dcscor:value>"
 				}
 			} elseif ($vtype -match '^[a-zA-Z]+:') {
 				$vStr = if ($dp.value -is [bool]) { "$($dp.value)".ToLower() } else { "$($dp.value)" }
-				X "$indent`t`t<dcscor:value xsi:type=`"$vtype`">$(Esc-Xml $vStr)</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"$vtype`">$(Esc-XmlText $vStr)</dcscor:value>"
 			} elseif ($vtype -eq 'boolean' -or $dp.value -is [bool]) {
-				X "$indent`t`t<dcscor:value xsi:type=`"xs:boolean`">$(Esc-Xml ("$($dp.value)".ToLower()))</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"xs:boolean`">$(Esc-XmlText ("$($dp.value)".ToLower()))</dcscor:value>"
 			} elseif ($vtype -match '^date' -or "$($dp.value)" -match '^\d{4}-\d{2}-\d{2}T') {
-				X "$indent`t`t<dcscor:value xsi:type=`"xs:dateTime`">$(Esc-Xml "$($dp.value)")</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"xs:dateTime`">$(Esc-XmlText "$($dp.value)")</dcscor:value>"
 			} elseif ($vtype -match '^decimal') {
-				X "$indent`t`t<dcscor:value xsi:type=`"xs:decimal`">$(Esc-Xml "$($dp.value)")</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"xs:decimal`">$(Esc-XmlText "$($dp.value)")</dcscor:value>"
 			} elseif ($vtype -match '^string') {
-				X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml "$($dp.value)")</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-XmlText "$($dp.value)")</dcscor:value>"
 			} elseif ("$($dp.value)" -match '^(ПланСчетов|Справочник|Перечисление|Документ|ПланВидовХарактеристик|ПланВидовРасчета|БизнесПроцесс|Задача|РегистрСведений|ПланОбмена)\.' -or "$($dp.value)" -match '^(ChartOfAccounts|Catalog|Enum|Document|ChartOfCharacteristicTypes|ChartOfCalculationTypes|BusinessProcess|Task|InformationRegister|ExchangePlan)\.') {
-				X "$indent`t`t<dcscor:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-Xml "$($dp.value)")</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"dcscor:DesignTimeValue`">$(Esc-XmlText (Normalize-DesignTimeValue "$($dp.value)"))</dcscor:value>"
 			} else {
-				X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml "$($dp.value)")</dcscor:value>"
+				X "$indent`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-XmlText "$($dp.value)")</dcscor:value>"
 			}
 		}
-		if ($dp.viewMode) { X "$indent`t`t<dcsset:viewMode>$(Esc-Xml "$($dp.viewMode)")</dcsset:viewMode>" }
-		if ($dp.userSettingID) { $uid = if ("$($dp.userSettingID)" -eq "auto") { New-Guid-String } else { "$($dp.userSettingID)" }; X "$indent`t`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>" }
+		if ($dp.viewMode) { X "$indent`t`t<dcsset:viewMode>$(Esc-XmlText "$($dp.viewMode)")</dcsset:viewMode>" }
+		if ($dp.userSettingID) { $uid = if ("$($dp.userSettingID)" -eq "auto") { New-Guid-String } else { "$($dp.userSettingID)" }; X "$indent`t`t<dcsset:userSettingID>$(Esc-XmlText $uid)</dcsset:userSettingID>" }
 		if ($dp.userSettingPresentation) { Emit-USPresentation -val $dp.userSettingPresentation -tag "dcsset:userSettingPresentation" -indent "$indent`t`t" }
 		X "$indent`t</dcscor:item>"
 	}
-	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-Xml "$blockViewMode")</dcsset:viewMode>" }
+	if ($null -ne $blockViewMode) { X "$indent`t<dcsset:viewMode>$(Esc-XmlText "$blockViewMode")</dcsset:viewMode>" }
 	X "$indent</dcsset:dataParameters>"
 }
 
@@ -5765,7 +7398,7 @@ function Emit-DLParameter {
 	param($p, $parsed, [string]$indent)
 	X "$indent<Parameter>"
 	$ci = "$indent`t"
-	X "$ci<dcssch:name>$(Esc-Xml $parsed.name)</dcssch:name>"
+	X "$ci<dcssch:name>$(Esc-XmlText $parsed.name)</dcssch:name>"
 	# Title: явный override (shorthand [..] / объект title/presentation) или авто из имени.
 	$title = $null
 	if ($parsed.title) { $title = $parsed.title }
@@ -5799,7 +7432,7 @@ function Emit-DLParameter {
 	# expression
 	$expr = $null
 	if ($p -isnot [string] -and (Has-DLProp $p 'expression') -and $p.expression) { $expr = "$($p.expression)" }
-	if ($expr) { X "$ci<dcssch:expression>$(Esc-Xml $expr)</dcssch:expression>" }
+	if ($expr) { X "$ci<dcssch:expression>$(Esc-XmlText $expr)</dcssch:expression>" }
 	# availableValues
 	if ($p -isnot [string] -and (Has-DLProp $p 'availableValues') -and $p.availableValues) {
 		foreach ($av in @($p.availableValues)) { Emit-DLAvailableValue -av $av -type $parsed.type -indent $ci }
@@ -5818,7 +7451,7 @@ function Emit-DLParameter {
 	# use
 	$useVal = $null
 	if ($p -isnot [string] -and (Has-DLProp $p 'use') -and $p.use) { $useVal = "$($p.use)" }
-	if ($useVal) { X "$ci<dcssch:use>$(Esc-Xml $useVal)</dcssch:use>" }
+	if ($useVal) { X "$ci<dcssch:use>$(Esc-XmlText $useVal)</dcssch:use>" }
 	X "$indent</Parameter>"
 }
 
@@ -5938,7 +7571,7 @@ function Emit-Attributes {
 			}
 			if ($saveFields.Count -gt 0) {
 				X "$inner<Save>"
-				foreach ($f in $saveFields) { X "$inner`t<Field>$(Esc-Xml $f)</Field>" }
+				foreach ($f in $saveFields) { X "$inner`t<Field>$(Esc-XmlText $f)</Field>" }
 				X "$inner</Save>"
 			}
 		}
@@ -6002,9 +7635,17 @@ function Emit-Attributes {
 			}
 			if ($hasAddCols) {
 				foreach ($ac in @($attr.additionalColumns)) {
+					# Пустой список колонок задаётся ЯВНО (`"columns": []`) — это законная форма,
+					# платформа так пишет таблицу, у которой доп. колонок нет. А вот отсутствие ключа
+					# — недосказанность автора: «доп. колонки есть», а какие, не указано. Раньше на
+					# этом PS падал с «Не удается индексировать в массив NULL» (@($null).Count = 1).
+					if ($null -eq $ac.PSObject.Properties['columns'] -or $null -eq $ac.columns) {
+						Write-Error "additionalColumns group for table '$($ac.table)': key 'columns' is missing — list the columns, or pass an empty array for a table without extra columns"
+						exit 1
+					}
 					$acCols = @($ac.columns)
 					if ($acCols.Count -eq 0) {
-						# Пустая группа доп.колонок (table-ref без колонок) → self-closing (как платформа)
+						# Явно пустая группа → self-closing (как платформа)
 						X "$inner`t<AdditionalColumns table=`"$($ac.table)`"/>"
 						continue
 					}
@@ -6038,8 +7679,8 @@ function Emit-Attributes {
 			$ddr = if ($st.dynamicDataRead -eq $false) { "false" } else { "true" }
 			X "$si<DynamicDataRead>$ddr</DynamicDataRead>"
 			if ($hasQuery) {
-				$qtext = Resolve-QueryValue "$($st.query)" $script:queryBaseDir
-				X "$si<QueryText>$(Esc-Xml $qtext)</QueryText>"
+				$qtext = Resolve-TextFromFile "$($st.query)" $script:queryBaseDir
+				X "$si<QueryText>$(Esc-XmlText $qtext)</QueryText>"
 			}
 			# Явные поля набора (редко): override title/dataPath
 			if ($st.fields) {
@@ -6054,8 +7695,8 @@ function Emit-Attributes {
 					if ($null -ne (Get-Prop $fld 'dataPath')) { $dp = "$($fld.dataPath)" }
 					elseif ($isFolder) { $dp = "" }
 					else { $dp = "$($fld.field)" }
-					if ($dp -eq "") { X "$si`t<dcssch:dataPath/>" } else { X "$si`t<dcssch:dataPath>$(Esc-Xml "$dp")</dcssch:dataPath>" }
-					if (-not $isFolder) { X "$si`t<dcssch:field>$(Esc-Xml "$($fld.field)")</dcssch:field>" }
+					if ($dp -eq "") { X "$si`t<dcssch:dataPath/>" } else { X "$si`t<dcssch:dataPath>$(Esc-XmlText "$dp")</dcssch:dataPath>" }
+					if (-not $isFolder) { X "$si`t<dcssch:field>$(Esc-XmlText "$($fld.field)")</dcssch:field>" }
 					if ($fld.title) {
 						X "$si`t<dcssch:title xsi:type=`"v8:LocalStringType`">"
 						Emit-MLItems -val $fld.title -indent "$si`t`t"
@@ -6065,7 +7706,7 @@ function Emit-Attributes {
 					Emit-RestrictBlock 'useRestriction' $fld.useRestriction "$si`t"
 					Emit-RestrictBlock 'attributeUseRestriction' $fld.attributeUseRestriction "$si`t"
 					# presentationExpression поля — перед valueType (порядок исходника)
-					if ($fld.presentationExpression) { X "$si`t<dcssch:presentationExpression>$(Esc-Xml "$($fld.presentationExpression)")</dcssch:presentationExpression>" }
+					if ($fld.presentationExpression) { X "$si`t<dcssch:presentationExpression>$(Esc-XmlText "$($fld.presentationExpression)")</dcssch:presentationExpression>" }
 					# valueType поля набора (тип значения; вычисляемые/кастомные поля)
 					if ($fld.valueType) { Emit-DLValueType -typeStr "$($fld.valueType)" -indent "$si`t" }
 					# appearance поля (формат/оформление) — после valueType (порядок исходника)
@@ -6085,8 +7726,8 @@ function Emit-Attributes {
 			Emit-DLParameters -params $st.parameters -indent $si
 			# Ключ набора (query-based список без MainTable): KeyType (RowNumber/FieldValue/RowKey)
 			# + KeyField* — после Parameter*, до MainTable. Захват/эмит факт. значений.
-			if ($st.keyType) { X "$si<KeyType>$(Esc-Xml "$($st.keyType)")</KeyType>" }
-			if ($st.keyFields) { foreach ($kf in @($st.keyFields)) { X "$si<KeyField>$(Esc-Xml "$kf")</KeyField>" } }
+			if ($st.keyType) { X "$si<KeyType>$(Esc-XmlText "$($st.keyType)")</KeyType>" }
+			if ($st.keyFields) { foreach ($kf in @($st.keyFields)) { X "$si<KeyField>$(Esc-XmlText "$kf")</KeyField>" } }
 			if ($st.mainTable) { X "$si<MainTable>$(Normalize-MetaTypeRef "$($st.mainTable)")</MainTable>" }
 			# GetInvisibleFieldPresentations — после MainTable (дефолт true; эмитим только при заданном ключе = отклонении false).
 			if ($null -ne $st.getInvisibleFieldPresentations) { X "$si<GetInvisibleFieldPresentations>$(if ($st.getInvisibleFieldPresentations){'true'}else{'false'})</GetInvisibleFieldPresentations>" }
@@ -6202,16 +7843,40 @@ function Emit-Commands {
 			Emit-MLText -tag "ToolTip" -text $cmd.tooltip -indent $inner
 		}
 
-		# Доступность команды по ролям (после ToolTip, до Action)
+		# Порядок детей — как пишет платформа (XSD FormCommand, корпус без обратных случаев):
+		# Title ToolTip Use Shortcut Picture Action FunctionalOptions Representation ModifiesSavedData
+		# CurrentRowUse AssociatedTableElementId
 		if ($null -ne $cmd.use) { Emit-XrFlag -tag 'Use' -val $cmd.use -indent $inner }
 
-		if ($cmd.action) {
-			X "$inner<Action>$($cmd.action)</Action>"
+		if ($cmd.shortcut) {
+			X "$inner<Shortcut>$($cmd.shortcut)</Shortcut>"
+		}
+
+		Emit-CommandPicture -pic $cmd.picture -elemLt $cmd.loadTransparent -indent $inner
+
+		# Обработчик; в расширении — с видом вызова (callType), или несколько: actions [{handler, callType}]
+		if ($cmd.actions) {
+			foreach ($act in @($cmd.actions)) {
+				$ct = Normalize-CallType "$($act.callType)" "$($cmd.name)" 'Action'
+				$ctAttr = if ($ct) { " callType=`"$ct`"" } else { "" }
+				X "$inner<Action$ctAttr>$($act.handler)</Action>"
+				Register-Handler "$($act.handler)" 'command'
+			}
+		} elseif ($cmd.action) {
+			$ct = Normalize-CallType "$($cmd.callType)" "$($cmd.name)" 'Action'
+			$ctAttr = if ($ct) { " callType=`"$ct`"" } else { "" }
+			X "$inner<Action$ctAttr>$($cmd.action)</Action>"
+			Register-Handler "$($cmd.action)" 'command'
+		}
+
+		Emit-FunctionalOptions -fo $cmd.functionalOptions -indent $inner
+
+		# Значение — к перечислению команды (Text/Picture/TextPicture/Auto) приводит Normalize-EnumTags
+		if ($cmd.representation) {
+			X "$inner<Representation>$($cmd.representation)</Representation>"
 		}
 
 		if ($cmd.modifiesSavedData -eq $true) { X "$inner<ModifiesSavedData>true</ModifiesSavedData>" }
-
-		Emit-FunctionalOptions -fo $cmd.functionalOptions -indent $inner
 
 		if ($cmd.currentRowUse) {
 			X "$inner<CurrentRowUse>$($cmd.currentRowUse)</CurrentRowUse>"
@@ -6223,17 +7888,7 @@ function Emit-Commands {
 		if (-not $cmdTable) { $cmdTable = $cmd.associatedTableElementId }
 		if (-not $cmdTable) { $cmdTable = $cmd.используемаяТаблица }
 		if ($cmdTable) {
-			X "$inner<AssociatedTableElementId xsi:type=`"xs:string`">$(Esc-Xml "$cmdTable")</AssociatedTableElementId>"
-		}
-
-		if ($cmd.shortcut) {
-			X "$inner<Shortcut>$($cmd.shortcut)</Shortcut>"
-		}
-
-		Emit-CommandPicture -pic $cmd.picture -elemLt $cmd.loadTransparent -indent $inner
-
-		if ($cmd.representation) {
-			X "$inner<Representation>$($cmd.representation)</Representation>"
+			X "$inner<AssociatedTableElementId xsi:type=`"xs:string`">$(Esc-XmlText "$cmdTable")</AssociatedTableElementId>"
 		}
 
 		X "$indent`t</Command>"
@@ -6276,8 +7931,9 @@ function Emit-CommandInterface {
 	if (-not $ci) { return }
 	$inner = "$indent`t"
 	$panels = @(
-		@{ Tag='CommandBar';      Syns=@('commandBar','команднаяПанель','КоманднаяПанель') },
-		@{ Tag='NavigationPanel'; Syns=@('navigationPanel','панельНавигации','ПанельНавигации') }
+		# Порядок панелей — как в выгрузке: панель навигации раньше командной (607 из 607 форм корпуса)
+		@{ Tag='NavigationPanel'; Syns=@('navigationPanel','панельНавигации','ПанельНавигации') },
+		@{ Tag='CommandBar';      Syns=@('commandBar','команднаяПанель','КоманднаяПанель') }
 	)
 	$present = @()
 	foreach ($p in $panels) {
@@ -6315,10 +7971,10 @@ function Emit-CommandInterface {
 			# group из дерева побеждает (если задан и непустой); явный group элемента — фолбэк
 			if ($treeGroup) { $grp = $treeGroup }
 			X "$inner`t<Item>"
-			X "$inner`t`t<Command>$(Esc-Xml "$cmd")</Command>"
+			X "$inner`t`t<Command>$(Esc-XmlText "$cmd")</Command>"
 			X "$inner`t`t<Type>$type</Type>"
-			if ($attr) { X "$inner`t`t<Attribute>$(Esc-Xml "$attr")</Attribute>" }
-			if ($grp)  { X "$inner`t`t<CommandGroup>$(Esc-Xml "$grp")</CommandGroup>" }
+			if ($attr) { X "$inner`t`t<Attribute>$(Esc-XmlText "$attr")</Attribute>" }
+			if ($grp)  { X "$inner`t`t<CommandGroup>$(Esc-XmlText "$grp")</CommandGroup>" }
 			if ($null -ne $idx) { X "$inner`t`t<Index>$idx</Index>" }
 			if ($null -ne $dv)  { X "$inner`t`t<DefaultVisible>$(if ($dv){'true'}else{'false'})</DefaultVisible>" }
 			if ($null -ne $vis) { Emit-XrFlag -tag 'Visible' -val $vis -indent "$inner`t`t" }
@@ -6331,14 +7987,15 @@ function Emit-CommandInterface {
 
 # --- 11. Properties emitter ---
 
-# Local: closed value sets of the platform enums behind these form properties
-# (FormWindowOpeningMode, AutoTimeMode, PostingModeUse). Upstream accepted any
-# string, and its spec listed values that do not exist (Modeless, Current,
-# Postings, Movements) — the Configurator refuses such a Form.xml on load.
-$script:formPropertyValues = @{
-	"windowOpeningMode" = @("Independent", "LockOwnerWindow", "LockWholeInterface")
-	"autoTime"          = @("DontUse", "First", "Last", "CurrentOrFirst", "CurrentOrLast")
-	"usePostingMode"    = @("Auto", "RealTime", "Regular")
+# Порядок дочерних тегов корня формы — по корпусу (БП и ERP, 8.3.24, 17036 форм, противоречий нет).
+# Свойства формы пишутся в этом порядке, а не в порядке ввода, — иначе выгрузка из базы их переставит.
+$script:formRootTagOrder = 'Title Width Height WindowOpeningMode EnterKeyBehavior AutoSaveDataInSettings SaveDataInSettings SaveWindowSettings SettingsStorage AutoTitle AutoURL Group HorizontalAlign ChildItemsWidth VerticalAlign HorizontalSpacing VerticalSpacing AutoFillCheck Customizable Enabled ChildrenAlign CommandBarLocation VerticalScroll ScalingMode ConversationsRepresentation MobileDeviceCommandBarContent CommandSet AutoTime UsePostingMode RepostOnWrite ReportResult DetailsData ReportFormType ShowTitle ShowCloseButton GroupList CollapseItemsByImportanceVariant UseForFoldersAndItems VariantAppearance AutoShowState CustomSettingsFolder ReportResultViewMode ViewModeApplicationOnSetReportResult Scale AutoCommandBar Events ChildItems Attributes Commands Parameters CommandInterface BaseForm'
+
+# Ранг тега корня формы; незнакомый тег — после всех знакомых свойств (перед AutoCommandBar).
+function Get-FormRootRank([string]$tag) {
+	$i = [array]::IndexOf(($script:formRootTagOrder -split ' '), $tag)
+	if ($i -lt 0) { return [array]::IndexOf(($script:formRootTagOrder -split ' '), 'AutoCommandBar') - 0.5 }
+	return $i
 }
 
 function Emit-Properties {
@@ -6381,14 +8038,10 @@ function Emit-Properties {
 		$val = $p.Value
 		# Пустая строка = суппресс-маркер (напр. autoTitle:"" — не эмитить и не додумывать)
 		if ($val -is [string] -and $val -eq '') { continue }
-		if ($script:formPropertyValues.ContainsKey($p.Name) -and $script:formPropertyValues[$p.Name] -cnotcontains [string]$val) {
-			[Console]::Error.WriteLine("[ERROR] Недопустимое значение свойства формы '$($p.Name)': '$val'. Допустимые: $($script:formPropertyValues[$p.Name] -join ', ')")
-			exit 1
-		}
 		if ($val -is [bool]) {
 			$val = if ($val) { "true" } else { "false" }
 		}
-		X "$indent<$xmlName>$val</$xmlName>"
+		X "$indent<$xmlName>$(Esc-XmlText "$val")</$xmlName>"
 	}
 }
 
@@ -6469,7 +8122,7 @@ function HasCmdBarRecursive {
 }
 
 function ApplyDynamicListTableHeuristic {
-	param($el, [string]$listName, [bool]$hasMainTable)
+	param($el, [string]$listName, [bool]$hasMainTable, [bool]$hasKeyType = $false)
 	if ($null -eq $el) { return }
 	if ($el.PSObject.Properties["table"] -and $null -ne $el.table -and "$($el.path)" -eq $listName) {
 		# Маркер дин-список-таблицы → Emit-Table эмитит блок свойств (Group A defaults)
@@ -6483,13 +8136,15 @@ function ApplyDynamicListTableHeuristic {
 		# RowPictureDataPath: умный дефолт <Список>.DefaultPicture, если ключ ОТСУТСТВУЕТ.
 		# Декомпилятор опускает ключ при rpdp == smart-default (ждёт реинъекции); реальное отсутствие
 		# фиксирует ""-маркером (НЕ перезатирается). Гейт hasMainTable снят: дин-список без mainTable
-		# (напр. query-based) тоже несёт RowPictureDataPath.
-		if ($null -eq $el.PSObject.Properties["rowPictureDataPath"]) {
+		# (напр. query-based) тоже несёт RowPictureDataPath. Но не при явном keyType: строка без ссылки,
+		# DefaultPicture платформа отвергает («Неверный путь к данным»); в корпусе у таких списков
+		# RowPictureDataPath нет ни разу.
+		if ($null -eq $el.PSObject.Properties["rowPictureDataPath"] -and -not $hasKeyType) {
 			$el | Add-Member -NotePropertyName "rowPictureDataPath" -NotePropertyValue "$listName.DefaultPicture" -Force
 		}
 	}
 	if ($el.PSObject.Properties["children"] -and $el.children) {
-		foreach ($child in $el.children) { ApplyDynamicListTableHeuristic $child $listName $hasMainTable }
+		foreach ($child in $el.children) { ApplyDynamicListTableHeuristic $child $listName $hasMainTable $hasKeyType }
 	}
 }
 
@@ -6575,17 +8230,22 @@ if ($def.attributes) {
 if ($def.attributes -and $def.elements) {
 	foreach ($attr in $def.attributes) {
 		if ("$($attr.type)" -ne "DynamicList") { continue }
-		$mt = $null
+		$mt = $null; $kt = $null
 		if ($attr.PSObject.Properties["settings"] -and $null -ne $attr.settings) {
 			if ($attr.settings -is [hashtable]) {
 				if ($attr.settings.ContainsKey("mainTable")) { $mt = $attr.settings["mainTable"] }
-			} elseif ($attr.settings.PSObject.Properties["mainTable"]) {
-				$mt = $attr.settings.mainTable
+				if ($attr.settings.ContainsKey("keyType")) { $kt = $attr.settings["keyType"] }
+			} else {
+				if ($attr.settings.PSObject.Properties["mainTable"]) { $mt = $attr.settings.mainTable }
+				if ($attr.settings.PSObject.Properties["keyType"]) { $kt = $attr.settings.keyType }
 			}
 		}
 		$hasMt = -not [string]::IsNullOrEmpty("$mt")
+		# Явный ключ набора (FieldValue/RowKey/RowNumber) без основной таблицы: ссылки в строке нет —
+		# нет и DefaultPicture. С mainTable ссылка остаётся.
+		$hasKt = -not [string]::IsNullOrEmpty("$kt") -and "$kt" -ne 'Auto' -and -not $hasMt
 		foreach ($el in $def.elements) {
-			ApplyDynamicListTableHeuristic $el $attr.name $hasMt
+			ApplyDynamicListTableHeuristic $el $attr.name $hasMt $hasKt
 		}
 	}
 }
@@ -6608,25 +8268,14 @@ function Compute-MainAcbAutofill {
 
 # --- 12. Main compilation ---
 
-# Title
-if ($def.title) {
-	Emit-MLText -tag "Title" -text $def.title -indent "`t"
-}
-
-# Header
-X '<?xml version="1.0" encoding="UTF-8"?>'
-X "<Form xmlns=`"http://v8.1c.ru/8.3/xcf/logform`" xmlns:app=`"http://v8.1c.ru/8.2/managed-application/core`" xmlns:cfg=`"http://v8.1c.ru/8.1/data/enterprise/current-config`" xmlns:dcscor=`"http://v8.1c.ru/8.1/data-composition-system/core`" xmlns:dcssch=`"http://v8.1c.ru/8.1/data-composition-system/schema`" xmlns:dcsset=`"http://v8.1c.ru/8.1/data-composition-system/settings`" xmlns:ent=`"http://v8.1c.ru/8.1/data/enterprise`" xmlns:lf=`"http://v8.1c.ru/8.2/managed-application/logform`" xmlns:style=`"http://v8.1c.ru/8.1/data/ui/style`" xmlns:sys=`"http://v8.1c.ru/8.1/data/ui/fonts/system`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:v8ui=`"http://v8.1c.ru/8.1/data/ui`" xmlns:web=`"http://v8.1c.ru/8.1/data/ui/colors/web`" xmlns:win=`"http://v8.1c.ru/8.1/data/ui/colors/windows`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"$($script:formatVersion)`">"
-
-# Oops — Title was emitted before header. Need to fix the order.
-# Actually, let me restructure: build the body into a separate buffer, then assemble
-
-# Reset and rebuild properly
+# Буфер и счётчики — с чистого листа: до этой точки они могли быть тронуты режимом from-object.
 $script:xml = New-Object System.Text.StringBuilder 8192
 $script:nextId = 1
 $script:seenElementNames = @{}  # пул имён элементов (глобально по всей форме)
 
+# Header
 X '<?xml version="1.0" encoding="UTF-8"?>'
-X "<Form xmlns=`"http://v8.1c.ru/8.3/xcf/logform`" xmlns:app=`"http://v8.1c.ru/8.2/managed-application/core`" xmlns:cfg=`"http://v8.1c.ru/8.1/data/enterprise/current-config`" xmlns:dcscor=`"http://v8.1c.ru/8.1/data-composition-system/core`" xmlns:dcssch=`"http://v8.1c.ru/8.1/data-composition-system/schema`" xmlns:dcsset=`"http://v8.1c.ru/8.1/data-composition-system/settings`" xmlns:ent=`"http://v8.1c.ru/8.1/data/enterprise`" xmlns:lf=`"http://v8.1c.ru/8.2/managed-application/logform`" xmlns:style=`"http://v8.1c.ru/8.1/data/ui/style`" xmlns:sys=`"http://v8.1c.ru/8.1/data/ui/fonts/system`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:v8ui=`"http://v8.1c.ru/8.1/data/ui`" xmlns:web=`"http://v8.1c.ru/8.1/data/ui/colors/web`" xmlns:win=`"http://v8.1c.ru/8.1/data/ui/colors/windows`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" version=`"$($script:formatVersion)`">"
+X "<Form $($script:formNsDecl) version=`"$($script:formatVersion)`">"
 
 # 12a. Title (from def.title or properties.title — must be multilingual XML)
 $formTitle = $def.title
@@ -6657,6 +8306,10 @@ if ($def.properties) {
 		}
 	}
 }
+# Шапка корня (свойства, CommandSet, MobileDeviceCommandBarContent) собирается блоками и пишется
+# в порядке корпуса: свойства из ввода идут вперемешку с CommandSet
+$mainXml = $script:xml
+$script:xml = New-Object System.Text.StringBuilder 1024
 Emit-Properties -props $propsClone -indent "`t"
 
 # 12c. CommandSet (excluded commands)
@@ -6680,11 +8333,21 @@ if ($null -ne $def.mobileCommandBarContent -and @($def.mobileCommandBarContent).
 		X "`t`t`t<xr:CheckState>0</xr:CheckState>"
 		# пустое значение → самозакрывающийся тег (зеркало платформы)
 		if ([string]::IsNullOrEmpty("$nm")) { X "`t`t`t<xr:Value xsi:type=`"xs:string`"/>" }
-		else { X "`t`t`t<xr:Value xsi:type=`"xs:string`">$(Esc-Xml "$nm")</xr:Value>" }
+		else { X "`t`t`t<xr:Value xsi:type=`"xs:string`">$(Esc-XmlText "$nm")</xr:Value>" }
 		X "`t`t</xr:Item>"
 	}
 	X "`t</MobileDeviceCommandBarContent>"
 }
+$hdrBlocks = New-Object System.Collections.ArrayList
+foreach ($ln in ($script:xml.ToString() -split "`r?`n")) {
+	if ($ln -eq '') { continue }
+	if ($ln -match '^\t<([A-Za-z]+)') { [void]$hdrBlocks.Add(@{ Tag = $Matches[1]; Lines = @($ln) }) }
+	else { $hdrBlocks[$hdrBlocks.Count - 1].Lines += $ln }
+}
+$script:xml = $mainXml
+$i = 0
+$hdrSorted = @($hdrBlocks | ForEach-Object { $_.Pos = $i; $i++; $_ } | Sort-Object -Property @{ Expression = { Get-FormRootRank $_.Tag } }, @{ Expression = { $_.Pos } })
+foreach ($b in $hdrSorted) { foreach ($ln in $b.Lines) { X $ln } }
 
 # 12d. AutoCommandBar (always present, id=-1)
 $acbAutofill = Compute-MainAcbAutofill
@@ -6720,18 +8383,23 @@ if ($acbHasInner) {
 	X "`t<AutoCommandBar name=`"$acbName`" id=`"-1`"$acbDIAttr/>"
 }
 
-# 12e. Events
+# 12e. Events — значения как у элементов; null — имя по конвенции (ПриСозданииНаСервере)
 if ($def.events) {
-	# Local: a refusal, not a [WARN] — same reason as the element events above.
+	# Local: an event the platform does not have at all is refused in Test-EventPairs.
 	foreach ($p in $def.events.PSObject.Properties) {
-		if ($script:knownFormEvents -notcontains $p.Name) {
-			[Console]::Error.WriteLine("[ERROR] Неизвестное событие формы '$($p.Name)'. Известные: $($script:knownFormEvents -join ', ')")
-			exit 1
+		if (Get-EventEntry 'Form' $p.Name) { continue }
+		foreach ($v in @($p.Value)) {
+			$h = if ($v -is [System.Management.Automation.PSCustomObject]) { "$($v.handler)" } else { "$v" }
+			if (-not $h) { Write-Error "Form event '$($p.Name)': specify the handler name — there is no naming convention for this event"; exit 1 }
 		}
 	}
+	$pairs = Get-EventPairs -el $def -elementName '' -xmlTag 'Form'
+	Test-EventPairs -pairs $pairs -xmlTag 'Form' -elementName ''
+	foreach ($pr in $pairs) { Register-Handler $pr.handler 'form' 'Form' $pr.name }
 	X "`t<Events>"
-	foreach ($p in $def.events.PSObject.Properties) {
-		X "`t`t<Event name=`"$($p.Name)`">$($p.Value)</Event>"
+	foreach ($pr in $pairs) {
+		$ctAttr = if ($pr.callType) { " callType=`"$($pr.callType)`"" } else { "" }
+		X "`t`t<Event name=`"$($pr.name)`"$ctAttr>$($pr.handler)</Event>"
 	}
 	X "`t</Events>"
 }
@@ -6748,11 +8416,11 @@ if ($def.elements -and $def.elements.Count -gt 0) {
 # 12g. Attributes
 Emit-Attributes -attrs $def.attributes -indent "`t" -conditionalAppearance $def.conditionalAppearance
 
-# 12h. Parameters
-Emit-Parameters -params $def.parameters -indent "`t"
-
-# 12i. Commands
+# 12h. Commands (по корпусу — раньше Parameters)
 Emit-Commands -cmds $def.commands -indent "`t"
+
+# 12i. Parameters
+Emit-Parameters -params $def.parameters -indent "`t"
 
 # 12i2. CommandInterface (командный интерфейс формы — последний дочерний Form)
 Emit-CommandInterface -ci $def.commandInterface -indent "`t"
@@ -6762,14 +8430,92 @@ X '</Form>'
 
 # --- 13. Write output ---
 
-$outPath = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location) $OutputPath }
+$outPath = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location).ProviderPath $OutputPath }
 $outDir = [System.IO.Path]::GetDirectoryName($outPath)
 if (-not (Test-Path $outDir)) {
 	New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 }
 
+$formText = Sort-ElementTagOrder (Normalize-EnumTags $xml.ToString().TrimEnd("`r", "`n"))
+# Режим ниже 8.3.19: платформа объявляет dcssch только там, где он есть в теле. Тело собрано —
+# теперь видно, нужен ли он; иначе снимаем объявление из корня (как сделала бы выгрузка).
+if ($script:isCompatPre8319) {
+	$ord = [System.StringComparison]::Ordinal
+	$rootStart = $formText.IndexOf('<Form ', $ord)
+	$rootEnd = if ($rootStart -ge 0) { $formText.IndexOf('>', $rootStart, $ord) } else { -1 }
+	if ($rootEnd -ge 0 -and $formText.IndexOf('dcssch:', $rootEnd, $ord) -lt 0) {
+		$formText = $formText.Substring(0, $rootEnd).Replace(' xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema"', '') + $formText.Substring($rootEnd)
+	}
+}
 $enc = New-Object System.Text.UTF8Encoding($true)
-[System.IO.File]::WriteAllText($outPath, $xml.ToString(), $enc)
+[System.IO.File]::WriteAllText($outPath, $formText, $enc)
+
+# Режим ниже 8.3.19: поля, вычисляемые поля и параметры динамического списка платформа хранит в
+# базе, но в выгрузку XML не пишет. Загрузка их принимает молча — предупреждаем здесь.
+if ($script:isCompatPre8319) {
+	$dynRx = '(?s)<Attribute name="([^"]+)"(?:(?!</Attribute>|<Attribute ).)*?<Settings xsi:type="DynamicList">(?:(?!</Settings>).)*?<(?:Field|CalculatedField|Parameter)[ >]'
+	foreach ($m in [regex]::Matches($formText, $dynRx)) {
+		Write-Host "[WARN] Dynamic list '$($m.Groups[1].Value)': Field/CalculatedField/Parameter under compatibility mode $($script:compatMode) (< 8.3.19) are kept in the infobase but not written to the XML dump"
+	}
+}
+
+# Порядок групп в <ChildObjects> объекта по виду. Это xs:sequence <Вид>ChildObjects из MDClasses XSD,
+# сверенный выгрузкой платформы: выгрузка сама ставит группы в этот порядок, так что вставка не на место
+# даёт дифф при следующей выгрузке. Единого порядка нет — у документа Form стоит до TabularSection.
+function Get-ObjectChildOrder {
+	return @{
+		"Catalog"                    = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Document"                   = @("Attribute", "Form", "TabularSection", "Template", "Command")
+		"ExchangePlan"               = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ChartOfCharacteristicTypes" = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ChartOfAccounts"            = @("Attribute", "TabularSection", "AccountingFlag", "ExtDimensionAccountingFlag", "Form", "Template", "Command")
+		"ChartOfCalculationTypes"    = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"BusinessProcess"            = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Task"                       = @("Attribute", "TabularSection", "Form", "Template", "AddressingAttribute", "Command")
+		"DataProcessor"              = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Report"                     = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ExternalDataProcessor"      = @("Attribute", "TabularSection", "Form", "Template")
+		"ExternalReport"             = @("Attribute", "TabularSection", "Form", "Template")
+		"Enum"                       = @("EnumValue", "Form", "Template", "Command")
+		"InformationRegister"        = @("Resource", "Attribute", "Dimension", "Form", "Template", "Command")
+		"AccumulationRegister"       = @("Resource", "Attribute", "Dimension", "Form", "Template", "Command")
+		"AccountingRegister"         = @("Dimension", "Resource", "Attribute", "Form", "Template", "Command")
+		"CalculationRegister"        = @("Resource", "Attribute", "Dimension", "Recalculation", "Form", "Template", "Command")
+		"DocumentJournal"            = @("Column", "Form", "Template", "Command")
+		"Table"                      = @("Field", "Form", "Command", "Template")
+		"ExternalDataSource"         = @("Table", "Cube", "Function")
+		"Cube"                       = @("DimensionTable", "Dimension", "Resource", "Form", "Command", "Template")
+		"DimensionTable"             = @("Field", "Form", "Command", "Template")
+		"FilterCriterion"            = @("Form", "Command")
+		"SettingsStorage"            = @("Form", "Template")
+		"TabularSection"             = @("Attribute")
+	}
+}
+
+# Элемент <ChildObjects>, ПЕРЕД которым встаёт новый <tag>; $null — дописать в конец.
+# Сразу за последним элементом своего тега, иначе перед первым элементом группы, идущей
+# по канону вида позже. Вид или тег вне канона — $null, как раньше.
+function Find-ChildAnchor($container, [string]$tag, [string]$objType) {
+	$children = New-Object System.Collections.Generic.List[object]
+	foreach ($c in $container.ChildNodes) { if ($c.NodeType -eq 'Element') { $children.Add($c) } }
+	$lastIdx = -1
+	for ($i = 0; $i -lt $children.Count; $i++) {
+		if ($children[$i].LocalName -ceq $tag) { $lastIdx = $i }
+	}
+	if ($lastIdx -ge 0) {
+		if ($lastIdx + 1 -lt $children.Count) { return $children[$lastIdx + 1] }
+		return $null
+	}
+	$order = (Get-ObjectChildOrder)[$objType]
+	if (-not $order) { return $null }
+	$tagIdx = [array]::IndexOf([string[]]$order, $tag)
+	if ($tagIdx -lt 0) { return $null }
+	$later = @($order | Select-Object -Skip ($tagIdx + 1))
+	foreach ($c in $children) {
+		if ($later -ccontains $c.LocalName) { return $c }
+	}
+	return $null
+}
 
 # --- 13b. Auto-register form in parent object XML ---
 
@@ -6806,8 +8552,8 @@ if ($formsLeaf -eq 'Forms') {
 				$formElem = $objDoc.CreateElement("Form", "http://v8.1c.ru/8.3/MDClasses")
 				$formElem.InnerText = $formName
 
-				$insertBefore = $childObjects.SelectSingleNode("md:Template", $nsMgr)
-				if (-not $insertBefore) { $insertBefore = $childObjects.SelectSingleNode("md:TabularSection", $nsMgr) }
+				# Место — по канону вида (у документа форма до ТЧ, у справочника после)
+				$insertBefore = Find-ChildAnchor $childObjects "Form" $childObjects.ParentNode.LocalName
 
 				if ($insertBefore) {
 					$childObjects.InsertBefore($formElem, $insertBefore) | Out-Null
@@ -6826,11 +8572,30 @@ if ($formsLeaf -eq 'Forms') {
 				}
 
 				$regEnc = New-Object System.Text.UTF8Encoding($true)
-				$xmlText = $objDoc.OuterXml
-				$xmlText = [regex]::Replace($xmlText, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
-				$targetEol = if ([System.IO.File]::ReadAllText($objectXmlPath) -match "`r`n") { "`r`n" } else { "`n" }
-				$xmlText = ($xmlText -replace "`r`n", "`n") -replace "`n", $targetEol
-				[System.IO.File]::WriteAllText($objectXmlPath, $xmlText, $regEnc)
+				$regSettings = New-Object System.Xml.XmlWriterSettings
+				$regSettings.Encoding = $regEnc
+				$regSettings.Indent = $false
+				$regSettings.NewLineHandling = [System.Xml.NewLineHandling]::None
+				# Через MemoryStream, а не прямо в файл: нужен шаг пост-обработки строки.
+				$regMem = New-Object System.IO.MemoryStream
+				$regWriter = [System.Xml.XmlWriter]::Create($regMem, $regSettings)
+				$objDoc.Save($regWriter)
+				$regWriter.Flush(); $regWriter.Close()
+
+				$regText = [System.Text.Encoding]::UTF8.GetString($regMem.ToArray())
+				$regMem.Close()
+				if ($regText.Length -gt 0 -and $regText[0] -eq [char]0xFEFF) { $regText = $regText.Substring(1) }
+				$regText = $regText.Replace('encoding="utf-8"', 'encoding="UTF-8"')
+				# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Внутри
+				# CDATA/комментария ` />` может быть содержимым (там `>` не экранируется),
+				# поэтому они идут первыми ветками альтернации и возвращаются как есть.
+				# Local (2026-09-14): processing instructions are protected as well — ` />` inside <?…?> is literal text.
+				$regText = [regex]::Replace($regText, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
+				# Целевой перевод строки: стиль файла-назначения — правка наследует его (#44/#46/#47),
+				# новый файл получает канон выгрузки CRLF. Зеркало _detect_xml_style в py-порту.
+				$targetEol = if ((Test-Path -LiteralPath $objectXmlPath) -and ([System.IO.File]::ReadAllText($objectXmlPath) -notmatch "`r`n")) { "`n" } else { "`r`n" }
+				$regText = ($regText -replace "`r`n", "`n") -replace "`n", $targetEol
+				[System.IO.File]::WriteAllText($objectXmlPath, $regText, $regEnc)
 
 				Write-Host "     Registered: <Form>$formName</Form> in $objectName.xml"
 			}
@@ -6846,3 +8611,4 @@ Write-Host "     Elements+IDs: $elCount"
 if ($def.attributes) { Write-Host "     Attributes: $($def.attributes.Count)" }
 if ($def.commands)   { Write-Host "     Commands: $($def.commands.Count)" }
 if ($def.parameters) { Write-Host "     Parameters: $($def.parameters.Count)" }
+foreach ($line in (Update-FormModule $outPath $OutputPath)) { Write-Host $line }

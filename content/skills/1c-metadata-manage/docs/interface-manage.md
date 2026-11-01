@@ -21,6 +21,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-interface-man
 | CreateIfMissing | Create file if it doesn't exist |
 | NoValidate | Skip auto-validation |
 
+Operation names are case-insensitive. Command names accept Russian and plural kinds (`Справочник.X`, `Catalogs.X`) and are normalised to `Catalog.X`. The edit is refused on a locked vendor configuration (support guard, [support-manage.md](support-manage.md)). A new file created with `CreateIfMissing` gets the format version of `Configuration.xml`. Auto-validation runs `interface-validate` from the same `scripts` directory; its non-zero exit (or a missing validator) is the exit code of `interface-edit`.
+
 ### Operations
 
 | Operation | Value | Description |
@@ -60,11 +62,12 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-interface-man
 
 | Parameter | Required | Default | Description |
 |-----------|:--------:|---------|-------------|
-| CIPath | yes | — | Path to CommandInterface.xml |
+| CIPath | yes | — | Path to CommandInterface.xml (first positional argument) |
+| Detailed | no | off | Show passing checks too |
 | MaxErrors | no | 30 | Stop after N errors |
 | OutFile | no | — | Write result to file (UTF-8 BOM) |
 
-### Checks (13)
+### Checks (14)
 
 | # | Check | Severity |
 |---|-------|----------|
@@ -81,6 +84,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-interface-man
 | 11 | GroupsOrder — Group non-empty | ERROR |
 | 12 | GroupsOrder — no duplicates | WARN |
 | 13 | Command reference format | WARN |
+| 14 | Format version equals the owner's (subsystem descriptor or `Configuration.xml`) — ERROR, the platform refuses mixed formats in one object; differs only from the rest of the dump — WARN | ERROR/WARN |
 
 Exit code: 0 = all checks passed, 1 = errors found.
 

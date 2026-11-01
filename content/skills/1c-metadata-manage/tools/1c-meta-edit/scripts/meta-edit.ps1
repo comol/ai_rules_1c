@@ -1,5 +1,13 @@
-﻿# meta-edit v1.24 — Edit existing 1C metadata object XML
+﻿# meta-edit v1.73 — Edit existing 1C metadata object XML
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: add-form / add-template are refused before any mutation, for every key
+# spelling and across the whole definition, and point at form-add / add-template
+# (Section 9.7); the auto-validator is resolved under the downstream dirs
+# 1c-meta-validate / 1c-epf-validate (EPF/ERF), a missing validator is a refusal
+# raised before the write, -NoValidate is the one opt-out and the validator's
+# exit code is ours; the support guard reads .dev.env SUPPORT_GUARD first and
+# fails closed on an unreadable Ext/ParentConfigurations.bin.
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[string]$DefinitionFile,
 
@@ -31,6 +39,79 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# --- Разбор пользовательского JSON ---
+# Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
+# идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
+# для полиморфного входа: у файла подсказка была бы наполнителем. -Inline печатает ещё и то,
+# что доехало: у файла такого вопроса нет — путь назван, позицию дал парсер, файл на диске.
+# Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
+# вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
+# и одиночный объект (issue #136).
+function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
+	try {
+		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
+		# тогда как py-порт падал. Проверяем сами, чтобы порты вели себя одинаково.
+		if ([string]::IsNullOrWhiteSpace($text)) { throw 'input is empty' }
+		# pwsh 7+ сам разворачивает массив верхнего уровня ([x] → x, [] → $null). Ключ -NoEnumerate
+		# появился там же: в 5.1 и pwsh 6 его нет, поэтому спрашиваем командлет, а не версию.
+		$cfj = @{}
+		$cfjKeys = (Get-Command ConvertFrom-Json).Parameters
+		if ($cfjKeys.ContainsKey('NoEnumerate')) { $cfj.NoEnumerate = $true }
+		# pwsh 7.5+ без -DateKind String превращает ISO-строки дат в DateTime, и в XML уходит формат
+		# локали; в 5.1 и pwsh до 7.5 ключа нет (5.1 даты и так не трогает).
+		if ($cfjKeys.ContainsKey('DateKind')) { $cfj.DateKind = 'String' }
+		$parsed = $text | ConvertFrom-Json @cfj
+	} catch {
+		$what = if ($expected) { "$source expects $expected" } else { "Invalid JSON in $source" }
+		if ($Inline) {
+			$got = ($text -replace '\s+', ' ').Trim()
+			$label = 'got'
+			if (-not $got) { $got = '(empty)' }
+			elseif ($got.Length -gt 60) { $label = 'got (first 60 chars)'; $got = $got.Substring(0, 60) }
+			$what = "${what}, ${label}: ${got}"
+		}
+		[Console]::Error.WriteLine("[ERROR] ${what} ($($_.Exception.Message))")
+		exit 1
+	}
+	return ,$parsed
+}
+
+# --- Чтение входного JSON-файла ---
+# Кодировку берём из BOM — это объявление самого файла, а не догадка. Без BOM ждём строгий UTF-8:
+# Get-Content -Encoding UTF8 на файле в cp1251 тихо меняет кириллицу на U+FFFD, JSON после этого
+# разбирается успешно, и в конфигурацию уезжает имя из «замен». Кодовую страницу не подбираем:
+# угаданное имя уйдёт в метаданные так же молча.
+function Read-JsonInputFile([string]$path) {
+	# Проверка здесь, а не по навыкам: часть навыков проверяла путь сама, часть — нет, и один и тот
+	# же промах давал то внятную строку, то дамп MethodInvocationException. Навыки со своей
+	# проверкой срабатывают раньше и сохраняют свой текст.
+	if (-not (Test-Path -LiteralPath $path)) {
+		[Console]::Error.WriteLine("[ERROR] File not found: $path")
+		exit 1
+	}
+	if (Test-Path -LiteralPath $path -PathType Container) {
+		[Console]::Error.WriteLine("[ERROR] Expected a JSON file, got a directory: $path")
+		exit 1
+	}
+	$bytes = [System.IO.File]::ReadAllBytes($path)
+	if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+		return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+		return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+		return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+	}
+	try {
+		return (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes)
+	} catch {
+		$detail = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+		[Console]::Error.WriteLine("[ERROR] ${path} is not valid UTF-8: ${detail} - save the file as UTF-8, or add a BOM if it is UTF-16")
+		exit 1
+	}
+}
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # ============================================================
@@ -64,7 +145,7 @@ $script:enumValueAliases = @{
 	"Разрешить" = "Allow"; "Запретить" = "Deny"
 	"ВДиалоге" = "InDialog"; "ВСписке" = "InList"; "ОбаСпособа" = "BothWays"
 	"ВВидеНаименования" = "AsDescription"; "ВВидеКода" = "AsCode"
-	"НеПроверять" = "DontCheck"; "Ошибка" = "ShowError"; "Предупреждение" = "ShowWarning"
+	"НеПроверять" = "DontCheck"; "Ошибка" = "ShowError"
 	"НеИндексировать" = "DontIndex"; "Индексировать" = "Index"
 	"ИндексироватьСДопУпорядочиванием" = "IndexWithAdditionalOrder"
 }
@@ -73,11 +154,16 @@ $script:validEnumValues = @{
 	"RegisterType"                   = @("Balance","Turnovers")
 	"WriteMode"                      = @("Independent","RecorderSubordinate")
 	"InformationRegisterPeriodicity" = @("Nonperiodical","Second","Day","Month","Quarter","Year","RecorderPosition")
-	"DependenceOnCalculationTypes"   = @("DontUse","OnActionPeriod")
-	"DataLockControlMode"            = @("Automatic","Managed")
+	"DependenceOnCalculationTypes"   = @("DontUse","OnActionPeriod","OnRegistrationPeriod")
+	# AutomaticAndManaged — только у внешнего источника данных и его таблиц.
+	"DataLockControlMode"            = @("Automatic","Managed","AutomaticAndManaged")
 	"FullTextSearch"                 = @("Use","DontUse")
 	"DataHistory"                    = @("Use","DontUse")
 	"DefaultPresentation"            = @("AsDescription","AsCode")
+	# Уточнение по виду объекта («Вид.Свойство») — проверяется раньше общего списка. AsNumber
+	# («в виде номера») есть только у задачи: у справочника и прочих платформа его отвергает
+	# («Неверное значение перечисления», 8.3.24 и 8.5.1).
+	"Task.DefaultPresentation"       = @("AsDescription","AsNumber")
 	"Posting"                        = @("Allow","Deny")
 	"RealTimePosting"                = @("Allow","Deny")
 	"EditType"                       = @("InDialog","InList","BothWays")
@@ -87,21 +173,70 @@ $script:validEnumValues = @{
 	"NumberType"                     = @("String","Number")
 	"NumberAllowedLength"            = @("Variable","Fixed")
 	"RegisterRecordsDeletion"        = @("AutoDelete","AutoDeleteOnUnpost","AutoDeleteOff")
-	"RegisterRecordsWritingOnPost"   = @("WriteModified","WriteSelected","WriteAll")
+	"RegisterRecordsWritingOnPost"   = @("WriteModified","WriteSelected")
 	"ReturnValuesReuse"              = @("DontUse","DuringRequest","DuringSession")
-	"ReuseSessions"                  = @("DontUse","AutoUse")
-	"FillChecking"                   = @("DontCheck","ShowError","ShowWarning")
+	"ReuseSessions"                  = @("DontUse","Use","AutoUse")
+	"FillChecking"                   = @("DontCheck","ShowError")
 	"Indexing"                       = @("DontIndex","Index","IndexWithAdditionalOrder")
+	# Значения — по XSD платформы; не встреченные в выгрузках БП/УНФ/ERP подтверждены загрузкой и
+	# выгрузкой на 8.3.24 и 8.5.1. Имя с разным смыслом у разных владельцев — только ключом «Контекст.Свойство».
+	"ChoiceFoldersAndItems"             = @("Items","Folders","FoldersAndItems")
+	"NumberPeriodicity"                 = @("Nonperiodical","Year","Quarter","Month","Day")
+	"ParameterUseMode"                  = @("Single","Multiple")
+	"Representation"                    = @("Auto","Text","Picture","PictureAndText")
+	"OnMainServerUnavalableBehavior"    = @("Auto","MakeDisable","DontChangeBehavior")
+	"FormType"                          = @("Managed","Ordinary")
+	"MoveBoundaryOnPosting"             = @("DontMove","Move")
+	"SequenceFilling"                   = @("AutoFill","AutoFillOff")
+	"TaskNumberAutoPrefix"              = @("BusinessProcessNumber","DontUse")
+	"AutoUse"                           = @("DontUse","Use")
+	"DataSeparation"                    = @("DontUse","Separate")
+	"UsersSeparation"                   = @("DontUse","Separate")
+	"AuthenticationSeparation"          = @("DontUse","Separate")
+	"ConfigurationExtensionsSeparation" = @("DontUse","Separate")
+	"SeparatedDataUse"                  = @("Independently","IndependentlyAndSimultaneously")
+	"TemplateType"                      = @("SpreadsheetDocument","BinaryData","ActiveDocument","HTMLDocument","TextDocument","GeographicalSchema","GraphicalSchema","DataCompositionSchema","DataCompositionAppearanceTemplate","AddIn")
+	"UseInInterfaceCompatibilityMode"   = @("Any","Taxi","Version85")
+	"TypeReductionMode"                 = @("TransformValues","DeleteData","Deny")
+	"TransactionsIsolationLevel"        = @("Auto","ReadUncommitted","ReadCommitted","RepeatableRead","Serializable")
+	"TableType"                         = @("Table","Expression")
+	"TableDataType"                     = @("NonobjectData","ObjectData")
+	"ChoiceDataGetModeOnInputByString"  = @("Directly","Background")
+	"HTTPMethod"                        = @("GET","HEAD","PUT","POST","DELETE","PATCH","MERGE","OPTIONS","TRACE","CONNECT","PROPFIND","PROPPATCH","MOVE","COPY","LOCK","UNLOCK","MKCOL","Any")
+	"TransferDirection"                 = @("In","Out","InOut")
+	"ValueChange"                       = @("Clear","DontChange")
+	# QuickChoice у справочника и других ссылочных — булево; перечислением он бывает здесь:
+	"Constant.QuickChoice"              = @("Auto","Use","DontUse")
+	"CommonAttribute.QuickChoice"       = @("Auto","Use","DontUse")
+	"Attribute.QuickChoice"             = @("Auto","Use","DontUse")
+	# Use: у реквизита и ТЧ — для групп/элементов; у состава общего реквизита — Auto/Use/DontUse;
+	# у регламентного задания — булево, у параметра функциональных опций — список (общего ключа нет).
+	"Attribute.Use"                     = @("ForItem","ForFolder","ForFolderAndItem")
+	"TabularSection.Use"                = @("ForItem","ForFolder","ForFolderAndItem")
+	"CommonAttributeContent.Use"        = @("Auto","Use","DontUse")
+	# Свойства объекта, которые модель меняет через modify-property и свойства реквизита — как в meta-compile
+	"Category"                          = @("NavigationPanel","ActionsPanel","FormCommandBar","FormNavigationPanel")
+	"ChoiceHistoryOnInput"              = @("Auto","DontUse")
+	"ChoiceMode"                        = @("BothWays","QuickChoice","FromForm")
+	"CodeSeries"                        = @("WholeCatalog","WithinSubordination","WithinOwnerSubordination","WholeCharacteristicKind","WholeChartOfAccounts")
+	"CreateOnInput"                     = @("Auto","Use","DontUse")
+	"FullTextSearchOnInputByString"     = @("Use","DontUse")
+	"PredefinedDataUpdate"              = @("Auto","DontAutoUpdate","AutoUpdate")
+	"SearchStringModeOnInputByString"   = @("Begin","AnyPart")
+	"SubordinationUse"                  = @("ToItems","ToFolders","ToFoldersAndItems")
 }
 
 function Normalize-EnumValue {
 	param([string]$propName, [string]$value)
-	# 1. Check alias dictionary — silent auto-correct
+	$valid = $script:validEnumValues["$script:objType.$propName"]
+	if (-not $valid) { $valid = $script:validEnumValues[$propName] }
+	# 1. Check alias dictionary — silent auto-correct. Словарь общий для всех свойств: у свойства со
+	# списком алиас берётся, только если его результат в списке (иначе «None» дало бы Nonperiodical везде)
 	if ($script:enumValueAliases.ContainsKey($value)) {
-		return $script:enumValueAliases[$value]
+		$aliased = $script:enumValueAliases[$value]
+		if (-not $valid -or $valid -ccontains $aliased) { return $aliased }
 	}
-	# 2. Case-insensitive match against valid values — silent
-	$valid = $script:validEnumValues[$propName]
+	# 2. Case-insensitive match against valid values — silent. Список вида объекта — раньше общего.
 	if ($valid) {
 		foreach ($v in $valid) {
 			if ($v -ieq $value) { return $v }
@@ -121,8 +256,8 @@ if ($DefinitionFile) {
 		Write-Error "Definition file not found: $DefinitionFile"
 		exit 1
 	}
-	$jsonText = Get-Content -Raw -Encoding UTF8 $DefinitionFile
-	$def = $jsonText | ConvertFrom-Json
+	$jsonText = Read-JsonInputFile $DefinitionFile
+	$def = ConvertFrom-JsonInput $jsonText $DefinitionFile
 }
 
 # --- Resolve object path ---
@@ -153,7 +288,7 @@ if (-not (Test-Path $ObjectPath)) {
 	Write-Error "Object file not found: $ObjectPath"
 	exit 1
 }
-$resolvedPath = (Resolve-Path $ObjectPath).Path
+$resolvedPath = (Resolve-Path $ObjectPath).ProviderPath
 
 # --- Support guard (Ext/ParentConfigurations.bin) ---
 # Canon: docs/support-manage.md. Blocks edits of vendor objects "на замке" /
@@ -202,16 +337,20 @@ function Get-EditMode([string]$cfgDir) {
 		    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
 		    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
 		}
-		$pj = Find-V8Project (Get-Location).Path
-		if (-not $pj) { $pj = Find-V8Project $cfgDir }
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
 		if (-not $pj) { return 'deny' }
-		$proj = Get-Content -Raw $pj | ConvertFrom-Json
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		# configSrc — от каталога .v8-project.json, а не от рабочего каталога: иначе из подкаталога
+		# проекта база не сопоставляется и берётся правило проекта.
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
 		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
 		if ($proj.databases) {
 			foreach ($db in $proj.databases) {
 				if ($db.configSrc) {
-					$src = [System.IO.Path]::GetFullPath($db.configSrc).TrimEnd('\', '/')
-					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar)) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
 						if ($db.editingAllowedCheck) { return $db.editingAllowedCheck }
 					}
 				}
@@ -224,7 +363,7 @@ function Get-EditMode([string]$cfgDir) {
 function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	try {
 		$rp = $targetPath
-		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).Path } catch {}
+		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).ProviderPath } catch {}
 		# Autonomous external object (EPF/ERF): never part of a config on support (issue #39).
 		if (Test-ExternalObjectRoot $rp) { return }
 		$elemUuid = Get-RootUuid $rp
@@ -250,6 +389,8 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 		$G = 0; $K = 0; $text = $null; $parseOk = $false
 		try {
 			$bytes = [System.IO.File]::ReadAllBytes($binPath)
+			# A state of 32 bytes or less is the empty container a configuration keeps when vendor support was removed completely (docs/1c-support-state-spec.md upstream: ~16 bytes) - nothing is on support, so it is not 'unreadable'.
+			if ($bytes.Length -le 32) { $parseOk = $true }
 			if ($bytes.Length -gt 32) {
 				$start = 0
 				if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
@@ -336,11 +477,43 @@ function Info($msg) {
 	Write-Host "[INFO] $msg" -ForegroundColor Cyan
 }
 
+# Операцию выполнить нельзя: в stderr и exit 1 до сохранения — файл не меняется.
+# Console.Error, а не Write-Error: под ErrorActionPreference=Stop тот бросает исключение.
+function Die($msg) {
+	[Console]::Error.WriteLine($msg)
+	exit 1
+}
+
+# Побочные файлы (таблица внешнего источника, модуль команды, предопределённые) пишутся после
+# основного XML: отказ посреди определения не оставляет на диске ни одного изменения.
+$script:pendingWrites = [ordered]@{}
+
+function Test-PendingOrFile([string]$path) {
+	return ($script:pendingWrites.Contains($path) -or (Test-Path $path))
+}
+
 # ============================================================
 # Section 2: Detect object type
 # ============================================================
 
 $root = $script:xmlDoc.DocumentElement
+
+# Префикс пространства current-config, объявленный в КОРНЕ файла (у платформы — cfg).
+# Ищем по объявлениям корня, а не через GetPrefixOfNamespace: ссылочный тип живёт в
+# ТЕКСТЕ узла, поэтому XML-слой этот префикс не отслеживает. $null = корень URI не
+# объявляет → эмиттер остаётся на самодостаточной локальной форме.
+# Версия формата правимого файла — из его же корня. Нужна эмиттерам: часть свойств
+# появилась в поздних версиях (напр. <Color> у значения перечисления — в 2.21).
+$script:formatVersion = $root.GetAttribute("version")
+if (-not $script:formatVersion) { $script:formatVersion = "2.17" }
+$script:isFormat221 = ($script:formatVersion -match '^(\d+)\.(\d+)$') -and ([int]$Matches[1] * 100 + [int]$Matches[2]) -ge 221
+
+$script:cfgUri = 'http://v8.1c.ru/8.1/data/enterprise/current-config'
+$script:cfgPrefix = $null
+foreach ($a in $root.Attributes) {
+	if ($a.Prefix -eq 'xmlns' -and $a.Value -eq $script:cfgUri) { $script:cfgPrefix = $a.LocalName; break }
+}
+
 if ($root.LocalName -ne "MetaDataObject") {
 	Write-Error "Root element must be MetaDataObject, got: $($root.LocalName)"
 	exit 1
@@ -410,6 +583,9 @@ $script:childTypeSynonyms = @{
 	"templates" = "templates"; "макеты" = "templates"
 	"commands" = "commands"; "команды" = "commands"
 	"properties" = "properties"; "свойства" = "properties"
+	"fields" = "fields"; "поля" = "fields"
+	"tables" = "tables"; "таблицы" = "tables"
+	"functions" = "functions"; "функции" = "functions"
 }
 
 # Type synonyms (from meta-compile)
@@ -440,9 +616,84 @@ $script:typeSynonyms["бизнеспроцессссылка"]            = "Bus
 $script:typeSynonyms["задачассылка"]                   = "TaskRef"
 $script:typeSynonyms["определяемыйтип"]              = "DefinedType"
 $script:typeSynonyms["definedtype"]                   = "DefinedType"
+# Русские имена объектных типов, менеджеров и наборов записей — те самые метки, которые печатает
+# meta-info. Без них раундтрип «прочитал вывод → подал на вход» рвался: `ДокументОбъект.Заказ` из
+# источников подписки компилятор отвергал с «Неизвестный тип», хотя сам же печатал эту форму
+# через meta-info. Аббревиатуры (ПВХ/ПВР, РС/РН/РБ/РР) приняты наравне с полными именами: вывод
+# навыка сокращает долгие виды, чтобы в списке на сорок реквизитов не терялось имя объекта.
+# Состав держит гард tests/skills/check-typeset-coverage.mjs.
+$script:typeSynonyms["бизнеспроцессменеджер"]           = "BusinessProcessManager"
+$script:typeSynonyms["бизнеспроцессобъект"]             = "BusinessProcessObject"
+$script:typeSynonyms["документменеджер"]                = "DocumentManager"
+$script:typeSynonyms["документобъект"]                  = "DocumentObject"
+$script:typeSynonyms["журналдокументовменеджер"]        = "DocumentJournalManager"
+$script:typeSynonyms["задачаменеджер"]                  = "TaskManager"
+$script:typeSynonyms["задачаобъект"]                    = "TaskObject"
+$script:typeSynonyms["константаменеджерзначения"]       = "ConstantValueManager"
+$script:typeSynonyms["любаяссылка"]                     = "AnyRef"
+$script:typeSynonyms["любаяссылкаиб"]                   = "AnyIBRef"
+$script:typeSynonyms["наборзаписейперерасчета"]         = "RecalculationRecordSet"
+$script:typeSynonyms["наборзаписейпоследовательности"]  = "SequenceRecordSet"
+$script:typeSynonyms["наборзаписейрб"]                  = "AccountingRegisterRecordSet"
+$script:typeSynonyms["наборзаписейрн"]                  = "AccumulationRegisterRecordSet"
+$script:typeSynonyms["наборзаписейрр"]                  = "CalculationRegisterRecordSet"
+$script:typeSynonyms["наборзаписейрс"]                  = "InformationRegisterRecordSet"
+$script:typeSynonyms["обработкаменеджер"]               = "DataProcessorManager"
+$script:typeSynonyms["отчетменеджер"]                   = "ReportManager"
+$script:typeSynonyms["пврменеджер"]                     = "ChartOfCalculationTypesManager"
+$script:typeSynonyms["пвробъект"]                       = "ChartOfCalculationTypesObject"
+$script:typeSynonyms["пврссылка"]                       = "ChartOfCalculationTypesRef"
+$script:typeSynonyms["пвхменеджер"]                     = "ChartOfCharacteristicTypesManager"
+$script:typeSynonyms["пвхобъект"]                       = "ChartOfCharacteristicTypesObject"
+$script:typeSynonyms["пвхссылка"]                       = "ChartOfCharacteristicTypesRef"
+$script:typeSynonyms["перечислениеменеджер"]            = "EnumManager"
+$script:typeSynonyms["планобменаменеджер"]              = "ExchangePlanManager"
+$script:typeSynonyms["планобменаобъект"]                = "ExchangePlanObject"
+$script:typeSynonyms["плансчетовменеджер"]              = "ChartOfAccountsManager"
+$script:typeSynonyms["плансчетовобъект"]                = "ChartOfAccountsObject"
+$script:typeSynonyms["регистрбухгалтериименеджер"]      = "AccountingRegisterManager"
+$script:typeSynonyms["регистрнакопленияменеджер"]       = "AccumulationRegisterManager"
+$script:typeSynonyms["регистррасчетаменеджер"]          = "CalculationRegisterManager"
+$script:typeSynonyms["регистрсведенийменеджер"]         = "InformationRegisterManager"
+$script:typeSynonyms["справочникменеджер"]              = "CatalogManager"
+$script:typeSynonyms["справочникобъект"]                = "CatalogObject"
+$script:typeSynonyms["характеристика"]                  = "Characteristic"
 $script:typeSynonyms["catalogref"]                    = "CatalogRef"
 $script:typeSynonyms["documentref"]                   = "DocumentRef"
 $script:typeSynonyms["enumref"]                       = "EnumRef"
+
+# Платформенные типы, требующие префикса v8: (коллекции/периоды, частые в реквизитах
+# обработок и отчётов, где набор типов шире, чем у хранимых объектов). Копия реестра meta-compile.
+$script:v8PlatformTypes = @("ValueTable","ValueTree","ValueList","ValueListType","StandardPeriod",
+	"StandardBeginningDate","PointInTime","TypeDescription","FixedArray","FixedMap","FixedStructure")
+# Ниже — записи, которых в этом навыке не было: словарь дополнен до набора meta-compile,
+# который является авторитетом. Расхождение держит tests/skills/check-type-synonyms.mjs.
+$script:typeSynonyms["время"] = "Time"
+$script:typeSynonyms["time"] = "Time"
+$script:typeSynonyms["base64binary"] = "ValueStorage"
+$script:typeSynonyms["binarydata"] = "BinaryData"
+$script:typeSynonyms["двоичныеданные"] = "BinaryData"
+$script:typeSynonyms["хранилищезначений"] = "ValueStorage"
+$script:typeSynonyms["uuid"] = "UUID"
+$script:typeSynonyms["уникальныйидентификатор"] = "UUID"
+$script:typeSynonyms["integer"] = "Number(10,0)"
+$script:typeSynonyms["int"] = "Number(10,0)"
+$script:typeSynonyms["int4"] = "Number(10,0)"
+$script:typeSynonyms["bigint"] = "Number(19,0)"
+$script:typeSynonyms["int8"] = "Number(19,0)"
+$script:typeSynonyms["smallint"] = "Number(5,0)"
+$script:typeSynonyms["int2"] = "Number(5,0)"
+$script:typeSynonyms["varchar"] = "String"
+$script:typeSynonyms["character varying"] = "String"
+$script:typeSynonyms["numeric"] = "Number"
+$script:typeSynonyms["decimal"] = "Number"
+$script:typeSynonyms["timestamp"] = "DateTime"
+$script:typeSynonyms["bytea"] = "BinaryData"
+$script:typeSynonyms["таблицазначений"] = "ValueTable"
+$script:typeSynonyms["деревозначений"] = "ValueTree"
+$script:typeSynonyms["списокзначений"] = "ValueListType"
+$script:typeSynonyms["стандартныйпериод"] = "StandardPeriod"
+$script:typeSynonyms["внешнийисточникданныхтаблицассылка"] = "ExternalDataSourceTableRef"
 
 # ============================================================
 # Section 4: Type system
@@ -472,7 +723,28 @@ function Resolve-TypeStr {
 	param([string]$typeStr)
 	if (-not $typeStr) { return $typeStr }
 
-	# Parameterized: Number(15,2), Строка(100)
+	# Прощающий ввод: ведущий префикс приходит копипастой из выгрузки. Без срезания он ломает
+	# поиск в словаре — русское имя типа остаётся непереведённым, и платформа отвечает
+	# «Неизвестное имя типа». cfg: снимаем всегда — он однозначно означает текущую конфигурацию.
+	# Сгенерированный dNpM: (в корпусе на этом URI встречаются d4p1, d5p1, d6p1 — имя префикса
+	# платформа выдаёт по порядку объявления) снимаем ТОЛЬКО у ссылочных типов, с точкой:
+	# сам по себе префикс многозначен — в формах d5p1:Chart, d5p1:TextDocument,
+	# d5p1:GeographicalSchema адресуют чужие пространства имён, и там он часть значения.
+	if ($typeStr.StartsWith('cfg:')) {
+		$typeStr = $typeStr.Substring(4)
+	} elseif ($typeStr.Contains('.') -and $typeStr -match '^d\d+p\d+:') {
+		$typeStr = $typeStr.Substring($typeStr.IndexOf(':') + 1)
+	}
+
+	# Хвосты, которые дописывает вывод meta-info к множествам типов: суффикс обобщённого метатипа
+	# и счётчик состава. Копипаста строки оттуда — обычный путь, поэтому хвост снимаем молча.
+	# Срезаем ТОЛЬКО эти известные формы: круглые скобки заняты параметризованными типами
+	# (Число(15,2)), слепой срез скобок сломал бы их.
+	$typeStr = ($typeStr -replace '\s*\((?:все|all)\)\s*$', '').Trim()
+	$typeStr = ($typeStr -replace '\s*[—-]\s*(?:типов|types):\s*\d+\s*$', '').Trim()
+	$typeStr = ($typeStr -replace '\s*\((?:типов|types):\s*\d+\)\s*$', '').Trim()
+
+	# Параметризованные типы: Number(15,2), Строка(100)
 	if ($typeStr -match '^([^(]+)\((.+)\)$') {
 		$baseName = $Matches[1].Trim()
 		$params = $Matches[2]
@@ -481,17 +753,17 @@ function Resolve-TypeStr {
 		return $typeStr
 	}
 
-	# Reference: СправочникСсылка.Организации
+	# Ссылочные типы: СправочникСсылка.Организации → CatalogRef.Организации
 	if ($typeStr.Contains('.')) {
 		$dotIdx = $typeStr.IndexOf('.')
 		$prefix = $typeStr.Substring(0, $dotIdx)
-		$suffix = $typeStr.Substring($dotIdx)
+		$suffix = $typeStr.Substring($dotIdx)  # includes the dot
 		$resolved = $script:typeSynonyms[$prefix.ToLower()]
 		if ($resolved) { return "$resolved$suffix" }
 		return $typeStr
 	}
 
-	# Simple
+	# Простое имя
 	$resolved = $script:typeSynonyms[$typeStr.ToLower()]
 	if ($resolved) { return $resolved }
 	return $typeStr
@@ -578,6 +850,58 @@ function Build-TypeContentXml {
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
+	# Time — третья доля даты, наравне с Date/DateTime.
+	if ($typeStr -eq "Time") {
+		$sb.AppendLine("$indent<v8:Type>xs:dateTime</v8:Type>") | Out-Null
+		$sb.AppendLine("$indent<v8:DateQualifiers>") | Out-Null
+		$sb.AppendLine("$indent`t<v8:DateFractions>Time</v8:DateFractions>") | Out-Null
+		$sb.AppendLine("$indent</v8:DateQualifiers>") | Out-Null
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
+	# UUID
+	if ($typeStr -eq "UUID") {
+		$sb.AppendLine("$indent<v8:Type>v8:UUID</v8:Type>") | Out-Null
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
+	# BinaryData — xs:base64Binary СО своими квалификаторами (в отличие от ХранилищаЗначения).
+	# Формы и умолчание — как в meta-compile, который здесь авторитет системы типов.
+	if ($typeStr -match '^BinaryData(\(|$)') {
+		$bm = [regex]::Match($typeStr, '^BinaryData(\((\d+)(,\s*(fixed|variable))?\))?$', 'IgnoreCase')
+		if (-not $bm.Success) {
+			Write-Error "Неверный тип '$typeStr': ждётся BinaryData, BinaryData(Длина) или BinaryData(Длина,fixed|variable)."
+			exit 1
+		}
+		$blen = if ($bm.Groups[2].Success) { $bm.Groups[2].Value } else { "4294967292" }
+		$ballowed = if ($bm.Groups[4].Success) { if ($bm.Groups[4].Value.ToLowerInvariant() -eq "fixed") { "Fixed" } else { "Variable" } }
+			elseif ($bm.Groups[2].Success) { "Variable" } else { "Fixed" }
+		$sb.AppendLine("$indent<v8:Type>xs:base64Binary</v8:Type>") | Out-Null
+		$sb.AppendLine("$indent<v8:BinaryDataQualifiers>") | Out-Null
+		$sb.AppendLine("$indent`t<v8:Length>$blen</v8:Length>") | Out-Null
+		$sb.AppendLine("$indent`t<v8:AllowedLength>$ballowed</v8:AllowedLength>") | Out-Null
+		$sb.AppendLine("$indent</v8:BinaryDataQualifiers>") | Out-Null
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
+	# Платформенные типы (коллекции/периоды) — префикс v8:, объявлен в шапке файла.
+	if ($script:v8PlatformTypes -contains $typeStr) {
+		$sb.AppendLine("$indent<v8:Type>v8:$typeStr</v8:Type>") | Out-Null
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
+	# Характеристика ПВХ — множество типов, как и ОпределяемыйТип.
+	if ($typeStr -match '^Characteristic\.(.+)$') {
+		$sb.AppendLine("$indent<v8:TypeSet>cfg:$typeStr</v8:TypeSet>") | Out-Null
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
+	# Голый метатип-категория без имени объекта — «любой объект категории», это TypeSet.
+	if ($typeStr -match '^(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|ExchangePlanRef|BusinessProcessRef|TaskRef|AnyRef|AnyIBRef)$') {
+		$sb.AppendLine("$indent<v8:TypeSet>cfg:$typeStr</v8:TypeSet>") | Out-Null
+		return $sb.ToString().TrimEnd("`r","`n")
+	}
+
 	# DefinedType
 	if ($typeStr -match '^DefinedType\.(.+)$') {
 		$dtName = $Matches[1]
@@ -585,9 +909,19 @@ function Build-TypeContentXml {
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
-	# Reference types — use local xmlns declaration for 1C compatibility
-	if ($typeStr -match '^(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|ExchangePlanRef|BusinessProcessRef|TaskRef)\.(.+)$') {
-		$sb.AppendLine("$indent<v8:Type xmlns:d5p1=`"http://v8.1c.ru/8.1/data/enterprise/current-config`">d5p1:$typeStr</v8:Type>") | Out-Null
+	# Ссылочные типы — префиксом, объявленным в КОРНЕ файла (у платформы это cfg).
+	# Раньше здесь всегда объявлялся локальный xmlns:d5p1 на тот же URI, что уже есть
+	# в шапке: платформа принимала, но при цикле «загрузить в базу → выгрузить»
+	# переписывала каждый ссылочный тип в cfg: — diff-шум на ровном месте.
+	# Если корень URI не объявляет (файл не от платформы), остаёмся на самодостаточной
+	# локальной форме: префикс тут — ТЕКСТ узла, XML-слой про него не знает и сам
+	# объявление не добавит, так что иначе получился бы неразрешимый префикс.
+	if ($typeStr -match '^(CatalogRef|DocumentRef|EnumRef|ChartOfAccountsRef|ChartOfCharacteristicTypesRef|ChartOfCalculationTypesRef|ExchangePlanRef|BusinessProcessRef|BusinessProcessRoutePointRef|TaskRef|ExternalDataSourceTableRef)\.(.+)$') {
+		if ($script:cfgPrefix) {
+			$sb.AppendLine("$indent<v8:Type>$($script:cfgPrefix):$typeStr</v8:Type>") | Out-Null
+		} else {
+			$sb.AppendLine("$indent<v8:Type xmlns:d5p1=`"$script:cfgUri`">d5p1:$typeStr</v8:Type>") | Out-Null
+		}
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
@@ -621,18 +955,27 @@ function Build-FillValueXml {
 }
 
 function Build-MLTextXml {
-	param([string]$indent, [string]$tag, [string]$text)
-	if (-not $text) {
+	param([string]$indent, [string]$tag, $text)
+	# Строка → один язык (ru); объект/словарь { "ru": ..., "en": ... } → по элементу на язык.
+	$pairs = @()
+	if ($text -is [System.Collections.IDictionary]) {
+		foreach ($k in $text.Keys) { $pairs += ,@("$k", "$($text[$k])") }
+	} elseif ($text -is [System.Management.Automation.PSCustomObject]) {
+		foreach ($p in $text.PSObject.Properties) { $pairs += ,@("$($p.Name)", "$($p.Value)") }
+	} elseif ("$text") {
+		$pairs += ,@("ru", "$text")
+	}
+	if ($pairs.Count -eq 0) {
 		return "$indent<$tag/>"
 	}
-	$lines = @(
-		"$indent<$tag>"
-		"$indent`t<v8:item>"
-		"$indent`t`t<v8:lang>ru</v8:lang>"
-		"$indent`t`t<v8:content>$(Esc-Xml $text)</v8:content>"
-		"$indent`t</v8:item>"
-		"$indent</$tag>"
-	)
+	$lines = @("$indent<$tag>")
+	foreach ($pr in $pairs) {
+		$lines += "$indent`t<v8:item>"
+		$lines += "$indent`t`t<v8:lang>$($pr[0])</v8:lang>"
+		$lines += "$indent`t`t<v8:content>$(Esc-XmlText $pr[1])</v8:content>"
+		$lines += "$indent`t</v8:item>"
+	}
+	$lines += "$indent</$tag>"
 	return $lines -join "`r`n"
 }
 
@@ -668,11 +1011,21 @@ function Import-Fragment([string]$xmlString) {
 }
 
 function Get-ChildIndent($container) {
+	# В контейнере с детьми первый пробельный узел — это отступ ПЕРЕД первым ребёнком.
+	# В пустом (только что раскрытом) единственный пробельный узел — отступ ЗАКРЫВАЮЩЕГО
+	# тега, то есть уровень самого контейнера: ребёнку нужен на табуляцию глубже. Без этой
+	# поправки первый ребёнок вставал вровень с <ChildObjects>.
+	$hasElements = $false
+	foreach ($child in $container.ChildNodes) {
+		if ($child.NodeType -eq 'Element') { $hasElements = $true; break }
+	}
 	foreach ($child in $container.ChildNodes) {
 		if ($child.NodeType -eq 'Whitespace' -or $child.NodeType -eq 'SignificantWhitespace') {
 			$text = $child.Value
-			if ($text -match '^\r?\n(\t+)$') { return $Matches[1] }
-			if ($text -match '^\r?\n(\t+)') { return $Matches[1] }
+			$found = $null
+			if ($text -match '^\r?\n(\t+)$') { $found = $Matches[1] }
+			elseif ($text -match '^\r?\n(\t+)') { $found = $Matches[1] }
+			if ($null -ne $found) { return $(if ($hasElements) { $found } else { "$found`t" }) }
 		}
 	}
 	# Fallback: count depth
@@ -748,25 +1101,6 @@ function Find-ElementByName($container, [string]$elemLocalName, [string]$nameVal
 	return $null
 }
 
-function Find-LastElementOfType($container, [string]$localName) {
-	$last = $null
-	foreach ($child in $container.ChildNodes) {
-		if ($child.NodeType -eq 'Element' -and $child.LocalName -eq $localName) {
-			$last = $child
-		}
-	}
-	return $last
-}
-
-function Find-FirstElementOfType($container, [string]$localName) {
-	foreach ($child in $container.ChildNodes) {
-		if ($child.NodeType -eq 'Element' -and $child.LocalName -eq $localName) {
-			return $child
-		}
-	}
-	return $null
-}
-
 function Ensure-ChildObjectsOpen {
 	if ($script:childObjectsEl) {
 		# Check if it's self-closing (no child elements)
@@ -832,6 +1166,9 @@ function Collapse-ChildObjectsIfEmpty {
 		while ($script:childObjectsEl.HasChildNodes) {
 			$script:childObjectsEl.RemoveChild($script:childObjectsEl.FirstChild) | Out-Null
 		}
+		# XmlDocument помнит, что у узла были дети, и пишет <ChildObjects></ChildObjects>.
+		# Платформа и py-порт дают <ChildObjects/> — сбрасываем флаг явно.
+		$script:childObjectsEl.IsEmpty = $true
 	}
 }
 
@@ -886,6 +1223,10 @@ function Parse-AttributeShorthand {
 		indexing    = if ($val.indexing) { "$($val.indexing)" } else { "" }
 		after       = if ($val.after) { "$($val.after)" } else { "" }
 		before      = if ($val.before) { "$($val.before)" } else { "" }
+		# Поле таблицы внешнего источника (контекст eds-field).
+		nameInDataSource = if ($val.nameInDataSource) { "$($val.nameInDataSource)" } else { "" }
+		readOnly    = if ($val.readOnly -eq $true) { $true } else { $false }
+		allowNull   = if ($val.allowNull -eq $true) { $true } else { $false }
 	}
 	# Map flags to properties
 	if ($result.flags -contains "req" -and -not $result.fillChecking) {
@@ -925,6 +1266,7 @@ function Parse-EnumValueShorthand {
 function Get-AttributeContext {
 	switch ($script:objType) {
 		"Catalog" { return "catalog" }
+		"Table" { return "eds-field" }
 		"Document" { return "document" }
 		{ $_ -in @("InformationRegister","AccumulationRegister","AccountingRegister","CalculationRegister") } { return "register" }
 		{ $_ -in @("DataProcessor","Report","ExternalDataProcessor","ExternalReport") } { return "processor" }
@@ -945,6 +1287,34 @@ $script:reservedAttrNames = @{
 	"Account"="Счет"; "ValueType"="ТипЗначения"; "ActionPeriodIsBasic"="ПериодДействияБазовый"
 }
 
+# Имена стандартных команд вида — англ. и рус., в нижнем регистре: команда объекта с таким именем
+# не загрузится («Имя команды не может совпадать с именем стандартной команды»; регистр не важен, от
+# UseStandardCommands не зависит — замер 8.3.24/8.3.27). Вида нет в карте — ограничения нет
+# (перечисление, план обмена; критерий отбора и таблица внешнего источника не замерены).
+function Get-ReservedCommandNames {
+	$openList = @("openlist", "открытьсписок")
+	$create = @("create", "создать")
+	$folder = @("createfolder", "создатьгруппу")
+	$byValue = @("openbyvalue", "открытьпозначению")
+	$basedOn = @("createbasedon", "создатьнаосновании")
+	return @{
+		"Catalog"                    = $openList + $create + $folder + $byValue + $basedOn
+		"ChartOfCharacteristicTypes" = $openList + $create + $folder + $basedOn
+		"Task"                       = $openList + $create + $byValue + $basedOn
+		"Document"                   = $openList + $create + $basedOn
+		"BusinessProcess"            = $openList + $create + $basedOn
+		"ChartOfAccounts"            = $openList + $create + $basedOn
+		"ChartOfCalculationTypes"    = $openList + $create + $basedOn
+		"InformationRegister"        = $openList + $create + $byValue
+		"AccumulationRegister"       = $openList
+		"AccountingRegister"         = $openList
+		"CalculationRegister"        = $openList
+		"DocumentJournal"            = $openList
+		"DataProcessor"              = @("open", "открыть")
+		"Report"                     = @("open", "открыть")
+	}
+}
+
 # Стандартные реквизиты по типу объекта (ключи из reservedAttrNames). Имя реквизита, совпадающее
 # с ними (англ. ИЛИ рус.), платформа не позволит — жёсткий отказ. Контексты вне карты → предупреждение.
 $script:reservedByContext = @{
@@ -953,7 +1323,7 @@ $script:reservedByContext = @{
 }
 
 function Build-AttributeFragment {
-	param($parsed, [string]$context, [string]$indent)
+	param($parsed, [string]$context, [string]$indent, [string]$elemTag = "Attribute")
 
 	if (-not $context) { $context = Get-AttributeContext }
 
@@ -968,7 +1338,7 @@ function Build-AttributeFragment {
 				exit 1
 			}
 		}
-	} elseif ($context -notin @("tabular", "processor-tabular") -and
+	} elseif ($context -notin @("tabular", "processor-tabular", "eds-field") -and
 		($script:reservedAttrNames.ContainsKey($attrName) -or ($script:reservedAttrNames.Values -contains $attrName))) {
 		Write-Warning "Attribute '$attrName' conflicts with a standard attribute name. This may cause errors when loading into 1C."
 	}
@@ -976,9 +1346,9 @@ function Build-AttributeFragment {
 	$uuid = New-Guid-String
 	$sb = New-Object System.Text.StringBuilder
 
-	$sb.AppendLine("$indent<Attribute uuid=`"$uuid`">") | Out-Null
+	$sb.AppendLine("$indent<$elemTag uuid=`"$uuid`">") | Out-Null
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $parsed.name)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $parsed.name)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $parsed.synonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
 
@@ -1015,14 +1385,30 @@ function Build-AttributeFragment {
 	if ($parsed.fillChecking) { $fillChecking = Normalize-EnumValue "FillChecking" $parsed.fillChecking }
 	$sb.AppendLine("$indent`t`t<FillChecking>$fillChecking</FillChecking>") | Out-Null
 
-	$sb.AppendLine("$indent`t`t<ChoiceFoldersAndItems>Items</ChoiceFoldersAndItems>") | Out-Null
+	# Поле внешнего источника (eds-field) не имеет ChoiceFoldersAndItems и LinkByType, а ChoiceForm
+	# у него стоит ПОСЛЕ ChoiceHistoryOnInput — порядок снят с выгрузки платформы.
+	if ($context -ne "eds-field") {
+		$sb.AppendLine("$indent`t`t<ChoiceFoldersAndItems>Items</ChoiceFoldersAndItems>") | Out-Null
+	}
 	$sb.AppendLine("$indent`t`t<ChoiceParameterLinks/>") | Out-Null
 	$sb.AppendLine("$indent`t`t<ChoiceParameters/>") | Out-Null
 	$sb.AppendLine("$indent`t`t<QuickChoice>Auto</QuickChoice>") | Out-Null
 	$sb.AppendLine("$indent`t`t<CreateOnInput>Auto</CreateOnInput>") | Out-Null
-	$sb.AppendLine("$indent`t`t<ChoiceForm/>") | Out-Null
-	$sb.AppendLine("$indent`t`t<LinkByType/>") | Out-Null
+	if ($context -ne "eds-field") {
+		$sb.AppendLine("$indent`t`t<ChoiceForm/>") | Out-Null
+		$sb.AppendLine("$indent`t`t<LinkByType/>") | Out-Null
+	}
 	$sb.AppendLine("$indent`t`t<ChoiceHistoryOnInput>Auto</ChoiceHistoryOnInput>") | Out-Null
+
+	if ($context -eq "eds-field") {
+		$sb.AppendLine("$indent`t`t<ChoiceForm/>") | Out-Null
+		$nids = if ($parsed.nameInDataSource) { "$($parsed.nameInDataSource)" } else { $parsed.name }
+		$sb.AppendLine("$indent`t`t<NameInDataSource>$(Esc-XmlText $nids)</NameInDataSource>") | Out-Null
+		$ro = if ($parsed.readOnly -eq $true -or $parsed.flags -contains "readonly") { "true" } else { "false" }
+		$sb.AppendLine("$indent`t`t<ReadOnly>$ro</ReadOnly>") | Out-Null
+		$an = if ($parsed.allowNull -eq $true -or $parsed.flags -contains "nullable") { "true" } else { "false" }
+		$sb.AppendLine("$indent`t`t<AllowNull>$an</AllowNull>") | Out-Null
+	}
 
 	# Use — catalog only
 	if ($context -eq "catalog") {
@@ -1030,7 +1416,8 @@ function Build-AttributeFragment {
 	}
 
 	# Indexing/FullTextSearch/DataHistory — not for non-stored objects (processor, processor-tabular)
-	if ($context -notin @("processor", "processor-tabular")) {
+	# Поля внешнего источника: индексами чужой таблицы 1С не владеет.
+	if ($context -notin @("processor", "processor-tabular", "eds-field")) {
 		$indexing = "DontIndex"
 		if ($parsed.flags -contains "index") { $indexing = "Index" }
 		if ($parsed.flags -contains "indexadditional") { $indexing = "IndexWithAdditionalOrder" }
@@ -1042,7 +1429,7 @@ function Build-AttributeFragment {
 	}
 
 	$sb.AppendLine("$indent`t</Properties>") | Out-Null
-	$sb.Append("$indent</Attribute>") | Out-Null
+	$sb.Append("$indent</$elemTag>") | Out-Null
 	return $sb.ToString()
 }
 
@@ -1075,7 +1462,7 @@ function Build-TabularSectionFragment {
 
 	# Properties
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $tsName)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $tsName)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $tsSynonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
 	$sb.AppendLine("$indent`t`t<ToolTip/>") | Out-Null
@@ -1149,7 +1536,7 @@ function Build-DimensionFragment {
 
 	$sb.AppendLine("$indent<Dimension uuid=`"$uuid`">") | Out-Null
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $parsed.name)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $parsed.name)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $parsed.synonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
 
@@ -1240,7 +1627,7 @@ function Build-ResourceFragment {
 
 	$sb.AppendLine("$indent<Resource uuid=`"$uuid`">") | Out-Null
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $parsed.name)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $parsed.name)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $parsed.synonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
 
@@ -1313,9 +1700,12 @@ function Build-EnumValueFragment {
 	$sb = New-Object System.Text.StringBuilder
 	$sb.AppendLine("$indent<EnumValue uuid=`"$uuid`">") | Out-Null
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $parsed.name)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $parsed.name)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $parsed.synonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
+	# Цвет значения — свойство формата 2.21 (8.5). Без него добавленное значение
+	# отличалось бы от соседних, написанных платформой.
+	if ($script:isFormat221) { $sb.AppendLine("$indent`t`t<Color>auto</Color>") | Out-Null }
 	$sb.AppendLine("$indent`t</Properties>") | Out-Null
 	$sb.Append("$indent</EnumValue>") | Out-Null
 	return $sb.ToString()
@@ -1343,14 +1733,14 @@ function Build-ColumnFragment {
 	$sb = New-Object System.Text.StringBuilder
 	$sb.AppendLine("$indent<Column uuid=`"$uuid`">") | Out-Null
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $name)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $name)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $synonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
 	$sb.AppendLine("$indent`t`t<Indexing>$indexing</Indexing>") | Out-Null
 	if ($references.Count -gt 0) {
 		$sb.AppendLine("$indent`t`t<References>") | Out-Null
 		foreach ($ref in $references) {
-			$sb.AppendLine("$indent`t`t`t<xr:Item xsi:type=`"xr:MDObjectRef`">$(Esc-Xml (Normalize-MDObjectRef "$ref"))</xr:Item>") | Out-Null
+			$sb.AppendLine("$indent`t`t`t<xr:Item xsi:type=`"xr:MDObjectRef`">$(Esc-XmlText (Normalize-MDObjectRef "$ref"))</xr:Item>") | Out-Null
 		}
 		$sb.AppendLine("$indent`t`t</References>") | Out-Null
 	} else {
@@ -1361,35 +1751,29 @@ function Build-ColumnFragment {
 	return $sb.ToString()
 }
 
-function Build-SimpleChildFragment {
-	param([string]$tagName, [string]$name, [string]$indent)
-	# For Form, Template, Command — just a name wrapper
+function Build-CommandFragment {
+	param([string]$name, [string]$indent)
+	# Команда объекта описывается целиком внутри ChildObjects (отдельного файла у неё нет).
+	# Порядок свойств платформенный — переставлять нельзя.
 	$uuid = New-Guid-String
 	$synonym = Split-CamelCase $name
 	$sb = New-Object System.Text.StringBuilder
-	$sb.AppendLine("$indent<$tagName uuid=`"$uuid`">") | Out-Null
+	$sb.AppendLine("$indent<Command uuid=`"$uuid`">") | Out-Null
 	$sb.AppendLine("$indent`t<Properties>") | Out-Null
-	$sb.AppendLine("$indent`t`t<Name>$(Esc-Xml $name)</Name>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Name>$(Esc-XmlText $name)</Name>") | Out-Null
 	$sb.AppendLine($(Build-MLTextXml "$indent`t`t" "Synonym" $synonym)) | Out-Null
 	$sb.AppendLine("$indent`t`t<Comment/>") | Out-Null
-	# Forms get additional properties
-	if ($tagName -eq "Form") {
-		$sb.AppendLine("$indent`t`t<FormType>Ordinary</FormType>") | Out-Null
-		$sb.AppendLine("$indent`t`t<IncludeHelpInContents>false</IncludeHelpInContents>") | Out-Null
-		$sb.AppendLine("$indent`t`t<UsePurposes/>") | Out-Null
-	}
-	if ($tagName -eq "Template") {
-		$sb.AppendLine("$indent`t`t<TemplateType>SpreadsheetDocument</TemplateType>") | Out-Null
-	}
-	if ($tagName -eq "Command") {
-		$sb.AppendLine("$indent`t`t<Group>FormNavigationPanelGoTo</Group>") | Out-Null
-		$sb.AppendLine("$indent`t`t<Representation>Auto</Representation>") | Out-Null
-		$sb.AppendLine("$indent`t`t<ToolTip/>") | Out-Null
-		$sb.AppendLine("$indent`t`t<Picture/>") | Out-Null
-		$sb.AppendLine("$indent`t`t<Shortcut/>") | Out-Null
-	}
+	$sb.AppendLine("$indent`t`t<Group>FormNavigationPanelGoTo</Group>") | Out-Null
+	$sb.AppendLine("$indent`t`t<CommandParameterType/>") | Out-Null
+	$sb.AppendLine("$indent`t`t<ParameterUseMode>Single</ParameterUseMode>") | Out-Null
+	$sb.AppendLine("$indent`t`t<ModifiesData>false</ModifiesData>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Representation>Auto</Representation>") | Out-Null
+	$sb.AppendLine("$indent`t`t<ToolTip/>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Picture/>") | Out-Null
+	$sb.AppendLine("$indent`t`t<Shortcut/>") | Out-Null
+	$sb.AppendLine("$indent`t`t<OnMainServerUnavalableBehavior>Auto</OnMainServerUnavalableBehavior>") | Out-Null
 	$sb.AppendLine("$indent`t</Properties>") | Out-Null
-	$sb.Append("$indent</$tagName>") | Out-Null
+	$sb.Append("$indent</Command>") | Out-Null
 	return $sb.ToString()
 }
 
@@ -1408,7 +1792,14 @@ function Get-AllChildNames {
 				$propsEl = $gc; break
 			}
 		}
-		if (-not $propsEl) { continue }
+		# Часть детей регистрируется голым текстом, без <Properties>: <Table>Имя</Table>,
+		# <Form>Имя</Form>, <Template>Имя</Template>. Пропуская их, проверка «уже существует»
+		# становилась мёртвой — повторное добавление давало второй такой же узел.
+		if (-not $propsEl) {
+			$n = $child.InnerText.Trim()
+			if ($n) { $names[$n] = $child.LocalName }
+			continue
+		}
 		foreach ($gc in $propsEl.ChildNodes) {
 			if ($gc.NodeType -eq 'Element' -and $gc.LocalName -eq "Name") {
 				$n = $gc.InnerText.Trim()
@@ -1459,6 +1850,9 @@ $script:validChildTypes = @{
 	"Task"                       = @("attributes","tabularSections","forms","templates","commands")
 	"Report"                     = @("attributes","tabularSections","forms","templates","commands")
 	"DataProcessor"              = @("attributes","tabularSections","forms","templates","commands")
+	# Внешняя обработка/отчёт: команд объекта нет — платформа выбрасывает их при сборке.
+	"ExternalDataProcessor"      = @("attributes","tabularSections","forms","templates")
+	"ExternalReport"             = @("attributes","tabularSections","forms","templates")
 	"Enum"                       = @("enumValues","forms","templates","commands")
 	"InformationRegister"        = @("dimensions","resources","attributes","forms","templates","commands")
 	"AccumulationRegister"       = @("dimensions","resources","attributes","forms","templates","commands")
@@ -1466,15 +1860,67 @@ $script:validChildTypes = @{
 	"CalculationRegister"        = @("dimensions","resources","attributes","forms","templates","commands")
 	"DocumentJournal"            = @("columns","forms","templates","commands")
 	"Constant"                   = @("forms")
+	"ExternalDataSource"         = @("tables","functions")
+	"Table"                      = @("fields","forms","templates","commands")
 }
 
-# Canonical child order in ChildObjects
-$script:childOrder = @(
-	"Resource", "Dimension", "Attribute", "TabularSection",
-	"AccountingFlag", "ExtDimensionAccountingFlag",
-	"EnumValue", "Column", "AddressingAttribute", "Recalculation",
-	"Form", "Template", "Command"
-)
+# Порядок групп в <ChildObjects> объекта по виду. Это xs:sequence <Вид>ChildObjects из MDClasses XSD,
+# сверенный выгрузкой платформы: выгрузка сама ставит группы в этот порядок, так что вставка не на место
+# даёт дифф при следующей выгрузке. Единого порядка нет — у документа Form стоит до TabularSection.
+function Get-ObjectChildOrder {
+	return @{
+		"Catalog"                    = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Document"                   = @("Attribute", "Form", "TabularSection", "Template", "Command")
+		"ExchangePlan"               = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ChartOfCharacteristicTypes" = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ChartOfAccounts"            = @("Attribute", "TabularSection", "AccountingFlag", "ExtDimensionAccountingFlag", "Form", "Template", "Command")
+		"ChartOfCalculationTypes"    = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"BusinessProcess"            = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Task"                       = @("Attribute", "TabularSection", "Form", "Template", "AddressingAttribute", "Command")
+		"DataProcessor"              = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"Report"                     = @("Attribute", "TabularSection", "Form", "Template", "Command")
+		"ExternalDataProcessor"      = @("Attribute", "TabularSection", "Form", "Template")
+		"ExternalReport"             = @("Attribute", "TabularSection", "Form", "Template")
+		"Enum"                       = @("EnumValue", "Form", "Template", "Command")
+		"InformationRegister"        = @("Resource", "Attribute", "Dimension", "Form", "Template", "Command")
+		"AccumulationRegister"       = @("Resource", "Attribute", "Dimension", "Form", "Template", "Command")
+		"AccountingRegister"         = @("Dimension", "Resource", "Attribute", "Form", "Template", "Command")
+		"CalculationRegister"        = @("Resource", "Attribute", "Dimension", "Recalculation", "Form", "Template", "Command")
+		"DocumentJournal"            = @("Column", "Form", "Template", "Command")
+		"Table"                      = @("Field", "Form", "Command", "Template")
+		"ExternalDataSource"         = @("Table", "Cube", "Function")
+		"Cube"                       = @("DimensionTable", "Dimension", "Resource", "Form", "Command", "Template")
+		"DimensionTable"             = @("Field", "Form", "Command", "Template")
+		"FilterCriterion"            = @("Form", "Command")
+		"SettingsStorage"            = @("Form", "Template")
+		"TabularSection"             = @("Attribute")
+	}
+}
+
+# Элемент <ChildObjects>, ПЕРЕД которым встаёт новый <tag>; $null — дописать в конец.
+# Сразу за последним элементом своего тега, иначе перед первым элементом группы, идущей
+# по канону вида позже. Вид или тег вне канона — $null, как раньше.
+function Find-ChildAnchor($container, [string]$tag, [string]$objType) {
+	$children = New-Object System.Collections.Generic.List[object]
+	foreach ($c in $container.ChildNodes) { if ($c.NodeType -eq 'Element') { $children.Add($c) } }
+	$lastIdx = -1
+	for ($i = 0; $i -lt $children.Count; $i++) {
+		if ($children[$i].LocalName -ceq $tag) { $lastIdx = $i }
+	}
+	if ($lastIdx -ge 0) {
+		if ($lastIdx + 1 -lt $children.Count) { return $children[$lastIdx + 1] }
+		return $null
+	}
+	$order = (Get-ObjectChildOrder)[$objType]
+	if (-not $order) { return $null }
+	$tagIdx = [array]::IndexOf([string[]]$order, $tag)
+	if ($tagIdx -lt 0) { return $null }
+	$later = @($order | Select-Object -Skip ($tagIdx + 1))
+	foreach ($c in $children) {
+		if ($later -ccontains $c.LocalName) { return $c }
+	}
+	return $null
+}
 
 # Map from DSL child type to XML element name
 $script:childTypeToXmlTag = @{
@@ -1487,6 +1933,260 @@ $script:childTypeToXmlTag = @{
 	"forms"           = "Form"
 	"templates"       = "Template"
 	"commands"        = "Command"
+	"fields"          = "Field"
+	"tables"          = "Table"
+	"functions"       = "Function"
+}
+
+# ============================================================
+# Section 8b: Внешние источники данных — копии из meta-compile
+# ============================================================
+# Тела ниже скопированы из meta-compile и обязаны совпадать с ним байт в байт:
+# таблица внешнего источника собирается в ОТДЕЛЬНЫЙ файл, и формат этого файла
+# должен быть один и тот же, кем бы он ни был создан. Держит check-inline-drift.mjs.
+
+
+# Шапка пространств имён файла таблицы внешнего источника — копия из meta-compile.
+$script:xmlnsDecl = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+
+$script:xml = New-Object System.Text.StringBuilder 32768
+
+function X {
+	param([string]$text)
+	$script:xml.AppendLine($text) | Out-Null
+}
+
+function Emit-MLItems {
+	param([string]$indent, $val)
+	if ($val -is [System.Collections.IDictionary]) {
+		foreach ($k in $val.Keys) {
+			X "$indent<v8:item>"; X "$indent`t<v8:lang>$k</v8:lang>"; X "$indent`t<v8:content>$(Esc-XmlText "$($val[$k])")</v8:content>"; X "$indent</v8:item>"
+		}
+	} elseif ($val -is [System.Management.Automation.PSCustomObject]) {
+		foreach ($p in $val.PSObject.Properties) {
+			X "$indent<v8:item>"; X "$indent`t<v8:lang>$($p.Name)</v8:lang>"; X "$indent`t<v8:content>$(Esc-XmlText "$($p.Value)")</v8:content>"; X "$indent</v8:item>"
+		}
+	} else {
+		X "$indent<v8:item>"; X "$indent`t<v8:lang>ru</v8:lang>"; X "$indent`t<v8:content>$(Esc-XmlText "$val")</v8:content>"; X "$indent</v8:item>"
+	}
+}
+
+function Emit-MLText {
+	param([string]$indent, [string]$tag, $text)
+	# Пусто (null / пустая строка) → самозакрывающийся тег.
+	if (($null -eq $text) -or (($text -is [string]) -and ($text -eq ''))) {
+		X "$indent<$tag/>"
+		return
+	}
+	X "$indent<$tag>"
+	Emit-MLItems "$indent`t" $text
+	X "$indent</$tag>"
+}
+
+
+function Emit-MDRefList {
+	param([string]$indent, [string]$tag, $items)
+	$arr = @(); if ($items) { $arr = @($items) }
+	if ($arr.Count -gt 0) {
+		X "$indent<$tag>"
+		foreach ($it in $arr) { X "$indent`t<xr:Item xsi:type=`"xr:MDObjectRef`">$(Esc-XmlText (Normalize-MDObjectRef "$it"))</xr:Item>" }
+		X "$indent</$tag>"
+	} else {
+		X "$indent<$tag/>"
+	}
+}
+
+function Get-EdsTables {
+	param($val)
+	$tables = [ordered]@{}
+	if (-not $val) { return $tables }
+	function New-EdsTableEntry { param($v)
+		if ($v -is [array] -or $v.GetType().Name -eq 'Object[]') {
+			return @{ props = $null; fields = @($v) }
+		}
+		$f = if ($null -ne $v.fields) { @($v.fields) } elseif ($null -ne $v.columns) { @($v.columns) } else { @() }
+		return @{ props = $v; fields = $f }
+	}
+	if ($val -is [array] -or $val.GetType().Name -eq 'Object[]') {
+		foreach ($t in $val) { $tables["$($t.name)"] = New-EdsTableEntry $t }
+	} else {
+		$val.PSObject.Properties | ForEach-Object { $tables[$_.Name] = New-EdsTableEntry $_.Value }
+	}
+	return $tables
+}
+
+function Get-EdsFieldRef {
+	param([string]$srcName, [string]$tableName, [string]$fieldName)
+	if (-not $fieldName) { return "" }
+	if ($fieldName -like "ExternalDataSource.*") { return $fieldName }
+	return "ExternalDataSource.$srcName.Table.$tableName.Field.$fieldName"
+}
+
+function Emit-EdsFieldRefList {
+	param([string]$indent, [string]$tag, $names, [string]$srcName, [string]$tableName)
+	$list = @($names | Where-Object { $_ })
+	if ($list.Count -eq 0) { X "$indent<$tag/>"; return }
+	X "$indent<$tag>"
+	foreach ($n in $list) {
+		X "$indent`t<xr:Field>$(Esc-XmlText (Get-EdsFieldRef $srcName $tableName "$n"))</xr:Field>"
+	}
+	X "$indent</$tag>"
+}
+
+function Emit-EdsFieldRefScalar {
+	param([string]$indent, [string]$tag, $name, [string]$srcName, [string]$tableName)
+	if (-not $name) { X "$indent<$tag/>"; return }
+	X "$indent<$tag>$(Esc-XmlText (Get-EdsFieldRef $srcName $tableName "$name"))</$tag>"
+}
+
+function Emit-EdsFunction {
+	# $typeXml — уже собранный узел <Type> возвращаемого значения: его рендерит вызывающий навык
+	# своим эмиттером типов. Так тело функции не зависит от того, какой это навык.
+	param([string]$indent, [string]$fnName, $val, [string]$typeXml)
+	$expr = ""
+	$returns = ""
+	$returnValue = $true
+	$fnSynonym = $null
+	$fnComment = ""
+	if ($val -is [string]) {
+		$expr = "$val"
+	} else {
+		$expr = if ($val.expression) { "$($val.expression)" } elseif ($val.expressionInDataSource) { "$($val.expressionInDataSource)" } else { "" }
+		$returns = if ($val.returns) { "$($val.returns)" } elseif ($val.returnType) { "$($val.returnType)" } else { "" }
+		if ($null -ne $val.returnValue) { $returnValue = ($val.returnValue -eq $true) }
+		$fnSynonym = $val.synonym
+		$fnComment = if ($val.comment) { "$($val.comment)" } else { "" }
+	}
+	if (-not $expr) {
+		Write-Error "Функция '$fnName' внешнего источника данных: не задано выражение (ключ expression)."
+		exit 1
+	}
+	$uuid = New-Guid-String
+	X "$indent<Function uuid=`"$uuid`">"
+	X "$indent`t<Properties>"
+	X "$indent`t`t<Name>$(Esc-XmlText $fnName)</Name>"
+	Emit-MLText "$indent`t`t" "Synonym" $fnSynonym
+	if ($fnComment) { X "$indent`t`t<Comment>$(Esc-XmlText $fnComment)</Comment>" } else { X "$indent`t`t<Comment/>" }
+	X "$indent`t`t<ReturnValue>$(if ($returnValue) { 'true' } else { 'false' })</ReturnValue>"
+	if ($returnValue -and $typeXml) {
+		X $typeXml.TrimEnd("`r", "`n")
+	} else {
+		X "$indent`t`t<Type/>"
+	}
+	X "$indent`t`t<ExpressionInDataSource>$(Esc-XmlText $expr)</ExpressionInDataSource>"
+	X "$indent`t</Properties>"
+	X "$indent</Function>"
+}
+
+function Emit-EdsTableProperties {
+	# $charXml и $defaultFormsXml — уже собранные блоки <Characteristics> и четыре слота
+	# <Default*Form>: их рендерит вызывающий навык своим эмиттером. Так тело не зависит
+	# от хелперов конкретного навыка и годится для копирования (check-inline-drift).
+	param([string]$indent, [string]$srcName, [string]$tableName, $t, [string]$charXml, [string]$defaultFormsXml)
+	$i = $indent
+	$tblSynonym = if ($t -and $null -ne $t.synonym) { $t.synonym } else { Split-CamelCase $tableName }
+	X "$i<Name>$(Esc-XmlText $tableName)</Name>"
+	Emit-MLText $i "Synonym" $tblSynonym
+	if ($t -and $t.comment) { X "$i<Comment>$(Esc-XmlText "$($t.comment)")</Comment>" } else { X "$i<Comment/>" }
+
+	$tableType = if ($t -and $t.tableType) { Normalize-EnumValue "TableType" "$($t.tableType)" } else { "Table" }
+	X "$i<TableType>$tableType</TableType>"
+	# Имя в источнике по умолчанию равно имени объекта — так поступает и платформа.
+	$nids = if ($t -and $t.nameInDataSource) { "$($t.nameInDataSource)" } elseif ($tableType -eq "Expression") { "" } else { $tableName }
+	if ($nids) { X "$i<NameInDataSource>$(Esc-XmlText $nids)</NameInDataSource>" } else { X "$i<NameInDataSource/>" }
+	$expr = if ($t -and $t.expressionInDataSource) { "$($t.expressionInDataSource)" } elseif ($t -and $t.expression) { "$($t.expression)" } else { "" }
+	if ($expr) { X "$i<ExpressionInDataSource>$(Esc-XmlText $expr)</ExpressionInDataSource>" } else { X "$i<ExpressionInDataSource/>" }
+	$dataType = if ($t -and $t.tableDataType) { Normalize-EnumValue "TableDataType" "$($t.tableDataType)" } else { "NonobjectData" }
+	X "$i<TableDataType>$dataType</TableDataType>"
+
+	Emit-EdsFieldRefList $i "KeyFields" $(if ($t) { $t.keyFields } else { $null }) $srcName $tableName
+	Emit-EdsFieldRefScalar $i "PresentationField" $(if ($t) { $t.presentationField } else { $null }) $srcName $tableName
+	Emit-EdsFieldRefScalar $i "ParentField" $(if ($t) { $t.parentField } else { $null }) $srcName $tableName
+	# Признака незаполненного родителя отдельным узлом нет: NULL против «Заданного значения»
+	# различаются формой самого значения (xsi:nil против типизированного).
+	# ВАЖНО: платформа при загрузке XML сбрасывает заданное значение в пустую строку — проверено
+	# на её собственной выгрузке. Задать его можно только интерактивно, поэтому дефолт у таблицы
+	# с полем родителя — пустая строка (как после загрузки), а без него — nil.
+	if ($t -and $t.parentField) { X "$i<UnfilledParentValue xsi:type=`"xs:string`"/>" }
+	else { X "$i<UnfilledParentValue xsi:nil=`"true`"/>" }
+	if ($charXml) { X $charXml.TrimEnd("`r", "`n") } else { X "$i<Characteristics/>" }
+
+	X "$i<UseStandardCommands>$(if ($t -and $t.useStandardCommands -eq $false) { 'false' } else { 'true' })</UseStandardCommands>"
+	X "$i<QuickChoice>$(if ($t -and $t.quickChoice -eq $true) { 'true' } else { 'false' })</QuickChoice>"
+	# Ввод по строке: ключа нет → выводим из поля представления (так делает платформа при загрузке).
+	# Явный список, в том числе пустой, уважаем как есть — отсюда presence-aware проверка.
+	$ibsGiven = ($t -and $t.PSObject -and $t.PSObject.Properties -and ($t.PSObject.Properties.Name -contains 'inputByString'))
+	$ibs = if ($ibsGiven) { $t.inputByString } elseif ($t -and $t.presentationField) { @($t.presentationField) } else { $null }
+	Emit-EdsFieldRefList $i "InputByString" $ibs $srcName $tableName
+	X "$i<CreateOnInput>$(if ($x = Get-EnumField $t 'createOnInput' 'CreateOnInput') { $x } else { 'Auto' })</CreateOnInput>"
+	X "$i<SearchStringModeOnInputByString>$(if ($x = Get-EnumField $t 'searchStringModeOnInputByString' 'SearchStringModeOnInputByString') { $x } else { 'Begin' })</SearchStringModeOnInputByString>"
+	X "$i<ChoiceDataGetModeOnInputByString>$(if ($t -and $t.choiceDataGetModeOnInputByString) { Normalize-EnumValue "ChoiceDataGetModeOnInputByString" "$($t.choiceDataGetModeOnInputByString)" } else { 'Directly' })</ChoiceDataGetModeOnInputByString>"
+	X "$i<ChoiceHistoryOnInput>$(if ($x = Get-EnumField $t 'choiceHistoryOnInput' 'ChoiceHistoryOnInput') { $x } else { 'Auto' })</ChoiceHistoryOnInput>"
+
+	# Пустая строка — четыре слота всё равно обязаны быть: в свойствах таблицы их ровно 38.
+	if ($defaultFormsXml) { X $defaultFormsXml.TrimEnd("`r", "`n") }
+	else { foreach ($formTag in @("DefaultObjectForm","DefaultRecordForm","DefaultListForm","DefaultChoiceForm")) { X "$i<$formTag/>" } }
+	foreach ($presTag in @("ObjectPresentation","ExtendedObjectPresentation","RecordPresentation",
+		"ExtendedRecordPresentation","ListPresentation","ExtendedListPresentation","Explanation")) {
+		$key = $presTag.Substring(0,1).ToLower() + $presTag.Substring(1)
+		Emit-MLText $i $presTag $(if ($t) { $t.$key } else { $null })
+	}
+	X "$i<IncludeHelpInContents>$(if ($t -and $t.includeHelpInContents -eq $true) { 'true' } else { 'false' })</IncludeHelpInContents>"
+	X "$i<ReadOnly>$(if ($t -and $t.readOnly -eq $true) { 'true' } else { 'false' })</ReadOnly>"
+	X "$i<TransactionsIsolationLevel>$(if ($t -and $t.transactionsIsolationLevel) { Normalize-EnumValue "TransactionsIsolationLevel" "$($t.transactionsIsolationLevel)" } else { 'Auto' })</TransactionsIsolationLevel>"
+	Emit-EdsFieldRefScalar $i "DataVersionField" $(if ($t) { $t.dataVersionField } else { $null }) $srcName $tableName
+	X "$i<EditType>$(if ($x = Get-EnumField $t 'editType' 'EditType') { $x } else { 'InDialog' })</EditType>"
+	Emit-MDRefList $i "BasedOn" $(if ($t) { $t.basedOn } else { $null })
+	Emit-EdsFieldRefList $i "DataLockFields" $(if ($t) { $t.dataLockFields } else { $null }) $srcName $tableName
+	X "$i<DataLockControlMode>$(if ($t -and $t.dataLockControlMode) { "$($t.dataLockControlMode)" } else { 'Automatic' })</DataLockControlMode>"
+}
+
+function Build-EdsTableXml {
+	# $fieldsXml, $charXml, $defaultFormsXml — уже собранные узлы: их рендерит вызывающий навык
+	# своими эмиттерами. Так тело функции не зависит от того, какой это навык.
+	param([string]$srcName, [string]$tableName, $entry, [string]$fieldsXml, [string]$charXml, [string]$defaultFormsXml)
+	$before = $script:xml.Length
+
+	$tableUuid = New-Guid-String
+	X '<?xml version="1.0" encoding="UTF-8"?>'
+	X "<MetaDataObject $($script:xmlnsDecl) version=`"$($script:formatVersion)`">"
+	X "`t<Table uuid=`"$tableUuid`">"
+	# InternalInfo у таблицы эмитится здесь, а не через $script:generatedTypes: имя элемента
+	# трёхчастное (Префикс.Источник.Таблица), общая карта такой формы не знает.
+	X "`t`t<InternalInfo>"
+	foreach ($pair in @(
+		@("ExternalDataSourceTableManager",       "Manager"),
+		@("ExternalDataSourceTableObject",        "Object"),
+		@("ExternalDataSourceTableRef",           "Ref"),
+		@("ExternalDataSourceTableList",          "List"),
+		@("ExternalDataSourceTableRecord",        "Record"),
+		@("ExternalDataSourceTableRecordSet",     "RecordSet"),
+		@("ExternalDataSourceTableRecordKey",     "RecordKey"),
+		@("ExternalDataSourceTableRecordManager", "RecordManager"))) {
+		X "`t`t`t<xr:GeneratedType name=`"$($pair[0]).$srcName.$tableName`" category=`"$($pair[1])`">"
+		X "`t`t`t`t<xr:TypeId>$(New-Guid-String)</xr:TypeId>"
+		X "`t`t`t`t<xr:ValueId>$(New-Guid-String)</xr:ValueId>"
+		X "`t`t`t</xr:GeneratedType>"
+	}
+	X "`t`t</InternalInfo>"
+
+	X "`t`t<Properties>"
+	Emit-EdsTableProperties "`t`t`t" $srcName $tableName $entry.props $charXml $defaultFormsXml
+	X "`t`t</Properties>"
+
+	if ($fieldsXml) {
+		X "`t`t<ChildObjects>"
+		X $fieldsXml.TrimEnd("`r", "`n")
+		X "`t`t</ChildObjects>"
+	} else {
+		X "`t`t<ChildObjects/>"
+	}
+	X "`t</Table>"
+	X "</MetaDataObject>"
+
+	$chunk = $script:xml.ToString($before, $script:xml.Length - $before)
+	[void]$script:xml.Remove($before, $script:xml.Length - $before)
+	return $chunk
 }
 
 # ============================================================
@@ -1587,8 +2287,7 @@ function Convert-InlineToDefinition([string]$operation, [string]$value) {
 		foreach ($item in $items) {
 			$dotIdx = $item.IndexOf('.')
 			if ($dotIdx -le 0) {
-				Warn "Invalid ts-attribute format (expected TSName.AttrDef): $item"
-				continue
+				Die "Invalid ts-attribute format (expected TSName.AttrDef): $item"
 			}
 			$tsName = $item.Substring(0, $dotIdx).Trim()
 			$rest = $item.Substring($dotIdx + 1).Trim()
@@ -1614,8 +2313,7 @@ function Convert-InlineToDefinition([string]$operation, [string]$value) {
 					foreach ($elemDef in $tsGroups[$tsName]) {
 						$colonIdx = $elemDef.IndexOf(':')
 						if ($colonIdx -le 0) {
-							Warn "Invalid modify format (expected Name: key=val): $elemDef"
-							continue
+							Die "Invalid modify format (expected Name: key=val): $elemDef"
 						}
 						$elemName = $elemDef.Substring(0, $colonIdx).Trim()
 						$changesPart = $elemDef.Substring($colonIdx + 1).Trim()
@@ -1725,7 +2423,7 @@ function Convert-InlineToDefinition([string]$operation, [string]$value) {
 						$v = $kv.Substring($eqIdx + 1).Trim()
 						$propsObj | Add-Member -NotePropertyName $k -NotePropertyValue $v
 					} else {
-						Warn "Invalid property format (expected Key=Value): $kv"
+						Die "Invalid property format (expected Key=Value): $kv"
 					}
 				}
 				$modifyObj = New-Object PSCustomObject
@@ -1738,8 +2436,7 @@ function Convert-InlineToDefinition([string]$operation, [string]$value) {
 				foreach ($elemDef in $elemDefs) {
 					$colonIdx = $elemDef.IndexOf(':')
 					if ($colonIdx -le 0) {
-						Warn "Invalid modify format (expected Name: key=val): $elemDef"
-						continue
+						Die "Invalid modify format (expected Name: key=val): $elemDef"
 					}
 					$elemName = $elemDef.Substring(0, $colonIdx).Trim()
 					$changesPart = $elemDef.Substring($colonIdx + 1).Trim()
@@ -1771,8 +2468,9 @@ function Convert-InlineToDefinition([string]$operation, [string]$value) {
 # ============================================================
 
 function Find-InsertionPoint {
-	param([string]$xmlTag, $parsed)
+	param([string]$xmlTag, $parsed, [string]$kind = "")
 	# Returns $refNode for Insert-BeforeElement (null = append)
+	# $kind — вид владельца контейнера для канона (по умолчанию вид объекта; для ТЧ — TabularSection)
 
 	if (-not $script:childObjectsEl) { return $null }
 
@@ -1780,41 +2478,24 @@ function Find-InsertionPoint {
 	if ($parsed.after) {
 		$afterEl = Find-ElementByName $script:childObjectsEl $xmlTag $parsed.after
 		if ($afterEl) {
-			# Insert after = insert before the next element sibling
+			# Insert after = insert before the next element sibling, какого бы вида он ни был:
+			# за последним элементом группы идёт уже следующая группа, а не конец ChildObjects
 			$next = $afterEl.NextSibling
 			while ($next -and $next.NodeType -ne 'Element') { $next = $next.NextSibling }
-			if ($next -and $next.LocalName -eq $xmlTag) { return $next }
-			return $null  # append
+			return $next
 		} else {
-			Warn "after='$($parsed.after)': element '$($parsed.after)' not found in $xmlTag, appending"
+			Warn "after='$($parsed.after)': element '$($parsed.after)' not found in $xmlTag, using default position"
 		}
 	}
 	if ($parsed.before) {
 		$beforeEl = Find-ElementByName $script:childObjectsEl $xmlTag $parsed.before
 		if ($beforeEl) { return $beforeEl }
-		Warn "before='$($parsed.before)': element '$($parsed.before)' not found in $xmlTag, appending"
+		Warn "before='$($parsed.before)': element '$($parsed.before)' not found in $xmlTag, using default position"
 	}
 
-	# Default: after last element of this type, or in canonical position
-	$lastOfType = Find-LastElementOfType $script:childObjectsEl $xmlTag
-	if ($lastOfType) {
-		$next = $lastOfType.NextSibling
-		while ($next -and $next.NodeType -ne 'Element') { $next = $next.NextSibling }
-		return $next  # null means append (which is correct: after last of type)
-	}
-
-	# No elements of this type yet — find canonical position
-	$tagIdx = [array]::IndexOf($script:childOrder, $xmlTag)
-	if ($tagIdx -lt 0) { return $null }
-
-	# Find first element of any type that comes AFTER in the canonical order
-	for ($i = $tagIdx + 1; $i -lt $script:childOrder.Count; $i++) {
-		$nextTag = $script:childOrder[$i]
-		$firstOfNext = Find-FirstElementOfType $script:childObjectsEl $nextTag
-		if ($firstOfNext) { return $firstOfNext }
-	}
-
-	return $null  # append at end
+	# Default: after last element of this type, or in canonical position of the owner kind
+	if (-not $kind) { $kind = $script:objType }
+	return Find-ChildAnchor $script:childObjectsEl $xmlTag $kind
 }
 
 function Process-Add($addDef) {
@@ -1828,21 +2509,22 @@ function Process-Add($addDef) {
 		$childType = Resolve-ChildTypeKey $rawKey
 
 		if (-not $childType) {
-			Warn "Unknown add child type: $rawKey"
-			return
+			Die "Unknown add child type: $rawKey"
 		}
 
-		# Validate allowed
-		$allowed = $script:validChildTypes[$script:objType]
-		if ($allowed -and $childType -notin $allowed) {
-			Warn "$childType not allowed for $($script:objType), skipping"
-			return
+		# Validate allowed. Проверяем НАЛИЧИЕ ключа, а не истинность списка: пустой список
+		# ($script:objType без допустимых детей) трактовался как «ограничений нет», и чужой
+		# ребёнок молча записывался в объект.
+		if ($script:validChildTypes.ContainsKey($script:objType)) {
+			$allowed = $script:validChildTypes[$script:objType]
+			if ($childType -notin $allowed) {
+				Die "$childType not allowed for $($script:objType)"
+			}
 		}
 
 		$xmlTag = $script:childTypeToXmlTag[$childType]
 		if (-not $xmlTag) {
-			Warn "No XML tag mapping for $childType"
-			return
+			Die "No XML tag mapping for $childType"
 		}
 
 		Ensure-ChildObjectsOpen
@@ -1867,6 +2549,101 @@ function Process-Add($addDef) {
 					Info "Added attribute: $($parsed.name)"
 					$script:addCount++
 					$existingNames[$parsed.name] = "Attribute"
+				}
+			}
+			"tables" {
+				# Таблица внешнего источника — ОТДЕЛЬНЫЙ файл рядом с файлом источника плюс имя
+				# в его ChildObjects. Единственная операция навыка, создающая файл: без неё
+				# добавить таблицу в существующий источник было нечем (пересборка источника
+				# целиком меняет его uuid и оставляет файлы выброшенных таблиц сиротами).
+				$srcDir = Join-Path (Split-Path -Parent $resolvedPath) $script:objName
+				$tablesDir = Join-Path $srcDir "Tables"
+				foreach ($entry in (Get-EdsTables $items).GetEnumerator()) {
+					$tblName = $entry.Key
+					# Характеристики и слоты форм точечным добавлением не задаются: первые требуют
+					# эмиттера характеристик (живёт в meta-compile), вторые назначает form-add при
+					# добавлении формы. Молча проглотить ключ нельзя — модель решит, что он сработал.
+					$tv = $entry.Value.props
+					if ($tv) {
+						foreach ($k in @("characteristics","defaultObjectForm","defaultRecordForm","defaultListForm","defaultChoiceForm")) {
+							if ($tv.$k) {
+								Die "Ключ '$k' не поддержан при добавлении таблицы: форму назначает навык form-add, характеристики — навык meta-compile."
+							}
+						}
+					}
+					if (-not $tblName) { continue }
+					if ($existingNames.ContainsKey($tblName)) {
+						Warn "Table '$tblName' already exists, skipping"
+						continue
+					}
+					$tablePath = Join-Path $tablesDir "$tblName.xml"
+					if (Test-PendingOrFile $tablePath) {
+						Warn "Файл таблицы уже существует: $tablePath — пропускаю"
+						continue
+					}
+					$fieldParts = @()
+					foreach ($f in @($entry.Value.fields)) {
+						$fieldParts += Build-AttributeFragment (Parse-AttributeShorthand $f) "eds-field" "`t`t`t" "Field"
+					}
+					$fieldsXml = $fieldParts -join "`r`n"
+					$tableXml = Build-EdsTableXml $script:objName $tblName $entry.Value $fieldsXml "" ""
+					$script:pendingWrites[$tablePath] = $tableXml.TrimEnd("`r", "`n")
+					$fragmentXml = "$indent<Table>$(Esc-XmlText $tblName)</Table>"
+					$nodes = Import-Fragment $fragmentXml
+					$refNode = Find-InsertionPoint "Table" @{ name = $tblName }
+					foreach ($node in $nodes) {
+						Insert-BeforeElement $script:childObjectsEl $node $refNode $indent
+					}
+					Info "Added table: $tblName ($tablePath)"
+					$script:addCount++
+					$existingNames[$tblName] = "Table"
+				}
+			}
+			"functions" {
+				# Функция живёт узлом внутри файла источника — отдельного файла у неё нет.
+				foreach ($prop in $items.PSObject.Properties) {
+					$fnName = $prop.Name
+					if ($existingNames.ContainsKey($fnName)) {
+						Warn "Function '$fnName' already exists, skipping"
+						continue
+					}
+					$before = $script:xml.Length
+					$fnVal = $prop.Value
+					$fnReturns = if ($fnVal -is [string]) { "String" }
+					             elseif ($fnVal.returns) { "$($fnVal.returns)" }
+					             elseif ($fnVal.returnType) { "$($fnVal.returnType)" } else { "String" }
+					$fnNoValue = (-not ($fnVal -is [string])) -and ($null -ne $fnVal.returnValue) -and ($fnVal.returnValue -ne $true)
+					$fnTypeXml = if ($fnNoValue) { "" } else { Build-ValueTypeXml "$indent`t`t" $fnReturns }
+					Emit-EdsFunction $indent $fnName $fnVal $fnTypeXml
+					$fragmentXml = $script:xml.ToString($before, $script:xml.Length - $before)
+					[void]$script:xml.Remove($before, $script:xml.Length - $before)
+					$nodes = Import-Fragment $fragmentXml
+					$refNode = Find-InsertionPoint "Function" @{ name = $fnName }
+					foreach ($node in $nodes) {
+						Insert-BeforeElement $script:childObjectsEl $node $refNode $indent
+					}
+					Info "Added function: $fnName"
+					$script:addCount++
+					$existingNames[$fnName] = "Function"
+				}
+			}
+			"fields" {
+				# Поле таблицы внешнего источника: тот же парсер реквизита, свой тег и контекст.
+				foreach ($item in $items) {
+					$parsed = Parse-AttributeShorthand $item
+					if ($existingNames.ContainsKey($parsed.name)) {
+						Warn "Field '$($parsed.name)' already exists, skipping"
+						continue
+					}
+					$fragmentXml = Build-AttributeFragment $parsed "eds-field" $indent "Field"
+					$nodes = Import-Fragment $fragmentXml
+					$refNode = Find-InsertionPoint "Field" $parsed
+					foreach ($node in $nodes) {
+						Insert-BeforeElement $script:childObjectsEl $node $refNode $indent
+					}
+					Info "Added field: $($parsed.name)"
+					$script:addCount++
+					$existingNames[$parsed.name] = "Field"
 				}
 			}
 			"tabularSections" {
@@ -1960,24 +2737,39 @@ function Process-Add($addDef) {
 					$existingNames[$colName] = "Column"
 				}
 			}
-			{ $_ -in @("forms","templates","commands") } {
-				$tagMap = @{ "forms" = "Form"; "templates" = "Template"; "commands" = "Command" }
-				$tag = $tagMap[$childType]
+			{ $_ -in @("forms","templates") } {
+				# Форма и макет регистрируются голым текстом (<Form>Имя</Form>) и требуют ещё и
+				# собственных файлов. И то и другое делают form-add / add-template — дублировать
+				# эту ответственность здесь нельзя: получится висячая регистрация без файла.
+				$skillName = if ($childType -eq "forms") { "form-add" } else { "add-template" }
+				$whatName  = if ($childType -eq "forms") { "Форму" } else { "Макет" }
+				Die "$whatName добавляет навык $skillName (он создаёт и файл, и запись в ChildObjects). meta-edit этого не делает."
+			}
+			"commands" {
 				foreach ($item in $items) {
 					$itemName = if ($item -is [string]) { "$item" } else { "$($item.name)" }
 					if ($existingNames.ContainsKey($itemName)) {
-						Warn "$tag '$itemName' already exists, skipping"
+						Warn "Command '$itemName' already exists, skipping"
 						continue
 					}
-					$fragmentXml = Build-SimpleChildFragment $tag $itemName $indent
+					$reservedCmd = (Get-ReservedCommandNames)[$script:objType]
+					if ($reservedCmd -and ($reservedCmd -contains $itemName)) {
+						Die "meta-edit: имя команды '$itemName' совпадает со стандартной командой объекта '$($script:objType)'. Выберите другое имя."
+					}
+					# У команды есть модуль обработчика (Commands/<Имя>/Ext/CommandModule.bsl) — в корпусе
+					# он есть у всех команд без исключения. Пишем ту же заготовку, что и meta-compile.
+					$cmdExtDir = Join-Path (Join-Path (Join-Path (Join-Path (Split-Path -Parent $resolvedPath) $script:objName) "Commands") $itemName) "Ext"
+					$cmdModPath = Join-Path $cmdExtDir "CommandModule.bsl"
+					$script:pendingWrites[$cmdModPath] = "&НаКлиенте`r`nПроцедура ОбработкаКоманды(ПараметрКоманды, ПараметрыВыполненияКоманды)`r`n`r`n`t// Вставьте обработчик команды.`r`n`r`nКонецПроцедуры`r`n"
+					$fragmentXml = Build-CommandFragment $itemName $indent
 					$nodes = Import-Fragment $fragmentXml
-					$refNode = Find-InsertionPoint $tag @{ after = ""; before = "" }
+					$refNode = Find-InsertionPoint "Command" @{ after = ""; before = "" }
 					foreach ($node in $nodes) {
 						Insert-BeforeElement $script:childObjectsEl $node $refNode $indent
 					}
-					Info "Added $($tag.ToLower()): $itemName"
+					Info "Added command: $itemName ($cmdModPath)"
 					$script:addCount++
-					$existingNames[$itemName] = $tag
+					$existingNames[$itemName] = "Command"
 				}
 			}
 		}
@@ -1995,12 +2787,16 @@ function Process-Remove($removeDef) {
 		$childType = Resolve-ChildTypeKey $rawKey
 
 		if (-not $childType) {
-			Warn "Unknown remove child type: $rawKey"
-			return
+			Die "Unknown remove child type: $rawKey"
 		}
 		if ($childType -eq "properties") {
-			Warn "Cannot remove properties — use modify instead"
-			return
+			Die "Cannot remove properties — use modify instead"
+		}
+		if ($childType -in @("forms","templates")) {
+			# Снять регистрацию мало — надо удалить и файлы; это делают remove-form / remove-template.
+			$skillName = if ($childType -eq "forms") { "remove-form" } else { "remove-template" }
+			$whatName  = if ($childType -eq "forms") { "Форму" } else { "Макет" }
+			Die "$whatName удаляет навык $skillName (он убирает и файлы, и запись в ChildObjects). meta-edit этого не делает."
 		}
 
 		$xmlTag = $script:childTypeToXmlTag[$childType]
@@ -2032,8 +2828,20 @@ function Process-Remove($removeDef) {
 
 function Modify-Properties($propsDef) {
 	$propsDef.PSObject.Properties | ForEach-Object {
-		$propName = $_.Name
+		$propName = Get-CanonicalName $_.Name ($script:knownObjectProps + @($script:complexPropertyMap.Keys))
 		$propValue = $_.Value
+
+		# Свойство-список: наличие элемента решает Get-ListPropertyElement (тип объекта, заимствование)
+		if ($script:complexPropertyMap.ContainsKey($propName)) {
+			$valuesList = @()
+			if ($propValue -is [array]) {
+				$valuesList = @($propValue | ForEach-Object { "$_" })
+			} else {
+				$valuesList = @("$propValue" -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+			}
+			Set-ComplexProperty $propName $valuesList
+			return
+		}
 
 		# Find the property element in Properties
 		$propEl = $null
@@ -2055,20 +2863,24 @@ function Modify-Properties($propsDef) {
 				Insert-PropertyInOrder $script:propertiesEl $newNodes[0] $null $propName
 				$propEl = $newNodes[0]
 			} else {
-				Warn "Property '$propName': could not create element"
-				return
+				Die "Property '$propName': could not create element"
 			}
 		}
 
-		# Complex property: Owners, RegisterRecords, BasedOn, InputByString
-		if ($script:complexPropertyMap.ContainsKey($propName)) {
-			$valuesList = @()
-			if ($propValue -is [array]) {
-				$valuesList = @($propValue | ForEach-Object { "$_" })
-			} else {
-				$valuesList = @("$propValue" -split ';;' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+		# Многоязычная строка (синоним, представления, пояснение…): простой текст в таком теге платформа
+		# не загружает. Узел заменяется целиком — и пустой, и уже заполненный.
+		if ($script:localStringObjectProps -ccontains $propName) {
+			$mlNodes = Import-Fragment (Build-MLTextXml (Get-ChildIndent $script:propertiesEl) $propName $propValue)
+			if ($mlNodes.Count -gt 0) {
+				# InsertBefore+RemoveChild сохраняет whitespace позиции (как Set-AttrPropertyElement)
+				$script:propertiesEl.InsertBefore($mlNodes[0], $propEl) | Out-Null
+				$script:propertiesEl.RemoveChild($propEl) | Out-Null
+				$shown = if ($propValue -is [System.Management.Automation.PSCustomObject]) { ($propValue.PSObject.Properties | ForEach-Object { "$($_.Name): $($_.Value)" }) -join '; ' }
+					elseif ($propValue -is [System.Collections.IDictionary]) { ($propValue.Keys | ForEach-Object { "${_}: $($propValue[$_])" }) -join '; ' }
+					else { "$propValue" }
+				Info "Modified property: $propName = $shown"
+				$script:modifyCount++
 			}
-			Set-ComplexProperty $propName $valuesList
 			return
 		}
 
@@ -2104,17 +2916,73 @@ function Modify-Properties($propsDef) {
 			exit 1
 		}
 
+		# Значение свойства-перечисления приводим к канону (как это делает meta-compile): иначе
+		# в XML уезжает то, что дала модель, и платформа отвергает выгрузку уже при загрузке.
+		# Неизвестное свойство функция пропускает как есть, неизвестное значение — отвергает.
+		# QuickChoice константы и общего реквизита — перечисление: булево → Use/DontUse, как в meta-compile.
+		$qcb = if ($propName -ceq 'QuickChoice' -and $script:validEnumValues.ContainsKey("$script:objType.QuickChoice")) { ConvertFrom-QuickChoiceBool $propValue } else { $null }
+		$valueStr = if ($qcb) { $qcb } else { Normalize-EnumValue $propName $valueStr }
+
 		$propEl.InnerText = $valueStr
 		Info "Modified property: $propName = $valueStr"
 		$script:modifyCount++
+
+		# Код/номер нулевой длины не может стоять во вводе по строке: платформа отвергает загрузку —
+		# «Указано неверное поле для ввода по строке: Код/Номер». Убираем поле вслед за длиной.
+		if (($propName -ceq 'CodeLength' -or $propName -ceq 'NumberLength') -and $valueStr.Trim() -eq '0') {
+			$stdAttr = if ($propName -ceq 'CodeLength') { 'Code' } else { 'Number' }
+			$ibEl = $null
+			foreach ($child in $script:propertiesEl.ChildNodes) {
+				if ($child.NodeType -eq 'Element' -and $child.LocalName -eq 'InputByString') { $ibEl = $child; break }
+			}
+			if ($ibEl) {
+				$cur = @($ibEl.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.InnerText.Trim() })
+				$keep = @($cur | Where-Object { $_ -cnotmatch "\.StandardAttribute\.$stdAttr$" })
+				if ($keep.Count -lt $cur.Count) {
+					Set-ComplexProperty "InputByString" $keep
+					Info "InputByString: removed StandardAttribute.$stdAttr ($propName=0 — a zero-length field cannot be an input-by-string field)"
+				}
+			}
+		}
 	}
+}
+
+# Значение перечисления из поля объекта DSL (реквизит, таблица внешнего источника…). Не задано —
+# только null или пустая строка: false — значение, его проверит список, а не молча заменит умолчание.
+function Get-EnumField($obj, [string]$field, [string]$propName) {
+	if ($null -eq $obj) { return "" }
+	$v = $obj.$field
+	if ($null -eq $v -or "$v" -eq '') { return "" }
+	return (Normalize-EnumValue $propName "$v")
+}
+
+# QuickChoice-перечисление (реквизит, константа, общий реквизит) из булева: true → Use, false → DontUse;
+# строки "true"/"false" — так же (строчная форма). Иначе $null — значение идёт обычной нормализацией.
+function ConvertFrom-QuickChoiceBool($v) {
+	if ($v -is [bool]) { return $(if ($v) { 'Use' } else { 'DontUse' }) }
+	if ("$v" -eq 'true') { return 'Use' }
+	if ("$v" -eq 'false') { return 'DontUse' }
+	return $null
+}
+
+# Значение свойства реквизита/измерения/ресурса/ТЧ. QuickChoice здесь — перечисление (Auto/Use/
+# DontUse): булево — Use/DontUse, как в meta-compile (литерал true/false платформа не примет). Список —
+# контекстный («Attribute.QuickChoice», «TabularSection.Use»), если он есть, иначе общий по свойству.
+function Get-ChildPropValue([string]$xmlTag, [string]$changeProp, $changeValue) {
+	if ($changeProp -ceq 'QuickChoice') {
+		$qcb = ConvertFrom-QuickChoiceBool $changeValue
+		if ($qcb) { return $qcb }
+	}
+	if ($changeValue -is [bool]) { return $(if ($changeValue) { "true" } else { "false" }) }
+	$ctx = if ($xmlTag -ceq 'TabularSection') { 'TabularSection' } else { 'Attribute' }
+	$enumKey = if ($script:validEnumValues.ContainsKey("$ctx.$changeProp")) { "$ctx.$changeProp" } else { $changeProp }
+	return (Normalize-EnumValue $enumKey "$changeValue")
 }
 
 function Modify-ChildElements($modifyDef, [string]$childType) {
 	$xmlTag = $script:childTypeToXmlTag[$childType]
 	if (-not $xmlTag -or -not $script:childObjectsEl) {
-		Warn "No ChildObjects or unknown tag for $childType"
-		return
+		Die "No ChildObjects or unknown tag for $childType"
 	}
 
 	$modifyDef.PSObject.Properties | ForEach-Object {
@@ -2123,8 +2991,13 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 
 		$el = Find-ElementByName $script:childObjectsEl $xmlTag $elemName
 		if (-not $el) {
-			Warn "$xmlTag '$elemName' not found for modify"
-			return
+			# ТЧ заимствованного объекта появляется в расширении только заимствованием — подсказать как
+			$hint = ""
+			$belonging = Find-PropertyElement 'ObjectBelonging'
+			if ($xmlTag -ceq 'TabularSection' -and $belonging -and $belonging.InnerText -ceq 'Adopted') {
+				$hint = " — in an extension, borrow it first: cfe-borrow -Object $($script:objType).$($script:objName).TabularSection.$elemName"
+			}
+			Die "$xmlTag '$elemName' not found for modify$hint"
 		}
 
 		# Find Properties inside the element
@@ -2135,12 +3008,11 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 			}
 		}
 		if (-not $propsEl) {
-			Warn "$xmlTag '$elemName': no Properties element found"
-			return
+			Die "$xmlTag '$elemName': no Properties element found"
 		}
 
 		$changes.PSObject.Properties | ForEach-Object {
-			$changeProp = $_.Name
+			$changeProp = Get-CanonicalName $_.Name ($script:childModifyKeys + $script:knownChildProps)
 			$changeValue = $_.Value
 
 			# TS child attribute operations (add/remove/modify attrs inside a TabularSection)
@@ -2156,8 +3028,7 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 				switch ($changeProp) {
 					"add" {
 						if (-not $tsChildObjEl) {
-							Warn "TS '$elemName' has no ChildObjects element, cannot add attributes"
-							return
+							Die "TS '$elemName' has no ChildObjects element, cannot add attributes"
 						}
 						# Ensure ChildObjects is open (not self-closing empty)
 						$hasTsChildElements = $false
@@ -2182,7 +3053,7 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 							$nodes = Import-Fragment $fragmentXml
 							$savedCO = $script:childObjectsEl
 							$script:childObjectsEl = $tsChildObjEl
-							$refNode = Find-InsertionPoint "Attribute" $parsed
+							$refNode = Find-InsertionPoint "Attribute" $parsed "TabularSection"
 							$script:childObjectsEl = $savedCO
 							foreach ($node in $nodes) {
 								Insert-BeforeElement $tsChildObjEl $node $refNode $tsAttrIndent
@@ -2209,8 +3080,7 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 					}
 					"modify" {
 						if (-not $tsChildObjEl) {
-							Warn "TS '$elemName' has no ChildObjects, cannot modify attributes"
-							return
+							Die "TS '$elemName' has no ChildObjects, cannot modify attributes"
 						}
 						# Temporarily swap childObjectsEl and recurse
 						$savedChildObjEl = $script:childObjectsEl
@@ -2234,6 +3104,12 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 					if ($nameEl) {
 						$oldName = $nameEl.InnerText.Trim()
 						$newName = "$changeValue"
+						if ($xmlTag -eq "Command") {
+							$reservedCmd = (Get-ReservedCommandNames)[$script:objType]
+							if ($reservedCmd -and ($reservedCmd -contains $newName)) {
+								Die "meta-edit: имя команды '$newName' совпадает со стандартной командой объекта '$($script:objType)'. Выберите другое имя."
+							}
+						}
 						$nameEl.InnerText = $newName
 
 						# Update Synonym if it was auto-generated (matches old CamelCase split)
@@ -2256,7 +3132,8 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 									}
 								}
 							}
-							if ($currentSyn -eq $oldSynonym -or -not $currentSyn) {
+							# Без учёта регистра: авто-синоним «ИНН» против разбивки «Инн»
+							if ($currentSyn -ieq $oldSynonym -or -not $currentSyn) {
 								$newSynonym = Split-CamelCase $newName
 								$synXml = Build-MLTextXml (Get-ChildIndent $propsEl) "Synonym" $newSynonym
 								$newSynNodes = Import-Fragment $synXml
@@ -2349,7 +3226,7 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 					}
 				}
 				"ChoiceForm" {
-					if (Set-AttrPropertyElement $propsEl "ChoiceForm" "<ChoiceForm>$(Esc-Xml "$changeValue")</ChoiceForm>") {
+					if (Set-AttrPropertyElement $propsEl "ChoiceForm" "<ChoiceForm>$(Esc-XmlText "$changeValue")</ChoiceForm>") {
 						Info "Set $xmlTag '$elemName'.ChoiceForm"; $script:modifyCount++
 					}
 				}
@@ -2392,12 +3269,7 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 						}
 					}
 					if ($scalarEl) {
-						$valueStr = "$changeValue"
-						if ($changeValue -is [bool]) {
-							$valueStr = if ($changeValue) { "true" } else { "false" }
-						} else {
-							$valueStr = Normalize-EnumValue $changeProp $valueStr
-						}
+						$valueStr = Get-ChildPropValue $xmlTag $changeProp $changeValue
 						$scalarEl.InnerText = $valueStr
 						Info "Modified $xmlTag '$elemName'.$changeProp = $valueStr"
 						$script:modifyCount++
@@ -2407,13 +3279,8 @@ function Modify-ChildElements($modifyDef, [string]$childType) {
 							Write-Error "modify: неизвестное свойство '$changeProp' у $xmlTag '$elemName' (опечатка?)"
 							exit 1
 						}
-						$valueStr = "$changeValue"
-						if ($changeValue -is [bool]) {
-							$valueStr = if ($changeValue) { "true" } else { "false" }
-						} else {
-							$valueStr = Normalize-EnumValue $changeProp $valueStr
-						}
-						$newNodes = Import-Fragment "<$changeProp>$(Esc-Xml $valueStr)</$changeProp>"
+						$valueStr = Get-ChildPropValue $xmlTag $changeProp $changeValue
+						$newNodes = Import-Fragment "<$changeProp>$(Esc-XmlText $valueStr)</$changeProp>"
 						if ($newNodes.Count -gt 0) {
 							Insert-PropertyInOrder $propsEl $newNodes[0] $script:attrPropOrder $changeProp
 							Info "Created $xmlTag '$elemName'.$changeProp = $valueStr"
@@ -2433,8 +3300,7 @@ function Process-Modify($modifyDef) {
 		$childType = Resolve-ChildTypeKey $rawKey
 
 		if (-not $childType) {
-			Warn "Unknown modify child type: $rawKey"
-			return
+			Die "Unknown modify child type: $rawKey"
 		}
 
 		if ($childType -eq "properties") {
@@ -2492,13 +3358,18 @@ function Normalize-MDObjectRef {
 
 # mdref — значения списка суть MDObjectRef-пути → прогоняем через Normalize-MDObjectRef.
 # root — корень для голого имени без точки.
+# types — у каких объектов свойство есть (Properties выгрузок ERP, БП, УТ, УНФ).
+# adopted — у каких заимствованных объектов расширение может менять свойство (8.3.27): прочие
+# списки платформа либо контролирует на равенство основной конфигурации (Owners, RegisteredDocuments —
+# расширение не применяется), либо молча выбрасывает при загрузке.
+$script:refObjectTypes = @('Catalog','Document','ChartOfAccounts','ChartOfCalculationTypes','ChartOfCharacteristicTypes','ExchangePlan','BusinessProcess','Task')
 $script:complexPropertyMap = @{
-	"Owners"          = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true; root = 'Catalog' }
-	"RegisterRecords" = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true }
-	"BasedOn"         = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true }
-	"InputByString"   = @{ tag = "xr:Field"; attr = $null }
-	"DataLockFields"      = @{ tag = "xr:Field"; attr = $null; expand = $true }
-	"RegisteredDocuments" = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true }
+	"Owners"          = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true; root = 'Catalog'; types = @('Catalog') }
+	"RegisterRecords" = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true; types = @('Document','Sequence'); adopted = @('Document') }
+	"BasedOn"         = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true; types = $script:refObjectTypes }
+	"InputByString"   = @{ tag = "xr:Field"; attr = $null; types = $script:refObjectTypes }
+	"DataLockFields"      = @{ tag = "xr:Field"; attr = $null; expand = $true; types = $script:refObjectTypes }
+	"RegisteredDocuments" = @{ tag = "xr:Item"; attr = 'xsi:type="xr:MDObjectRef"'; mdref = $true; types = @('DocumentJournal') }
 }
 
 # Известные свойства объекта (union по корпусу acc+erp 8.3.24) — allowlist для modify-property.
@@ -2531,6 +3402,13 @@ $script:knownObjectProps = @(
 	'VariantsStorage','WriteMode'
 )
 
+# Свойства объекта типа LocalStringType (XSD MDClasses) — modify-property пишет их многоязычной строкой.
+$script:localStringObjectProps = @(
+	'Synonym','ToolTip','Explanation','ObjectPresentation','ExtendedObjectPresentation','ListPresentation',
+	'ExtendedListPresentation','RecordPresentation','ExtendedRecordPresentation','ExtendedPresentation',
+	'Format','EditFormat'
+)
+
 # Известные свойства дочерних элементов (union Attribute/Dimension/Resource по корпусу) — allowlist default-ветки
 # modify-attribute/-dimension/-resource.
 $script:knownChildProps = @(
@@ -2540,6 +3418,13 @@ $script:knownChildProps = @(
 	'FillValue','Format','FullTextSearch','Indexing','LinkByType','MainFilter','MarkNegatives','Mask','Master',
 	'MaxValue','MinValue','MultiLine','Name','PasswordMode','QuickChoice','RegisterRecordsMap','ScheduleLink',
 	'Synonym','ToolTip','Type','Use','UseInTotals'
+)
+
+# Ключи веток modify дочернего элемента в их написании. Стоят перед knownChildProps: при канонизации
+# первый выигрывает, и Name уходит в ветку переименования name, а не в скалярную.
+$script:childModifyKeys = @(
+	'add','remove','modify','name','type','synonym','Format','EditFormat','ToolTip','ChoiceForm','MinValue','MaxValue',
+	'LinkByType','ChoiceParameterLinks','ChoiceParameters','FillValue'
 )
 
 # Канонический порядок свойств реквизита (последовательность Build-AttributeFragment) — для вставки в позицию.
@@ -2589,7 +3474,7 @@ function Set-AttrPropertyElement($propsEl, $propName, $fragmentXml) {
 function Build-MinMaxValueXml([string]$tag, $val) {
 	if ($null -eq $val -or "$val" -eq '') { return "<$tag xsi:nil=`"true`"/>" }
 	$t = if ($val -is [string]) { 'xs:string' } else { 'xs:decimal' }
-	return "<$tag xsi:type=`"$t`">$(Esc-Xml "$val")</$tag>"
+	return "<$tag xsi:type=`"$t`">$(Esc-XmlText "$val")</$tag>"
 }
 
 # --- Порт из meta-compile: развёртка путей данных + связи выбора / тип по ссылке (structural modify) ---
@@ -2654,7 +3539,7 @@ function Build-LinkByTypeXml([string]$indent, $spec) {
 	$dp = Expand-DataPath $dp
 	$lines = @(
 		"$indent<LinkByType>"
-		"$indent`t<xr:DataPath>$(Esc-Xml "$dp")</xr:DataPath>"
+		"$indent`t<xr:DataPath>$(Esc-XmlText "$dp")</xr:DataPath>"
 		"$indent`t<xr:LinkItem>$li</xr:LinkItem>"
 		"$indent</LinkByType>"
 	)
@@ -2676,12 +3561,12 @@ function Build-ChoiceParameterLinksXml([string]$indent, $cpl) {
 			$vc = switch -Regex ("$vcRaw".ToLower()) {
 				'^(clear|очистить|очистка)$'             { 'Clear'; break }
 				'^(dontchange|неизменять|неменять|нет)$' { 'DontChange'; break }
-				default                                  { "$vcRaw" }
+				default                                  { Normalize-EnumValue "ValueChange" "$vcRaw" }
 			}
 		}
 		$sb.Append("`r`n$indent`t<xr:Link>") | Out-Null
-		$sb.Append("`r`n$indent`t`t<xr:Name>$(Esc-Xml "$name")</xr:Name>") | Out-Null
-		$sb.Append("`r`n$indent`t`t<xr:DataPath xsi:type=`"xs:string`">$(Esc-Xml "$dp")</xr:DataPath>") | Out-Null
+		$sb.Append("`r`n$indent`t`t<xr:Name>$(Esc-XmlText "$name")</xr:Name>") | Out-Null
+		$sb.Append("`r`n$indent`t`t<xr:DataPath xsi:type=`"xs:string`">$(Esc-XmlText "$dp")</xr:DataPath>") | Out-Null
 		$sb.Append("`r`n$indent`t`t<xr:ValueChange>$vc</xr:ValueChange>") | Out-Null
 		$sb.Append("`r`n$indent`t</xr:Link>") | Out-Null
 	}
@@ -2822,13 +3707,13 @@ function Build-ChoiceParametersXml([string]$indent, $cp) {
 			foreach ($v in $val) {
 				$norm = Normalize-ChoiceValueT $v $ptype
 				if ([string]::IsNullOrEmpty($norm.Text)) { $sb.Append("`r`n$indent`t`t`t<v8:Value xsi:type=`"$($norm.XsiType)`"/>") | Out-Null }
-				else { $sb.Append("`r`n$indent`t`t`t<v8:Value xsi:type=`"$($norm.XsiType)`">$(Esc-Xml $norm.Text)</v8:Value>") | Out-Null }
+				else { $sb.Append("`r`n$indent`t`t`t<v8:Value xsi:type=`"$($norm.XsiType)`">$(Esc-XmlText $norm.Text)</v8:Value>") | Out-Null }
 			}
 			$sb.Append("`r`n$indent`t`t</app:value>") | Out-Null
 		} else {
 			$norm = Normalize-ChoiceValueT $val $ptype
 			if ([string]::IsNullOrEmpty($norm.Text)) { $sb.Append("`r`n$indent`t`t<app:value xsi:type=`"$($norm.XsiType)`"/>") | Out-Null }
-			else { $sb.Append("`r`n$indent`t`t<app:value xsi:type=`"$($norm.XsiType)`">$(Esc-Xml $norm.Text)</app:value>") | Out-Null }
+			else { $sb.Append("`r`n$indent`t`t<app:value xsi:type=`"$($norm.XsiType)`">$(Esc-XmlText $norm.Text)</app:value>") | Out-Null }
 		}
 		$sb.Append("`r`n$indent`t</app:item>") | Out-Null
 	}
@@ -2841,7 +3726,11 @@ function Build-ChoiceParametersXml([string]$indent, $cp) {
 $script:fillBoolTrue  = @('true','истина','да')
 $script:fillBoolFalse = @('false','ложь','нет')
 
-function Esc-XmlText([string]$s) { return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;') }
+function Esc-XmlText {
+	param([string]$s)
+	# Эскейп ТЕКСТА элемента: только & < > — кавычку и апостроф платформа держит сырыми.
+	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
+}
 
 function Get-FillTypeCategory([string]$typeStr) {
 	if (-not $typeStr) { return 'String' }
@@ -2923,6 +3812,14 @@ function Build-FillValueExplicitXml([string]$typeStr, $spec) {
 	return "<FillValue xsi:type=`"$($r.XsiType)`">$(Esc-XmlText $r.Text)</FillValue>"
 }
 
+# Прощающий ввод: ключ свойства в любом регистре сводим к каноническому имени из списка (первое
+# совпадение без учёта регистра). Дальше работаем только с ним — в XML уходит имя тега, а не
+# написание из входа. Неизвестное возвращается как есть — его отвергнет allowlist.
+function Get-CanonicalName([string]$name, [string[]]$canon) {
+	foreach ($c in $canon) { if ($c -eq $name) { return $c } }
+	return $name
+}
+
 function Find-PropertyElement([string]$propName) {
 	foreach ($child in $script:propertiesEl.ChildNodes) {
 		if ($child.NodeType -eq 'Element' -and $child.LocalName -eq $propName) {
@@ -2930,6 +3827,31 @@ function Find-PropertyElement([string]$propName) {
 		}
 	}
 	return $null
+}
+
+# Элемент свойства-списка. Свойство, которого у типа объекта нет, — ошибка (раньше на справочнике
+# add-registerRecord тихо не делал ничего). У заимствованного объекта расширения в Properties только
+# изменённые свойства, поэтому отсутствующий элемент при $create создаём (в конец, как Modify-Properties);
+# у обычного объекта выгрузка содержит все свойства, и отсутствие элемента — ошибка.
+function Get-ListPropertyElement([string]$propName, [bool]$create) {
+	$mapEntry = $script:complexPropertyMap[$propName]
+	if ($mapEntry -and $mapEntry.types -cnotcontains $script:objType) {
+		Die "Свойство '$propName' не применимо к $($script:objType)"
+	}
+	$belonging = Find-PropertyElement 'ObjectBelonging'
+	$isAdopted = $belonging -and $belonging.InnerText -ceq 'Adopted'
+	if ($isAdopted -and $mapEntry.adopted -cnotcontains $script:objType) {
+		Die "Свойство '$propName' заимствованного объекта $($script:objType).$($script:objName) расширение не меняет — значение берётся из основной конфигурации"
+	}
+	$propEl = Find-PropertyElement $propName
+	if ($propEl) { return $propEl }
+	if (-not $isAdopted) {
+		Die "В Properties объекта $($script:objType).$($script:objName) нет элемента '$propName' — файл не из выгрузки платформы?"
+	}
+	if (-not $create) { return $null }
+	$newNodes = Import-Fragment "<$propName/>"
+	Insert-PropertyInOrder $script:propertiesEl $newNodes[0] $null $propName
+	return $newNodes[0]
 }
 
 function Get-ComplexPropertyValues([System.Xml.XmlElement]$propEl) {
@@ -2944,15 +3866,11 @@ function Get-ComplexPropertyValues([System.Xml.XmlElement]$propEl) {
 
 function Add-ComplexPropertyItem([string]$propertyName, [string[]]$values) {
 	$mapEntry = $script:complexPropertyMap[$propertyName]
-	if (-not $mapEntry) { Warn "Unknown complex property: $propertyName"; return }
+	if (-not $mapEntry) { Die "Unknown complex property: $propertyName" }
 	if ($mapEntry.expand) { $values = @($values | ForEach-Object { Expand-DataPath "$_" }) }
 	if ($mapEntry.mdref) { $values = @($values | ForEach-Object { Normalize-MDObjectRef "$_" $mapEntry.root }) }
 
-	$propEl = Find-PropertyElement $propertyName
-	if (-not $propEl) {
-		Warn "Property element '$propertyName' not found in Properties"
-		return
-	}
+	$propEl = Get-ListPropertyElement $propertyName $true
 
 	# Get existing values to check duplicates
 	$existing = Get-ComplexPropertyValues $propEl
@@ -2980,9 +3898,9 @@ function Add-ComplexPropertyItem([string]$propertyName, [string[]]$values) {
 		$tag = $mapEntry.tag
 		$attrStr = $mapEntry.attr
 		if ($attrStr) {
-			$fragXml = "<$tag $attrStr>$(Esc-Xml $val)</$tag>"
+			$fragXml = "<$tag $attrStr>$(Esc-XmlText $val)</$tag>"
 		} else {
-			$fragXml = "<$tag>$(Esc-Xml $val)</$tag>"
+			$fragXml = "<$tag>$(Esc-XmlText $val)</$tag>"
 		}
 		$nodes = Import-Fragment $fragXml
 		foreach ($node in $nodes) {
@@ -2997,7 +3915,7 @@ function Remove-ComplexPropertyItem([string]$propertyName, [string[]]$values) {
 	$mapEntry = $script:complexPropertyMap[$propertyName]
 	if ($mapEntry -and $mapEntry.expand) { $values = @($values | ForEach-Object { Expand-DataPath "$_" }) }
 	if ($mapEntry -and $mapEntry.mdref) { $values = @($values | ForEach-Object { Normalize-MDObjectRef "$_" $mapEntry.root }) }
-	$propEl = Find-PropertyElement $propertyName
+	$propEl = Get-ListPropertyElement $propertyName $false
 	if (-not $propEl) {
 		Warn "Property element '$propertyName' not found in Properties"
 		return
@@ -3033,15 +3951,13 @@ function Remove-ComplexPropertyItem([string]$propertyName, [string[]]$values) {
 
 function Set-ComplexProperty([string]$propertyName, [string[]]$values) {
 	$mapEntry = $script:complexPropertyMap[$propertyName]
-	if (-not $mapEntry) { Warn "Unknown complex property: $propertyName"; return }
+	if (-not $mapEntry) { Die "Unknown complex property: $propertyName" }
 	if ($mapEntry.expand) { $values = @($values | ForEach-Object { Expand-DataPath "$_" }) }
 	if ($mapEntry.mdref) { $values = @($values | ForEach-Object { Normalize-MDObjectRef "$_" $mapEntry.root }) }
 
-	$propEl = Find-PropertyElement $propertyName
-	if (-not $propEl) {
-		Warn "Property element '$propertyName' not found in Properties"
-		return
-	}
+	# Пустой список на отсутствующем элементе: очищать нечего, пустой элемент не создаём
+	$propEl = Get-ListPropertyElement $propertyName ($values.Count -gt 0)
+	if (-not $propEl) { return }
 
 	$indent = Get-ChildIndent $script:propertiesEl
 	$childIndent = "$indent`t"
@@ -3052,7 +3968,9 @@ function Set-ComplexProperty([string]$propertyName, [string[]]$values) {
 	}
 
 	if ($values.Count -eq 0) {
-		# Leave self-closing
+		# Самозакрывающийся, как пишет платформа (и py-порт): после удаления детей XmlElement
+		# остаётся в форме <X></X>, пока не выставить IsEmpty
+		$propEl.IsEmpty = $true
 		Info "Cleared $propertyName"
 		$script:modifyCount++
 		return
@@ -3067,9 +3985,9 @@ function Set-ComplexProperty([string]$propertyName, [string[]]$values) {
 		$tag = $mapEntry.tag
 		$attrStr = $mapEntry.attr
 		if ($attrStr) {
-			$fragXml = "<$tag $attrStr>$(Esc-Xml $val)</$tag>"
+			$fragXml = "<$tag $attrStr>$(Esc-XmlText $val)</$tag>"
 		} else {
-			$fragXml = "<$tag>$(Esc-Xml $val)</$tag>"
+			$fragXml = "<$tag>$(Esc-XmlText $val)</$tag>"
 		}
 		$nodes = Import-Fragment $fragXml
 		foreach ($node in $nodes) {
@@ -3159,16 +4077,15 @@ function Add-PredefinedItems($items) {
 	$itemsXml = ""
 	foreach ($it in @($items)) { $itemsXml += (Build-PredefItemXml "`t" $it $codeType) }
 	$utf8Bom = New-Object System.Text.UTF8Encoding($true)
-	if (Test-Path $path) {
-		$text = [System.IO.File]::ReadAllText($path, $utf8Bom)
+	if (Test-PendingOrFile $path) {
+		$text = if ($script:pendingWrites.Contains($path)) { $script:pendingWrites[$path] } else { [System.IO.File]::ReadAllText($path, $utf8Bom) }
 		$text = $text.Replace("</PredefinedData>", "$itemsXml</PredefinedData>")
 	} else {
-		$extDir = Split-Path $path
-		if (-not (Test-Path $extDir)) { New-Item -ItemType Directory -Path $extDir -Force | Out-Null }
 		$hdr = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<PredefinedData xmlns=`"http://v8.1c.ru/8.3/xcf/predef`" xmlns:v8=`"http://v8.1c.ru/8.1/data/core`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" xmlns:xs=`"http://www.w3.org/2001/XMLSchema`" xmlns:xsi=`"http://www.w3.org/2001/XMLSchema-instance`" xsi:type=`"$xsiType`" version=`"$version`">`r`n"
 		$text = "$hdr$itemsXml</PredefinedData>`r`n"
 	}
-	[System.IO.File]::WriteAllText($path, $text, $utf8Bom)
+	# Создаваемый файл — по канону: без перевода строки в конце.
+	$script:pendingWrites[$path] = $text.TrimEnd("`r", "`n")
 	$n = @($items).Count
 	Info "Added $n predefined item(s) → $path"
 	$script:addCount += $n
@@ -3198,7 +4115,8 @@ if (-not $def) {
 # and the Configurator does not recover from it — the result of the earlier
 # silent success. Fixing the builder means reimplementing the whole managed
 # scaffold that 1c-form-scaffold already owns, so the contract here is: refuse,
-# and name the working command. Removal (remove-form) is untouched.
+# and name the working command. Removal is refused further down (Process-Remove)
+# and points at remove-form / remove-template.
 function Test-DefinitionAddsForm($definition, [string]$childType = 'forms') {
 	# The gate has to see exactly what the dispatcher below will act on, so it walks
 	# every top-level operation through the same Resolve-OperationKey /
@@ -3244,13 +4162,22 @@ if (Test-DefinitionAddsForm $def 'templates') {
 
 # Gate 2 — the validator has to exist *before* the edit, not after it.
 #
-# The sibling directory is 1c-meta-validate downstream (upstream calls it
-# meta-validate), so the upstream-relative path resolved to nothing and the run
-# printed [SKIP] on an otherwise successful edit. A missing validator is now a
-# refusal raised before the mutation; -NoValidate stays the one explicit opt-out.
-$script:validateScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\1c-meta-validate\scripts\meta-validate.ps1'))
+# The sibling directories are 1c-meta-validate / 1c-epf-validate downstream
+# (upstream calls them meta-validate / epf-validate), so the upstream-relative
+# path resolved to nothing and the run printed [SKIP] on an otherwise successful
+# edit. A missing validator is now a refusal raised before the mutation;
+# -NoValidate stays the one explicit opt-out.
+# An external data processor / report is an autonomous object that meta-validate
+# does not know (upstream #108, 372510bb): it is checked by epf-validate.
+if (@('ExternalDataProcessor','ExternalReport') -contains $script:objType) {
+	$script:validateSkill = 'epf-validate'
+	$script:validateScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\1c-epf-validate\scripts\epf-validate.ps1'))
+} else {
+	$script:validateSkill = 'meta-validate'
+	$script:validateScript = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\1c-meta-validate\scripts\meta-validate.ps1'))
+}
 if (-not $NoValidate -and -not (Test-Path -LiteralPath $script:validateScript)) {
-	[Console]::Error.WriteLine("[ERROR] Обязательная автопроверка не может быть выполнена: meta-validate не найден по пути $($script:validateScript).")
+	[Console]::Error.WriteLine("[ERROR] Обязательная автопроверка не может быть выполнена: $($script:validateSkill) не найден по пути $($script:validateScript).")
 	[Console]::Error.WriteLine("        Правка не применена. Восстановите навык целиком либо запустите с -NoValidate, если проверка сознательно не нужна.")
 	exit 1
 }
@@ -3272,8 +4199,7 @@ $def.PSObject.Properties | ForEach-Object {
 	if ($prop.Name -eq "_complex") { return }
 	$opKey = Resolve-OperationKey $prop.Name
 	if (-not $opKey) {
-		Warn "Unknown operation: $($prop.Name)"
-		return
+		Die "Unknown operation: $($prop.Name)"
 	}
 
 	switch ($opKey) {
@@ -3310,22 +4236,26 @@ if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
 	$text = $text.Substring(1)
 }
 $text = $text.Replace('encoding="utf-8"', 'encoding="UTF-8"')
-# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Save переписывает файл
-# целиком, поэтому без этой правки одна точечная операция переводила в пробельную форму ВСЕ
-# пустые теги документа. Внутри CDATA/комментария ` />` может быть содержимым (там `>` не
-# экранируется), поэтому они идут первыми ветками альтернации и возвращаются как есть.
+# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Внутри
+# CDATA/комментария ` />` может быть содержимым (там `>` не экранируется),
+# поэтому они идут первыми ветками альтернации и возвращаются как есть.
 $text = [regex]::Replace($text, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
 
 # Write with BOM
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
-# Целевой перевод строки: стиль файла-назначения — правка наследует его, новый файл получает
-# канон выгрузки CRLF. Без этого вставленный скриптом whitespace (`r`n) смешивался с LF
-# исходника, и точечная правка LF-выгрузки давала файл со смешанным EOL.
+# Целевой перевод строки: стиль файла-назначения — правка наследует его (#44/#46/#47),
+# новый файл получает канон выгрузки CRLF. Зеркало _detect_xml_style в py-порту.
 $targetEol = if ((Test-Path -LiteralPath $resolvedPath) -and ([System.IO.File]::ReadAllText($resolvedPath) -notmatch "`r`n")) { "`n" } else { "`r`n" }
 $text = ($text -replace "`r`n", "`n") -replace "`n", $targetEol
 [System.IO.File]::WriteAllText($resolvedPath, $text, $utf8Bom)
 
 Info "Saved: $resolvedPath"
+
+foreach ($pw in $script:pendingWrites.GetEnumerator()) {
+	$pwDir = Split-Path $pw.Key
+	if (-not (Test-Path $pwDir)) { New-Item -ItemType Directory -Path $pwDir -Force | Out-Null }
+	[System.IO.File]::WriteAllText($pw.Key, $pw.Value, $utf8Bom)
+}
 
 # ============================================================
 # Section 15: Auto-validate
@@ -3337,11 +4267,11 @@ Info "Saved: $resolvedPath"
 $script:validateExitCode = 0
 if (-not $NoValidate) {
 	Write-Host ""
-	Write-Host "--- Running meta-validate ---" -ForegroundColor DarkGray
+	Write-Host "--- Running $($script:validateSkill) ---" -ForegroundColor DarkGray
 	& powershell.exe -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
 	$script:validateExitCode = $LASTEXITCODE
 	if ($script:validateExitCode -ne 0) {
-		[Console]::Error.WriteLine("[ERROR] meta-validate завершился с кодом $($script:validateExitCode): изменение записано, но объект не проходит проверку. Разберите вывод выше перед загрузкой в базу.")
+		[Console]::Error.WriteLine("[ERROR] $($script:validateSkill) завершился с кодом $($script:validateExitCode): изменение записано, но объект не проходит проверку. Разберите вывод выше перед загрузкой в базу.")
 	}
 }
 

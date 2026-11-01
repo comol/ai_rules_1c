@@ -1,6 +1,6 @@
 # 1C Database Manage — Registry and Platform Operations
 
-Comprehensive database management: registry (.v8-project.json) and platform operations (create, run, update, dump/load configuration).
+Comprehensive database management: registry (.v8-project.json) and platform operations (create, run, update, dump/load configuration, extensions in the infobase).
 
 ## Integration with configuration synchronization
 
@@ -18,14 +18,18 @@ Manages the `.v8-project.json` file — the project's infobase registry. Stores 
 >
 > | Script looks for | Taken from `.dev.env` | Upstream fallback in `.v8-project.json` |
 > |---|---|---|
-> | Platform path | `PLATFORM_PATH` | `v8path` |
+> | Platform path | `PLATFORM_PATH` | `v8path` of the database record matching the connection, then the root `v8path` |
 > | Extra `1cv8` arguments | `PLATFORM_ARGS` | `v8args` |
 > | Extra `ibcmd` arguments | `IBCMD_ARGS` | `ibcmdargs` |
 > | Support-guard reaction | `SUPPORT_GUARD` | `editingAllowedCheck` |
+> | Repository credentials (`db-load-xml`, `db-load-git`, `db-dump-xml`, `db-update`, `db-cfe-admin`) | `REPOSITORY_PATH`, `REPOSITORY_USER`, `REPOSITORY_PASSWORD` — the main configuration's repository | `databases[].repository`; an extension's own repository only as `databases[].extensions[].repository` |
+> | Configuration dump for the `epf-build` source check | `EXPORT_PATH` (relative to the `.dev.env` directory; empty = the project root, used only when it holds `Configuration.xml`) | `databases[].configSrc` |
+> | Extension applicability check after a load | — off unless `-ApplyCheck` (the gate is `/update1cbase` Step 2c) | `extensionApplyCheck: true` turns it on |
+> | `epf-build` source check | — on unless `-Checks off` | `externalCheck: false` turns it off |
 >
-> Resolution order per value: explicit command-line parameter → `.dev.env` → `.v8-project.json` → built-in default (auto-detect for the platform, `deny` for the guard). An empty key in `.dev.env` counts as "not set" and falls through.
+> Resolution order per value: explicit command-line parameter → `.dev.env` → `.v8-project.json` → built-in default (auto-detect for the platform, `deny` for the guard). For the platform that is `-V8Path` → `PLATFORM_PATH` → `v8path` of the matching database record → root `v8path` → auto-detect. An empty key in `.dev.env` counts as "not set" and falls through. Repository credentials passed to an infobase that is not bound to a repository are harmless (checked on 8.3.27.2130), so they are passed whenever they are known.
 >
-> Connection parameters (`INFOBASE_PATH`, `INFOBASE_KIND`, `IB_USER`, `IB_PASSWORD`, `EXPORT_PATH`, `EXTENSION_NAME`) are passed to the scripts as flags by the calling slash command (`/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test`) from the same `.dev.env`. **`.v8-project.json` is not required and not created by the installer** — describe it only if you deliberately want the upstream multi-base registry below (several infobases bound to Git branches / aliases). If you do create one, remember `.dev.env` still wins for the four values in the table.
+> Connection parameters (`INFOBASE_PATH`, `INFOBASE_KIND`, `IB_USER`, `IB_PASSWORD`, `EXPORT_PATH`, `EXTENSION_NAME`) are passed to the scripts as flags by the calling slash command (`/loadfrom1cbase`, `/update1cbase`, `/getconfigfiles`, `/deploy-and-test`) from the same `.dev.env`. **`.v8-project.json` is not required and not created by the installer** — describe it only if you deliberately want the upstream multi-base registry below (several infobases bound to Git branches / aliases). If you do create one, remember `.dev.env` still wins for the values in the table.
 
 ### Usage
 
@@ -93,6 +97,9 @@ File is placed at the project root (next to `.git/`).
 | `aliases` | string[] | no | Alternative names for quick access |
 | `branches` | string[] | no | Git branches or glob patterns (`release/*`, `feature/*`) bound to this database |
 | `configSrc` | string | no | Configuration XML export directory |
+| `v8path` | string | no | Platform of this database — wins over the root `v8path` (not over `.dev.env` `PLATFORM_PATH`) |
+| `repository` | object | no | `{ "path", "user", "password" }` of the main configuration's repository |
+| `extensions` | array | no | `[{ "name", "repository": { … } }]` — an extension bound to its own repository |
 
 ### Database Resolution Algorithm
 
@@ -112,7 +119,7 @@ This algorithm is used by ALL skills (`1c-db-ops`, `1c-epf-build`, `1c-epf-dump`
 
 ### Platform Auto-Detection
 
-Only when neither `-V8Path`, nor `.dev.env` `PLATFORM_PATH`, nor `.v8-project.json` `v8path` gives a value — the newest installed platform is picked:
+Only when neither `-V8Path`, nor `.dev.env` `PLATFORM_PATH`, nor a `.v8-project.json` `v8path` (database record or root) gives a value — the newest installed platform is picked:
 
 ```powershell
 $v8 = Get-ChildItem "C:\Program Files\1cv8\*\bin\1cv8.exe" | Sort-Object -Descending | Select-Object -First 1
@@ -183,10 +190,17 @@ All scripts accept the same connection parameters:
 | `-Password <password>` | Password |
 | `-AdditionalV8Arguments <list>` | Extra `1cv8.exe` launch arguments, comma-separated (e.g. `/UseHwLicenses+`) |
 | `-AdditionalIbcmdArguments <list>` | Extra `ibcmd` arguments, comma-separated, in `--key=value` form |
+| `-RepositoryPath` / `-RepositoryUser` / `-RepositoryPassword` | Repository credentials (`/ConfigurationRepositoryF` / `N` / `P`) for `db-load-xml`, `db-load-git`, `db-dump-xml`, `db-update`, `db-cfe-admin`. Default: `.dev.env` `REPOSITORY_*` (main configuration only), then the registry record |
 
-Either `-InfoBasePath` or the `-InfoBaseServer` + `-InfoBaseRef` pair is required.
+Either `-InfoBasePath` or the `-InfoBaseServer` + `-InfoBaseRef` pair is required. A relative `-InfoBasePath` resolves from the project root (the nearest directory with `.dev.env` or `.v8-project.json`); other relative paths resolve from the working directory. Only absolute paths reach the platform: `ibcmd` would read a relative `--db-path` from its temporary `--data` directory.
 
-**Additional arguments are validated, not passed through blindly.** The platform accepts only one batch operation per launch, and a duplicate connection / output key fails with an opaque 1C error — so the scripts reject any argument the tool owns itself (`/F`, `/S`, `/N`, `/P`, `/DumpIB`, `/UpdateDBCfg`, `--db-path`, `--out`, …) and name the proper parameter instead. Passing a `1cv8` argument to an `ibcmd` run (or vice versa) is also an error. Project-wide defaults live in **`.dev.env` as `PLATFORM_ARGS` / `IBCMD_ARGS`** (comma-separated) — same validation applies; the upstream `.v8-project.json` `v8args` / `ibcmdargs` keys remain as a fallback. Secrets in these arguments (`/P`, `/UC`, `--password`) are masked in the echoed command line.
+**Additional arguments are validated, not passed through blindly.** The platform accepts only one batch operation per launch, and a duplicate connection / output key fails with an opaque 1C error — so the scripts reject any argument the tool owns itself (`/F`, `/S`, `/N`, `/P`, `/DumpIB`, `/UpdateDBCfg`, `--db-path`, `--out`, …) and name the proper parameter instead. Batch commands are refused too (`/CheckConfig`, `/CheckModules`, `/CheckCanApplyConfigurationExtensions`, `/DumpDBCfgList`, `/DeleteCfg`, `/UpdateCfg`, `/CompareCfg`, `/MergeCfg`, `/ManageCfgSupport`, `/RollbackCfg`, `/ConvertFiles`): a Designer command line runs only its **last** batch command, so a smuggled one would replace the tool's own operation while `/DumpResult` reports 0. Passing a `1cv8` argument to an `ibcmd` run (or vice versa) is also an error. Project-wide defaults live in **`.dev.env` as `PLATFORM_ARGS` / `IBCMD_ARGS`** (comma-separated) — same validation applies; the upstream `.v8-project.json` `v8args` / `ibcmdargs` keys remain as a fallback. Secrets (`/P`, `/UC`, `/WSP`, `/AWSP`, `/ConfigurationRepositoryP`, `--password`) are masked in the echoed command line.
+
+### Launch and verdict
+
+- **Batch verdict.** Every Designer launch — the operation itself, the opt-in applicability check, `db-cfe-admin`, the `epf-build` source check and the stub infobase — passes `/DumpResult` beside `/Out`; a non-zero result or a missing file turns exit code 0 into a failure (`content/rules/designer-batch-checks.md → The verdict is three signals`).
+- **No false success.** An unhandled error inside a script (before or after the launch) exits 1 and prints the script line, not 0.
+- **No hang on 8.5.** The platform is started with an explicit list of the three handles it may inherit, so a process it leaves behind (`crashpad_handler`) cannot hold the caller's output pipe open. Where `Add-Type` is blocked (AppLocker, Constrained Language Mode), the scripts fall back to `Process.Start` and still return when the platform exits.
 
 ### Database Resolution
 
@@ -238,11 +252,16 @@ Applies main configuration changes to the database configuration (`/UpdateDBCfg`
 |-----------------|-------------|
 | `-Extension <name>` | Update extension |
 | `-AllExtensions` | Update all extensions |
-| `-Dynamic <auto/disable>` | `auto` dynamic update, `disable` turn it off (`+`/`-` still accepted, but a lone `-` never reaches the script through `powershell.exe -File` — PowerShell 5.1 exits silently; use `disable` or `-Dynamic:-`) |
+| `-Dynamic <on/off>` | `on` dynamic update, `off` turn it off. `auto` / `disable` (the `ibcmd` spellings) and `yes` / `no` are accepted too; `+` / `-` still work in-process, but a lone `-` never reaches the script through `powershell.exe -File` — PowerShell 5.1 exits silently |
 | `-Server` | Server-side update |
 | `-WarningsAsErrors` | Treat warnings as errors |
+| `-ApplyCheck` | After an extension update, run `/CheckCanApplyConfigurationExtensions`; a refusal exits 1. Off by default — see below |
 
 **Warning**: Non-dynamic update requires exclusive database access (all users must exit).
+
+The update log is scanned after an exit-0 run: metadata rejections (`Неверное свойство объекта метаданных`, `Неизвестное имя типа`, …), a compatibility mode above the platform (`Для работы с конфигурацией необходима версия платформы не меньше …`) and the update's own `Ошибка [при] обновлени… конфигурации базы данных` exit **1** — the database configuration is not the one that was asked for.
+
+**Extension applicability check is opt-in** in `db-update`, `db-load-xml`, `db-load-cf` and `db-load-git`. Upstream runs it after every extension load; here `/update1cbase` Step 2c is the gate (`/CheckModules`, then `/CheckCanApplyConfigurationExtensions`, between load and update), so the loaders do not add a second Designer pass. `-ApplyCheck` turns it on for a standalone call (a refusal then exits 1); `-NoApplyCheck` always wins; `.v8-project.json` `extensionApplyCheck: true` turns it on project-wide (refusal = warning, exit 1 only with `-StrictLog`).
 
 ---
 
@@ -272,6 +291,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/script
 |-----------------|-------------|
 | `-InputFile <path>` | Input CF file (required) |
 | `-Extension <name>` | Load as extension |
+| `-ApplyCheck` / `-NoApplyCheck` | Extension applicability check after the load — off by default (section 3) |
 
 After loading: offer to run `db-update` to apply changes to the database.
 
@@ -290,7 +310,9 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/script
 | `-ConfigDir <path>` | Export directory (required) |
 | `-Mode <mode>` | `Full` / `Changes` (default) / `Partial` / `UpdateInfo` |
 | `-Objects <list>` | Object names comma-separated (for Partial) |
+| `-ObjectsFile <path>` | UTF-8 file with one object name per line (`#` comments allowed) — e.g. the list a repository `update` reported; merged with `-Objects` |
 | `-Extension <name>` | Dump extension |
+| `-AllExtensions` | Dump all extensions |
 | `-Format <format>` | `Hierarchical` (default) / `Plain` |
 
 #### Dump Modes
@@ -304,7 +326,13 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/script
 
 Choose the mode from the task and `/loadfrom1cbase → Select scope`; state the inferred choice instead of asking again when the scope is established. Partial mode accepts **metadata names**, not import file paths; include needed separate development objects explicitly. Check the dirty destination and a non-empty selection before running.
 
-Designer mappings: `Full` → `/DumpConfigToFiles`; `Changes` → `-update -force`; `Partial` → `-listFile` generated from `-Objects`; `UpdateInfo` → `-configDumpInfoOnly`. `Changes` therefore permits a full dump on a format-version mismatch. When that wider overwrite is not authorized, use the command's Designer `-update` template without `-force`. Missing baselines must be resolved before the run; `UpdateInfo` does not export files or establish that their contents match the infobase.
+Designer mappings: `Full` → `/DumpConfigToFiles`; `Changes` → `-update` (**without** `-force`); `Partial` → `-listFile` generated from `-Objects`; `UpdateInfo` → `-configDumpInfoOnly`. Mode resolution:
+
+- An object list (`-Objects` / `-ObjectsFile`) always means `Partial` — `-Mode Full` / `Changes` is ignored with a note (the list was silently dropped before). `UpdateInfo` with a list is refused.
+- `Changes` into a directory with no dump yet (no `ConfigDumpInfo.xml`, no `Configuration.xml`; `.git`, a README are fine) runs as the first, full dump. A dump without `ConfigDumpInfo.xml` is refused — choose `-Mode Full` deliberately.
+- `Changes` on a format-version mismatch (the directory was dumped by another platform) now fails with a hint instead of silently re-dumping every file; `-Mode Full` is the deliberate wider overwrite.
+
+Missing baselines must be resolved before the run; `UpdateInfo` does not export files or establish that their contents match the infobase. Through `ibcmd`, a full export into a non-empty directory goes to a temp directory and is copied over `-ConfigDir`, like Designer writes it.
 
 For `-getChanges` reports or `-configDumpInfoForChanges` delta exports, use the Designer procedure in the synchronization contract. This wrapper has no dedicated parameters for those modes. Keep their report/baseline/output paths distinct; a delta output directory must start empty.
 
@@ -321,13 +349,20 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/script
 | Extra Parameter | Description |
 |-----------------|-------------|
 | `-ConfigDir <path>` | XML source directory (required) |
-| `-Mode <mode>` | `Full` (default) / `Partial` |
+| `-Mode <mode>` | `Full` / `Partial`; when omitted — `Partial` if files are listed, otherwise `Full` |
 | `-Files <list>` | Relative file paths comma-separated (for Partial) |
 | `-ListFile <path>` | File with path list (alternative to `-Files`) |
 | `-Extension <name>` | Load into extension |
 | `-Format <format>` | `Hierarchical` (default) / `Plain` |
+| `-UpdateDB` | Add `/UpdateDBCfg` to the same launch |
+| `-ApplyCheck` / `-NoApplyCheck` | Extension applicability check after the load — off by default (section 3) |
+| `-StrictLog` | Exit 1 when the log holds silent rejections (otherwise a warning) |
 
-Partial mode accepts **file paths** through exactly one of `-Files` / `-ListFile`; validate scope, existence and dependencies first. A raw platform list is UTF-8 with no blank lines. The Designer branch writes its own list, adds `-partial -updateConfigDumpInfo`, and uses `-Format`; confirm the platform supports the intended flags. It excludes service files (`ConfigDumpInfo.xml`, `ParentConfigurations.bin`) from partial loading. If those exclusions omit part of the requested change, resolve the scope instead of reporting a complete deployment. Do not combine partial mode with `-AllExtensions`. When the list includes `Configuration.xml` (for example after a new object is borrowed into an extension), Designer reads every object file in the directory, not only the listed ones (reported on 8.3.27 extension loads): an unlisted file that does not load, such as a borrowed form referring to an unborrowed `CommonPicture` or `StyleItem`, fails the whole load. Run `cfe-validate` on the extension directory before such a load.
+**A listed file set is always a partial load.** `-Files` / `-ListFile` without `-Mode` (or with `-Mode Full`, which is then ignored with a note) loads only the listed files on both engines; before this sync the 1cv8 branch defaulted to `Full` and **replaced the whole configuration**. Only a call without a list is a full load.
+
+Partial mode accepts **file paths** through exactly one of `-Files` / `-ListFile`; validate scope, existence and dependencies first. A raw platform list is UTF-8 with no blank lines. The Designer branch writes its own list, adds `-partial -updateConfigDumpInfo`, and uses `-Format`; confirm the platform supports the intended flags. It excludes service files (`ConfigDumpInfo.xml`, `ParentConfigurations.bin`) from partial loading. If those exclusions omit part of the requested change, resolve the scope instead of reporting a complete deployment. A partial load with `-AllExtensions` is refused (Designer rejects it, `ibcmd` would load every extension whole) — load extensions one by one with `-Extension`.
+
+After an exit-0 load the log is scanned for silent rejections — metadata dropped, or a compatibility mode above the platform (`Для работы с конфигурацией необходима версия платформы не меньше …`: the objects never reach the base). They are printed as a warning; `-StrictLog` makes them exit 1. In a repository-bound base the script adds the action to three platform messages: «текущая конфигурация помещена в хранилище» (a full load is impossible — lock the objects through `1c-repository-manage` and load partially), «… не захвачен в хранилище» (lock that object; the root «Конфигурация» is needed to add or remove a top-level object), «Соединение с хранилищем конфигурации не установлено» (set `REPOSITORY_*` in `.dev.env`, or the repository server is unreachable). When the list includes `Configuration.xml` (for example after a new object is borrowed into an extension), Designer reads every object file in the directory, not only the listed ones (reported on 8.3.27 extension loads): an unlisted file that does not load, such as a borrowed form referring to an unborrowed `CommonPicture` or `StyleItem`, fails the whole load. Run `cfe-validate` on the extension directory before such a load.
 
 Standalone load-only requests finish after loading. In `/update1cbase` / `/deploy-and-test`, continue with checks and `db-update`; a successful import or updated baseline is not a completed database update.
 
@@ -346,7 +381,8 @@ Determines changed configuration files from Git data and performs partial load i
 | `-ConfigDir <path>` | XML export directory (git repository, required) |
 | `-Source <source>` | `All` (default) / `Staged` / `Unstaged` / `Commit` |
 | `-CommitRange <range>` | Commit range for Source=Commit (e.g. `HEAD~3..HEAD`) |
-| `-Extension <name>` | Load into extension |
+| `-Extension <name>` | Load into extension (`-AllExtensions` is refused — one extension per partial load) |
+| `-UpdateDB` | Add `/UpdateDBCfg` to the same launch |
 | `-DryRun` | Only show what would be loaded (no actual load) |
 
 #### Change Sources
@@ -358,7 +394,7 @@ Determines changed configuration files from Git data and performs partial load i
 | `Unstaged` | Modified but not indexed + untracked |
 | `Commit` | Files from commit range (requires `-CommitRange`) |
 
-Run `-DryRun` first to inspect the exact scope. Resolve deletions, renames, missing dependencies and excluded files before loading; files absent from the working tree are not automatically a successful metadata deletion. A no-change plan is a no-op. After a successful load, follow the same checks → `db-update` sequence when database update was requested.
+Run `-DryRun` first to inspect the exact scope. Deletions are reported, not skipped silently: a deleted object description is applied only when its owner (`Configuration.xml` or the parent object) is in the load and no longer lists it in `ChildObjects` (`[note] удаление применится …`); every other deletion — a deleted module or `Ext/` file, an object whose owner did not change, anything in `Plain` format — is listed under `[ВНИМАНИЕ] Удаления, которые загрузка частями НЕ применит` and stays in the base until a full load. A change set that consists only of such deletions exits 1. Renames show up as a deletion plus an addition (`--no-renames`). `Configuration.xml` in the diff triggers a warning that the platform will load the whole configuration. Resolve deletions, renames, missing dependencies and excluded files before loading. A no-change plan is a no-op. The log is scanned for silent rejections as in section 7. After a successful load, follow the same checks → `db-update` sequence when database update was requested.
 
 ---
 
@@ -404,6 +440,53 @@ If the base is busy (active sessions), the load fails: for a server base pass `-
 
 ---
 
+### 11. Extensions in the Infobase (`db-cfe-admin`)
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-cfe-admin.ps1 -Command list -InfoBasePath "C:\Bases\MyDB"
+```
+
+The infobase side of extensions: what is connected, checks, connection properties, removal. Extension **sources** are [cfe-manage.md](cfe-manage.md); loading them is `db-load-xml -Extension` / `db-load-cf -Extension`, applying them `db-update -Extension`.
+
+| Command | What it does | Runs through |
+|---|---|---|
+| `list` | Extension names (`/DumpDBCfgList -AllExtensions`, file or server base) and a property table: purpose, active, **safe mode**, **unsafe-action protection**, used in a distributed infobase, **scope** (`Информационная база` / `Область данных`). The properties come from `ibcmd`, so they are shown only for a file infobase with `ibcmd` next to `1cv8`; otherwise the columns read `—` and the reason is printed | 1cv8 (+ `ibcmd`) |
+| `check` | `-Checks` (default `apply,modules`): `apply` — `/CheckCanApplyConfigurationExtensions`; `modules` — syntax check in `-Context` contexts (default `ThinClient,Server`; `WebClient`, `ExternalConnection`, `MobileClient`, … accepted); `config` — integrity, references, unreferenced procedures, handler existence, empty handlers. `modules` + `config` share one `/CheckConfig` launch. Only the extension is checked, not the main configuration. Without `-Name` — every extension. Any `/Out` line of the applicability check is a refusal: some refusals arrive with exit code 0 | 1cv8 |
+| `set-properties` | `-SafeMode`, `-Active`, `-UnsafeActionProtection`, `-UsedInDistributedInfobase` (`on` / `off`), `-Scope infobase` / `data-separation`, `-SecurityProfile <name>`. Only the passed properties change; the state is re-read and a value that did not stick exits 1 | **`ibcmd`, file infobase only** |
+| `delete` | Removes the extension **and its data** from the infobase, then re-reads the list | 1cv8 |
+
+| Parameter | Description |
+|---|---|
+| `-Command <cmd>` | `list` / `check` / `set-properties` / `delete` (required) |
+| `-Name <name>` (alias `-Extension`) | The extension. Required for `set-properties`; for `delete` — or `-All`. Omitted in `list` / `check` = all extensions |
+| `-All` | `delete` only: every extension, removed one by one by name |
+| `-DryRun` / `-Force` | `delete` and `set-properties` only: `-DryRun` prints the plan (exit 0), `-Force` applies it; neither → exit 2 |
+| `-Checks`, `-Context` | `check` only, see above |
+
+Safety:
+
+- **An empty name never reaches the platform.** `-Name ""` / `-Extension ""` is refused in every command, and `delete` without a name needs an explicit `-All`. Reason: `/DeleteCfg -Extension ""` exits 0, writes `/DumpResult` 0 and deletes the **first** extension of the list (reproduced on 8.3.27.2130) — never compose that line by hand (`content/rules/designer-batch-checks.md → Never run these switches`).
+- `delete` and `set-properties` mutate the infobase: follow the `INFOBASE_ROLE` gates, run `-DryRun` first, offer `db-dump-dt` before deleting an extension that holds data.
+- **An extension that first reaches an infobase through a load is created in safe mode** (upstream observation; `ibcmd` is not part of the local 8.3.27 / 8.5.1 installs, so not re-measured here). Upstream reports that a module extension does not apply in that mode. Check `list`, and switch it off with `set-properties -SafeMode off -Force` when the extension needs it.
+- `check` is the standalone form of `/update1cbase` Step 2c's applicability gate; inside `/update1cbase` the Step 2c ladder stays the gate.
+
+Return codes: 0 — success / all checks passed / dry run; 1 — error, a failed check, a property that did not stick; 2 — `delete` / `set-properties` without `-Force`.
+
+```powershell
+# What is connected, with properties (file infobase with ibcmd)
+... -Command list -InfoBasePath "C:\Bases\MyDB"
+# Applicability + syntax of one extension, web-client context
+... -Command check -InfoBasePath "C:\Bases\MyDB" -Name "Расш1" -Checks apply,modules -Context WebClient,Server
+# Plan, then switch safe mode off
+... -Command set-properties -InfoBasePath "C:\Bases\MyDB" -Name "Расш1" -SafeMode off -DryRun
+... -Command set-properties -InfoBasePath "C:\Bases\MyDB" -Name "Расш1" -SafeMode off -Force
+# Plan, then remove
+... -Command delete -InfoBasePath "C:\Bases\MyDB" -Extension "Расш1" -DryRun
+... -Command delete -InfoBasePath "C:\Bases\MyDB" -Extension "Расш1" -Force
+```
+
+---
+
 ### Common Workflows
 
 #### Fix a Bug in a Data Processor
@@ -436,13 +519,14 @@ Within a database update, continue with the applicable checks and `db-update`. I
 | Code | Description |
 |------|-------------|
 | 0 | Success |
-| 1 | Error (check log) |
+| 1 | Error (check log); also any unhandled script error |
+| 2 | `db-cfe-admin delete` / `set-properties` refused without `-Force` |
 
 ### Update retry discipline — mandatory for load / update operations
 
 `db-load-cf` / `db-load-xml` / `db-load-git` / `db-update` failures are handled **iteratively**, mirroring `content/commands/update1cbase.md → Update retry loop`:
 
-1. **Log after every attempt, success or not.** Exit code 0 does not prove success — the platform writes errors like `Неверное свойство объекта метаданных`, `Неизвестное имя типа`, `Ошибка при обновлении конфигурации базы данных` to the log while formally exiting clean. The scripts already close part of that gap: every Designer launch passes `/DumpResult` and turns a non-zero (or missing) batch result into a non-zero script exit, and `db-load-xml` / `db-update` also scan the log for known failure lines. Still read the log output the script shows. A diagnostic line = failed attempt — but classify the platform's **success phrases first** (`Ошибок не обнаружено`, `Предупреждений: 0` contain the same word stems), otherwise a clean run reads as a failure. Order and pattern list — `content/rules/designer-batch-checks.md → The success-phrase trap`.
+1. **Log after every attempt, success or not.** Exit code 0 does not prove success — the platform writes errors like `Неверное свойство объекта метаданных`, `Неизвестное имя типа`, `Ошибка при обновлении конфигурации базы данных` to the log while formally exiting clean. The scripts already close part of that gap: every Designer launch passes `/DumpResult` and turns a non-zero (or missing) batch result into a non-zero script exit, `db-update` fails on known failure lines in its log, and `db-load-xml` / `db-load-git` print them as a warning (exit 1 with `-StrictLog`). Still read the log output the script shows. A diagnostic line = failed attempt — but classify the platform's **success phrases first** (`Ошибок не обнаружено`, `Предупреждений: 0` contain the same word stems), otherwise a clean run reads as a failure. Order and pattern list — `content/rules/designer-batch-checks.md → The success-phrase trap`.
 2. **Terminate a hung / failed Configurator before retrying.** A dead-but-alive Designer process holds the configuration lock, and every next attempt fails with `База данных заблокирована`. Kill only the process this run started (by PID with a timeout); never blanket-kill all `1cv8` processes — the user's own Designer / client sessions may be among them. A lock that survives your process's death is foreign — report it, do not kill further.
 3. **Fix before retry.** Re-running against unchanged sources is forbidden. Fix the logged cause first (source XML/BSL — through this skill's tools plus `verify_xml` / `syntaxcheck`; parameters — in `.dev.env` / flags). After a failed **load**, restart from the load step, not from `db-update` — the half-loaded state is not trustworthy.
 4. **Budget: 3 full attempts.** Then stop and report the last log fragment, the fixes applied between attempts, and the remaining error. A failed update is never reported as done.

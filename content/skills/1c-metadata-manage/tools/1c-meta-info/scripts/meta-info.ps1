@@ -1,7 +1,8 @@
-﻿# meta-info v1.4 — Compact summary of 1C metadata object
+﻿# meta-info v1.16 — Compact summary of 1C metadata object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+[CmdletBinding(PositionalBinding=$false)]
 param(
-	[Parameter(Mandatory=$true)][Alias('Path')][string]$ObjectPath,
+	[Parameter(Mandatory=$true, Position=0)][Alias('Path')][string]$ObjectPath,
 	[ValidateSet("overview","brief","full")]
 	[string]$Mode = "overview",
 	[string]$Name,
@@ -19,7 +20,7 @@ function Out([string]$text) { $script:lines += $text }
 
 # --- Resolve path ---
 if (-not [System.IO.Path]::IsPathRooted($ObjectPath)) {
-	$ObjectPath = Join-Path (Get-Location).Path $ObjectPath
+	$ObjectPath = Join-Path (Get-Location).ProviderPath $ObjectPath
 }
 
 # Directory -> find XML inside or as sibling
@@ -103,14 +104,19 @@ $typeNameMap = @{
 	"DefinedType"="Определяемый тип"; "CommonModule"="Общий модуль"
 	"ScheduledJob"="Регламентное задание"; "EventSubscription"="Подписка на событие"
 	"HTTPService"="HTTP-сервис"; "WebService"="Веб-сервис"
+	"ExternalDataSource"="Внешний источник данных"; "Table"="Таблица внешнего источника"
 }
 
+# Долгие виды сокращаем (ПВХ, РС/РН/РБ/РР): в списке на сорок реквизитов повторяющийся префикс
+# съедает колонку и прячет отличающуюся часть — имя объекта. Аббревиатуры приняты как ВВОД в
+# meta-compile/meta-edit (словарь typeSynonyms), поэтому строку из вывода можно подать обратно.
 $refTypeMap = @{
 	"CatalogRef"="СправочникСсылка"; "DocumentRef"="ДокументСсылка"
 	"EnumRef"="ПеречислениеСсылка"; "ChartOfAccountsRef"="ПланСчетовСсылка"
 	"ChartOfCharacteristicTypesRef"="ПВХСсылка"; "ChartOfCalculationTypesRef"="ПВРСсылка"
 	"ExchangePlanRef"="ПланОбменаСсылка"; "BusinessProcessRef"="БизнесПроцессСсылка"
 	"TaskRef"="ЗадачаСсылка"
+	"ExternalDataSourceTableRef"="ВнешнийИсточникДанныхТаблицаСсылка"
 }
 
 $regTypeMap = @{
@@ -143,11 +149,32 @@ $objectTypeMap = @{
 	"CatalogObject"="СправочникОбъект"; "DocumentObject"="ДокументОбъект"
 	"ChartOfAccountsObject"="ПланСчетовОбъект"
 	"ChartOfCharacteristicTypesObject"="ПВХОбъект"
+	"ChartOfCalculationTypesObject"="ПВРОбъект"
 	"BusinessProcessObject"="БизнесПроцессОбъект"; "TaskObject"="ЗадачаОбъект"
 	"ExchangePlanObject"="ПланОбменаОбъект"
 	"InformationRegisterRecordSet"="НаборЗаписейРС"
 	"AccumulationRegisterRecordSet"="НаборЗаписейРН"
 	"AccountingRegisterRecordSet"="НаборЗаписейРБ"
+	"CalculationRegisterRecordSet"="НаборЗаписейРР"
+	"SequenceRecordSet"="НаборЗаписейПоследовательности"
+	"RecalculationRecordSet"="НаборЗаписейПерерасчета"
+	# Менеджеры встречаются в источниках подписок. Сиблинга-аббревиатуры у них нет
+	# (единственный ориентир — КонстантаМенеджерЗначения), поэтому имена полные.
+	"CatalogManager"="СправочникМенеджер"; "DocumentManager"="ДокументМенеджер"
+	"DocumentJournalManager"="ЖурналДокументовМенеджер"
+	"EnumManager"="ПеречислениеМенеджер"
+	"ConstantValueManager"="КонстантаМенеджерЗначения"
+	"InformationRegisterManager"="РегистрСведенийМенеджер"
+	"AccumulationRegisterManager"="РегистрНакопленияМенеджер"
+	"AccountingRegisterManager"="РегистрБухгалтерииМенеджер"
+	"CalculationRegisterManager"="РегистрРасчетаМенеджер"
+	"ChartOfAccountsManager"="ПланСчетовМенеджер"
+	"ChartOfCharacteristicTypesManager"="ПВХМенеджер"
+	"ChartOfCalculationTypesManager"="ПВРМенеджер"
+	"ExchangePlanManager"="ПланОбменаМенеджер"
+	"BusinessProcessManager"="БизнесПроцессМенеджер"
+	"TaskManager"="ЗадачаМенеджер"
+	"DataProcessorManager"="ОбработкаМенеджер"; "ReportManager"="ОтчетМенеджер"
 }
 
 $numberPeriodMap = @{
@@ -170,6 +197,144 @@ function Get-MLText($node) {
 	return ""
 }
 
+# Корень конфигурации — ближайший каталог выше объекта, где лежит Configuration.xml (или
+# Ext/ParentConfigurations.bin у выгрузки на поддержке). Фиксированное «на два уровня выше» тут
+# неверно: объект бывает подан из другого места дерева, а у внешней обработки корня нет вовсе.
+function Find-ConfigRootDir {
+	$d = [System.IO.Path]::GetDirectoryName($ObjectPath)
+	for ($i = 0; $i -lt 8 -and $d; $i++) {
+		if ((Test-Path (Join-Path (Join-Path $d "Ext") "ParentConfigurations.bin")) -or
+		    (Test-Path (Join-Path $d "Configuration.xml"))) { return $d }
+		$parent = [System.IO.Path]::GetDirectoryName($d)
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return $null
+}
+
+# Множество типов (v8:TypeSet) — индирекция: в строке типа стоит имя, а состав лежит в другом
+# файле (определяемый тип) или определяется данными (характеристика ПВХ). Раскрывать состав в
+# строке типа нельзя дважды: один псевдоним встречается в объекте десятками раз (в АвансовомОтчете
+# `ДенежнаяСумма*` — 12 раз), а в корпусе есть определяемые типы на 596 типов — вывод упёрся бы в
+# постраничник и съел хвост объекта. Поэтому имя стоит встроенно, а раскрытие идёт ровно одной
+# записью на уникальное множество, глоссарием в конце вывода.
+$script:typeSetGlossary = New-Object System.Collections.Specialized.OrderedDictionary
+$script:definedTypeCache = @{}
+$script:configRootProbed = $false
+$script:configRootDir = $null
+# Состав определяемого типа сам может содержать множество. Внутрь раскрытия не углубляемся: там
+# имя уже достаточно, а рекурсия по самоссылочному типу не завершилась бы.
+$script:inTypeSetExpansion = $false
+
+function Get-ConfigRootDir {
+	if (-not $script:configRootProbed) {
+		$script:configRootProbed = $true
+		$script:configRootDir = Find-ConfigRootDir
+	}
+	return $script:configRootDir
+}
+
+function Resolve-DefinedType([string]$dtName) {
+	if ($script:definedTypeCache.ContainsKey($dtName)) { return $script:definedTypeCache[$dtName] }
+	# Broken отличаем от Found: файл на месте, но не разобрался — сказать «файла нет» было бы
+	# враньём, а молчать — тем же тихим отказом, от которого лечим.
+	$res = @{ Found = $false; Broken = $false; Members = @() }
+	$root = Get-ConfigRootDir
+	if ($root) {
+		$dtPath = Join-Path (Join-Path $root "DefinedTypes") "$dtName.xml"
+		if (Test-Path -LiteralPath $dtPath) {
+			try {
+				[xml]$dtDoc = Get-Content -LiteralPath $dtPath -Encoding UTF8
+				$dtNs = New-Object System.Xml.XmlNamespaceManager($dtDoc.NameTable)
+				$dtNs.AddNamespace("md", "http://v8.1c.ru/8.3/MDClasses")
+				$dtNs.AddNamespace("v8", "http://v8.1c.ru/8.1/data/core")
+				$tn = $dtDoc.SelectSingleNode("/md:MetaDataObject/md:DefinedType/md:Properties/md:Type", $dtNs)
+				if ($tn) {
+					$members = @()
+					$script:inTypeSetExpansion = $true
+					try {
+						foreach ($c in $tn.ChildNodes) {
+							if ($c.NodeType -ne 'Element') { continue }
+							# .LocalName у XML-адаптера PS перекрывается одноимённым атрибутом — get_LocalName().
+							switch ($c.get_LocalName()) {
+								'Type'    { $members += Format-SingleType $c.InnerText $tn }
+								'TypeSet' { $members += Format-SingleTypeSet $c.InnerText }
+							}
+						}
+					} finally { $script:inTypeSetExpansion = $false }
+					$res.Members = $members
+					# Found только после успешного разбора: иначе упавшее раскрытие
+					# печаталось бы как «состав пуст» — ложь вместо «не разобран».
+					$res.Found = $true
+				}
+			} catch { $res.Broken = $true }
+			if (-not $res.Found) { $res.Broken = $true }
+		}
+	}
+	$script:definedTypeCache[$dtName] = $res
+	return $res
+}
+
+function Register-TypeSet([string]$label, [string]$kind, [string]$name) {
+	if ($script:inTypeSetExpansion) { return }
+	if ($script:typeSetGlossary.Contains($label)) { return }
+	$script:typeSetGlossary.Add($label, @{ Kind = $kind; Name = $name })
+}
+
+# Тип-множество: голое имя метатипа без `.Имя` означает ВСЕ объекты этого класса
+# (см. docs/meta-dsl-spec.md §«Тип-множество»). Конкретный тип всегда пишется с точкой, но
+# отличать «все» от «один» по наличию точки посреди длинного имени — сигнал низкой различимости,
+# поэтому обобщённый метатип получает суффикс «(все)»: разница становится словом, а не пунктуацией.
+function Format-SingleTypeSet([string]$raw) {
+	$raw = $raw -replace '^d\d+p\d+:', 'cfg:'
+	if ($raw -match '^cfg:DefinedType\.(.+)$') {
+		$label = "ОпределяемыйТип.$($Matches[1])"
+		Register-TypeSet $label 'DefinedType' $Matches[1]
+		return $label
+	}
+	if ($raw -match '^cfg:Characteristic\.(.+)$') {
+		$label = "Характеристика.$($Matches[1])"
+		Register-TypeSet $label 'Characteristic' $Matches[1]
+		return $label
+	}
+	if ($raw -eq 'cfg:AnyRef')   { return "ЛюбаяСсылка" }
+	if ($raw -eq 'cfg:AnyIBRef') { return "ЛюбаяСсылкаИБ" }
+	if ($raw -match '^cfg:(\w+Ref)$' -and $refTypeMap.ContainsKey($Matches[1])) {
+		return "$($refTypeMap[$Matches[1]]) (все)"
+	}
+	if ($raw -match '^cfg:(\w+)$' -and $objectTypeMap.ContainsKey($Matches[1])) {
+		return "$($objectTypeMap[$Matches[1]]) (все)"
+	}
+	if ($raw -match '^cfg:(.+)$') { return $Matches[1] }
+	return $raw
+}
+
+# Глоссарий множеств: одна запись на уникальное множество, в порядке первого упоминания.
+function Get-TypeSetGlossaryLines {
+	$lines = @()
+	foreach ($label in $script:typeSetGlossary.Keys) {
+		$e = $script:typeSetGlossary[$label]
+		if ($e.Kind -eq 'Characteristic') {
+			$lines += "  $label — набор определяется данными ПВХ"
+			continue
+		}
+		$dt = Resolve-DefinedType $e.Name
+		if (-not $dt.Found) {
+			$lines += if ($dt.Broken) { "  $label — файл типа не разобран" } else { "  $label — файла типа нет в выгрузке" }
+			continue
+		}
+		$members = @($dt.Members)
+		if ($members.Count -eq 0) { $lines += "  $label — состав пуст"; continue }
+		if ($members.Count -le $script:composedTypeThreshold) {
+			$lines += "  $label → $($members -join ' | ')"
+		} else {
+			$lines += "  $label — типов: $($members.Count)"
+			$lines += "    раскрыть: meta-info -ObjectPath DefinedTypes/$($e.Name).xml -Mode full"
+		}
+	}
+	return $lines
+}
+
 function Format-Type($typeNode) {
 	if (-not $typeNode) { return "" }
 	$types = @()
@@ -178,14 +343,7 @@ function Format-Type($typeNode) {
 		$types += Format-SingleType $raw $typeNode
 	}
 	foreach ($t in $typeNode.SelectNodes("v8:TypeSet", $ns)) {
-		$raw = $t.InnerText
-		if ($raw -match '^cfg:DefinedType\.(.+)$') {
-			$types += "ОпределяемыйТип.$($Matches[1])"
-		} elseif ($raw -match '^cfg:Characteristic\.(.+)$') {
-			$types += "Характеристика.$($Matches[1])"
-		} else {
-			$types += $raw
-		}
+		$types += Format-SingleTypeSet $t.InnerText
 	}
 	if ($types.Count -eq 0) { return "" }
 	if ($types.Count -eq 1) { return $types[0] }
@@ -221,6 +379,10 @@ function Format-SingleType([string]$raw, $parentNode) {
 		}
 		"v8:ValueStorage" { return "ХранилищеЗначения" }
 		"v8:UUID" { return "УникальныйИдентификатор" }
+		# xs:base64Binary — всегда ДвоичныеДанные, и без квалификаторов тоже: замерено
+		# на 8.3.24.1691 — такой узел платформа загружает и выгружает обратно как безлимитные
+		# двоичные данные (Length 0, AllowedLength Variable), а не как ХранилищеЗначения.
+		"xs:base64Binary" { return "ДвоичныеДанные" }
 		"v8:Null" { return "Null" }
 		default {
 			# Normalize d5p1:/dNpN: -> cfg:
@@ -244,6 +406,12 @@ function Format-SingleType([string]$raw, $parentNode) {
 			# cfg:DefinedType.Xxx
 			if ($raw -match '^cfg:DefinedType\.(.+)$') {
 				return "ОпределяемыйТип.$($Matches[1])"
+			}
+			# cfg:DocumentObject.Xxx / cfg:InformationRegisterRecordSet.Xxx — объектные типы.
+			# Без карты они уходили в ветку «снять cfg:» и печатались по-английски, хотя в
+			# источниках подписки те же типы печатались по-русски: одно понятие двумя видами.
+			if ($raw -match '^cfg:(\w+)\.(.+)$' -and $objectTypeMap.ContainsKey($Matches[1])) {
+				return "$($objectTypeMap[$Matches[1]]).$($Matches[2])"
 			}
 			# Strip cfg: prefix for unknown
 			if ($raw -match '^cfg:(.+)$') {
@@ -285,6 +453,202 @@ function Format-Flags($propsNode, [bool]$isDimension = $false) {
 
 	if ($flags.Count -eq 0) { return "" }
 	return "  [$($flags -join ', ')]"
+}
+
+# Ссылка на объект метаданных (`Catalog.Валюты` в Owners и подобных) — не тип значения,
+# но в выводе показываем именно тип, который присваивается: СправочникСсылка.Валюты.
+function Format-MDObjectRef([string]$raw) {
+	if ($raw -match '^(\w+)\.(.+)$') {
+		$key = "$($Matches[1])Ref"
+		if ($refTypeMap.ContainsKey($key)) { return "$($refTypeMap[$key]).$($Matches[2])" }
+	}
+	return $raw
+}
+
+# --- Стандартные реквизиты ---
+
+# Сколько типов состава печатать списком, прежде чем свернуть в счётчик. По корпусу
+# acc/erp/ut/unf состав ПВХ доходит до 151 типа, при этом 20 из 42 ПВХ укладываются в 5.
+$script:composedTypeThreshold = 5
+
+# Имена полей, состав которых свернули в счётчик, — по ним в конце вывода печатается
+# единственная подсказка, чем состав развернуть.
+$script:collapsedNames = @()
+
+# Блок StandardAttributes в XML опционален: платформа материализует его только когда хотя бы
+# один стандартный реквизит кастомизирован (docs/meta-dsl-spec.md §7.1.1). Когда блока нет,
+# действуют платформенные дефолты — профиль ниже совпадает с $stdAttrProfile в meta-compile
+# (выведен из корпуса acc+erp). Правки держать синхронными, иначе навыки разъедутся молча.
+$stdAttrRequiredDefault = @{
+	"Catalog"                    = @{ "Owner" = $true; "Description" = $true }
+	"Document"                   = @{ "Date" = $true }
+	"ExchangePlan"               = @{ "Description" = $true; "Code" = $true }
+	"ChartOfAccounts"            = @{ "Description" = $true; "Code" = $true }
+	"ChartOfCharacteristicTypes" = @{ "Description" = $true }
+	"ChartOfCalculationTypes"    = @{ "Description" = $true }
+}
+
+function Test-StdAttrRequired($propsNode, [string]$attrName, [string]$objType) {
+	$fc = $propsNode.SelectSingleNode("md:StandardAttributes/xr:StandardAttribute[@name='$attrName']/xr:FillChecking", $ns)
+	if ($fc) { return ($fc.InnerText -eq "ShowError") }
+	if ($stdAttrRequiredDefault.ContainsKey($objType) -and $stdAttrRequiredDefault[$objType].ContainsKey($attrName)) {
+		return $stdAttrRequiredDefault[$objType][$attrName]
+	}
+	return $false
+}
+
+function New-StdAttr([string]$name, [string]$type, $flags) {
+	$f = @($flags | Where-Object { $_ })
+	$flagStr = if ($f.Count -gt 0) { "  [$($f -join ', ')]" } else { "" }
+	return @{ Name = $name; Type = $type; Flags = $flagStr }
+}
+
+# Стандартные реквизиты, наличие и характеристики которых задаются настройками объекта, —
+# их нельзя вывести из остального вывода, поэтому они попадают и в overview. Ссылка,
+# ПометкаУдаления, Родитель и прочее следуют из типа объекта и строки «Иерархический» —
+# они только в full (см. Get-StandardAttributesFull).
+function Get-StandardAttributes($propsNode, [string]$objType, [string]$mode) {
+	$result = @()
+
+	# Владелец — только у подчинённого справочника; состав типов ниоткуда не выводится
+	if ($objType -eq "Catalog") {
+		$ownersNode = $propsNode.SelectSingleNode("md:Owners", $ns)
+		$ownerTypes = @()
+		if ($ownersNode) {
+			foreach ($it in $ownersNode.SelectNodes("xr:Item", $ns)) {
+				$ownerTypes += Format-MDObjectRef $it.InnerText
+			}
+		}
+		if ($ownerTypes.Count -gt 0) {
+			$req = if (Test-StdAttrRequired $propsNode "Owner" $objType) { "обязательный" } else { $null }
+			$result += New-StdAttr "Владелец" ($ownerTypes -join ", ") @($req)
+		}
+	}
+
+	# ТипЗначения ПВХ — до полутора сотен типов, полный список раздул бы сводку в обоих
+	# режимах, поэтому сворачиваем в счётчик. Состав смотреть через -Name ТипЗначения.
+	if ($objType -eq "ChartOfCharacteristicTypes") {
+		$vt = $propsNode.SelectSingleNode("md:Type", $ns)
+		if ($vt) {
+			$cnt = $vt.SelectNodes("v8:Type", $ns).Count + $vt.SelectNodes("v8:TypeSet", $ns).Count
+			$typeStr = if ($cnt -gt $script:composedTypeThreshold) {
+				$script:collapsedNames += "ТипЗначения"
+				"Составной ($cnt)"
+			} else { Format-Type $vt }
+			if ($typeStr) { $result += New-StdAttr "ТипЗначения" $typeStr @() }
+		}
+	}
+
+	# Дата — есть всегда, ценна флагом обязательности
+	if ($objType -in @("Document", "BusinessProcess", "Task")) {
+		$req = if (Test-StdAttrRequired $propsNode "Date" $objType) { "обязательный" } else { $null }
+		$result += New-StdAttr "Дата" "Дата" @($req)
+	}
+
+	# Номер — тип и длина задаются объектом, при NumberLength=0 номера нет
+	if ($objType -in @("Document", "BusinessProcess", "Task")) {
+		$numLen = $propsNode.SelectSingleNode("md:NumberLength", $ns)
+		if ($numLen -and [int]$numLen.InnerText -gt 0) {
+			$numType = $propsNode.SelectSingleNode("md:NumberType", $ns)
+			$ntRu = if ($numType -and $numType.InnerText -eq "Number") { "Число" } else { "Строка" }
+			$flags = @()
+			if (Test-StdAttrRequired $propsNode "Number" $objType) { $flags += "обязательный" }
+			$numPer = $propsNode.SelectSingleNode("md:NumberPeriodicity", $ns)
+			if ($numPer -and $numberPeriodMap.ContainsKey($numPer.InnerText)) { $flags += $numberPeriodMap[$numPer.InnerText] }
+			$numAllowed = $propsNode.SelectSingleNode("md:NumberAllowedLength", $ns)
+			if ($numAllowed -and $numAllowed.InnerText -eq "Fixed") { $flags += "фикс. длина" }
+			$autoNum = $propsNode.SelectSingleNode("md:Autonumbering", $ns)
+			if ($autoNum -and $autoNum.InnerText -eq "true") { $flags += "авто" }
+			$result += New-StdAttr "Номер" "$ntRu($($numLen.InnerText))" $flags
+		}
+	}
+
+	# Код — при CodeLength=0 кода у объекта нет вовсе, строку не печатаем
+	$codeLen = $propsNode.SelectSingleNode("md:CodeLength", $ns)
+	if ($codeLen -and [int]$codeLen.InnerText -gt 0) {
+		$codeType = $propsNode.SelectSingleNode("md:CodeType", $ns)
+		$ctRu = if ($codeType -and $codeType.InnerText -eq "Number") { "Число" } else { "Строка" }
+		$flags = @()
+		if (Test-StdAttrRequired $propsNode "Code" $objType) { $flags += "обязательный" }
+		$codeAllowed = $propsNode.SelectSingleNode("md:CodeAllowedLength", $ns)
+		if ($codeAllowed -and $codeAllowed.InnerText -eq "Fixed") { $flags += "фикс. длина" }
+		$result += New-StdAttr "Код" "$ctRu($($codeLen.InnerText))" $flags
+	}
+
+	# Наименование — при DescriptionLength=0 наименования нет
+	$descLen = $propsNode.SelectSingleNode("md:DescriptionLength", $ns)
+	if ($descLen -and [int]$descLen.InnerText -gt 0) {
+		$req = if (Test-StdAttrRequired $propsNode "Description" $objType) { "обязательный" } else { $null }
+		$result += New-StdAttr "Наименование" "Строка($($descLen.InnerText))" @($req)
+	}
+
+	return $result
+}
+
+# Остальные стандартные реквизиты — предсказуемы по типу объекта, но в full полезны
+# как перечень доступных полей для запроса.
+function Get-StandardAttributesFull($propsNode, [string]$objType, [string]$objName) {
+	$selfRef = switch ($objType) {
+		"Catalog"                    { "СправочникСсылка.$objName" }
+		"ChartOfCharacteristicTypes" { "ПВХСсылка.$objName" }
+		"ChartOfAccounts"            { "ПланСчетовСсылка.$objName" }
+		"ChartOfCalculationTypes"    { "ПВРСсылка.$objName" }
+		"ExchangePlan"               { "ПланОбменаСсылка.$objName" }
+		"Document"                   { "ДокументСсылка.$objName" }
+		"BusinessProcess"            { "БизнесПроцессСсылка.$objName" }
+		"Task"                       { "ЗадачаСсылка.$objName" }
+		default                      { "" }
+	}
+	$result = @()
+	if ($selfRef) { $result += New-StdAttr "Ссылка" $selfRef @() }
+	$result += New-StdAttr "ПометкаУдаления" "Булево" @()
+
+	# Родитель и ЭтоГруппа существуют только у иерархических объектов
+	$hier = $propsNode.SelectSingleNode("md:Hierarchical", $ns)
+	$isHier = ($hier -and $hier.InnerText -eq "true") -or $objType -eq "ChartOfAccounts"
+	if ($isHier -and $selfRef) {
+		$result += New-StdAttr "Родитель" $selfRef @()
+		$ht = $propsNode.SelectSingleNode("md:HierarchyType", $ns)
+		if ($objType -eq "Catalog" -and (-not $ht -or $ht.InnerText -eq "HierarchyFoldersAndItems")) {
+			$result += New-StdAttr "ЭтоГруппа" "Булево" @()
+		}
+	}
+
+	switch ($objType) {
+		"Document" {
+			$result += New-StdAttr "Проведен" "Булево" @()
+		}
+		"ExchangePlan" {
+			$result += New-StdAttr "ЭтотУзел" "Булево" @()
+			$result += New-StdAttr "НомерОтправленного" "Число" @()
+			$result += New-StdAttr "НомерПринятого" "Число" @()
+		}
+		"BusinessProcess" {
+			$result += New-StdAttr "Стартован" "Булево" @()
+			$result += New-StdAttr "Завершен" "Булево" @()
+			$result += New-StdAttr "ВедущаяЗадача" "ЗадачаСсылка" @()
+		}
+		"Task" {
+			$result += New-StdAttr "Выполнена" "Булево" @()
+			$result += New-StdAttr "БизнесПроцесс" "БизнесПроцессСсылка" @()
+			$result += New-StdAttr "ТочкаМаршрута" "БизнесПроцессТочкаМаршрутаСсылка" @()
+		}
+		"ChartOfAccounts" {
+			$result += New-StdAttr "Вид" "ВидСчета" @()
+			$result += New-StdAttr "Забалансовый" "Булево" @()
+			$result += New-StdAttr "Порядок" "Число" @()
+		}
+		"ChartOfCalculationTypes" {
+			$result += New-StdAttr "ПериодДействияБазовый" "Булево" @()
+		}
+	}
+
+	# Предопределённые данные есть у всех перечисленных типов, кроме документов и задач
+	if ($objType -in @("Catalog", "ChartOfCharacteristicTypes", "ChartOfAccounts", "ChartOfCalculationTypes")) {
+		$result += New-StdAttr "Предопределенный" "Булево" @()
+		$result += New-StdAttr "ИмяПредопределенныхДанных" "Строка" @()
+	}
+	return $result
 }
 
 function Get-Attributes($parentNode, [string]$childTag = "Attribute", [bool]$isDimension = $false) {
@@ -329,7 +693,10 @@ function Get-MaxNameLen($attrs) {
 function Get-SimpleChildren($parentNode, [string]$tag) {
 	$result = @()
 	foreach ($child in $parentNode.SelectNodes("md:$tag", $ns)) {
-		$result += $child.InnerText
+		# Form/Template в ChildObjects — простые узлы с именем в тексте, а Command — узел
+		# с вложенным Properties: у него InnerText склеил бы всё содержимое в одну строку.
+		$nameNode = $child.SelectSingleNode("md:Properties/md:Name", $ns)
+		if ($nameNode) { $result += $nameNode.InnerText } else { $result += $child.InnerText }
 	}
 	return $result
 }
@@ -363,8 +730,33 @@ function Format-SourceType([string]$raw) {
 		$prefix = $Matches[1]; $name = $Matches[2]
 		if ($objectTypeMap.ContainsKey($prefix)) { return "$($objectTypeMap[$prefix]).$name" }
 	}
+	# Голый вид без точки тоже бывает источником: meta-compile пишет менеджера (ДокументМенеджер)
+	# обычным v8:Type. Суффикса «(все)» тут НЕ ставим — это сам тип менеджера, а не класс объектов;
+	# множеством голый вид приходит через v8:TypeSet, и его форматирует Format-SingleTypeSet.
+	if ($raw -match '^cfg:(\w+)$' -and $objectTypeMap.ContainsKey($Matches[1])) {
+		return $objectTypeMap[$Matches[1]]
+	}
 	if ($raw -match '^cfg:(.+)$') { return $Matches[1] }
 	return $raw
+}
+
+# Источники подписки задаются и списком типов (v8:Type), и множеством (v8:TypeSet — определяемый
+# тип или целый класс «все документы»). В корпусе множеством задана треть подписок (в erp_8.3.24
+# 151 из 492 — вообще без v8:Type), поэтому чтение только v8:Type оставляло их без строки
+# «Источники»: подписка выглядела так, будто ни на что не срабатывает. Оба узла читаем одним
+# XPath, в порядке документа — так же, как meta-decompile.
+#
+# Множества и явные типы возвращаем врозь: явных бывает много (в корпусе до 1353 в одной
+# подписке), а множеств — не больше восьми. Поэтому в сводке множества называем всегда, а
+# явные типы сворачиваем в счётчик: по одному числу не видно, что подписка бьёт по целому классу.
+function Get-SubscriptionSourceList($sourceNode) {
+	$types = @()
+	$sets = @()
+	foreach ($t in $sourceNode.SelectNodes("v8:Type|v8:TypeSet", $ns)) {
+		if ($t.get_LocalName() -eq 'TypeSet') { $sets  += Format-SingleTypeSet $t.InnerText }
+		else                                  { $types += Format-SourceType   $t.InnerText }
+	}
+	return [pscustomobject]@{ Types = $types; Sets = $sets }
 }
 
 function Get-HTTPEndpoints($childObjs) {
@@ -431,16 +823,9 @@ function Test-ExternalObjectRoot([string]$xmlPath) {
 function Get-ObjectSupportStatus([string]$objUuid) {
 	try {
 		if (Test-ExternalObjectRoot $ObjectPath) { return $null }
-		# Walk up to the config root (dir with Configuration.xml or Ext/ParentConfigurations.bin).
-		$d = [System.IO.Path]::GetDirectoryName($ObjectPath)
-		$binPath = $null
-		for ($i = 0; $i -lt 8 -and $d; $i++) {
-			$cand = Join-Path (Join-Path $d "Ext") "ParentConfigurations.bin"
-			if ((Test-Path $cand) -or (Test-Path (Join-Path $d "Configuration.xml"))) { $binPath = $cand; break }
-			$parent = [System.IO.Path]::GetDirectoryName($d)
-			if ($parent -eq $d) { break }
-			$d = $parent
-		}
+		# Корень конфигурации ищем тем же климбом, что и состав определяемых типов.
+		$root = Get-ConfigRootDir
+		$binPath = if ($root) { Join-Path (Join-Path $root "Ext") "ParentConfigurations.bin" } else { $null }
 		if (-not $binPath -or -not (Test-Path $binPath)) { return "не на поддержке" }
 		$bytes = [System.IO.File]::ReadAllBytes($binPath)
 		if ($bytes.Length -le 32) { return "снято с поддержки (правки свободны)" }
@@ -650,6 +1035,43 @@ if ($Name -and $childObjs) {
 		}
 	}
 
+	# Не нашли среди дочерних объектов — пробуем стандартные реквизиты ниже
+}
+
+# Drill-down по стандартному реквизиту — единственный способ увидеть состав типов целиком,
+# когда в сводке он свёрнут в счётчик. Живёт в Properties, а не в ChildObjects, поэтому идёт
+# отдельной веткой и работает даже у объектов без ChildObjects.
+if ($Name -and -not $drillDone) {
+	$stdAll = @(Get-StandardAttributes $props $mdType "full") + @(Get-StandardAttributesFull $props $mdType $objName)
+	foreach ($s in $stdAll) {
+		if ($s.Name -ne $Name) { continue }
+		Out "Стандартный реквизит: $($s.Name)"
+
+		# Состав типов разворачиваем списком: ради этого drill-down и нужен
+		$typeSrc = $null
+		if ($Name -eq "ТипЗначения") { $typeSrc = $props.SelectSingleNode("md:Type", $ns) }
+		$typeList = @()
+		if ($typeSrc) {
+			foreach ($t in $typeSrc.SelectNodes("v8:Type", $ns))    { $typeList += Format-SingleType $t.InnerText $typeSrc }
+			foreach ($t in $typeSrc.SelectNodes("v8:TypeSet", $ns)) { $typeList += Format-SingleTypeSet $t.InnerText }
+		} elseif ($Name -eq "Владелец") {
+			$ownersNode = $props.SelectSingleNode("md:Owners", $ns)
+			if ($ownersNode) {
+				foreach ($it in $ownersNode.SelectNodes("xr:Item", $ns)) { $typeList += Format-MDObjectRef $it.InnerText }
+			}
+		}
+
+		if ($typeList.Count -gt 0) {
+			Out "  Типы ($($typeList.Count)):"
+			foreach ($t in $typeList) { Out "    $t" }
+		} else {
+			Out "  Тип: $($s.Type)"
+		}
+		$flagText = $s.Flags.Trim()
+		if ($flagText) { Out "  Свойства: $($flagText.Trim('[', ']'))" }
+		$drillDone = $true
+		break
+	}
 	if (-not $drillDone) {
 		Write-Host "[ERROR] '$Name' not found in $objName"
 		exit 1
@@ -680,6 +1102,20 @@ if (-not $drillDone) {
 
 	# --- Mode: brief ---
 	if ($Mode -eq "brief") {
+		# Подчинённость — единственный факт структуры, который из brief не выводится никак,
+		# а без него код записи элемента падает. Про обязательность здесь намеренно молчим:
+		# обязательными бывают и обычные реквизиты, а их brief не разбирает.
+		if ($mdType -eq "Catalog") {
+			$ownersNode = $props.SelectSingleNode("md:Owners", $ns)
+			$ownerNames = @()
+			if ($ownersNode) {
+				foreach ($it in $ownersNode.SelectNodes("xr:Item", $ns)) {
+					$ownerNames += ($it.InnerText -replace '^\w+\.', '')
+				}
+			}
+			if ($ownerNames.Count -gt 0) { Out "Подчинён: $($ownerNames -join ', ')" }
+		}
+
 		# Attributes
 		$attrs = @()
 		if ($childObjs) { $attrs = @(Get-Attributes $childObjs) }
@@ -730,9 +1166,15 @@ if (-not $drillDone) {
 		if ($mdType -eq "DefinedType") {
 			$typeNode2 = $props.SelectSingleNode("md:Type", $ns)
 			if ($typeNode2) {
+				# Оба узла, одним XPath и в порядке документа. v8:TypeSet внутри определяемого
+				# типа платформа НЕ принимает («Недопустимый тип», замерено на 8.3.24.1691 для
+				# AnyRef, голого CatalogRef, Characteristic.X и вложенного DefinedType.X),
+				# поэтому в выгрузке его не бывает — но в рукотворном файле бывает, и тогда
+				# чтение только v8:Type МОЛЧА теряло узел, а счётчик «Типы (N)» врал.
 				$types = @()
-				foreach ($t in $typeNode2.SelectNodes("v8:Type", $ns)) {
-					$types += Format-SingleType $t.InnerText $typeNode2
+				foreach ($t in $typeNode2.SelectNodes("v8:Type|v8:TypeSet", $ns)) {
+					if ($t.get_LocalName() -eq 'TypeSet') { $types += Format-SingleTypeSet $t.InnerText }
+					else { $types += Format-SingleType $t.InnerText $typeNode2 }
 				}
 				if ($types.Count -gt 0) {
 					Out "Типы ($($types.Count)): $($types -join ', ')"
@@ -795,8 +1237,17 @@ if (-not $drillDone) {
 			}
 			$source = $props.SelectSingleNode("md:Source", $ns)
 			if ($source) {
-				$srcCount = $source.SelectNodes("v8:Type", $ns).Count
-				if ($srcCount -gt 0) { $esParts += "Источники: $srcCount" }
+				# brief называет множества, а явные типы считает: по одному числу не видно, что
+				# подписка срабатывает на целый класс документов или на состав определяемого типа.
+				$src = Get-SubscriptionSourceList $source
+				$srcTypes = @($src.Types); $srcSets = @($src.Sets)
+				$total = $srcTypes.Count + $srcSets.Count
+				if ($total -gt 0) {
+					$parts2 = @()
+					if ($srcSets.Count -gt 0) { $parts2 += $srcSets }
+					if ($srcTypes.Count -gt 0) { $parts2 += "явных типов: $($srcTypes.Count)" }
+					$esParts += "Источники ($total): $($parts2 -join ', ')"
+				}
 			}
 			if ($esParts.Count -gt 0) { Out ($esParts -join " | ") }
 		}
@@ -828,51 +1279,47 @@ if (-not $drillDone) {
 
 		# Document-specific header properties
 		if ($mdType -eq "Document") {
-			$numType = $props.SelectSingleNode("md:NumberType", $ns)
-			$numLen = $props.SelectSingleNode("md:NumberLength", $ns)
-			$numPer = $props.SelectSingleNode("md:NumberPeriodicity", $ns)
-			$autoNum = $props.SelectSingleNode("md:Autonumbering", $ns)
 			$posting = $props.SelectSingleNode("md:Posting", $ns)
 
 			$parts = @()
-			if ($numType -and $numLen) {
-				$nt = if ($numType.InnerText -eq "String") { "Строка" } else { "Число" }
-				$piece = "Номер: $nt($($numLen.InnerText))"
-				if ($numPer) {
-					$perRu = if ($numberPeriodMap.ContainsKey($numPer.InnerText)) { $numberPeriodMap[$numPer.InnerText] } else { $numPer.InnerText }
-					$piece += ", $perRu"
-				}
-				if ($autoNum -and $autoNum.InnerText -eq "true") { $piece += ", авто" }
-				$parts += $piece
-			}
+			# Номер уехал в блок стандартных реквизитов — здесь остаются свойства объекта
 			if ($posting) {
 				$parts += "Проведение: $(if ($posting.InnerText -eq 'Allow') { 'да' } else { 'нет' })"
 			}
 			if ($parts.Count -gt 0) { Out ($parts -join " | ") }
 		}
 
-		# Catalog-specific header properties
-		if ($mdType -eq "Catalog") {
-			$parts = @()
-			$hier = $props.SelectSingleNode("md:Hierarchical", $ns)
-			if ($hier -and $hier.InnerText -eq "true") {
-				$ht = $props.SelectSingleNode("md:HierarchyType", $ns)
-				$htText = if ($ht -and $ht.InnerText -eq "HierarchyFoldersAndItems") { "группы и элементы" } else { "элементы" }
-				$limitNode = $props.SelectSingleNode("md:LimitLevelCount", $ns)
-				$levelNode = $props.SelectSingleNode("md:LevelCount", $ns)
-				if ($limitNode -and $limitNode.InnerText -eq "true" -and $levelNode) {
-					$htText += ", уровней: $($levelNode.InnerText)"
-				} else {
-					$htText += ", без ограничения уровней"
-				}
-				$parts += "Иерархический: $htText"
+		# Свойства иерархии и подчинения. Иерархия — не только у справочников: свойство
+		# Hierarchical есть и у ПВХ (в корпусе acc/erp/ut/unf их 13), а без этой строки
+		# в full появлялся Родитель, происхождение которого было ниоткуда не видно.
+		$parts = @()
+		$hier = $props.SelectSingleNode("md:Hierarchical", $ns)
+		if ($hier -and $hier.InnerText -eq "true") {
+			$ht = $props.SelectSingleNode("md:HierarchyType", $ns)
+			$htText = if ($ht -and $ht.InnerText -eq "HierarchyFoldersAndItems") { "группы и элементы" } else { "элементы" }
+			$limitNode = $props.SelectSingleNode("md:LimitLevelCount", $ns)
+			$levelNode = $props.SelectSingleNode("md:LevelCount", $ns)
+			if ($limitNode -and $limitNode.InnerText -eq "true" -and $levelNode) {
+				$htText += ", уровней: $($levelNode.InnerText)"
+			} else {
+				$htText += ", без ограничения уровней"
 			}
-			$codeLen = $props.SelectSingleNode("md:CodeLength", $ns)
-			$descLen = $props.SelectSingleNode("md:DescriptionLength", $ns)
-			if ($codeLen -and [int]$codeLen.InnerText -gt 0) { $parts += "Код($($codeLen.InnerText))" }
-			if ($descLen -and [int]$descLen.InnerText -gt 0) { $parts += "Наименование($($descLen.InnerText))" }
-			if ($parts.Count -gt 0) { Out ($parts -join " | ") }
+			$parts += "Иерархический: $htText"
 		}
+		# Код и Наименование уехали в блок стандартных реквизитов — здесь только свойства объекта.
+		# Подчинение печатаем лишь когда оно отличается от дефолта ToItems.
+		if ($mdType -eq "Catalog") {
+			$sub = $props.SelectSingleNode("md:SubordinationUse", $ns)
+			if ($sub -and $sub.InnerText -ne "ToItems") {
+				$subRu = switch ($sub.InnerText) {
+					"ToFolders"         { "группам" }
+					"ToFoldersAndItems" { "группам и элементам" }
+					default             { $sub.InnerText }
+				}
+				$parts += "Подчинение: $subRu"
+			}
+		}
+		if ($parts.Count -gt 0) { Out ($parts -join " | ") }
 
 		# Register-specific header properties
 		if ($mdType -match "Register$") {
@@ -923,9 +1370,15 @@ if (-not $drillDone) {
 		if ($mdType -eq "DefinedType") {
 			$typeNode2 = $props.SelectSingleNode("md:Type", $ns)
 			if ($typeNode2) {
+				# Оба узла, одним XPath и в порядке документа. v8:TypeSet внутри определяемого
+				# типа платформа НЕ принимает («Недопустимый тип», замерено на 8.3.24.1691 для
+				# AnyRef, голого CatalogRef, Characteristic.X и вложенного DefinedType.X),
+				# поэтому в выгрузке его не бывает — но в рукотворном файле бывает, и тогда
+				# чтение только v8:Type МОЛЧА теряло узел, а счётчик «Типы (N)» врал.
 				$types = @()
-				foreach ($t in $typeNode2.SelectNodes("v8:Type", $ns)) {
-					$types += Format-SingleType $t.InnerText $typeNode2
+				foreach ($t in $typeNode2.SelectNodes("v8:Type|v8:TypeSet", $ns)) {
+					if ($t.get_LocalName() -eq 'TypeSet') { $types += Format-SingleTypeSet $t.InnerText }
+					else { $types += Format-SingleType $t.InnerText $typeNode2 }
 				}
 				if ($types.Count -gt 0) {
 					Out "Типы ($($types.Count)):"
@@ -988,17 +1441,17 @@ if (-not $drillDone) {
 			}
 			$source = $props.SelectSingleNode("md:Source", $ns)
 			if ($source) {
-				$srcTypes = @()
-				foreach ($t in $source.SelectNodes("v8:Type", $ns)) {
-					$srcTypes += Format-SourceType $t.InnerText
-				}
-				if ($srcTypes.Count -gt 0) {
-					if ($Mode -eq "full") {
-						Out "Источники ($($srcTypes.Count)):"
-						foreach ($s in $srcTypes) { Out "  $s" }
-					} else {
-						Out "Источники ($($srcTypes.Count))"
-					}
+				$src = Get-SubscriptionSourceList $source
+				$srcTypes = @($src.Types); $srcSets = @($src.Sets)
+				$total = $srcTypes.Count + $srcSets.Count
+				if ($total -gt 0) {
+					Out "Источники ($total):"
+					# full печатает всё: режим для этого и нужен, а длину держит постраничник.
+					# В overview явные типы сворачиваем в счётчик — их бывает больше тысячи.
+					$listTypes = ($Mode -eq "full") -or ($srcTypes.Count -le $script:composedTypeThreshold)
+					if ($listTypes) { foreach ($s in $srcTypes) { Out "  $s" } }
+					foreach ($s in $srcSets) { Out "  $s" }
+					if (-not $listTypes) { Out "  явных типов: $($srcTypes.Count) (-Mode full)" }
 				}
 			}
 		}
@@ -1059,6 +1512,16 @@ if (-not $drillDone) {
 			}
 		}
 
+		# --- Standard attributes ---
+		$stdAttrs = @(Get-StandardAttributes $props $mdType $Mode)
+		if ($Mode -eq "full") { $stdAttrs += @(Get-StandardAttributesFull $props $mdType $objName) }
+		if ($stdAttrs.Count -gt 0) {
+			Out ""
+			Out "Стандартные реквизиты:"
+			$ml = Get-MaxNameLen $stdAttrs
+			foreach ($s in $stdAttrs) { Out (Format-AttrLine $s $ml) }
+		}
+
 		# --- Dimensions (registers) ---
 		if ($mdType -match "Register$" -and $childObjs) {
 			$dims = @(Get-Attributes $childObjs "Dimension" $true)
@@ -1078,6 +1541,80 @@ if (-not $drillDone) {
 				Out "Ресурсы ($($res.Count)):"
 				$ml = Get-MaxNameLen $res
 				foreach ($r in $res) { Out (Format-AttrLine $r $ml) }
+			}
+		}
+
+		# --- Внешний источник данных: таблицы и функции ---
+		if ($mdType -eq "ExternalDataSource") {
+			$dlcm = $props.SelectSingleNode("md:DataLockControlMode", $ns)
+			if ($dlcm) { Out "Блокировка данных: $($dlcm.InnerText)" }
+			if ($childObjs) {
+				$tables = @(Get-SimpleChildren $childObjs "Table")
+				if ($tables.Count -gt 0) {
+					Out ""
+					Out "Таблицы ($($tables.Count)): $($tables -join ', ')"
+				}
+				$fns = @($childObjs.SelectNodes("md:Function", $ns))
+				if ($fns.Count -gt 0) {
+					Out ""
+					Out "Функции ($($fns.Count)):"
+					foreach ($fn in $fns) {
+						$fp = $fn.SelectSingleNode("md:Properties", $ns)
+						$fnName = $fp.SelectSingleNode("md:Name", $ns).InnerText
+						$fnExpr = $fp.SelectSingleNode("md:ExpressionInDataSource", $ns)
+						$fnType = Format-Type $fp.SelectSingleNode("md:Type", $ns)
+						$retNode = $fp.SelectSingleNode("md:ReturnValue", $ns)
+						$ret = if ($retNode -and $retNode.InnerText -eq "false") { "процедура" } else { $fnType }
+						Out "  $fnName → $(if ($fnExpr) { $fnExpr.InnerText })$(if ($ret) { " : $ret" })"
+					}
+				}
+			}
+		}
+
+		# --- Таблица внешнего источника: свойства и поля ---
+		if ($mdType -eq "Table") {
+			$g = { param($tag) $n = $props.SelectSingleNode("md:$tag", $ns); if ($n) { $n.InnerText } else { "" } }
+			$short = { param($ref) if ($ref) { ($ref -split '\.')[-1] } else { "" } }
+
+			$head = @()
+			$tableType = & $g "TableType"
+			$head += "Вид: $(if ($tableType -eq 'Expression') { 'выражение' } else { 'таблица' })"
+			$src = if ($tableType -eq "Expression") { & $g "ExpressionInDataSource" } else { & $g "NameInDataSource" }
+			if ($src) { $head += "в источнике: $src" }
+			$head += "данные: $(if ((& $g 'TableDataType') -eq 'ObjectData') { 'объектные' } else { 'необъектные' })"
+			if ((& $g "ReadOnly") -eq "true") { $head += "только чтение" }
+			Out ($head -join " | ")
+
+			$keys = @($props.SelectNodes("md:KeyFields/xr:Field", $ns) | ForEach-Object { & $short $_.InnerText })
+			$refs = @()
+			if ($keys.Count -gt 0) { $refs += "ключ: $($keys -join ', ')" }
+			foreach ($pair in @(@("PresentationField","представление"), @("ParentField","родитель"), @("DataVersionField","версия данных"))) {
+				$v = & $short (& $g $pair[0])
+				if ($v) { $refs += "$($pair[1]): $v" }
+			}
+			$ibs = @($props.SelectNodes("md:InputByString/xr:Field", $ns) | ForEach-Object { & $short $_.InnerText })
+			if ($ibs.Count -gt 0) { $refs += "ввод по строке: $($ibs -join ', ')" }
+			if ($refs.Count -gt 0) { Out ($refs -join " | ") }
+
+			if ($childObjs) {
+				$fields = @(Get-Attributes $childObjs "Field")
+				if ($fields.Count -gt 0) {
+					Out ""
+					Out "Поля ($($fields.Count)):"
+					$ml = Get-MaxNameLen $fields
+					foreach ($f in $fields) {
+						$fp = $f.Props
+						$marks = @()
+						$nids = $fp.SelectSingleNode("md:NameInDataSource", $ns)
+						if ($nids -and $nids.InnerText -and $nids.InnerText -ne $f.Name) { $marks += "→ $($nids.InnerText)" }
+						$ro = $fp.SelectSingleNode("md:ReadOnly", $ns)
+						if ($ro -and $ro.InnerText -eq "true") { $marks += "только чтение" }
+						$an = $fp.SelectSingleNode("md:AllowNull", $ns)
+						if ($an -and $an.InnerText -eq "true") { $marks += "NULL" }
+						$tail = if ($marks.Count -gt 0) { "  [$($marks -join ', ')]" } else { "" }
+						Out ("  $($f.Name.PadRight($ml)) $($f.Type)$tail")
+					}
+				}
 			}
 		}
 
@@ -1177,6 +1714,25 @@ if (-not $drillDone) {
 			}
 		}
 	}
+
+	# Единственная подсказка на весь вывод — чем развернуть свёрнутый в счётчик состав
+	if ($script:collapsedNames.Count -gt 0) {
+		$hints = ($script:collapsedNames | ForEach-Object { "-Name $_" }) -join ", "
+		Out ""
+		Out "Полный состав типов: $hints"
+	}
+}
+
+# Глоссарий множеств — после всего остального: в строках типов стоят только имена, и это
+# единственное место, где имя превращается в состав. brief не глоссируем: там типов реквизитов
+# нет вовсе, а множества источников подписки он называет прямо в строке.
+if ($Mode -ne "brief" -and $script:typeSetGlossary.Count -gt 0) {
+	$glossary = @(Get-TypeSetGlossaryLines)
+	if ($glossary.Count -gt 0) {
+		Out ""
+		Out "Множества типов в составе:"
+		foreach ($l in $glossary) { Out $l }
+	}
 }
 
 # --- Pagination and output ---
@@ -1201,7 +1757,7 @@ if ($Limit -gt 0 -and $outLines.Count -gt $Limit) {
 
 if ($OutFile) {
 	if (-not [System.IO.Path]::IsPathRooted($OutFile)) {
-		$OutFile = Join-Path (Get-Location).Path $OutFile
+		$OutFile = Join-Path (Get-Location).ProviderPath $OutFile
 	}
 	$utf8 = New-Object System.Text.UTF8Encoding($true)
 	[System.IO.File]::WriteAllLines($OutFile, $outLines, $utf8)

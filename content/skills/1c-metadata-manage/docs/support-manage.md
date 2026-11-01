@@ -13,9 +13,11 @@ This matters because editing a supported object directly is not a style question
 
 Every mutating tool of this skill checks the support state before touching anything:
 
-`cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
+`cf-edit`, `meta-edit`, `meta-compile`, `meta-remove`, `form-edit`, `form-add`, `form-compile`, `skd-edit`, `skd-compile`, `mxl-compile`, `role-compile`, `role-edit`, `subsystem-edit`, `subsystem-compile`, `interface-edit`, `add-template`, `add-help`, `xdto-compile`, `xdto-edit`.
 
-**Trigger.** The guard activates only when the configuration is genuinely on vendor support — i.e. `Ext/ParentConfigurations.bin` is present next to `Configuration.xml` (found by walking up from the target path). Own configurations, extensions and autonomous external objects (EPF/ERF) are never affected. A support-state file that exists but cannot be read or parsed gets the same `deny|warn|off` reaction (fail-closed — an unknown state may be a locked object); other guard errors (the state cannot even be located) degrade to *allow* with a stderr notice.
+All of them run the same decision. `xdto-compile` / `xdto-edit` used to refuse any configuration that merely had `Ext/ParentConfigurations.bin`; they now decide per object like the rest, so an XDTO package can be added wherever `meta-compile` may add a catalog. `remove-template` has no guard — check the owner's state yourself before removing a template from a typical configuration.
+
+**Trigger.** The guard activates only when the configuration is genuinely on vendor support — i.e. `Ext/ParentConfigurations.bin` is present next to `Configuration.xml` (found by walking up from the target path). Own configurations, extensions and autonomous external objects (EPF/ERF) are never affected; neither is a configuration whose support was removed completely — its `ParentConfigurations.bin` is the empty container of 32 bytes or less. A support-state file that exists but cannot be read or parsed gets the same `deny|warn|off` reaction (fail-closed — an unknown state may be a locked object); other guard errors (the state cannot even be located) degrade to *allow* with a stderr notice.
 
 **What is blocked:**
 
@@ -25,6 +27,8 @@ Every mutating tool of this skill checks the support state before touching anyth
 | Object is on support and locked ("на замке") | blocked — `locked` |
 | Deleting an object that is still on support (`meta-remove`) | blocked — `not-removed` |
 | Object is `editable` or off support | allowed |
+| Modification is on and no object is on support (bin header `{6,0,0,…}`) — nothing to protect | allowed |
+| New object (no descriptor yet) | decided by the configuration root's state |
 
 A blocked run exits with code `1` and prints a diagnostic naming the state, the recommended path (extension) and the exact `support-edit` command for this case.
 
@@ -37,6 +41,8 @@ A blocked run exits with code `1` and prints a diagnostic naming the state, the 
 | `off` | No check at all |
 
 `.dev.env` is looked up by walking up from the working directory, exactly like the rest of the toolkit. Upstream `cc-1c-skills` reads `editingAllowedCheck` from `.v8-project.json` instead; that path still works as a fallback for projects that have such a file, but **`.dev.env` wins** — it is this project's single source of truth ([db-manage.md](db-manage.md)).
+
+**Direct edits (optional hook, experimental).** The guard runs inside the tools, so an agent that writes the XML or a module of a locked object with its own `Edit` / `Write` is not stopped by it. In Claude Code with the `1c-rules` plugin, `SUPPORT_GUARD_HOOK=on` in `.dev.env` adds a `PreToolUse` hook that applies the same rule and the same `SUPPORT_GUARD` reaction to such edits of dump files (Node 18+; without Node it lets the edit through with a notice). It is off by default and absent on other hosts — there the tools' guard and this document are the protection. A refusal from the hook is answered exactly like one from a tool: an extension, or `support-edit`; never a write through another tool. Details: `plugins/1c-rules/README.md` in the ruleset source.
 
 ---
 

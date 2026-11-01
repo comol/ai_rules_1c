@@ -46,7 +46,7 @@ On a dump error, follow that command's result-check step — show the log fragme
 ## Step 4. Git repository and the first commit
 
 1. If the project directory is not a git repository — run `git init`.
-2. Ensure `.gitignore` exists and covers at least `.dev.env`, local `build/` output and the resolved `{RELEASE_PATH}`. Extend an existing `.gitignore`, never overwrite it.
+2. Ensure `.gitignore` exists and covers at least `.dev.env`, `.v8-xsd/` (platform XSD schemas, 1C-Soft property — `{V8_XSD_PATH}` when set), local `build/` output and the resolved `{RELEASE_PATH}`. Extend an existing `.gitignore`, never overwrite it.
 3. Create the first snapshot commit (e.g. `init: 1C configuration sources (cf + cfe)`). If the repository **already had commits**, ask the user before committing on top of the existing history.
 
 ## Step 5. Final report

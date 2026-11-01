@@ -1,5 +1,8 @@
-﻿# help-add v1.9 — Add built-in help to 1C object
+﻿# help-add v1.26 — Add built-in help to 1C object (+write_xml_file/write_utf8_bom: общий эталон записи)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: .dev.env SUPPORT_GUARD first (fail-closed on an unreadable bin); PositionalBinding=$false
+#   as in every other writing tool (upstream left this one out).
+[CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
 	[string]$ObjectName,
@@ -60,16 +63,20 @@ function Get-EditMode([string]$cfgDir) {
 		    $__devEnvMode = (Get-1CDevEnvValue 'SUPPORT_GUARD').ToLower()
 		    if (@('deny', 'warn', 'off') -contains $__devEnvMode) { return $__devEnvMode }
 		}
-		$pj = Find-V8Project (Get-Location).Path
-		if (-not $pj) { $pj = Find-V8Project $cfgDir }
+		$pj = Find-V8Project (Get-Location).ProviderPath
+		if (-not $pj) { $pj = Find-V8Project ([System.IO.Path]::GetFullPath($cfgDir)) }
 		if (-not $pj) { return 'deny' }
-		$proj = Get-Content -Raw $pj | ConvertFrom-Json
+		# UTF-8 явно: PS 5.1 читает файл без BOM как ANSI, и configSrc с кириллицей не совпал бы
+		$proj = Get-Content -Raw -Encoding UTF8 $pj | ConvertFrom-Json
+		# configSrc — от каталога .v8-project.json, а не от рабочего каталога: иначе из подкаталога
+		# проекта база не сопоставляется и берётся правило проекта.
+		$projDir = [System.IO.Path]::GetDirectoryName($pj)
 		$cfgFull = [System.IO.Path]::GetFullPath($cfgDir).TrimEnd('\', '/')
 		if ($proj.databases) {
 			foreach ($db in $proj.databases) {
 				if ($db.configSrc) {
-					$src = [System.IO.Path]::GetFullPath($db.configSrc).TrimEnd('\', '/')
-					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar)) {
+					$src = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projDir, $db.configSrc)).TrimEnd('\', '/')
+					if ($cfgFull -eq $src -or $cfgFull.StartsWith($src + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
 						if ($db.editingAllowedCheck) { return $db.editingAllowedCheck }
 					}
 				}
@@ -82,7 +89,7 @@ function Get-EditMode([string]$cfgDir) {
 function Assert-EditAllowed([string]$targetPath, [string]$require) {
 	try {
 		$rp = $targetPath
-		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).Path } catch {}
+		try { $rp = (Resolve-Path $targetPath -ErrorAction Stop).ProviderPath } catch {}
 		# Autonomous external object (EPF/ERF): never part of a config on support (issue #39).
 		if (Test-ExternalObjectRoot $rp) { return }
 		$elemUuid = Get-RootUuid $rp
@@ -108,6 +115,8 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 		$G = 0; $K = 0; $text = $null; $parseOk = $false
 		try {
 			$bytes = [System.IO.File]::ReadAllBytes($binPath)
+			# A state of 32 bytes or less is the empty container a configuration keeps when vendor support was removed completely (docs/1c-support-state-spec.md upstream: ~16 bytes) - nothing is on support, so it is not 'unreadable'.
+			if ($bytes.Length -le 32) { $parseOk = $true }
 			if ($bytes.Length -gt 32) {
 				$start = 0
 				if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $start = 3 }
@@ -177,10 +186,20 @@ function Assert-EditAllowed([string]$targetPath, [string]$require) {
 function Detect-FormatVersion([string]$dir) {
 	$d = $dir
 	while ($d) {
+		# Автономная внешняя обработка/отчёт: своего Configuration.xml у неё нет, версию несёт
+		# корень самой обработки. Без этого форма и макет внутри обработки 2.21 писались бы 2.17.
+		$extPath = "$d.xml"
+		if (Test-Path $extPath) {
+			$extText = [System.IO.File]::ReadAllText($extPath, [System.Text.Encoding]::UTF8)
+			$extHead = $extText.Substring(0, [Math]::Min(2000, $extText.Length))
+			if ($extHead -match '<(ExternalDataProcessor|ExternalReport)[ >]' -and $extHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
 		$cfgPath = Join-Path $d "Configuration.xml"
 		if (Test-Path $cfgPath) {
-			$content = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
-			$head = $content.Substring(0, [Math]::Min(2000, $content.Length))
+			$cfgText = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8)
+			# Длину среза берём по СТРОКЕ, а не по размеру файла: размер в БАЙТАХ, Substring считает
+			# СИМВОЛЫ, и на кириллице байт больше — короткий Configuration.xml ронял навык исключением.
+			$head = $cfgText.Substring(0, [Math]::Min(2000, $cfgText.Length))
 			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
 		}
 		$parent = Split-Path $d -Parent
@@ -190,8 +209,6 @@ function Detect-FormatVersion([string]$dir) {
 	return "2.17"
 }
 
-$formatVersion = Detect-FormatVersion (Resolve-Path $SrcDir).Path
-
 # --- Проверки ---
 
 $objectDir = Join-Path $SrcDir $ObjectName
@@ -199,6 +216,41 @@ $extDir = Join-Path $objectDir "Ext"
 
 if (-not (Test-Path $extDir)) {
 	Write-Error "Каталог объекта не найден: $extDir. Проверьте путь ObjectName (например Catalogs/МойСправочник)."
+	exit 1
+}
+
+# Справка — тело объекта, а тело и дескриптор платформа загружает только в одной версии формата.
+# Поэтому версию берём прежде всего из дескриптора <объект>.xml (объект может быть старше выгрузки после
+# мержа веток), и только без него — подъёмом от каталога объекта. Не от SrcDir: у внешней обработки
+# корень <Имя>.xml лежит В SrcDir, подъём его не видел, и справка обработки 2.20 писалась 2.17.
+$formatVersion = $null
+# Resolve-Path сохраняет завершающий разделитель («Обр/» → «…\Обр\»): без обрезки искался бы «…\Обр\.xml».
+$objectFull = (Resolve-Path $objectDir).ProviderPath.TrimEnd('\', '/')
+$ownerXml = "$objectFull.xml"
+if (Test-Path $ownerXml) {
+	$ownerHead = [System.IO.File]::ReadAllText($ownerXml, [System.Text.Encoding]::UTF8)
+	$ownerHead = $ownerHead.Substring(0, [Math]::Min(2000, $ownerHead.Length))
+	if ($ownerHead -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { $formatVersion = $Matches[1] }
+}
+if (-not $formatVersion) { $formatVersion = Detect-FormatVersion $objectFull }
+
+# Код языка идёт и в текст XML, и в имя файла страницы, поэтому проверяем его до записи:
+# пустое значение дало бы файл «.html» и пустой <Page></Page>, разделитель пути — запись мимо
+# каталога страниц, а зарезервированное имя устройства (nul, con, prn, aux, com1…, lpt1…) на
+# Windows уводит запись в само устройство. Все отказы платформы были бы тихими.
+#
+# Якоря `\A…\z`, а не `^…$`: последние в обоих языках допускают перевод строки в конце.
+#
+# Копия этой функции есть в template-add (навыки автономны, формат «дескриптор + страница»
+# у них общий). Держать копии одинаковыми — сознательно; за дрейфом следит check-inline-drift.
+function Test-LangCode([string]$code) {
+	if ($code -notmatch '\A[A-Za-z0-9_-]+\z') { return $false }
+	if ($code -match '\A(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])\z') { return $false }
+	return $true
+}
+
+if (-not (Test-LangCode $Lang)) {
+	Write-Error "Недопустимый код языка: '$Lang'`nОжидается код вида ru, en (буквы, цифры, дефис, подчёркивание; имена устройств Windows недопустимы)"
 	exit 1
 }
 
@@ -223,7 +275,18 @@ $helpXml = @"
 </Help>
 "@
 
-[System.IO.File]::WriteAllText($helpXmlPath, $helpXml, $encBom)
+# XML в каноне выгрузки Конфигуратора: CRLF в разделителях, без перевода в конце.
+#
+# Копия этой функции есть в каждом навыке-эмиттере (навыки автономны). Держать
+# копии одинаковыми — сознательно: разошедшиеся копии сводят на нет весь смысл.
+#
+# HTML-страница сюда НЕ идёт — платформа хранит её с LF.
+function Write-XmlFile([string]$path, [string]$text, $encoding) {
+	$t = ($text -replace "`r`n", "`n") -replace "`n", "`r`n"
+	[System.IO.File]::WriteAllText($path, $t.TrimEnd("`r", "`n"), $encoding)
+}
+
+Write-XmlFile $helpXmlPath $helpXml $encBom
 
 # --- 2. Help/<lang>.html ---
 
@@ -236,8 +299,8 @@ $helpHtml = @"
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
 <html>
 <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-    <link rel="stylesheet" type="text/css" href="v8help://service_book/service_style"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"></meta>
+    <link rel="stylesheet" type="text/css" href="v8help://service_book/service_style"></link>
 </head>
 <body>
     <h1>$ObjectName</h1>
@@ -246,7 +309,14 @@ $helpHtml = @"
 </html>
 "@
 
-[System.IO.File]::WriteAllText($helpHtmlPath, $helpHtml, $encBom)
+# Файл страницы НЕ перезаписываем: отказ выше смотрит только на Help.xml, а страница может
+# пережить его (удалённый дескриптор, частичная выгрузка, справка, сделанная руками) — и тогда
+# безусловная запись молча стирала бы текст справки с кодом 0.
+if (Test-Path $helpHtmlPath) {
+	Write-Host "[WARN] Страница $Lang.html уже лежала на диске — содержимое сохранено, создан только дескриптор."
+} else {
+	[System.IO.File]::WriteAllText($helpHtmlPath, $helpHtml, $encBom)
+}
 
 # --- 3. Проверка IncludeHelpInContents в метаданных форм ---
 
@@ -280,9 +350,27 @@ if (Test-Path $formsDir) {
 					$parent.AppendChild($newElem) | Out-Null
 				}
 
-				$xmlText = $xmlDoc.OuterXml
+				$settings = New-Object System.Xml.XmlWriterSettings
+				$settings.Encoding = $encBom
+				$settings.Indent = $false
+				$settings.NewLineHandling = [System.Xml.NewLineHandling]::None
+				# Через MemoryStream, а не прямо в файл: нужен шаг пост-обработки строки.
+				$memStream = New-Object System.IO.MemoryStream
+				$writer = [System.Xml.XmlWriter]::Create($memStream, $settings)
+				$xmlDoc.Save($writer)
+				$writer.Flush(); $writer.Close()
+
+				$xmlText = [System.Text.Encoding]::UTF8.GetString($memStream.ToArray())
+				$memStream.Close()
+				if ($xmlText.Length -gt 0 -and $xmlText[0] -eq [char]0xFEFF) { $xmlText = $xmlText.Substring(1) }
+				$xmlText = $xmlText.Replace('encoding="utf-8"', 'encoding="UTF-8"')
+				# Пустой элемент: XmlWriter отдаёт `<a />`, Конфигуратор пишет `<a/>`. Внутри
+				# CDATA/комментария ` />` может быть содержимым (там `>` не экранируется),
+				# поэтому они идут первыми ветками альтернации и возвращаются как есть.
 				$xmlText = [regex]::Replace($xmlText, '(?s)<!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>|(?<=\S) />', { param($m) if ($m.Value -eq ' />') { '/>' } else { $m.Value } })
-				$targetEol = if ([System.IO.File]::ReadAllText($formMeta.FullName) -match "`r`n") { "`r`n" } else { "`n" }
+				# Целевой перевод строки: стиль файла-назначения — правка наследует его (#44/#46/#47),
+				# новый файл получает канон выгрузки CRLF. Зеркало _detect_xml_style в py-порту.
+				$targetEol = if ((Test-Path -LiteralPath $formMeta.FullName) -and ([System.IO.File]::ReadAllText($formMeta.FullName) -notmatch "`r`n")) { "`n" } else { "`r`n" }
 				$xmlText = ($xmlText -replace "`r`n", "`n") -replace "`n", $targetEol
 				[System.IO.File]::WriteAllText($formMeta.FullName, $xmlText, $encBom)
 
