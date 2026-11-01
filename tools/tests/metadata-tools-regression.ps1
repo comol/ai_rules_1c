@@ -1966,6 +1966,170 @@ Register-Case 'v8-xsd-fetch: the target comes from .dev.env V8_XSD_PATH and is c
     Assert-True ($run.StdOut.Contains('2.x')) "the invalid version is not named: $($run.StdOut)"
 }
 
+# ---------------------------------------------------------------- MXL: spreadsheet layouts
+
+$MxlCompile   = Join-Path $ToolsDir '1c-mxl-compile\scripts\mxl-compile.ps1'
+$MxlDecompile = Join-Path $ToolsDir '1c-mxl-decompile\scripts\mxl-decompile.ps1'
+$MxlValidate  = Join-Path $ToolsDir '1c-mxl-validate\scripts\mxl-validate.ps1'
+
+function Write-MxlJson([string]$Path, [string]$Json) {
+    New-Item -ItemType Directory -Path (Split-Path $Path -Parent) -Force | Out-Null
+    [System.IO.File]::WriteAllText($Path, $Json, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Read-MxlXml([string]$Path) {
+    $doc = New-Object System.Xml.XmlDocument
+    try { $doc.Load($Path) } catch { Fail "$Path is not well-formed XML: $($_.Exception.Message)" }
+    $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+    $ns.AddNamespace('d', 'http://v8.1c.ru/8.2/data/spreadsheet')
+    return [pscustomobject]@{ Doc = $doc; Ns = $ns }
+}
+
+Register-Case 'mxl-compile: parameter, detail, area name and font face are XML-escaped (#121)' {
+    param($Work)
+    $json = Join-Path $Work 'escape.json'
+    Write-MxlJson $json @'
+{ "columns": 2,
+  "fonts": { "odd": { "face": "Face \"Q\" & <Co>", "size": 9 } },
+  "styles": { "s": { "font": "odd" } },
+  "areas": [ { "name": "Area&<1>", "rows": [
+    [ { "style": "s", "param": "Discount <> 0 & Total", "detail": "Ref<&>" }, { "detail": "A & B" } ] ] } ] }
+'@
+    $out = Join-Path $Work 'Tpl\Ext\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', $json, '-OutputPath', $out) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stderr: $($run.StdErr))"
+    $x = Read-MxlXml $out
+    Assert-Equal 'Discount <> 0 & Total' $x.Doc.SelectSingleNode('//d:parameter', $x.Ns).InnerText 'parameter'
+    $details = @($x.Doc.SelectNodes('//d:detailParameter', $x.Ns) | ForEach-Object { $_.InnerText })
+    Assert-Equal 'Ref<&>|A & B' ($details -join '|') 'detailParameter (the second one is a details-only cell)'
+    Assert-Equal 'Area&<1>' $x.Doc.SelectSingleNode('//d:namedItem/d:name', $x.Ns).InnerText 'area name'
+    Assert-Equal 'Face "Q" & <Co>' $x.Doc.SelectSingleNode('//d:font', $x.Ns).GetAttribute('faceName') 'faceName'
+    $val = Invoke-Tool $MxlValidate @('-TemplatePath', $out) $Work
+    Assert-Equal 0 $val.ExitCode "mxl-validate (stdout: $($val.StdOut))"
+}
+
+Register-Case 'mxl-compile: a missing destination directory is created' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'small.json') '{ "columns": 1, "areas": [ { "name": "A", "rows": [ ["x"] ] } ] }'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', 'Templates\New\Ext\Template.xml') $Work
+    Assert-Equal 0 $run.ExitCode "relative path into a new tree (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'Templates\New\Ext\Template.xml')) 'relative output not written'
+    $abs = Join-Path $Work 'deep\a\b\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', $abs) $Work
+    Assert-Equal 0 $run.ExitCode "absolute path into a new tree (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath $abs) 'absolute output not written'
+}
+
+Register-Case 'mxl-decompile: an absolute -OutputPath is written where it points' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'small.json') '{ "columns": 2, "areas": [ { "name": "A", "rows": [ ["x", "{P}"] ] } ] }'
+    $tpl = Join-Path $Work 'Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', $tpl) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stderr: $($run.StdErr))"
+    # Run from a different directory: the old code glued the absolute path onto the cwd.
+    $cwd = Join-Path $Work 'elsewhere'
+    New-Item -ItemType Directory -Path $cwd -Force | Out-Null
+    $outJson = Join-Path $Work 'decompiled.json'
+    $run = Invoke-Tool $MxlDecompile @('-TemplatePath', $tpl, '-OutputPath', $outJson) $cwd
+    Assert-Equal 0 $run.ExitCode "mxl-decompile (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath $outJson) 'JSON not written at the absolute path'
+    $dsl = Get-Content -LiteralPath $outJson -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Equal 2 $dsl.columns 'decompiled columns'
+}
+
+Register-Case 'mxl round trip: header/footer, input-field cells and one row group rebuild byte-for-byte' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'layout.json') @'
+{ "columns": 3,
+  "header": { "center": "Page [&PageNumber] of [&PagesTotal]" },
+  "footer": { "right": "Signed", "startPage": 2 },
+  "printSettings": { "pageOrientation": "Landscape" },
+  "areas": [
+    { "name": "Head", "rows": [ ["Item", "Qty", "Done"] ] },
+    { "name": "Row", "rows": [ [ "{Item}",
+        { "valueType": "Number(10,2)", "value": 1.5 },
+        { "valueType": "Boolean", "controlType": "checkbox" } ] ] } ],
+  "rowGroups": [ { "rows": 2 } ] }
+'@
+    $first = Join-Path $Work 'first\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'layout.json', '-OutputPath', $first) $Work
+    Assert-Equal 0 $run.ExitCode "first compile (stderr: $($run.StdErr))"
+    $back = Join-Path $Work 'back.json'
+    $run = Invoke-Tool $MxlDecompile @('-TemplatePath', $first, '-OutputPath', $back) $Work
+    Assert-Equal 0 $run.ExitCode "decompile (a single row group used to throw; stderr: $($run.StdErr))"
+    $dsl = Get-Content -LiteralPath $back -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-Equal 'Page [&PageNumber] of [&PagesTotal]' $dsl.header.center 'header kept'
+    Assert-Equal 'Signed' $dsl.footer.right 'footer kept'
+    $cells = @($dsl.areas | Where-Object { $_.name -eq 'Row' } | ForEach-Object { $_.rows } | ForEach-Object { $_ } | Where-Object { $_.valueType })
+    Assert-Equal 'Number(10,2)|Boolean' (($cells | ForEach-Object { $_.valueType }) -join '|') 'input-field types kept'
+    Assert-Equal 'checkbox' ($cells | Where-Object { $_.valueType -eq 'Boolean' }).controlType 'controlType kept'
+    Assert-Equal 1 @($dsl.rowGroups).Count 'row group kept'
+    $second = Join-Path $Work 'second\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', $back, '-OutputPath', $second) $Work
+    Assert-Equal 0 $run.ExitCode "second compile (stderr: $($run.StdErr))"
+    Assert-Equal ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($first))) `
+        ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($second))) 'decompile -> compile changed the bytes'
+}
+
+Register-Case 'mxl-compile: printSettings sits after the named items, where the platform writes it' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'print.json') @'
+{ "columns": 2, "printSettings": { "topMargin": 500 },
+  "areas": [ { "name": "A", "rows": [ [ { "span": 2, "text": "x" } ] ] } ] }
+'@
+    $out = Join-Path $Work 'Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'print.json', '-OutputPath', $out) $Work
+    Assert-Equal 0 $run.ExitCode "mxl-compile (stderr: $($run.StdErr))"
+    $names = @((Read-MxlXml $out).Doc.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq 'Element' } | ForEach-Object { $_.LocalName })
+    $at = [array]::IndexOf($names, 'printSettings')
+    Assert-True ($at -gt [array]::LastIndexOf($names, 'merge')) "printSettings before merge: $($names -join ',')"
+    Assert-True ($at -gt [array]::LastIndexOf($names, 'namedItem')) "printSettings before namedItem: $($names -join ',')"
+    Assert-True ($at -lt [array]::IndexOf($names, 'format')) "printSettings after the format palette: $($names -join ',')"
+}
+
+Register-Case 'mxl-compile: enums are checked case-insensitively, legacy style keys still map' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'bad.json') '{ "columns": 1, "styles": { "s": { "valign": "middle" } }, "areas": [ { "rows": [ [ { "style": "s", "text": "x" } ] ] } ] }'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'bad.json', '-OutputPath', 'bad\Template.xml') $Work
+    Assert-Equal 1 $run.ExitCode 'an unknown enum value must fail'
+    Assert-True ($run.StdErr -match 'verticalAlignment') "stderr does not name the property: $($run.StdErr)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'bad\Template.xml'))) 'a failed compile wrote a file'
+
+    Write-MxlJson (Join-Path $Work 'legacy.json') @'
+{ "columns": 1,
+  "styles": { "old": { "align": "right", "valign": "bottom", "wrap": true, "border": "all", "borderWidth": "thick" },
+              "new": { "horizontalAlignment": "CENTER" } },
+  "areas": [ { "rows": [ [ { "style": "old", "text": "a" } ], [ { "style": "new", "text": "b" } ] ] } ] }
+'@
+    $out = Join-Path $Work 'legacy\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'legacy.json', '-OutputPath', $out) $Work
+    Assert-Equal 0 $run.ExitCode "legacy spellings (stderr: $($run.StdErr))"
+    $text = [System.IO.File]::ReadAllText($out)
+    foreach ($want in @('<horizontalAlignment>Right</horizontalAlignment>', '<verticalAlignment>Bottom</verticalAlignment>',
+            '<textPlacement>Wrap</textPlacement>', '<horizontalAlignment>Center</horizontalAlignment>', '<line width="2" gap="false">')) {
+        Assert-True ($text.Contains($want)) "missing $want"
+    }
+}
+
+Register-Case 'mxl-compile: a control kind in the base64 control key is refused' {
+    param($Work)
+    Write-MxlJson (Join-Path $Work 'ctl.json') '{ "columns": 1, "areas": [ { "rows": [ [ { "valueType": "Boolean", "control": "checkbox" } ] ] } ] }'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'ctl.json', '-OutputPath', 'ctl\Template.xml') $Work
+    Assert-Equal 1 $run.ExitCode 'control: checkbox must fail'
+    Assert-True ($run.StdErr -match 'controlType') "stderr does not point at controlType: $($run.StdErr)"
+}
+
+Register-Case 'support guard: mxl-compile refuses a locked owner before creating the template directory' {
+    param($Work)
+    Copy-Fixture 'on-support' $Work "`n"
+    Write-MxlJson (Join-Path $Work 'small.json') '{ "columns": 1, "areas": [ { "rows": [ ["x"] ] } ] }'
+    $out = Join-Path $Work 'Catalogs\Locked\Templates\Print\Ext\Template.xml'
+    $run = Invoke-Tool $MxlCompile @('-JsonPath', 'small.json', '-OutputPath', $out) $Work
+    Assert-True ($run.ExitCode -ne 0) 'guard let a compile under a locked object through'
+    Assert-True ($run.StdErr -match 'support-guard') "stderr does not name the guard: $($run.StdErr)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Catalogs\Locked'))) 'the refused compile created the template directory'
+}
+
 # ---------------------------------------------------------------- run
 
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ("1c-rules-regr-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
