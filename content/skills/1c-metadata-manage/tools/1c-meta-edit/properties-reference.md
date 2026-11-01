@@ -14,6 +14,17 @@
 Свойство можно задать, даже если оно ещё не выставлено у объекта (например `FullTextSearch`, `DataHistory`).
 Опечатка в имени свойства → ошибка (правка не теряется молча). Допустимы имена свойств соответствующего типа объекта.
 
+- **Перечисления.** Значение свойства-перечисления (`RegisterType`, `CodeAllowedLength`, `DataLockControlMode`, …)
+  приводится к канону: алиас (`обороты` → `Turnovers`) и регистр исправляются молча, неизвестное
+  значение — ошибка со списком допустимых до записи файла.
+- **Регистр ключа.** `codeallowedlength=Fixed` пишет тег `<CodeAllowedLength>`, а не ключ как подан.
+- **Многоязычные свойства** (`Synonym`, `ToolTip`, `Explanation`, `ObjectPresentation`, `ListPresentation`,
+  `ExtendedObjectPresentation`, `ExtendedListPresentation`, `RecordPresentation`, `ExtendedRecordPresentation`,
+  `ExtendedPresentation`, `Format`, `EditFormat`) пишутся элементами `v8:item`, узел заменяется целиком.
+  Inline-строка — значение для `ru`; в JSON можно `{ "ru": "…", "en": "…" }`.
+- **Нулевая длина кода / номера.** `CodeLength=0` / `NumberLength=0` убирает `StandardAttribute.Code` /
+  `StandardAttribute.Number` из `InputByString`: поле нулевой длины во вводе по строке платформа не загружает.
+
 ### Type — тип значения (Константа, ПВХ)
 
 `Type=...` перестраивает дескриптор типа значения. Значение — тип 1С в том же синтаксисе,
@@ -22,7 +33,7 @@
 -Operation modify-property -Value "Type=String(100) + Number(15,2) + CatalogRef.Номенклатура"
 ```
 Структурные свойства (со вложенными узлами) в скалярный текст не превращаются: попытка задать
-такое свойство обычным `Ключ=Значение` (кроме `Type`) завершается ошибкой до записи файла.
+такое свойство обычным `Ключ=Значение` (кроме `Type` и многоязычных свойств) завершается ошибкой до записи файла.
 
 ## Свойства-списки
 
@@ -30,12 +41,24 @@
 
 | Свойство | Объекты | Inline-значение |
 |----------|---------|-----------------|
-| Owners | Catalog, ChartOfCharacteristicTypes | `Catalog.XXX` |
-| RegisterRecords | Document | `AccumulationRegister.XXX` |
-| BasedOn | Document, Catalog, BP, Task | `Document.XXX` |
-| InputByString | Catalog, ChartOf*, Task | `StandardAttribute.Description` |
-| DataLockFields | Catalog, Document, регистры и др. | `Организация` (короткое имя реквизита → полный путь) |
+| Owners | Catalog | `Catalog.XXX` |
+| RegisterRecords | Document, Sequence | `AccumulationRegister.XXX` |
+| BasedOn | ссылочные* | `Document.XXX` |
+| InputByString | ссылочные* | `StandardAttribute.Description` |
+| DataLockFields | ссылочные* | `Организация` (короткое имя реквизита → полный путь) |
 | RegisteredDocuments | DocumentJournal | `Document.XXX` |
+
+\* Catalog, Document, ChartOfCharacteristicTypes, ChartOfAccounts, ChartOfCalculationTypes, ExchangePlan, BusinessProcess, Task.
+
+Свойство-список, которого у типа объекта нет (движения у справочника), — отказ. Если у объекта из
+выгрузки нет элемента списка, `add-*` / `set-*` / `remove-*` тоже отказывают (код `1`): файл не похож на
+выгрузку платформы.
+
+**Заимствованный объект расширения** хранит в `Properties` только изменённые свойства. У заимствованного
+документа отсутствующий `RegisterRecords` создаётся. Прочие списки у заимствованного объекта — отказ:
+`Owners` и `RegisteredDocuments` платформа сверяет с основной конфигурацией, а `BasedOn`, `InputByString`,
+`DataLockFields` и движения последовательности при загрузке расширения молча выбрасывает (проверено на 8.3.27).
+`remove-*` у заимствованного объекта без элемента — предупреждение «удалять нечего».
 
 ### add-owner / add-registerRecord / add-basedOn / add-registeredDocument
 

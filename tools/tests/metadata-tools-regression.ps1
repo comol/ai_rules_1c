@@ -415,8 +415,10 @@ Register-Case 'meta-edit: the mandatory meta-validate really runs and never degr
     $combined = "$($run.StdOut)$($run.StdErr)"
     Assert-True ($combined -match '--- Running meta-validate ---') "the validator banner never appeared: $combined"
     Assert-True ($combined -notmatch '\[SKIP\]') "validation was skipped instead of run: $combined"
-    Assert-True ($combined -match '=== Validation: Catalog\.TestCatalog ===') "the validator printed no banner for the edited object: $combined"
-    Assert-True ($combined -match '=== Result: 0 errors') "the validator produced no clean result line: $combined"
+    # meta-validate 1.45 prints a clean run as one line, '=== Validation OK: <Obj> (N checks) ===';
+    # the long form (banner + '=== Result: 0 errors') remains for warnings and -Detailed.
+    Assert-True ($combined -match '=== Validation( OK)?: Catalog\.TestCatalog') "the validator printed no banner for the edited object: $combined"
+    Assert-True ($combined -match '=== Validation OK: Catalog\.TestCatalog|=== Result: 0 errors') "the validator produced no clean result line: $combined"
 
     $after = Get-FileFacts $target
     Assert-True ($before.Text -ne $after.Text) 'baseline and result are the same bytes - the case asserts nothing'
@@ -543,6 +545,64 @@ Register-Case 'meta-edit: a validator that reports errors propagates its non-zer
     Assert-True ($run.StdErr -match '3') "the child exit code is not reported: $($run.StdErr)"
 }
 
+Register-Case 'meta-edit: an external data processor is validated by epf-validate, a missing one is refused' {
+    param($Work)
+    # Upstream #108 (372510bb): meta-validate does not know ExternalDataProcessor /
+    # ExternalReport, so a correct edit ended in 'Unrecognized metadata type'. The
+    # validator is chosen by object type and resolved under the downstream directory
+    # 1c-epf-validate; its absence is refused before the write, like meta-validate's.
+    $epfInit = Join-Path $ToolsDir '1c-epf-scaffold\scripts\init.ps1'
+    $src = Join-Path $Work 'epf'
+    New-Item -ItemType Directory -Path $src -Force | Out-Null
+    $init = Invoke-Tool $epfInit @('-Name', 'RegrEpf', '-SrcDir', $src) $Work
+    Assert-Equal 0 $init.ExitCode "epf-init exit code (stderr: $($init.StdErr))"
+    $target = Join-Path $src 'RegrEpf.xml'
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag: Boolean') $Work
+    Assert-Equal 0 $run.ExitCode "meta-edit exit code (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    $combined = "$($run.StdOut)$($run.StdErr)"
+    Assert-True ($combined -match '--- Running epf-validate ---') "epf-validate did not run: $combined"
+    Assert-True ($combined -notmatch 'Running meta-validate|\[SKIP\]|Unrecognized') "the external object went to the wrong validator: $combined"
+
+    $broken = New-BrokenToolTree $Work 'no-epf-validator' { param($Root)
+        Remove-Item -LiteralPath (Join-Path $Root '1c-epf-validate\scripts\epf-validate.ps1') -Force
+    }
+    $before = Get-TreeSnapshot $src
+    $run = Invoke-Tool (Join-Path $broken '1c-meta-edit\scripts\meta-edit.ps1') @('-ObjectPath', $target, '-Operation', 'add-attribute', '-Value', 'RegrFlag2: Boolean') $Work
+    Assert-True ($run.ExitCode -ne 0) "a missing epf-validate exited 0 (stdout: $($run.StdOut))"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $src) 'EPF edit with no epf-validate available'
+    Assert-True ($run.StdErr -match 'epf-validate') "the refusal does not name epf-validate: $($run.StdErr)"
+}
+
+Register-Case 'meta-edit: a missing element or an invalid enum value is refused, an alias is canonicalized' {
+    param($Work)
+    # cfd2d1be: modifying an element that does not exist printed WARN and exited 0 -
+    # a batch run read it as success. 50bc9f5c / 0ff84878: modify-property wrote an
+    # enum value and a property key as given, so 'Whatever' or a lower-case tag
+    # reached the dump. Now: refusal with exit 1 and nothing written; a known alias
+    # or another letter case is written as the canonical value and tag.
+    $dump = Join-Path $Work 'dump'
+    Copy-Fixture 'config-dump' $dump "`n"
+    $target = Join-Path $dump 'Catalogs\TestCatalog.xml'
+    $before = Get-TreeSnapshot $dump
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'modify-attribute', '-Value', 'NoSuchAttr: synonym=X') $dump
+    Assert-True ($run.ExitCode -ne 0) "modify of a missing attribute exited 0 (stdout: $($run.StdOut))"
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'NoSuchAttr') "the refusal does not name the element: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $dump) 'modify of a missing attribute'
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'modify-property', '-Value', 'CodeAllowedLength=Whatever') $dump
+    Assert-True ($run.ExitCode -ne 0) "an invalid enum value exited 0 (stdout: $($run.StdOut))"
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'Invalid value') "the refusal does not list valid values: $($run.StdErr)"
+    Assert-TreeIdentical $before (Get-TreeSnapshot $dump) 'modify-property with an invalid enum value'
+
+    $run = Invoke-Tool $MetaEdit @('-ObjectPath', $target, '-Operation', 'modify-property', '-Value', 'codeallowedlength=fixed') $dump
+    Assert-Equal 0 $run.ExitCode "modify-property with an alias (stdout: $($run.StdOut) stderr: $($run.StdErr))"
+    $text = (Get-FileFacts $target).Text
+    Assert-True ($text -cmatch '<CodeAllowedLength>Fixed</CodeAllowedLength>') 'the value or the tag was not canonicalized'
+    Assert-True ($text -cnotmatch '<codeallowedlength') 'the property key was written in the case it was given'
+}
+
 # ---------------------------------------------------------------- C. meta-validate form checks
 
 Register-Case 'meta-validate: an inline ChildObjects/Form descriptor is rejected (6a)' {
@@ -573,6 +633,38 @@ Register-Case 'meta-validate: a form registered without its descriptor file is r
     $combined = "$($run.StdOut)$($run.StdErr)"
     Assert-True ($run.ExitCode -ne 0) "the validator accepted a dangling form reference: $combined"
     Assert-True ($combined -match '6b\.') "no 6b diagnostic: $combined"
+}
+
+# Upstream 2e5289a8: TypeReductionMode is a 2.18 property (8.3.25), not 2.20. With the
+# old threshold check 18 raised a false ERROR on almost every object of a 8.3.25 /
+# 8.3.26 dump - and meta-edit turned that into a non-zero exit after a correct edit.
+Register-Case 'meta-validate: TypeReductionMode in a 2.18 / 2.19 dump is not an error (18)' {
+    param($Work)
+    $block = "<DefaultObjectForm/>`n`t`t`t<StandardAttributes>`n`t`t`t`t<xr:StandardAttribute name=`"Description`">" +
+        "`n`t`t`t`t`t<xr:TypeReductionMode>TransformValues</xr:TypeReductionMode>" +
+        "`n`t`t`t`t</xr:StandardAttribute>`n`t`t`t</StandardAttributes>"
+    $bom = New-Object System.Text.UTF8Encoding($true)
+    foreach ($ver in @('2.17', '2.18', '2.19')) {
+        $dir = Join-Path $Work $ver
+        Copy-Fixture 'config-dump' $dir "`n"
+        $target = Join-Path $dir 'Catalogs\TestCatalog.xml'
+        foreach ($file in @((Join-Path $dir 'Configuration.xml'), $target)) {
+            $text = [System.IO.File]::ReadAllText($file).Replace('version="2.17"', "version=`"$ver`"")
+            if ($file -eq $target) { $text = $text.Replace('<DefaultObjectForm/>', $block) }
+            [System.IO.File]::WriteAllText($file, $text, $bom)
+        }
+        Assert-True ([System.IO.File]::ReadAllText($target).Contains("version=`"$ver`">")) "${ver}: the fixture edit did not land"
+        Assert-True ([System.IO.File]::ReadAllText($target).Contains('<xr:TypeReductionMode>')) "${ver}: no TypeReductionMode in the fixture"
+        $run = Invoke-Tool $MetaValidate @('-ObjectPath', $target) $dir
+        $combined = "$($run.StdOut)$($run.StdErr)"
+        if ($ver -eq '2.17') {
+            # The property really is new in 2.18: a 2.17 file still gets the error.
+            Assert-True ($run.ExitCode -ne 0 -and $combined -match '\[ERROR\] 18\.') "2.17: check 18 no longer fires: $combined"
+        } else {
+            Assert-Equal 0 $run.ExitCode "${ver}: meta-validate exit code ($combined)"
+            Assert-True ($combined -notmatch '\[ERROR\]') "${ver}: false error on TypeReductionMode: $combined"
+        }
+    }
 }
 
 # ---------------------------------------------------------------- D. form-add / form-compile
@@ -777,6 +869,72 @@ Register-Case 'meta-compile: NEW_OBJECT_POSITION=end is the backward-compatible 
     Assert-Equal $newEnum $enums[2].Name 'explicit end must behave like the default'
 }
 
+Register-Case 'meta-compile: an existing object is refused without -Force and keeps its uuid' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configPath = Join-Path $Work 'Configuration.xml'
+    Copy-Item (Join-Path $FixturesDir 'meta-compile\new-enum.json') (Join-Path $Work 'new-enum.json')
+    $first = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work) $Work
+    Assert-Equal 0 $first.ExitCode "first meta-compile exit code (stderr: $($first.StdErr))"
+    $objXml = @(Get-ChildItem -LiteralPath (Join-Path $Work 'Enums') -Filter '*.xml' |
+        Sort-Object LastWriteTimeUtc -Descending)[0].FullName
+    $objBefore = [System.IO.File]::ReadAllBytes($objXml)
+    $configBefore = Get-FileFacts $configPath
+
+    # Upstream only warns here; a recompile would give the object a new uuid and cut the link
+    # to the infobase object, so the local tool refuses before it writes anything.
+    $second = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work) $Work
+    Assert-Equal 1 $second.ExitCode "an existing object was recompiled without -Force (stdout: $($second.StdOut))"
+    Assert-True ($second.StdErr -match 'already exists' -and $second.StdErr -match '-Force' -and $second.StdErr -match 'meta-edit') "refusal does not explain itself: $($second.StdErr)"
+    Assert-Equal ([System.Convert]::ToBase64String($objBefore)) ([System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($objXml))) 'refused compile still rewrote the object file'
+    Assert-Equal $configBefore.Text (Get-FileFacts $configPath).Text 'refused compile still edited Configuration.xml'
+
+    $forced = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work, '-Force') $Work
+    Assert-Equal 0 $forced.ExitCode "-Force did not replace the object (stderr: $($forced.StdErr))"
+    $uuidRx = [regex]'<Enum uuid="([^"]+)"'
+    $oldUuid = $uuidRx.Match([System.Text.Encoding]::UTF8.GetString($objBefore)).Groups[1].Value
+    $newUuid = $uuidRx.Match((Get-FileFacts $objXml).Text).Groups[1].Value
+    Assert-True ($oldUuid -and $newUuid -and $oldUuid -ne $newUuid) "-Force is expected to replace the object (uuid $oldUuid -> $newUuid)"
+}
+
+Register-Case 'meta-compile: a Constant without valueType is a String, not of type Constant' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $jsonPath = Join-Path $Work 'const.json'
+    [System.IO.File]::WriteAllText($jsonPath, '{ "type": "Constant", "name": "RegrConst" }', (New-Object System.Text.UTF8Encoding($false)))
+    $run = Invoke-Tool $MetaCompile @('-JsonPath', $jsonPath, '-OutputDir', $Work) $Work
+    Assert-Equal 0 $run.ExitCode "meta-compile exit code (stderr: $($run.StdErr))"
+    $text = (Get-FileFacts (Join-Path $Work 'Constants\RegrConst.xml')).Text
+    Assert-True ($text -notmatch '<v8:Type>Constant</v8:Type>') 'the object kind leaked into the value type (platform: unknown type name - Constant)'
+    Assert-True ($text -match '<v8:Type>xs:string</v8:Type>') 'a Constant without valueType must default to String'
+}
+
+Register-Case 'meta-compile: an unknown type name is refused before anything is written' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configPath = Join-Path $Work 'Configuration.xml'
+    $configBefore = Get-FileFacts $configPath
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+
+    # A typo used to reach the XML verbatim; the platform then refused the whole configuration.
+    $typoJson = Join-Path $Work 'typo.json'
+    [System.IO.File]::WriteAllText($typoJson, '{ "type": "Catalog", "name": "RegrTypo", "attributes": [ "Amount: Nubmer(15,2)" ] }', $utf8)
+    $typo = Invoke-Tool $MetaCompile @('-JsonPath', $typoJson, '-OutputDir', $Work) $Work
+    Assert-True ($typo.ExitCode -ne 0) "an unknown type name was accepted (stdout: $($typo.StdOut))"
+    Assert-True ($typo.StdErr -match 'Nubmer\(15,2\)') "the refusal does not name the type: $($typo.StdErr)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Catalogs\RegrTypo.xml'))) 'the object file was written with an unknown type'
+    Assert-Equal $configBefore.Text (Get-FileFacts $configPath).Text 'a refused compile still registered the object'
+
+    # A DBMS spelling is understood, not written verbatim: varchar(150) is String(150).
+    $dbmsJson = Join-Path $Work 'dbms.json'
+    [System.IO.File]::WriteAllText($dbmsJson, '{ "type": "Catalog", "name": "RegrDbms", "attributes": [ "Code1C: varchar(150)" ] }', $utf8)
+    $dbms = Invoke-Tool $MetaCompile @('-JsonPath', $dbmsJson, '-OutputDir', $Work) $Work
+    Assert-Equal 0 $dbms.ExitCode "meta-compile exit code (stderr: $($dbms.StdErr))"
+    $text = (Get-FileFacts (Join-Path $Work 'Catalogs\RegrDbms.xml')).Text
+    Assert-True ($text -notmatch 'varchar') 'a DBMS type name reached the XML verbatim'
+    Assert-True ($text -match '(?s)<v8:Type>xs:string</v8:Type>\s*<v8:StringQualifiers>\s*<v8:Length>150</v8:Length>') 'varchar(150) must become String(150)'
+}
+
 Register-Case 'cf-edit add-childObject: default position appends after the last object of the type' {
     param($Work)
     Copy-Fixture 'config-dump' $Work "`n"
@@ -881,8 +1039,10 @@ Register-Case 'meta-compile: re-registering the same object is a no-op' {
     Assert-Equal 0 $first.ExitCode "first meta-compile exit code (stderr: $($first.StdErr))"
     $afterFirst = Get-FileFacts $configPath
 
-    $second = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work) $Work
-    Assert-Equal 0 $second.ExitCode "second meta-compile exit code (stderr: $($second.StdErr))"
+    # A second compile of an existing object is refused without -Force (see the next case);
+    # with -Force the object file is replaced, but the registration stays a no-op.
+    $second = Invoke-Tool $MetaCompile @('-JsonPath', (Join-Path $Work 'new-enum.json'), '-OutputDir', $Work, '-Force') $Work
+    Assert-Equal 0 $second.ExitCode "second meta-compile -Force exit code (stderr: $($second.StdErr))"
     $afterSecond = Get-FileFacts $configPath
 
     $hits = @(Get-ChildObjectEntries $configPath | Where-Object { $_.Name -eq $newEnum })

@@ -44,22 +44,30 @@ carries its downstream deltas in its own file header:
   an ordinary `A & B` produced a descriptor no parser accepts); `-FormName` must be
   a 1C identifier, and an information register's object form names its
   `RecordManager` main attribute `Запись`.
-- `tools/1c-meta-edit/scripts/meta-edit.py` — Python runtime of `meta-edit`.
-  Downstream deltas: `add-form` is refused before any mutation and redirected to
-  `form-add`, in every key spelling the dispatcher itself accepts and across the
-  whole definition; the auto-validator is resolved under the downstream directory name
-  (`1c-meta-validate`), its absence is a refusal raised *before* the edit is
-  written, `-NoValidate` is the single explicit opt-out, and the validator's
-  exit code propagates instead of being discarded.
+- `tools/1c-meta-edit/scripts/meta-edit.py` — Python runtime of `meta-edit`,
+  upstream base v1.73 (`2e75b0f`). Downstream deltas: `add-form` and
+  `add-template` are refused before any mutation (exit 2) and redirected to
+  `form-add` / `add-template`, in every key spelling the dispatcher itself
+  accepts and across the whole definition; the auto-validator is resolved under
+  the downstream directory names (`1c-meta-validate`, and for an external data
+  processor or report the PowerShell `1c-epf-validate` script run through
+  `pwsh` / Windows PowerShell), a missing validator or PowerShell host is a
+  refusal raised *before* the edit is written, `-NoValidate` is the single
+  explicit opt-out, and the validator's exit code propagates instead of being
+  discarded; the support guard reads `.dev.env` `SUPPORT_GUARD` first and fails
+  closed on an unreadable support state.
 - `tools/1c-meta-validate/scripts/meta-validate.py` — Python runtime of
-  `meta-validate`. Downstream deltas: checks 6a–6d — a `ChildObjects/Form`
-  registration must be a scalar reference (6a), it must resolve to
-  `Forms/<Name>.xml` on disk (6b), that descriptor must parse as XML (6c), and the
-  name it declares must be the name that was registered (6d); versions equal to
-  `Configuration.xml` (1e, 6e), required and exactly named GeneratedTypes (2),
-  default-form references and roles (6f), `Description` / `Code` bindings (6g, 6h),
-  case-insensitive cross-kind name uniqueness (8), information-register forbidden
-  properties (12) and export-folder type names (16a).
+  `meta-validate`, upstream base v1.45 (`2e75b0f`). Downstream deltas, the same in
+  both runtimes: checks 6a–6d — a `ChildObjects/Form` registration must be a
+  scalar reference (6a), it must resolve to `Forms/<Name>.xml` on disk (6b), that
+  descriptor must parse as XML (6c), and the name it declares must be the name
+  that was registered (6d); required and exactly named GeneratedTypes (2);
+  default-form roles (6f, on top of upstream check 20); `Description` / `Code`
+  bindings (6g, 6h); case-insensitive name uniqueness shared by attributes,
+  tabular sections, dimensions, resources, addressing attributes and accounting
+  flags (8); information-register forbidden properties (12) and export-folder
+  type names (16a). Format versions follow upstream check 24; the former local
+  1e / 6e are retired.
 - `tools/_common/dev_env.py` — not upstream code: the Python peer of the local
   `DevEnv.ps1`, so both runtimes read project parameters from `.dev.env`.
 
