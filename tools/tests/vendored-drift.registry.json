@@ -1,0 +1,409 @@
+{
+  "$comment": [
+    "Registry of tools/tests/vendored-drift.ps1. Members are discovered by AST: every definition of 'function' under 'root' is a copy.",
+    "authority: the copy every other copy must equal (the upstream authority of the family, in our layout); without it the largest group is the base.",
+    "localVariants: [{ files: [paths under root], reason: why this copy deliberately differs }]; files of one entry must be identical to each other.",
+    "maxVariants: a ratchet for a family whose copies legitimately differ - only growth past the number fails.",
+    "declaredBeforeUse.ignore: [{ file, function, reason }] for a false positive of the order check.",
+    "Seeded from upstream tests/skills/check-inline-drift.mjs at 2e75b0f (families present in two or more of our files) plus our own .dev.env helpers. Calibrate after each upstream sync."
+  ],
+  "root": "content/skills/1c-metadata-manage/tools",
+  "families": [
+    {
+      "function": "Assert-EditAllowed",
+      "authority": "1c-cf-manage/scripts/cf-edit.ps1",
+      "note": "support guard; local delta: .dev.env SUPPORT_GUARD first, fail-closed on an unreadable support state. The Claude Code hook (plugins/1c-rules/hooks) mirrors Assert-EditAllowed; tools/tests/support-guard-hook.ps1 pins the two together.",
+      "localVariants": []
+    },
+    {
+      "function": "Get-EditMode",
+      "authority": "1c-cf-manage/scripts/cf-edit.ps1",
+      "note": "support guard; local delta: .dev.env SUPPORT_GUARD first, fail-closed on an unreadable support state. The Claude Code hook (plugins/1c-rules/hooks) mirrors Assert-EditAllowed; tools/tests/support-guard-hook.ps1 pins the two together.",
+      "localVariants": []
+    },
+    {
+      "function": "Test-ExternalObjectRoot",
+      "authority": "1c-cf-manage/scripts/cf-edit.ps1",
+      "note": "support guard; local delta: .dev.env SUPPORT_GUARD first, fail-closed on an unreadable support state. The Claude Code hook (plugins/1c-rules/hooks) mirrors Assert-EditAllowed; tools/tests/support-guard-hook.ps1 pins the two together.",
+      "localVariants": []
+    },
+    {
+      "function": "Find-V8Project",
+      "authority": "1c-cf-manage/scripts/cf-edit.ps1",
+      "note": "support guard; local delta: .dev.env SUPPORT_GUARD first, fail-closed on an unreadable support state. The Claude Code hook (plugins/1c-rules/hooks) mirrors Assert-EditAllowed; tools/tests/support-guard-hook.ps1 pins the two together.",
+      "localVariants": []
+    },
+    {
+      "function": "Get-RootUuid",
+      "authority": "1c-cf-manage/scripts/cf-edit.ps1",
+      "note": "support guard; local delta: .dev.env SUPPORT_GUARD first, fail-closed on an unreadable support state. The Claude Code hook (plugins/1c-rules/hooks) mirrors Assert-EditAllowed; tools/tests/support-guard-hook.ps1 pins the two together.",
+      "localVariants": []
+    },
+    {
+      "function": "Get-SupportStatusForPath",
+      "note": "support state shown by the *-info tools",
+      "localVariants": []
+    },
+    {
+      "function": "Find-ProjectV8Path",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "local delta: .dev.env PLATFORM_PATH first, a version install directory resolves through bin\u0001cv8.exe",
+      "localVariants": []
+    },
+    {
+      "function": "Get-ProjectExtraArgs",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "local helper: .dev.env PLATFORM_ARGS / IBCMD_ARGS before .v8-project.json",
+      "localVariants": []
+    },
+    {
+      "function": "Resolve-ExtraArgs",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "Assert-ExtraArgs",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "Test-ArgKeyMatch",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "Format-ArgsForDisplay",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "Invoke-PlatformProcess",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "ConvertFrom-PlatformBytes",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "Write-PlatformOutput",
+      "authority": "1c-db-ops/scripts/db-create.ps1",
+      "note": "platform launch helpers",
+      "localVariants": []
+    },
+    {
+      "function": "Protect-Secrets",
+      "authority": "1c-db-ops/scripts/db-dump-cf.ps1",
+      "note": "upstream authority db-dump-cf",
+      "localVariants": []
+    },
+    {
+      "function": "ConvertTo-CleanPath",
+      "authority": "1c-db-ops/scripts/db-load-xml.ps1",
+      "note": "upstream authority db-load-xml",
+      "localVariants": []
+    },
+    {
+      "function": "Assert-InfoBaseExists",
+      "note": "db-* / epf-* launch checks; local delta: the batch verdict (/DumpResult) lives next to them",
+      "localVariants": []
+    },
+    {
+      "function": "Test-OutputNonEmpty",
+      "note": "db-* / epf-* launch checks; local delta: the batch verdict (/DumpResult) lives next to them",
+      "localVariants": []
+    },
+    {
+      "function": "Get-ExitAnnotation",
+      "note": "db-* / epf-* launch checks; local delta: the batch verdict (/DumpResult) lives next to them",
+      "localVariants": []
+    },
+    {
+      "function": "Get-NewObjectPosition",
+      "authority": "1c-meta-compile/scripts/meta-compile.ps1",
+      "note": "local delta: .dev.env NEW_OBJECT_POSITION",
+      "localVariants": []
+    },
+    {
+      "function": "Detect-FormatVersion",
+      "authority": "1c-form-compile/scripts/form-compile.ps1",
+      "note": "upstream fix fae22435 (length in characters, not bytes) must reach every copy",
+      "localVariants": []
+    },
+    {
+      "function": "Compare-MetadataNames",
+      "localVariants": []
+    },
+    {
+      "function": "Test-OrderSensitiveType",
+      "localVariants": []
+    },
+    {
+      "function": "New-Guid-String",
+      "localVariants": []
+    },
+    {
+      "function": "Normalize-EnumValue",
+      "localVariants": []
+    },
+    {
+      "function": "Esc-Xml",
+      "localVariants": []
+    },
+    {
+      "function": "Esc-XmlText",
+      "localVariants": []
+    },
+    {
+      "function": "Resolve-TypeStr",
+      "localVariants": []
+    },
+    {
+      "function": "Test-EmptyValue",
+      "localVariants": []
+    },
+    {
+      "function": "Get-ElementName",
+      "localVariants": []
+    },
+    {
+      "function": "Get-HandlerName",
+      "localVariants": []
+    },
+    {
+      "function": "Get-FormatRank",
+      "localVariants": []
+    },
+    {
+      "function": "Get-Interceptors",
+      "localVariants": []
+    },
+    {
+      "function": "Report-Error",
+      "localVariants": []
+    },
+    {
+      "function": "Report-OK",
+      "localVariants": []
+    },
+    {
+      "function": "Report-Warn",
+      "localVariants": []
+    },
+    {
+      "function": "Normalize-ChoiceValue",
+      "localVariants": []
+    },
+    {
+      "function": "Parse-CalcShorthand",
+      "localVariants": []
+    },
+    {
+      "function": "Parse-DataParamShorthand",
+      "localVariants": []
+    },
+    {
+      "function": "Parse-FilterShorthand",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-AppearanceValue",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Button",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-CalcFields",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Calendar",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Check",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-ChoiceParameterLinks",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-ChoiceParameters",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-CommandPicture",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-CommonFlags",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Companion",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-ConditionalAppearance",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-DataParameters",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Element",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-EmptyValue",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Events",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Filter",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-FilterItem",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Group",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Input",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Label",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-LabelField",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-MLItems",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Order",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Page",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Pages",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Parameters",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-PictureDecoration",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-PictureField",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Popup",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-SingleType",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Table",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Title",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-Type",
+      "note": "form DSL emitter; upstream keeps form-edit a copy of form-compile",
+      "localVariants": []
+    },
+    {
+      "function": "Emit-MLText",
+      "maxVariants": 5,
+      "note": "upstream ratchet (ps1 <= 4): different signatures per tool",
+      "localVariants": []
+    },
+    {
+      "function": "Get-MLText",
+      "maxVariants": 5,
+      "note": "upstream ratchet (ps1 <= 6): same task, different completeness per *-info",
+      "localVariants": []
+    },
+    {
+      "function": "Import-Fragment",
+      "maxVariants": 4,
+      "note": "upstream ratchet (ps1 <= 4): not one family - different xmlns sets per tool",
+      "localVariants": []
+    },
+    {
+      "function": "Get-ChildIndent",
+      "maxVariants": 3,
+      "note": "upstream ratchet (ps1 <= 3): different indent heuristics",
+      "localVariants": []
+    }
+  ],
+  "declaredBeforeUse": {
+    "ignore": []
+  }
+}
