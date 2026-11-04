@@ -56,7 +56,7 @@ A diagnostic's row carries primitive values only. A non-primitive field — `tag
 
 ### `syntaxcheck_file` (default)
 
-- `file_path` — path to the BSL file **relative to the mounted sources directory** (usually the project root mounted into the server's container), not an absolute workspace path. If the call fails with "file not found", do not retry with path variations more than once — fall back to `syntaxcheck` with the code text.
+- `file_path` — path to the BSL file **relative to the mounted sources directory** (usually the project root mounted into the server's container; on a container shared by several projects, a parent with one directory per project — then the path starts with that directory), not an absolute workspace path. If the call fails with "file not found", do not retry with path variations more than once — fall back to `syntaxcheck` with the code text. When the refusal (`file_not_found`, or `path_outside_files_dir` for an absolute path) carries `detail.candidates`, that one retry uses the candidate naming the module you mean, unchanged; `detail.files_dir_entries` lists the top-level directories to build it from.
 - `lines` — optional 1-based line selection, e.g. `"5, 10-20, 35"`; empty string checks the whole file. For a small edit inside a large module, pass the edited range (the whole procedure/function) to keep the report focused; line-filtering affects only the report, the file is still parsed in full, so surrounding-context errors are not masked within the selected lines.
 - Save the file before calling — the tool checks the on-disk state, not the editor buffer.
 
