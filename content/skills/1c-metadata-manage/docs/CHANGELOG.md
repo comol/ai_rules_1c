@@ -74,6 +74,10 @@ The PowerShell scripts under `tools/1c-cf-manage/scripts/` were refreshed from [
 
 ## cfe-manage.md
 
+### Local fix 2026-11-06 — a borrowed form follows Configurator on columns, ref types and missing source files
+
+`cfe-borrow` v1.58 → **v1.59**, `cfe-validate` v1.33 → **v1.34** (support ticket 9a17951b). In `-BorrowMainAttribute Form` a tabular section keeps only the columns a form path names, including `CurrentData`; a section named without a column is still borrowed whole. A composite type made only of references is written as `cfg:AnyIBRef` and those objects are not borrowed. `<FunctionalOptions>` are dropped from `AdditionalColumns` columns. A style file or a type's object missing from the export fails the call and is listed; the reference stays. A form borrowed without `-BorrowMainAttribute` warns that the data paths were removed. Check 12 treats `FieldSelectionBackColor`, `ReportGroup1BackColor` and `ReportGroup2BackColor` as platform styles. Pinned by `tools/tests/cfe-borrow-regression.ps1`.
+
 ### Upstream sync 2026-11-01 (2e75b0f)
 
 Versions: `cfe-borrow` v1.12 → **v1.58**, `cfe-validate` v1.5 → **v1.33**, `cfe-patch-method` v2.5 → **v2.14**, `cfe-diff` v1.0 → **v1.8**, `cfe-init` v1.2 → **v1.13**. `cfe-diff`, `cfe-init` and `cfe-patch-method` had no local delta and were taken as is; `cfe-borrow` was rebuilt on upstream HEAD with the local deltas re-applied; `cfe-validate` is upstream HEAD plus its two local hunks. No sibling calls, Designer launches or `.v8-project.json` reads besides `newObjectPosition` (now `.dev.env` first). Every script got `[CmdletBinding(PositionalBinding=$false)]`.

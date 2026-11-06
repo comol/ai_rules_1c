@@ -351,7 +351,8 @@ Register-Case 'form: an element CommandSet keeps its ExcludedCommand list while 
     # Without the main attribute the table loses its DataPath, and with it the Add / Copy commands:
     # the platform rejects such a set (8.3.27, "invalid form item command name"). It goes whole.
     $ws = New-Workspace (Join-Path $work 'skeleton')
-    Invoke-Borrow $ws $FormObject | Out-Null
+    $skeletonRun = Invoke-Borrow $ws $FormObject
+    Assert-True ($skeletonRun.StdOut -match 'BorrowMainAttribute Form') 'skeleton borrow did not warn that data paths were stripped'
     $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
     Assert-Equal 0 ([regex]::Matches($out, '<ExcludedCommand>Add</ExcludedCommand>')).Count 'unbound table kept its CommandSet'
     Assert-Equal 0 ([regex]::Matches($out, $emptySet)).Count 'empty CommandSet in the skeleton form'
@@ -430,7 +431,7 @@ Register-Case 'cfe-validate: fresh form borrow is clean; an unborrowed CommonPic
     Assert-True (-not ($v.StdOut -match 'FormTextColor')) "platform style item reported:`n$($v.StdOut)"
 }
 
-Register-Case 'form: an unborrowed configuration style is stripped, a platform style stays' {
+Register-Case 'form: a style missing from the export fails the call and is not stripped' {
     param($work)
     $ws = New-Workspace $work
     $srcForm = Read-Text (Join-Path $ws.Base "$FormRel\Ext\Form.xml")
@@ -439,10 +440,11 @@ Register-Case 'form: an unborrowed configuration style is stripped, a platform s
     $configStyle = @($styleNames | Where-Object { $_ -and ($_ -ne $platform) })
     Assert-True ($configStyle.Count -ge 1) 'fixture has no configuration style reference'
     Remove-Item -LiteralPath (Join-Path $ws.Base 'StyleItems') -Recurse -Force
-    Invoke-Borrow $ws $FormObject | Out-Null
+    $run = Invoke-Borrow $ws $FormObject @() 1
+    Assert-True ($run.StdErr -match 'StyleItem\.') "missing style was not reported:`n$($run.StdErr)"
     $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
     foreach ($name in $configStyle) {
-        Assert-True (-not $out.Contains("style:$name")) "unborrowed style reference left in the form: $name"
+        Assert-True $out.Contains("style:$name") "missing style reference was stripped: $name"
     }
     Assert-True $out.Contains("style:$platform") 'platform style item was stripped'
     Assert-True (-not (Test-Path (Join-Path $ws.Ext 'StyleItems'))) 'a missing source style item was still borrowed'
@@ -744,6 +746,76 @@ Register-Case 'shell: a borrowed chart of characteristic types carries the Chara
     Assert-True ($null -ne $ext.Doc.SelectSingleNode("$xp/md:ChildObjects", $ext.Ns)) 'chart of characteristic types shell has no ChildObjects'
     $v = Invoke-Validate $ws
     Assert-Equal 0 $v.ExitCode "cfe-validate after a chart of characteristic types borrow:`n$($v.StdOut)"
+}
+
+Register-Case 'form: Form mode keeps named tabular columns, AnyIBRef and drops AdditionalColumns options' {
+    param($work)
+    $ws = New-Workspace $work
+    $objPath = Join-Path $ws.Base 'Documents\Zakaz.xml'
+    $obj = Read-Text $objPath
+    $marker = '<Attribute uuid="a2a2a2a2-0000-4000-8000-000000000002">'
+    $start = $obj.IndexOf($marker)
+    Assert-True ($start -ge 0) 'fixture column Kolichestvo is gone'
+    $end = $obj.IndexOf('</Attribute>', $start) + '</Attribute>'.Length
+    $block = $obj.Substring($start, $end - $start)
+    $copy = $block.Replace('000000000002', '000000000099').Replace('<Name>Kolichestvo</Name>', '<Name>Lishnyaya</Name>')
+    $obj = $obj.Insert($start, $copy + "`n")
+    $ref = '<v8:Type>cfg:CatalogRef.Kontragenty</v8:Type>'
+    $composite = "<v8:Type>cfg:DocumentRef.AktA</v8:Type>`n`t`t`t`t`t`t`t<v8:Type>cfg:DocumentRef.AktB</v8:Type>"
+    Assert-True $obj.Contains($ref) 'fixture Kontragent type is gone'
+    $obj = $obj.Replace($ref, $composite)
+    [System.IO.File]::WriteAllText($objPath, ($obj -replace "`n", "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
+
+    $formPath = Join-Path $ws.Base "$FormRel\Ext\Form.xml"
+    $form = Read-Text $formPath
+    # The fixture path is the Cyrillic word for the object plus .Tovary. Read it from the file.
+    $tablePath = [regex]::Match($form, '<DataPath>([^<]*Tovary)</DataPath>').Groups[1].Value
+    Assert-True ($tablePath.Length -gt 0) 'fixture table path is gone'
+    $named = "`t`t`t<InputField name=`"Kol`" id=`"40`">`n`t`t`t`t<DataPath>$tablePath.Kolichestvo</DataPath>`n`t`t`t</InputField>`n"
+    $current = "`t`t`t<InputField name=`"Nom`" id=`"41`">`n`t`t`t`t<DataPath>Items.Tablitsa.CurrentData.Nomenklatura</DataPath>`n`t`t`t</InputField>`n"
+    # Table element name in the fixture is Cyrillic; read it.
+    $tableName = [regex]::Match($form, '<Table name="([^"]+)"').Groups[1].Value
+    $current = $current.Replace('Tablitsa', $tableName)
+    $form = $form.Replace("<Table name=`"$tableName`"", $named + $current + "<Table name=`"$tableName`"")
+    $saved = '<SavedData>true</SavedData>'
+    $columns = @"
+$saved
+			<Columns>
+				<AdditionalColumns table="$tablePath">
+					<Column name="Extra" id="42">
+						<Title>
+							<v8:item>
+								<v8:lang>ru</v8:lang>
+								<v8:content>Extra</v8:content>
+							</v8:item>
+						</Title>
+						<FunctionalOptions>
+							<Item>FunctionalOption.Opt</Item>
+						</FunctionalOptions>
+					</Column>
+				</AdditionalColumns>
+			</Columns>
+"@.Replace("`r`n", "`n")
+    Assert-True $form.Contains($saved) 'fixture main attribute has no SavedData'
+    $form = $form.Replace($saved, $columns.TrimEnd())
+    $form = $form.Replace('style:FormTextColor', 'style:FieldSelectionBackColor')
+    [System.IO.File]::WriteAllText($formPath, ($form -replace "`n", "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
+
+    Invoke-Borrow $ws $FormObject @('-BorrowMainAttribute', 'Form') | Out-Null
+    $ext = Get-Xml (Join-Path $ws.Ext 'Documents\Zakaz.xml')
+    $cols = @($ext.Doc.SelectNodes('/md:MetaDataObject/md:Document/md:ChildObjects/md:TabularSection/md:ChildObjects/md:Attribute/md:Properties/md:Name', $ext.Ns) | ForEach-Object { $_.InnerText })
+    Assert-Equal 'Nomenklatura,Kolichestvo' ($cols -join ',') 'tabular columns named by the form'
+    $typeText = Get-AttributeTypeText $ext '/md:MetaDataObject/md:Document/md:ChildObjects/md:Attribute[md:Properties/md:Name="Kontragent"]'
+    Assert-True ($typeText -match 'cfg:AnyIBRef') "composite ref type was not collapsed:`n$typeText"
+    Assert-True ($typeText -notmatch 'DocumentRef') 'composite ref type kept the member list'
+    Assert-True (-not (Test-Path (Join-Path $ws.Ext 'Documents\AktA.xml'))) 'a member of a ref-only composite was borrowed'
+    $out = Read-Text (Join-Path $ws.Ext "$FormRel\Ext\Form.xml")
+    Assert-Equal 0 ([regex]::Matches($out, '<FunctionalOptions>')).Count 'FunctionalOptions left in AdditionalColumns'
+    Assert-True ($out -match 'AdditionalColumns') 'AdditionalColumns were dropped with the options'
+    Assert-True ($out.Contains('style:FieldSelectionBackColor')) 'platform FieldSelectionBackColor was stripped'
+    $v = Invoke-Validate $ws
+    Assert-Equal 0 $v.ExitCode "cfe-validate after the Form-mode borrow:`n$($v.StdOut)"
+    Assert-True (-not ($v.StdOut -match 'FieldSelectionBackColor')) "platform style reported:`n$($v.StdOut)"
 }
 
 # ---------------------------------------------------------------- run

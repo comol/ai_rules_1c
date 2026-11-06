@@ -1,4 +1,4 @@
-﻿# cfe-borrow v1.58 — Borrow objects from configuration into extension (CFE)
+﻿# cfe-borrow v1.59 — Borrow objects from configuration into extension (CFE)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: Configurator 2.20 shapes kept over upstream —
 #        an element CommandSet keeps its ExcludedCommand list while the element keeps its DataPath
@@ -9,8 +9,8 @@
 #        a borrowed attribute / column keeps the source <Type> line layout (as the round-trip dump).
 # Local: -BorrowMainAttribute Only — the form main attribute without the cascade (no UseAlways /
 #        Columns, every data path stripped in both parts).
-# Local: a style:X that is neither borrowed nor a platform style item is stripped from the form,
-#        AutoCommandBar and form properties (they are scanned for styles too).
+# Local: a style:X missing from the source export fails the call and is not stripped.
+#        Platform style items stay. AutoCommandBar and form properties are scanned too.
 # Local: Russian kind segments in -Object (Реквизит, ТабличнаяЧасть, Форма, …) next to Russian types.
 # Local: NEW_OBJECT_POSITION comes from .dev.env first (tools/_common/DevEnv.ps1); .v8-project.json
 #        newObjectPosition is the upstream fallback.
@@ -41,6 +41,8 @@ $script:formBindingPictureTags = @('MultipleValuePictureDataPath')
 
 # Пути ссылок параметров выбора, которые пришлось вырезать (для предупреждения в конце)
 $script:droppedLinks = @()
+# Объекты и элементы стиля, которых нет в выгрузке: ссылку не снимаем, в конце отказ со списком.
+$script:missingExports = New-Object System.Collections.Generic.List[string]
 
 # id основного реквизита в заимствованной форме — как у Конфигуратора
 $script:mainAttrId = "1000001"
@@ -87,6 +89,37 @@ function Strip-FormBindings {
 		$xml = [regex]::Replace($xml, "\s*<$tag>[^<]*</$tag>", '')
 	}
 	return $xml
+}
+
+# Колонки <AdditionalColumns> Конфигуратор пишет без <FunctionalOptions>. Остальные
+# функциональные опции формы не трогаем.
+function Remove-AdditionalColumnFunctionalOptions([string]$xml) {
+	if (-not $xml -or $xml -notmatch '<AdditionalColumns[\s>]') { return $xml }
+	return [regex]::Replace($xml, '(?s)(<AdditionalColumns\b[^>]*>)(.*?)(</AdditionalColumns>)', {
+		param($m)
+		$body = [regex]::Replace($m.Groups[2].Value, '(?s)\s*<FunctionalOptions>.*?</FunctionalOptions>', '')
+		$body = [regex]::Replace($body, '\s*<FunctionalOptions\s*/>', '')
+		return $m.Groups[1].Value + $body + $m.Groups[3].Value
+	})
+}
+
+# Составной тип из одних ссылок Конфигуратор сворачивает в cfg:AnyIBRef и объекты не заимствует.
+# Одна ссылка, примесь примитива или уже готовый TypeSet остаются как в источнике.
+function Convert-RefOnlyCompositeType([string]$typeXml) {
+	if (-not $typeXml) { return $typeXml }
+	if ($typeXml -match '<v8:TypeSet[\s>]') { return $typeXml }
+	$types = [regex]::Matches($typeXml, '<v8:Type>([^<]+)</v8:Type>')
+	if ($types.Count -lt 2) { return $typeXml }
+	foreach ($t in $types) {
+		if ($t.Groups[1].Value.Trim() -notmatch '^(?:\w+:)?\w+Ref\.\w+$') { return $typeXml }
+	}
+	$nl = if ($typeXml.Contains("`r`n")) { "`r`n" } else { "`n" }
+	$wrap = [regex]::Match($typeXml, '(?s)^(\s*<Type[^>]*>)(.*?)(\s*</Type>\s*)$')
+	if (-not $wrap.Success) { return $typeXml }
+	$indent = "`t"
+	$ind = [regex]::Match($wrap.Groups[2].Value, '\n([ \t]+)<v8:Type>')
+	if ($ind.Success) { $indent = $ind.Groups[1].Value }
+	return $wrap.Groups[1].Value + $nl + $indent + '<v8:TypeSet>cfg:AnyIBRef</v8:TypeSet>' + $wrap.Groups[3].Value
 }
 
 # Сдвиг блока на уровень вглубь для <BaseForm>; $firstIndent — отступ первой строки.
@@ -1254,12 +1287,18 @@ function Borrow-Form {
 	# Local: режим Only — сам основной реквизит, без реквизитов объекта. Ни один путь от него в
 	# расширении не разрешится, поэтому привязки снимаются все (как в скелете), а у реквизита —
 	# UseAlways и Columns: они называют реквизиты и ТЧ объекта, которых в расширении нет.
+	if (-not $BorrowMainAttribute -and $srcMainInfo) {
+		Warn "  Форма заимствована без -BorrowMainAttribute: привязки к данным сняты. С «Добавить в расширение» Конфигуратора совпадает -BorrowMainAttribute Form."
+	}
 	$onlyMain = [bool]($mainAttrInfo -and $BorrowMainAttribute -eq 'Only')
 	if ($onlyMain) {
 		$onlyXml = [regex]::Replace($mainAttrInfo.Xml, '(?s)\s*<UseAlways>.*?</UseAlways>', '')
 		$onlyXml = [regex]::Replace($onlyXml, '(?s)\s*<Columns>.*?</Columns>', '')
 		$mainAttrInfo = @{ Name = $mainAttrInfo.Name; Xml = $onlyXml }
 		$mainAttrName = ""
+	} elseif ($mainAttrInfo) {
+		# Колонки AdditionalColumns Конфигуратор переносит без FunctionalOptions.
+		$mainAttrInfo.Xml = Remove-AdditionalColumnFunctionalOptions $mainAttrInfo.Xml
 	}
 
 	# Имена реквизитов объекта нужны в обоих режимах: без заимствования — для кода пути в связях
@@ -1527,6 +1566,7 @@ function Borrow-Form {
 		"SmallTextFont"=$true; "ExtraLargeTextFont"=$true; "LargeTextFont"=$true
 		"NormalTextColor"=$true; "GroupHeaderBackColor"=$true; "GroupHeaderFont"=$true
 		"ErrorColor"=$true; "SuccessColor"=$true; "WarningColor"=$true
+		"FieldSelectionBackColor"=$true; "ReportGroup1BackColor"=$true; "ReportGroup2BackColor"=$true
 	}
 	$referencedStyles = [ordered]@{}
 	$styleRefs1 = [regex]::Matches($styleScanXml, 'ref="style:(\w+)"[^>]*kind="StyleItem"')
@@ -1555,8 +1595,8 @@ function Borrow-Form {
 				$script:borrowedFiles += $targetFile
 				Info "  Auto-borrowed: StyleItem.${styleName}"
 			} else {
-				# Local: стиля нет ни в источнике, ни в списке платформы — ссылка вырезается ниже
-				Warn "  StyleItem.${styleName} not found in source config — will strip from form"
+				# Файла стиля нет в выгрузке: ссылку не снимаем, в конце отказ со списком.
+				$script:missingExports.Add("StyleItem.${styleName}") | Out-Null
 			}
 		}
 	}
@@ -1569,6 +1609,10 @@ function Borrow-Form {
 	$styleNsMgr.AddNamespace("md", $script:mdNs)
 	$borrowedStyleSet = @{}
 	foreach ($sn in $script:xmlDoc.SelectNodes("//md:ChildObjects/md:StyleItem", $styleNsMgr)) { $borrowedStyleSet[$sn.InnerText] = $true }
+	$missingStyleSet = @{}
+	foreach ($miss in $script:missingExports) {
+		if ($miss.StartsWith('StyleItem.')) { $missingStyleSet[$miss.Substring(10)] = $true }
+	}
 	$stripStyleRef = {
 		param([string]$xml)
 		if (-not $xml) { return $xml }
@@ -1584,6 +1628,7 @@ function Borrow-Form {
 				$hitStyle = $hm.Groups[$hm.Groups.Count - 1].Value
 				if ($platformStyleItems.ContainsKey($hitStyle)) { continue }
 				if ($borrowedStyleSet.ContainsKey($hitStyle)) { continue }
+				if ($missingStyleSet.ContainsKey($hitStyle)) { continue }
 				$xml = $xml.Remove($hm.Index, $hm.Length)
 			}
 		}
@@ -2416,7 +2461,8 @@ function Collect-FormDataPaths {
 		$bms = [regex]::Matches($content, "<$tag>[^<]*\b$root\.(\w+(?:\.\w+)*)</$tag>")
 		foreach ($m in $bms) {
 			$path = $m.Groups[1].Value
-			$segments = $path.Split(".")
+			$segments = @($path.Split('.') | Where-Object { $_ -cne 'CurrentData' })
+			if ($segments.Count -eq 0) { continue }
 			$seg0 = $segments[0]
 			if ($script:standardFields -contains $seg0) { continue }
 			$firstLevel[$seg0] = $true
@@ -2432,7 +2478,8 @@ function Collect-FormDataPaths {
 	$fieldMatches = [regex]::Matches($content, "<Field>[^<]*\b$root\.(\w+(?:\.\w+)*)</Field>")
 	foreach ($m in $fieldMatches) {
 		$path = $m.Groups[1].Value
-		$segments = $path.Split(".")
+		$segments = @($path.Split('.') | Where-Object { $_ -cne 'CurrentData' })
+		if ($segments.Count -eq 0) { continue }
 		$seg0 = $segments[0]
 		if ($script:standardFields -contains $seg0) { continue }
 		$firstLevel[$seg0] = $true
@@ -2440,6 +2487,22 @@ function Collect-FormDataPaths {
 			if ($script:standardFields -contains $segments[1]) { continue }
 			$deepPaths += ,$segments
 		}
+	}
+
+	# Items.<таблица>.CurrentData.<колонка>: таблица сама указывает табличную часть через DataPath.
+	$tableToTs = @{}
+	foreach ($tm in [regex]::Matches($content, "(?s)<Table name=`"([^`"]+)`"[^>]*>(?:(?!</Table>).)*?<DataPath>[^<]*\b$root\.(\w+)")) {
+		$tableToTs[$tm.Groups[1].Value] = $tm.Groups[2].Value
+	}
+	foreach ($im in [regex]::Matches($content, '<DataPath>Items\.(\w+)\.CurrentData\.(\w+)')) {
+		$tname = $im.Groups[1].Value
+		if (-not $tableToTs.ContainsKey($tname)) { continue }
+		$ts = $tableToTs[$tname]
+		$col = $im.Groups[2].Value
+		if ($script:standardFields -contains $ts) { continue }
+		$firstLevel[$ts] = $true
+		if ($script:standardFields -contains $col) { continue }
+		$deepPaths += ,@($ts, $col)
 	}
 
 	# Also scan <AdditionalColumns table="Объект.X"> — доп. колонки табличной части, объявленные в
@@ -2481,8 +2544,24 @@ function Collect-FormDataPaths {
 }
 
 # --- 11c. Resolve source attributes and tabular sections ---
+# Имена колонок, которые форма назвала путём <ТЧ>.<Колонка>. Ключ — Get-QueryKey имени ТЧ,
+# значение — набор Get-QueryKey колонок. Пустой набор не сужает: таблица без колонок в путях
+# и слово из текста запроса по-прежнему заимствуют все колонки.
+function Get-NamedTabularColumns($deepPaths) {
+	$map = @{}
+	foreach ($segs in $deepPaths) {
+		if ($segs.Count -lt 2) { continue }
+		$col = $segs[1]
+		if ($script:standardFields -contains $col) { continue }
+		$tsKey = Get-QueryKey $segs[0]
+		if (-not $map.ContainsKey($tsKey)) { $map[$tsKey] = @{} }
+		$map[$tsKey][(Get-QueryKey $col)] = $true
+	}
+	return $map
+}
+
 function Resolve-SourceAttributes {
-	param([string]$typeName, [string]$objName, $firstLevelNames)
+	param([string]$typeName, [string]$objName, $firstLevelNames, $tabularColumns)
 	# $firstLevelNames: hashtable of names, or $null for "all"
 	# Имена сверяются ключом запроса (регистр, Ё/Е): слова приходят и из текста запроса списка,
 	# а правило тильды (Get-DynListQueryUnresolved) считает их найденными по тому же ключу.
@@ -2550,6 +2629,7 @@ function Resolve-SourceAttributes {
 			$typeXml = if ($typeNode) { $typeNode.OuterXml } else { "" }
 			# Strip namespace declarations from Type
 			$typeXml = [regex]::Replace($typeXml, '\s+xmlns(?::\w+)?="[^"]*"', '')
+			$typeXml = Convert-RefOnlyCompositeType $typeXml
 
 			$attrs += @{ Name = $attrName; Uuid = $uuid; TypeXml = $typeXml; Kind = $child.LocalName }
 		}
@@ -2588,7 +2668,15 @@ function Resolve-SourceAttributes {
 					$tsTypeNode = $tsChild.SelectSingleNode("md:Properties/md:Type", $srcNs)
 					$tsTypeXml = if ($tsTypeNode) { $tsTypeNode.OuterXml } else { "" }
 					$tsTypeXml = [regex]::Replace($tsTypeXml, '\s+xmlns(?::\w+)?="[^"]*"', '')
+					$tsTypeXml = Convert-RefOnlyCompositeType $tsTypeXml
 					$tsAttrs += @{ Name = $tsAttrName.InnerText; Uuid = $tsAttrUuid; TypeXml = $tsTypeXml }
+				}
+			}
+			# Form: колонки, которые форма назвала путём. Нет ни одного пути на колонку — весь состав.
+			if ($null -ne $tabularColumns) {
+				$wanted = $tabularColumns[(Get-QueryKey $tsName)]
+				if ($wanted -and $wanted.Count -gt 0) {
+					$tsAttrs = @($tsAttrs | Where-Object { $wanted.ContainsKey((Get-QueryKey $_.Name)) })
 				}
 			}
 
@@ -2893,7 +2981,7 @@ function Borrow-ObjectShell([string]$typeName, [string]$objName) {
 	}
 	$srcFile = Join-Path (Join-Path $cfgDir $childTypeDirMap[$typeName]) "${objName}.xml"
 	if (-not (Test-Path $srcFile)) {
-		Warn "  Source not found: ${typeName}.${objName}"
+		$script:missingExports.Add("${typeName}.${objName}") | Out-Null
 		return
 	}
 	$src = Read-SourceObject $typeName $objName
@@ -3062,6 +3150,7 @@ function Borrow-MainAttribute {
 	# Step 1: Collect DataPaths (Form mode) or take all (All mode)
 	$firstLevelNames = $null
 	$deepPaths = @()
+	$tabularColumns = $null
 	if ($mode -eq "Form") {
 		if (-not (Test-Path $srcFormXmlPath)) {
 			Write-Error "Source Form.xml not found: $srcFormXmlPath"
@@ -3079,6 +3168,7 @@ function Borrow-MainAttribute {
 		$dp = Collect-FormDataPaths $srcFormXmlPath $dpInfo.Name
 		$firstLevelNames = $dp.FirstLevel
 		$deepPaths = $dp.DeepPaths
+		$tabularColumns = Get-NamedTabularColumns $deepPaths
 		Info "  Collected $($firstLevelNames.Count) first-level DataPath references, $($deepPaths.Count) deep paths"
 	} else {
 		Info "  Mode All: borrowing all attributes and tabular sections"
@@ -3094,7 +3184,7 @@ function Borrow-MainAttribute {
 	}
 
 	# Step 2: Resolve source attributes
-	$resolved = Resolve-SourceAttributes $typeName $objName $firstLevelNames
+	$resolved = Resolve-SourceAttributes $typeName $objName $firstLevelNames $tabularColumns
 	$srcAttrs = $resolved.Attributes
 	$srcTS = $resolved.TabularSections
 	$extraProps = $resolved.ExtraProps
@@ -3947,5 +4037,10 @@ Write-Host "  Config:     $cfgDir"
 Write-Host "  Borrowed:   $borrowedCount object(s)"
 foreach ($f in $script:borrowedFiles) {
 	Write-Host "    - $f"
+}
+if ($script:missingExports.Count -gt 0) {
+	$list = (@($script:missingExports) | Select-Object -Unique) -join ', '
+	[Console]::Error.WriteLine("[ERROR] В выгрузке конфигурации нет: $list. Довыгрузите эти объекты и повторите заимствование; ссылки не сняты.")
+	exit 1
 }
 exit 0

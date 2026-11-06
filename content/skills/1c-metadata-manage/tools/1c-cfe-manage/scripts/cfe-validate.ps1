@@ -1,4 +1,4 @@
-﻿# cfe-validate v1.33 — Validate 1C configuration extension structure (CFE)
+﻿# cfe-validate v1.34 — Validate 1C configuration extension structure (CFE)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: check 11 does not warn about a missing Module.bsl of a borrowed form (object or common):
 #        cfe-borrow writes none, as Configurator 2.20 does; an own form still needs one.
@@ -1288,6 +1288,7 @@ $platformStyleItems = @{
 	"SmallTextFont"=$true; "ExtraLargeTextFont"=$true; "LargeTextFont"=$true
 	"NormalTextColor"=$true; "GroupHeaderBackColor"=$true; "GroupHeaderFont"=$true
 	"ErrorColor"=$true; "SuccessColor"=$true; "WarningColor"=$true
+	"FieldSelectionBackColor"=$true; "ReportGroup1BackColor"=$true; "ReportGroup2BackColor"=$true
 }
 $check12Ok = $true
 $depCheckCount = 0
