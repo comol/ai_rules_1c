@@ -20,7 +20,7 @@ Always show tools in this order. The 1C MCP bundle is always first.
 | 3 | OpenViking memory MCP | Persistent agent memory and context retrieval; searched alongside Cognee and other connected memory providers | Recommended when the user wants OpenViking context retrieval or a primary memory store without Cognee | `/install-openviking` |
 | 4 | EDT-MCP | Live access to the EDT workspace, errors, native refactoring, metadata/forms, launches and debugging | Recommended only when the user develops in a locally installed 1C:EDT | `/install-edt-mcp` |
 | 5 | agent-browser | Token-efficient browser automation based on accessibility snapshots | Recommended for automated tests of a published 1C web client | `/install-agent-browser` |
-| 6 | Windows-MCP | Windows desktop, mouse and keyboard automation | Last resort for thick-client or other non-web UI flows | `/install-windows-mcp` |
+| 6 | agent-desktop | Vercel Labs desktop accessibility, window actions and screenshots | OS dialogs and native applications outside the 1C testing model | `/install-agent-desktop` |
 | 7 | rtk | Third-party, user-global shell-output compression proxy — fewer tokens on every shell call (git, docker, platform commands) | Optional; only on explicit selection — also offered by `/economymode` | `/install-rtk` |
 | 8 | Atlassian MCP | Access to Jira issues and Confluence pages in Cloud or Server/Data Center | Optional for projects using Jira or Confluence | `/install-atlassian-mcp` |
 | 9 | OfficeCLI | Create, read and edit Word, Excel and PowerPoint files without Microsoft Office | Optional; recommended when the workflow includes `.docx`, `.xlsx` or `.pptx` documents | `/install-officecli` |
@@ -46,7 +46,7 @@ Read `USE_EDT` from the project `.dev.env` before evaluating EDT tools. It is a 
 - **OpenViking:** check for exposed OpenViking memory tools and an `openviking` MCP entry; inspect the configured installation manifest, `openviking-server --version` when already installed, and the configured health endpoint (default `http://127.0.0.1:1933/health`). For Docker inspect the existing container; for a remote endpoint do not require a local package/container. A healthy HTTP process alone does not verify model access or MCP memory operations. Do not install packages or start the service during detection.
 - **EDT-MCP:** check for an `edt-mcp` / `EDT MCP Server` client entry and `http://127.0.0.1:8765/health`. A stopped EDT makes health inconclusive; do not report the plugin missing solely because EDT is closed.
 - **agent-browser:** check `agent-browser --version` and the client MCP entry.
-- **Windows-MCP:** on Windows, inspect the client MCP entry and exposed tools; do not use `uvx windows-mcp --help` for detection because it may install/run the package. On non-Windows, mark it `not applicable`.
+- **agent-desktop:** check the installed CLI with `agent-desktop --version` and inspect the configured stdio entry and available MCP tool names. On Linux the target needs a graphical session with AT-SPI. Do not take a screenshot or enumerate windows during installation detection.
 - **rtk:** check `rtk --version` and `rtk init --show` (user-global; nothing in the project or in `.dev.env`).
 - **Atlassian MCP:** inspect the active client's configuration for `mcp-atlassian` or another entry running the same server, and exposed Jira / Confluence tools. Check the configured local executable or Docker image without starting it; remote connections do not require a local package. Configuration alone does not prove service access. Do not run `uvx mcp-atlassian --help`, pull images, or request credentials during detection.
 - **OfficeCLI:** follow the read-only detection in `content/commands/install-officecli.md` (the `status` path): resolve the executable, then probe `officecli --version` with temporary `OFFICECLI_SKIP_UPDATE=1`. Check its native install location if it is missing from `PATH`; never run bare `officecli` or `officecli install` during detection. CLI availability and installed agent skills are separate states; no MCP entry is required.
@@ -75,7 +75,7 @@ Treat `recommended` contextually:
 - OpenViking: select when the user requests OpenViking or its context retrieval. Do not infer a request to install both memory servers from a request for general memory alone.
 - EDT-MCP: select when `USE_EDT=true`. If the flag is `false`, select only on an explicit numbered choice; a detected local EDT installation alone does not change the project preference.
 - agent-browser: select when a published web-client URL or web UI testing is expected.
-- Windows-MCP: never include automatically; it requires an explicit selection.
+- agent-desktop: never include automatically; it requires an explicit selection.
 - rtk: never include automatically; it requires an explicit selection.
 - Atlassian MCP: select when the user wants the agent to work with Jira or Confluence. Do not infer this from Git hosting or the presence of an installer alone.
 - OfficeCLI: select when the user needs to create, read or edit Office documents; do not preselect it for a purely BSL/metadata workflow.
@@ -89,7 +89,7 @@ Execute selected installers sequentially in catalog order by loading and followi
 3. `install-openviking.md`
 4. `install-edt-mcp.md`
 5. `install-agent-browser.md`
-6. `install-windows-mcp.md`
+6. `install-agent-desktop.md`
 7. `install-rtk.md`
 8. `install-atlassian-mcp.md`
 9. `install-officecli.md`

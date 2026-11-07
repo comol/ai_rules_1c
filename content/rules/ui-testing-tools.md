@@ -1,5 +1,5 @@
 ---
-description: UI testing routes — QA MCP (`1c-qa`) first, web client (agent-browser → built-in browser) as fallback, Windows-MCP only for windows outside the client; bans home-grown screenshot/OCR
+description: UI testing routes — QA MCP (`1c-qa`) first, web client (agent-browser → built-in browser) as fallback, agent-desktop only for windows outside the client; bans home-grown screenshot/OCR
 alwaysApply: false
 category: tooling
 ---
@@ -14,7 +14,7 @@ Whether a UI check runs at all is gated by `UI_TESTING` — canon: `dev-standard
 
 1. **QA MCP (`1c-qa`)** — the main route for checks in the 1C interface. It drives the thin client's forms through the platform testing model and reads structured state. Eligible when `TOOL_QA` is not `off` and its `qa_*` / `ui_*` tools are exposed; it needs the project infobase (`INFOBASE_PATH`, `INFOBASE_ROLE`), not a web publication. Load `content/skills/1c-qa-testing/SKILL.md` and `content/rules/qa-testclient.md` (starting the test client, visible / hidden window, screenshots, data confirmation).
 2. **Web client** — the fallback when QA MCP is absent, disabled, cannot connect or cannot cover a step, and the primary route for web-client-specific behaviour or a requested web screenshot. Needs `INFOBASE_PUBLISH_URL`; runs the preflight and driver order below, then `web-client-driving.md`.
-3. **Windows-MCP** — windows outside the testing model (OS and file dialogs, platform error windows the test client does not reach, other applications) under the cautions of `qa-testclient.md → Windows-MCP`. It does not see 1C form controls and never drives forms that QA MCP or the web client can drive.
+3. **agent-desktop** — windows outside the testing model (OS and file dialogs, platform error windows the test client does not reach, other applications) under the cautions of `qa-testclient.md → agent-desktop`. Use QA MCP for thin-client forms and agent-browser for web pages.
 
 State the chosen route, and the reason for a fallback, once in the report. `TOOL_QA=required` with the server missing or failing blocks the check; the web client does not satisfy it. A route that cannot run leaves its scenarios unverified; never report them passed.
 
@@ -26,7 +26,7 @@ Any interactive exploration or debugging needed to author/fix the suite still fo
 
 ## Preflight before web UI tests (hard gate)
 
-Runs before an authorized interactive web UI test, once the web route is selected (saved suites use the preceding section). First apply `TOOL_AGENT_BROWSER`, `TOOL_BROWSER`, `TOOL_WINDOWS_MCP` (`content/rules/mcp-policy.md → Tool availability`). In `auto`, use the preflight below. With `TOOL_AGENT_BROWSER=off`, skip its probes/install question and select an eligible built-in browser. With `required`, a missing agent-browser blocks execution. If no permitted web driver works, report the web test unrun; do not substitute desktop automation for a web scenario. A selected built-in driver's `required` failure also blocks the test.
+Runs before an authorized interactive web UI test, once the web route is selected (saved suites use the preceding section). First apply `TOOL_AGENT_BROWSER` and `TOOL_BROWSER` (`content/rules/mcp-policy.md → Tool availability`). In `auto`, use the preflight below. With `TOOL_AGENT_BROWSER=off`, skip its probes/install question and select an eligible built-in browser. With `required`, a missing agent-browser blocks execution. If no permitted web driver works, report the web test unrun; do not substitute desktop automation for a web scenario. A selected built-in driver's `required` failure also blocks the test.
 
 1. **Detect `agent-browser`.** Available if **either**:
    - CLI on `PATH` (`agent-browser --version` succeeds), **or**
@@ -50,7 +50,6 @@ Once a driver is chosen, load `web-client-driving.md` before the first action �
 
 1. **`agent-browser`** (https://github.com/vercel-labs/agent-browser) — **default for 1C web client tests**. Use accessibility-tree snapshots (`snapshot` / MCP equivalents), refs (`@eN`), and typed interactions. Screenshots only for evidence in the test report, not as the primary observe loop. Install: `/install-agent-browser`.
 2. **Built-in browser MCP** of the active client (`cursor-ide-browser`, Playwright / `browser-use`, etc.) — eligible fallback after the preflight above (agent-browser disabled, declined, or absent with no operator). Same human-like typing / TAB / wait rules as in `1c-tester`.
-3. **`Windows-MCP`** (https://github.com/CursorTouch/Windows-MCP) — **last resort**, Windows only: OS UI and windows outside the 1C client, never the web client's pages. Install: `/install-windows-mcp`.
 
 Never invent a parallel stack (PowerShell screenshot loops, custom OCR, ad-hoc vision pipelines) while a tool from this list can cover the need.
 
@@ -62,15 +61,15 @@ Never invent a parallel stack (PowerShell screenshot loops, custom OCR, ad-hoc v
 - `UI_TESTING` decides whether a run happens — do not "warm up" a browser or start a test client outside an allowed run.
 - QA MCP answers are already structured: read the window tree (`detail="lite"`) instead of screenshots, and screenshot key states only (`qa-testclient.md → Screenshots`).
 
-## Windows-MCP — when and when not
+## agent-desktop — when and when not
 
-| Use Windows-MCP | Do not use Windows-MCP |
+| Use agent-desktop | Do not use agent-desktop |
 |---|---|
 | OS, file and platform error dialogs outside the testing model (the web client's native file dialog may be invisible to it: `web-client-driving.md → Login as another user, file choice`) | Driving 1C forms — QA MCP does that, and the thin client exposes no controls to UI Automation |
-| External Windows apps in the scenario | Routine checks of the **web** client at `INFOBASE_PUBLISH_URL` |
+| Native applications on the target desktop | Routine checks of the **web** client at `INFOBASE_PUBLISH_URL` |
 | User explicitly requires desktop automation | "Because screenshots feel easier", or as a substitute for publishing the web client |
 
-When Windows-MCP is the chosen tool: drive it through its MCP tools; **do not** ask the model to code a screenshotter, template matcher, or OCR layer for the same job.
+Apply `TOOL_AGENT_DESKTOP` before using Vercel Labs agent-desktop. Follow the user's Computer Use consent policy before observing a window, taking a screenshot or sending input. Use the MCP tools or the installed CLI in the authorized desktop session. Select the intended window, take a structured snapshot, act on a ref from that snapshot, and verify the resulting state. Prefer headless semantic actions; physical input can take focus and requires headed mode. Capture the requested window or display only. Use the host shell for commands that need output and exit status. See the [platform guides](https://agent-browser.dev/desktop) for Windows UI Automation and Linux AT-SPI session requirements.
 
 ## Install commands
 
@@ -78,7 +77,7 @@ When Windows-MCP is the chosen tool: drive it through its MCP tools; **do not** 
 |---|---|
 | UI checks in the thin client | QA MCP: Docker image `comol/qa_mcp` from the MCP server distribution, client connection `1c-qa`; the ruleset's MCP installers do not set it up yet |
 | Web UI testing, token-efficient browser | `/install-agent-browser` |
-| Unavoidable Windows desktop automation | `/install-windows-mcp` |
+| Native desktop automation | `/install-agent-desktop` |
 
 Installing a tool does not change `UI_TESTING` or `TOOL_*` and does not set `INFOBASE_PUBLISH_URL`.
 

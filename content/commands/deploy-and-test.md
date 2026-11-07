@@ -139,7 +139,7 @@ Load `content/rules/ui-testing-tools.md` and run its **Preflight before web UI t
 
 ### Step 4c. Run web scenarios
 
-Open `{INFOBASE_PUBLISH_URL}` with the tool chosen in 4b. Prefer **`agent-browser`** (a11y snapshots); built-in browser MCP only after decline / no-operator fallback; **`Windows-MCP`** (`/install-windows-mcp`) only for unavoidable desktop / thick-client automation — never as the default for the web client, never a home-grown screenshotter/OCR. Rules:
+Open `{INFOBASE_PUBLISH_URL}` with the tool chosen in 4b. Prefer **`agent-browser`** (a11y snapshots); built-in browser MCP only after decline / no-operator fallback; **`agent-desktop`** (`/install-agent-desktop`) only for native windows outside the 1C testing model — never for a web page, never a home-grown screenshotter/OCR. Rules:
 
 - Prefer snapshot/refs observe loops over screenshot/vision.
 - **MUST** use delayed human-like typing when filling fields.

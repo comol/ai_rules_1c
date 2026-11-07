@@ -401,11 +401,11 @@
       "wire": [],
       "env": {"UI_TESTING": "auto", "INFOBASE_PUBLISH_URL": "http://localhost/erp25_test", "TOOL_AGENT_BROWSER": "off", "TOOL_BROWSER": "auto"},
       "response": "ok",
-      "criteria": "Preflight skips agent-browser probes and installation prompts, then uses the eligible built-in browser under web-client-driving. It does not substitute Windows desktop automation or change UI_TESTING."
+      "criteria": "Preflight skips agent-browser probes and installation prompts, then uses the eligible built-in browser under web-client-driving. It does not substitute desktop automation or change UI_TESTING."
     },
     {
       "id": "S139", "gate": "G-MCP-SCOPE", "area": "Политика инструментов",
-      "task": "Проверь уже разрешённый веб-сценарий: TOOL_AGENT_BROWSER=auto, TOOL_BROWSER=off, agent-browser отсутствует, оператора для установки нет. Windows-MCP подключён.",
+      "task": "Проверь уже разрешённый веб-сценарий: TOOL_AGENT_BROWSER=auto, TOOL_BROWSER=off, agent-browser отсутствует, оператора для установки нет. agent-desktop подключён.",
       "wire": [],
       "env": {"TOOL_AGENT_BROWSER": "auto", "TOOL_BROWSER": "off"},
       "response": "refused",
@@ -433,7 +433,7 @@
       "id": "S142", "gate": "G-MCP-SCOPE", "area": "Политика инструментов",
       "task": "Выполни /installtools status. Все TOOL_* выставлены в off, USE_EDT=false; часть серверов установлена, но инструменты в сессии не видны.",
       "wire": [],
-      "env": {"TOOL_COGNEE": "off", "TOOL_OPENVIKING": "off", "TOOL_TEMPLATES": "off", "TOOL_GRAPH": "off", "TOOL_CODE": "off", "TOOL_DOCS": "off", "TOOL_SSL": "off", "TOOL_SYNTAX": "off", "TOOL_CHECKER": "off", "TOOL_DATA": "off", "TOOL_EDT": "off", "TOOL_AGENT_BROWSER": "off", "TOOL_BROWSER": "off", "TOOL_WINDOWS_MCP": "off", "TOOL_UI_TEST": "off", "TOOL_CONVERSION": "off", "USE_EDT": "false"},
+      "env": {"TOOL_COGNEE": "off", "TOOL_OPENVIKING": "off", "TOOL_TEMPLATES": "off", "TOOL_GRAPH": "off", "TOOL_CODE": "off", "TOOL_DOCS": "off", "TOOL_SSL": "off", "TOOL_SYNTAX": "off", "TOOL_CHECKER": "off", "TOOL_DATA": "off", "TOOL_EDT": "off", "TOOL_AGENT_BROWSER": "off", "TOOL_BROWSER": "off", "TOOL_AGENT_DESKTOP": "off", "TOOL_UI_TEST": "off", "TOOL_CONVERSION": "off", "USE_EDT": "false"},
       "response": "ok",
       "criteria": "Explicit status allows read-only inspection and shows installation, off policy and session exposure separately. No install, uvx package execution, configuration write, purchase prompt or recommendation to install disabled providers occurs."
     },

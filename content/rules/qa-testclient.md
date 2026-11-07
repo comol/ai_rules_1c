@@ -1,5 +1,5 @@
 ---
-description: "1C test client for QA MCP checks — start and stop (qa-testclient.ps1), visible or hidden window, screenshots, Windows-MCP, developer-licence trap, extension safe mode, data confirmation through 1c-data-mcp"
+description: "1C test client for QA MCP checks — start and stop (qa-testclient.ps1), visible or hidden window, screenshots, agent-desktop, developer-licence trap, extension safe mode, data confirmation through 1c-data-mcp"
 alwaysApply: false
 category: tooling
 ---
@@ -8,20 +8,20 @@ category: tooling
 
 **When to load:** with the skill `content/skills/1c-qa-testing/SKILL.md`, before starting or stopping a 1C test client, hiding or showing it, taking a screenshot of it, or confirming what a UI step wrote. Whether a check runs at all is `UI_TESTING` (`dev-standards-env.md`); the driver order is `ui-testing-tools.md`.
 
-These are not QA MCP functions. The server drives forms only. Everything on the Windows machine — starting the test client, the hidden desktop and screenshots in `native`, the MCPQAClient pointer, installing the extension — is done by the agent with the project's tools under this rule: the `qa-testclient.ps1` script of the `1c-qa-testing` skill (`scripts/qa-testclient.ps1`, found by file name in the installed skills folder), PowerShell, a project launcher script, Windows-MCP, Designer in batch mode. Do not write a home-grown screenshotter, OCR or window automation.
+These are not QA MCP functions. The server drives forms only. Everything on the Windows machine — starting the test client, the hidden desktop and screenshots in `native`, the MCPQAClient pointer, installing the extension — is done by the agent with the project's tools under this rule: the `qa-testclient.ps1` script of the `1c-qa-testing` skill (`scripts/qa-testclient.ps1`, found by file name in the installed skills folder), PowerShell, a project launcher script, agent-desktop, Designer in batch mode. Do not write a home-grown screenshotter, OCR or window automation.
 
 ## Windows scenario (`native`)
 
 Settle two facts once per session:
 
 - **Own shell there:** the agent's shell runs on the Windows machine of the test client (the usual local setup: Docker Desktop and 1C on the same PC).
-- **Windows-MCP:** its tools are exposed and `TOOL_WINDOWS_MCP` is not `off`.
+- **agent-desktop:** its tools are exposed and `TOOL_AGENT_DESKTOP` is not `off`.
 
 | Scenario | Start and stop | Hidden window | Screenshot |
 |---|---|---|---|
-| **A.** Own shell + Windows-MCP | `qa-testclient.ps1` | `start -Hidden` | `qa-testclient.ps1 capture`; Windows-MCP for windows outside the client |
-| **B.** Own shell, no Windows-MCP | `qa-testclient.ps1` | `start -Hidden` | `qa-testclient.ps1 capture` |
-| **C.** Windows-MCP only (the agent works elsewhere) | Windows-MCP's shell or launch tool with the command line below | none: Windows-MCP sees only the visible desktop | Windows-MCP screenshot, client window brought forward first |
+| **A.** Own shell + agent-desktop | `qa-testclient.ps1` | `start -Hidden` | `qa-testclient.ps1 capture`; agent-desktop for windows outside the client |
+| **B.** Own shell, no agent-desktop | `qa-testclient.ps1` | `start -Hidden` | `qa-testclient.ps1 capture` |
+| **C.** agent-desktop only (the agent works elsewhere) | Launch the client executable with `desktop_launch` and separate arguments; hand off any step that needs a shell | none: agent-desktop sees only the visible desktop | `desktop_screenshot` targeting the visible client window or its display (see the maximised 8.5 caveat below) |
 | **D.** Neither | the person, with the command line the agent gives | none | the person on request; otherwise the visual check is reported not done |
 
 `platform` executor: `qa_start` starts the client itself, `qa_start(hidden_desktop=True)` hides it, `ui_screenshot` takes screenshots; connection string and password come from a profile (`qa_profiles`), never from the chat.
@@ -42,7 +42,7 @@ qa-testclient.ps1 status [-Port 1538]
 - `start` waits until the main window opens; the port opens earlier, before the licence and sign-in checks. A client that exits during start-up returns 1C's own message from the log: report it, do not retry in a loop. No main window before the timeout means a start-up dialog is waiting — `capture` shows it, then `stop`.
 - `-Execute <file.epf>` appends `/Execute` for that file on the same client (the same pid, hidden desktop, deadline and `stop`). The file must already exist. A missing file is an error before the client starts.
 - `-MaxSeconds <n>` closes the client `n` seconds after launch even if the agent does not come back, and ends the process if it does not close by itself; use it when the project bounds test sessions, and never extend a deadline through relaunch loops.
-- `capture` saves a PNG of the client's own windows and popups only, on the hidden desktop too, and also for a client the person started (found by port). The port listens before the main window exists: a capture right after the port opens finds no windows. On 8.5 a maximised client painted through `PrintWindow` hangs (a core busy, the test link dead until `stop -Force`; measured on 8.5.1.1522): `capture` restores such windows for the shot and maximises them again (`maximized_restored_for_capture`). Do not shoot a maximised 8.5 client window with other PrintWindow-based tools; a screen capture (Windows-MCP Screenshot) is not affected.
+- `capture` saves a PNG of the client's own windows and popups only, on the hidden desktop too, and also for a client the person started (found by port). The port listens before the main window exists: a capture right after the port opens finds no windows. On 8.5 a maximised client painted through `PrintWindow` hangs (a core busy, the test link dead until `stop -Force`; measured on 8.5.1.1522): `capture` restores such windows for the shot and maximises them again (`maximized_restored_for_capture`). Do not shoot a maximised 8.5 client window with other PrintWindow-based tools; use an authorized display capture (`agent-desktop screenshot --screen N`) instead of requesting a window capture in this case.
 - `stop` closes only a client this script started, through its main window, and refuses a client the person started. It waits `-CloseTimeoutSec` for the process to exit and answers `how: closed` with `port_free`. While it waits it clicks a window whose text is «Завершить работу» when the exit question «Завершить работу с программой?» is open, including on the hidden desktop. If that question is visible but the button is not a window the script can click, the answer is `how: exit question`. If a new owned `V8TopLevelFrameSDIsec` dialog appears after the close request but its text and buttons are not exposed as windows, `stop` immediately returns `how: exit question` and preserves the process and state. This structural signal does not identify the dialog text: connect to that same client with `qa_start`, inspect `ui_dialog`, and answer only the confirmed exit question; never send Enter to an unknown dialog. A client that has not closed and has neither signal answers `how: still closing`. In both cases there is an `error`: `capture`, then `stop` again. `-Force` ends the process; use it only when the person agrees (licence trap below).
 - `status` answers `started_here: true` only while that client is alive. A client the person closed, or one that exited, is forgotten with its deadline watchdog and reported once as `gone`. A closed client can take over a minute to exit (seen on a large configuration): `alive` or a refused `start` right after closing means "wait and ask `status` again", not a conflict.
 
@@ -50,7 +50,7 @@ qa-testclient.ps1 status [-Port 1538]
 
 - Start a test client only for an infobase whose `INFOBASE_ROLE` is `dev` or `test`, or that the person confirmed as a test copy; otherwise ask once and wait. Never switch infobases silently.
 - If the port already listens, run `status` first. A client of the same infobase on that port is connected to with `qa_start`; a client of another base, or one owned by another agent, is a conflict to resolve — never close it.
-- Start with the project launcher if there is one, else `qa-testclient.ps1 start` (A, B), or this command line (C through Windows-MCP, D for the person):
+- Start with the project launcher if there is one, else `qa-testclient.ps1 start` (A, B), or this command line (C: pass the absolute executable path and individual launch arguments via agent-desktop, D: give the command to the person):
 
   ```
   1cv8c ENTERPRISE /F"<infobase path>" /TestClient -TPort1538 /DisableStartupDialogs
@@ -67,7 +67,7 @@ qa-testclient.ps1 status [-Port 1538]
 
 - **Visible:** `start` without `-Hidden`; `platform`: `qa_start(hidden_desktop=False)`.
 - **Hidden:** `start -Hidden` (A, B) — the client runs on a separate hidden desktop; `platform`: `qa_start(hidden_desktop=True)`. In C and D there is no hidden launch: start visible and say so once.
-- A step that needs Windows-MCP (a window outside the testing model) runs with a visible client.
+- A step that needs agent-desktop (a window outside the testing model) runs with a visible client.
 
 Windows cannot move a window between desktops. **The client becomes visible** by restarting it visible:
 
@@ -86,22 +86,22 @@ When the person wants to watch or click themselves:
 - Start the client visible. A deadline meant for unattended runs is too short to watch: ask how long to keep the client and pass that as `-MaxSeconds`; when asking is not possible, keep it for 30 minutes (`-MaxSeconds 1800`) and say so.
 - Bring the form to the requested state and stop. Do not close forms or the client; say which form is open and in what state. Close them only when the person says so.
 - The person's clicks do not break the link. Before continuing, read the window again: earlier snapshots and `ui_here` pins are stale.
-- Do not send Windows-MCP input while the person works in the client.
+- Do not send agent-desktop input while the person works in the client.
 
 ## Screenshots
 
 - Observe and assert through structured reads (`ui_window_tree`, `ui_inspect`, `ui_get_text`). A screenshot is for layout questions (overlaps, clipped text) and as evidence of key states — form opened, data entered, save or posting, error, completion — never after every action and never as the observe loop.
-- Take it by the scenario: `qa-testclient.ps1 capture -Out <journal folder>\<step>.png` (A, B), Windows-MCP (C, and in A for windows outside the client), the person (D), `ui_screenshot` (`platform`). When none is possible, the report says the visual check was not done.
+- Take it by the scenario: `qa-testclient.ps1 capture -Out <journal folder>\<step>.png` (A, B), agent-desktop (C, and in A for windows outside the client), the person (D), `ui_screenshot` (`platform`). When none is possible, the report says the visual check was not done.
 - Save screenshots next to the journal and reference them by step number. Look at the PNG with the agent's image viewer when there is one.
 - A task that asks for a screenshot needs a real one of the updated infobase — a client capture, or a web-client screenshot through the browser driver. Structured results, SVG, HTML or mock images do not replace it.
 
-## Windows-MCP
+## agent-desktop
 
-Windows outside the testing model — platform error dialogs it does not reach, OS and file dialogs, other applications — are handled with Windows-MCP (A, C), on the visible desktop only. In B and D such a step is reported not done. A platform security warning is handed to the person. Windows-MCP works on the person's real screen:
+Windows outside the testing model — platform error dialogs it does not reach, OS and file dialogs, other applications — are handled with agent-desktop (A, C), on the visible desktop only. In B and D such a step is reported not done. A platform security warning is handed to the person. Follow the user's desktop-session consent policy before observing or acting.
 
-- Its keyboard and mouse input goes to whatever window is in front. Bring the client forward (`App`, mode `switch`) right before each input and check it is in front. While the person works on this desktop, send no input: ask them to step away, or report the step not done.
-- Its screenshots show the whole desktop on every monitor, the person's other windows included. Shoot the client with `capture`; use Windows-MCP screenshots only for windows outside the client, and delete copies that caught unrelated windows.
-- It does not see 1C form controls: the thin client exposes none to UI Automation. Forms are driven only through QA MCP.
+- On Windows, select the intended window with `desktop_list_windows` and inspect it with `desktop_snapshot`. For supported controls, use semantic actions on fresh refs. Re-snapshot after an action to verify its result. Coordinate any physical input with the person and check the foreground target before sending it.
+- Capture the authorized window by ID. A display screenshot also captures other visible content; use it only when the requested evidence requires it. For the hidden test desktop use `qa-testclient.ps1 capture`.
+- QA MCP remains responsible for thin-client forms. Use the host's shell for command output and exit status. Agent Desktop's launch tool starts an executable and reports the process.
 
 ## MCPQAClient extension
 

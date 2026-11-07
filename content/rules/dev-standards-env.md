@@ -143,7 +143,7 @@ Explicit editor: `/uitests essential|on|manual|off|status` (`content/commands/ui
 
 Resolve `off` first: it blocks UI regardless of routes and starts no setup questionnaire. Loading the change for a check follows `INFOBASE_ROLE` and `/update1cbase` / `/deploy-and-test`. The route supplies **where**: QA MCP — the test client of `INFOBASE_PATH`; web — `INFOBASE_PUBLISH_URL`. An automatic run with no available route is skipped and affected criteria stay unverified with that reason; for an explicitly requested run, ask for the missing prerequisite and continue independent work.
 
-**Route and tool** — `ui-testing-tools.md`: QA MCP → web client → `Windows-MCP` for windows outside the client. `MCP_QA_CLIENT_VISIBLE` (`/uitests visible|hidden`) sets the test-client window, never `UI_TESTING` — `qa-testclient.md → Visible or hidden window`.
+**Route and tool** — `ui-testing-tools.md`: QA MCP → web client → `agent-desktop` for windows outside the client. `MCP_QA_CLIENT_VISIBLE` (`/uitests visible|hidden`) sets the test-client window, never `UI_TESTING` — `qa-testclient.md → Visible or hidden window`.
 
 #### `USE_EDT` — project uses 1C:EDT
 
@@ -175,7 +175,7 @@ Missing, empty or invalid values are `unknown`, not proof that EDT is absent. On
 | `TOOL_EDT` | EDT-MCP; workflow still requires `USE_EDT=true` |
 | `TOOL_AGENT_BROWSER` | agent-browser, MCP and CLI |
 | `TOOL_BROWSER` | Active client's built-in browser tools and saved UI test runners |
-| `TOOL_WINDOWS_MCP` | Windows-MCP desktop automation |
+| `TOOL_AGENT_DESKTOP` | Vercel Labs agent-desktop for native windows |
 | `TOOL_QA` | `1c-qa` (QA MCP): UI checks in the 1C thin client |
 | `TOOL_UI_TEST` | Optional `MCP_Test` / `1C Visual UI Test` |
 | `TOOL_CONVERSION` | `1c-kd20` (KD20): «Конвертация данных» 2.0 exchange rules and read-only EnterpriseData checks; installed separately |

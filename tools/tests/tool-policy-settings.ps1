@@ -39,7 +39,7 @@ try {
         $original = '# keep ' + [char]0x0410 + $newline +
             'TOOL_COGNEE = off' + $newline + 'TOOL_SYNTAX=required' + $newline +
             'TOOL_OPENVIKING=' + $newline + 'TOOL_DATA=typo' + $newline +
-            'TOOL_CUSTOM=off' + $newline + 'PREFIX=unchanged'
+            'TOOL_WINDOWS_MCP=off' + $newline + 'TOOL_CUSTOM=off' + $newline + 'PREFIX=unchanged'
         Write-TextFile -Path $target -Content $original
         $manifest = [ordered]@{ files = [ordered]@{ '.dev.env' = [ordered]@{ installedHash = 'old' } } }
         Ensure-ToolPolicySettings -Root $fixtureRoot -SourceRoot $repoRoot -Manifest $manifest
@@ -51,6 +51,7 @@ try {
             Assert-True (([regex]::Matches($result, ('(?m)^' + $key + '\s*='))).Count -eq 1) "Duplicate key: $key"
         }
         Assert-True ($values['TOOL_COGNEE'] -eq 'off') 'off was overwritten'
+        Assert-True ($values['TOOL_AGENT_DESKTOP'] -eq 'off') 'Desktop migration lost the previous policy'
         Assert-True ($values['TOOL_SYNTAX'] -eq 'required') 'required was overwritten'
         Assert-True ($values['TOOL_OPENVIKING'] -eq '') 'Empty value was overwritten'
         Assert-True ($values['TOOL_DATA'] -eq 'typo') 'Invalid value was silently repaired'
@@ -66,6 +67,9 @@ try {
     Ensure-ToolPolicySettings -Root $emptyRoot -SourceRoot $repoRoot -Manifest ([ordered]@{ files = [ordered]@{} })
     Assert-True (-not (Test-Path (Join-Path $emptyRoot '.dev.env'))) 'Migration created a missing user file'
     $target = Join-Path $fixtureRoot '.dev.env'
+    Write-TextFile -Path $target -Content "TOOL_WINDOWS_MCP=off`nTOOL_AGENT_DESKTOP=required"
+    Ensure-ToolPolicySettings -Root $fixtureRoot -SourceRoot $repoRoot -Manifest ([ordered]@{ files = [ordered]@{} })
+    Assert-True ((Read-DevEnvKeys $target)['TOOL_AGENT_DESKTOP'] -eq 'required') 'Explicit desktop policy was overwritten'
     Write-TextFile -Path $target -Content ''
     Ensure-ToolPolicySettings -Root $fixtureRoot -SourceRoot $repoRoot -Manifest ([ordered]@{ files = [ordered]@{} })
     Assert-True ((Read-DevEnvKeys $target).Count -eq $policyKeys.Count) 'Empty file migration failed'

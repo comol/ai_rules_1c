@@ -4446,12 +4446,18 @@ function Ensure-ToolPolicySettings {
     $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
     if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $text += $newline }
     $text += $newline + '# Tool policy: auto (default), off, required; availability is checked separately.' + $newline
-    foreach ($key in $missing) { $text += $key + '=auto' + $newline }
+    foreach ($key in $missing) {
+        $value = 'auto'
+        if ($key -eq 'TOOL_AGENT_DESKTOP' -and $values.Contains('TOOL_WINDOWS_MCP')) {
+            $value = $values['TOOL_WINDOWS_MCP']
+        }
+        $text += $key + '=' + $value + $newline
+    }
     Write-TextFile -Path $target -Content $text
     if ($Manifest.files.Contains($script:DevEnvFileName)) {
         $Manifest.files[$script:DevEnvFileName]['installedHash'] = Get-FileSha256 $target
     }
-    Write-Info ('  .dev.env: added tool policy keys with auto defaults (' + ($missing -join ', ') + ')')
+    Write-Info ('  .dev.env: added missing tool policy keys (' + ($missing -join ', ') + ')')
 }
 
 function Ensure-EdtUsageSetting {

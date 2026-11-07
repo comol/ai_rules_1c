@@ -19,7 +19,7 @@ All of these hold:
 
 Otherwise use the web fallback of `ui-testing-tools.md`, or report the check unrun with the reason. `TOOL_QA=required` with the server missing blocks the check; the web client does not replace it.
 
-**Before the first action load `content/rules/qa-testclient.md`.** It owns what the server does not do: starting and stopping the test client, visible or hidden window, screenshots, Windows-MCP, and confirming data through `1c-data-mcp`. Tool argument names come from the exposed schemas; `qa_playbook` returns the sequence for the current executor.
+**Before the first action load `content/rules/qa-testclient.md`.** It owns what the server does not do: starting and stopping the test client, visible or hidden window, screenshots, agent-desktop, and confirming data through `1c-data-mcp`. Tool argument names come from the exposed schemas; `qa_playbook` returns the sequence for the current executor.
 
 ## Other MCP servers in a check
 
