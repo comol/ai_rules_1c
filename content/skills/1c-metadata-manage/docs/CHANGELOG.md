@@ -254,6 +254,15 @@ The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refre
 
 ## form-manage.md
 
+### Local fix `2026-11-08` — registering a ready form, `autoEditMode`
+
+Support request: extension changes carried onto a new vendor dump (format 2.21, 8.5.1) where the custom form already exists in the previous version.
+
+- **`form-add -RegisterExisting`** (PowerShell only): the descriptor `Forms/<Name>.xml`, `Ext/Form.xml` and `Ext/Form/Module.bsl` must all exist; the form is added to the owner's `ChildObjects` and nothing else is written — no form file, no uuid, no `Default*Form` slot, even an empty one. Refused (exit 1, nothing written): a missing file, a path outside the owner's `Forms` or through a symlink / junction, a descriptor that is not `MetaDataObject/Form`, whose `Properties/Name` differs from `-FormName`, or whose uuid is invalid or already used by the owner or another of its forms, a `Form.xml` that is not a managed form. `-SetDefault` / `-Synonym` / `-Purpose` with it are exit 2. Already registered — exit 0 without a write. A descriptor or `Form.xml` in another format than the owner is a `[WARN]`. Ordinary creation over an existing descriptor is refused as before.
+- **`autoEditMode`** for `input` in `form-edit` (add and `set`) and in `form-compile.ps1`: `<AutoEditMode>true|false</AutoEditMode>`. The property exists only in the 2.21 logform XSD (`Field`, `xs:boolean`, no default, after `CellMark` and before the `InputField` part that starts with `Width`), so it is added to the `InputField` child order of both emitters between `FooterPicture` and `Width`; `form-validate`'s copy of the order is not changed (its check 16 skips the tag). A non-boolean value and a form of format < 2.21 are refused (exit 1, nothing written); `null` in `set` removes the tag. Before, the key was reported as «unknown key … ignored». `form-compile.py` does not know the key yet.
+
+Verified with a synthetic 2.21 test set under Windows PowerShell 5.1 (registration, repeat, missing file, name mismatch, traversal, conflicting switches, ordinary creation; `autoEditMode` true / false on add, `set` true → false → `null`, non-boolean, 2.20 form, `form-compile`), `meta-validate` / `form-validate` on every result; no case in `tools/tests` yet.
+
 ### Upstream sync `2026-11-01` (`2e75b0f`)
 
 Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) `2e75b0f`: `form-compile` v1.176 → **v1.224** (both runtimes), `form-edit` v1.6 → **v1.46**, `form-validate` v1.10 → **v1.39**, `form-info` v1.5 → **v1.14**, `form-add` v1.12 → **v1.34** (both runtimes), `remove-form` v1.4 → **v1.11** (both runtimes, reference check only). `tools/1c-form-compile/form-dsl-spec.md` is re-merged with upstream `docs/form-dsl-spec.md`. The scripts read no new data files: the event catalog, handler-stub templates, enum sets and child-tag orders are embedded; `presets/erp-standard.json` is unchanged upstream and keeps the local posting properties.
@@ -391,6 +400,12 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 - **`interface-validate`** — universal validator improvements (one-liner output by default, `-Detailed`, folder path auto-resolution) — see `role-manage.md` → "Recent Additions".
 
 ## meta-manage.md
+
+### Local fix `2026-11-08` — `meta-edit import-attribute`
+
+Support request: an attribute of the previous version has to move onto a new vendor dump (format 2.21, 8.5.1) with its uuid; `add-attribute` gives a new uuid, which stays correct for a new attribute. `meta-edit.ps1 -Operation import-attribute -SourceFile <previous object XML> -Value <Name>` (batch with `;;`) copies the source's native `<Attribute>` element as it is, uuid and every property included, after the last attribute of the target. Refused with exit 1 and nothing written: source and target are not the same object (kind and name; the object uuid is not compared), the same file, a source attribute that is missing or has an invalid uuid, a target attribute of that name with other content, the name taken by another child, the uuid already used anywhere in the target file (attribute `uuid`, `xr:TypeId` / `xr:ValueId`), a namespace prefix the attribute uses that the target root declares differently. A target attribute identical to the source (up to line endings) is skipped; when nothing is left to import the file is not written and the run exits 0. The save path is the usual one (BOM, target EOL, compact tags), the support guard and the `meta-validate` gate apply; if `meta-validate` fails after the write, the target's original bytes are written back and its exit code is returned. There is no configuration-wide uuid check in `meta-edit` — run `uuid-check` on the dump. `meta-edit.py` does not have the operation yet.
+
+Verified with a synthetic 2.21 test set under Windows PowerShell 5.1 (import, repeat, batch, other catalog, document of the same name, same file, invalid uuid, conflicting attribute, uuid collision, missing attribute, failed validator, `-SourceFile` misuse), `meta-validate` on every result; no case in `tools/tests` yet.
 
 ### Upstream sync `2026-11-01` (`2e75b0f`)
 

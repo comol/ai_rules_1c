@@ -169,3 +169,7 @@ Adding `forms` or `templates` (including accepted aliases) is refused with exit 
 изменение несуществующего элемента, неизвестное значение свойства-перечисления, свойство, которого
 у типа объекта нет. Побочные файлы (модуль команды, таблица внешнего источника, предопределённые)
 пишутся после основного XML, поэтому отказ посреди определения не оставляет на диске изменений.
+
+Перенос готового реквизита из прошлой выгрузки с его uuid — только inline-операцией
+`-Operation import-attribute -SourceFile …` ([child-operations.md](child-operations.md#import-attribute));
+ключа JSON DSL у неё нет.

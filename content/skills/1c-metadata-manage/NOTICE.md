@@ -105,6 +105,19 @@ Other tool commands remain PowerShell-only. The upstream pin above is not to be 
   (`db-cfe-admin`) and `tools/1c-v8-xsd-fetch/` (`v8-xsd-fetch`). Copies of
   shared functions across these scripts are held together by
   `tools/tests/vendored-drift.ps1` in the ruleset source.
+- local PowerShell-only deltas of 2026-11-08 (carrying extension changes onto a
+  new vendor dump of format 2.21), each also described in the file's header:
+  `tools/1c-meta-edit/scripts/meta-edit.ps1` — operation `import-attribute`
+  (`-SourceFile`, native `<Attribute>` with its uuid, refusals before the write,
+  byte-level no-op on a repeat, original bytes restored when the validator
+  fails); `tools/1c-form-scaffold/scripts/form-add.ps1` — switch
+  `-RegisterExisting` (registration of a ready form only);
+  `tools/1c-form-edit/scripts/form-edit.ps1` and
+  `tools/1c-form-compile/scripts/form-compile.ps1` — the `input` key
+  `autoEditMode` (`<AutoEditMode>`, `Emit-Input` / `Emit-Element` changed in both
+  copies, `AutoEditMode` added to their `InputField` child order). The Python
+  runtimes `meta-edit.py`, `form-add.py` and `form-compile.py` do not have these
+  deltas yet.
 
 Not part of this skill, listed for completeness: the ruleset source also
 carries a port of upstream `hooks/support-guard.mjs` for Claude Code

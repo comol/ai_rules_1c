@@ -5,6 +5,12 @@
 # exit 2 before any path or XPath is built from it); -FormName / -Synonym are
 # XML-escaped in the descriptor. (The information register's record form names
 # its main attribute "Запись" upstream too since 1.2x — Purpose=Record.)
+# Local (2026-11-08): -RegisterExisting registers a ready form (descriptor,
+# Ext/Form.xml, Module.bsl already on disk) in ChildObjects only — no form file
+# is written, no uuid and no Default*Form slot changes; a missing file, a
+# descriptor whose name / uuid does not fit, or a path through a link is refused
+# before the write, and an existing registration is a no-op. Not ported to
+# form-add.py.
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
@@ -24,7 +30,12 @@ param(
 	# параметра "set-default" и без алиаса отвечает отказом биндинга. Написания -SetDefault,
 	# --SetDefault и --setdefault совпадают с именем параметра и так.
 	[Alias('set-default')]
-	[switch]$SetDefault
+	[switch]$SetDefault,
+
+	# Local: форма уже лежит на диске (перенос из прошлой выгрузки) — только зарегистрировать её
+	# в ChildObjects владельца, ни один файл формы не переписывать.
+	[Alias('register-existing')]
+	[switch]$RegisterExisting
 )
 
 $ErrorActionPreference = "Stop"
@@ -233,6 +244,16 @@ function Detect-FormatVersion([string]$dir) {
 if ($FormName -cnotmatch '^[A-Za-z_А-яЁё][0-9A-Za-z_А-яЁё]{0,127}\z') {
 	[Console]::Error.WriteLine("Недопустимое имя формы (-FormName): '$FormName'. Ожидается идентификатор 1С (латиница или кириллица, цифры и подчёркивание, не начинается с цифры, до 128 символов).")
 	exit 2
+}
+
+# Local: -RegisterExisting не создаёт форму и не трогает основные формы — ключи, которые что-то
+# из этого задают, при нём ничего бы не сделали. Отказ, а не молчаливый пропуск.
+if ($RegisterExisting) {
+	$regConflicts = @(foreach ($k in 'SetDefault', 'Synonym', 'Purpose') { if ($PSBoundParameters.ContainsKey($k)) { "-$k" } })
+	if ($regConflicts.Count -gt 0) {
+		[Console]::Error.WriteLine("-RegisterExisting только регистрирует готовую форму: $($regConflicts -join ', ') при нём не применяются (синоним — в дескрипторе формы, основная форма не меняется). Ничего не изменено.")
+		exit 2
+	}
 }
 
 # Версия формата как число для сравнений: "2.20" → 220, "2.9" → 209.
@@ -632,7 +653,70 @@ $objectDir = [System.IO.Path]::ChangeExtension($objectXmlFull.ProviderPath, $nul
 $formsDir = Join-Path $objectDir "Forms"
 $formMetaPath = Join-Path $formsDir "$FormName.xml"
 
-if (Test-Path $formMetaPath) {
+if ($RegisterExisting) {
+	# Local: готовая форма — три файла на месте, внутри каталога Forms владельца, без ссылок
+	# (symlink / junction) на пути; дескриптор называет эту форму и несёт свой корректный uuid.
+	function Stop-RegisterExisting([string]$msg) {
+		[Console]::Error.WriteLine("-RegisterExisting: $msg Ничего не изменено.")
+		exit 1
+	}
+	$regFormXml = Join-Path (Join-Path (Join-Path $formsDir $FormName) "Ext") "Form.xml"
+	$regModule = Join-Path (Join-Path (Join-Path (Join-Path $formsDir $FormName) "Ext") "Form") "Module.bsl"
+	$regMissing = @(foreach ($p in @($formMetaPath, $regFormXml, $regModule)) { if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { $p } })
+	if ($regMissing.Count -gt 0) {
+		Stop-RegisterExisting "форма '$FormName' не готова — нет файлов: $($regMissing -join '; '). Новую форму создаёт form-add без -RegisterExisting."
+	}
+	$formsDirFull = [System.IO.Path]::GetFullPath($formsDir).TrimEnd('\', '/')
+	foreach ($p in @($objectDir, $formsDir, (Join-Path $formsDir $FormName), (Split-Path $regFormXml), (Split-Path $regModule), $formMetaPath, $regFormXml, $regModule)) {
+		$full = [System.IO.Path]::GetFullPath($p)
+		if ($p -ne $objectDir -and $p -ne $formsDir -and -not $full.StartsWith($formsDirFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+			Stop-RegisterExisting "путь '$full' выходит за каталог форм '$formsDirFull'."
+		}
+		if (((Get-Item -LiteralPath $p -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+			Stop-RegisterExisting "путь '$full' ведёт через ссылку (symlink / junction) — регистрируется только форма, лежащая в каталоге владельца."
+		}
+	}
+	$regDesc = New-Object System.Xml.XmlDocument
+	try { $regDesc.Load($formMetaPath) } catch { Stop-RegisterExisting "дескриптор '$formMetaPath' не разбирается как XML: $($_.Exception.Message)." }
+	$regFormEl = $null
+	if ($regDesc.DocumentElement -and $regDesc.DocumentElement.LocalName -eq 'MetaDataObject') {
+		foreach ($ch in $regDesc.DocumentElement.ChildNodes) { if ($ch.NodeType -eq 'Element') { $regFormEl = $ch; break } }
+	}
+	if (-not $regFormEl -or $regFormEl.LocalName -ne 'Form') { Stop-RegisterExisting "'$formMetaPath' — не дескриптор формы (ожидается MetaDataObject/Form)." }
+	$regUuid = $regFormEl.GetAttribute('uuid')
+	if ($regUuid -cnotmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z' -or $regUuid -eq '00000000-0000-0000-0000-000000000000') {
+		Stop-RegisterExisting "у дескриптора '$formMetaPath' некорректный uuid '$regUuid'."
+	}
+	$regNameEl = $null
+	foreach ($ch in $regFormEl.ChildNodes) {
+		if ($ch.NodeType -eq 'Element' -and $ch.LocalName -eq 'Properties') {
+			foreach ($gc in $ch.ChildNodes) { if ($gc.NodeType -eq 'Element' -and $gc.LocalName -eq 'Name') { $regNameEl = $gc; break } }
+		}
+	}
+	$regName = if ($regNameEl) { $regNameEl.InnerText.Trim() } else { '' }
+	if ($regName -cne $FormName) {
+		Stop-RegisterExisting "дескриптор '$formMetaPath' называет форму '$regName', а регистрируется '$FormName' — имя файла и Properties/Name должны совпадать."
+	}
+	# uuid формы не должен совпадать ни с одним uuid владельца и ни с одной другой его формой
+	# (копия дескриптора под новым именем без смены uuid — частая ошибка переноса).
+	foreach ($u in $xmlDoc.SelectNodes('//@uuid')) {
+		if ($u.Value.Trim() -eq $regUuid) { Stop-RegisterExisting "uuid формы $regUuid уже занят в '$($objectXmlFull.ProviderPath)'." }
+	}
+	foreach ($other in @(Get-ChildItem -LiteralPath $formsDir -Filter '*.xml' -File)) {
+		if ($other.FullName -eq [System.IO.Path]::GetFullPath($formMetaPath)) { continue }
+		if ((Get-RootUuid $other.FullName) -eq $regUuid) { Stop-RegisterExisting "uuid формы $regUuid совпадает с uuid формы '$($other.FullName)'." }
+	}
+	$regForm = New-Object System.Xml.XmlDocument
+	try { $regForm.Load($regFormXml) } catch { Stop-RegisterExisting "'$regFormXml' не разбирается как XML: $($_.Exception.Message)." }
+	if ($regForm.DocumentElement.LocalName -ne 'Form' -or $regForm.DocumentElement.NamespaceURI -ne 'http://v8.1c.ru/8.3/xcf/logform') {
+		Stop-RegisterExisting "'$regFormXml' — не управляемая форма (ожидается корень logform:Form)."
+	}
+	foreach ($pair in @(@('descriptor', $regDesc.DocumentElement.GetAttribute('version')), @('Form.xml', $regForm.DocumentElement.GetAttribute('version')))) {
+		if ($pair[1] -and $pair[1] -ne $script:formatVersion) {
+			Write-Host "[WARN] $($pair[0]) формы '$FormName' в формате $($pair[1]), владелец — $($script:formatVersion): платформа загружает выгрузку только в одном формате, проверьте form-validate / meta-validate"
+		}
+	}
+} elseif (Test-Path $formMetaPath) {
 	Write-Error "Форма уже существует: $formMetaPath"
 	exit 1
 }
@@ -641,7 +725,8 @@ $formDir = Join-Path $formsDir $FormName
 $formExtDir = Join-Path $formDir "Ext"
 $formModuleDir = Join-Path $formExtDir "Form"
 
-New-Item -ItemType Directory -Path $formModuleDir -Force | Out-Null
+# Local: -RegisterExisting — файлы формы уже есть и не пишутся (здесь и в 3a–3c).
+if (-not $RegisterExisting) { New-Item -ItemType Directory -Path $formModuleDir -Force | Out-Null }
 
 $encBom = New-Object System.Text.UTF8Encoding($true)
 
@@ -706,7 +791,7 @@ function Write-XmlFile([string]$path, [string]$text, $encoding) {
 	[System.IO.File]::WriteAllText($path, $t.TrimEnd("`r", "`n"), $encoding)
 }
 
-Write-XmlFile $formMetaPath $formMetaXml $encBom
+if (-not $RegisterExisting) { Write-XmlFile $formMetaPath $formMetaXml $encBom }
 
 # --- 3b. Form.xml ---
 
@@ -753,7 +838,9 @@ $formXml = @"
 </Form>
 "@
 
-if (Test-Path $formXmlPath) {
+if ($RegisterExisting) {
+	# готовый Form.xml проверен в фазе 3 и не переписывается
+} elseif (Test-Path $formXmlPath) {
 	Write-Host "[SKIP] Form.xml already exists: $formXmlPath — not overwriting"
 } else {
 	Write-XmlFile $formXmlPath $formXml $encBom
@@ -775,7 +862,9 @@ $modulePath = Join-Path $formModuleDir "Module.bsl"
 
 $moduleBsl = (Get-FormModuleTemplate) -join "`n"
 
-if (Test-Path $modulePath) {
+if ($RegisterExisting) {
+	# готовый Module.bsl проверен в фазе 3 и не переписывается
+} elseif (Test-Path $modulePath) {
 	Write-Host "[SKIP] Module.bsl already exists: $modulePath — not overwriting"
 } else {
 	# Модуль пишем в каноне платформы: CRLF в разделителях строк (корпус: 2643 CRLF,
@@ -854,6 +943,12 @@ if (-not $childObjects) {
 # Добавить <Form>$FormName</Form> — идемпотентно (не дублировать уже зарегистрированную)
 $alreadyRegistered = [bool]$childObjects.SelectSingleNode("md:Form[text()='$FormName']", $nsMgr)
 
+# Local: повторная регистрация готовой формы — без записи, владелец остаётся побайтно прежним.
+if ($RegisterExisting -and $alreadyRegistered) {
+	Write-Host "Already registered: <Form>$FormName</Form> in ChildObjects — nothing to do, no file written"
+	exit 0
+}
+
 if (-not $alreadyRegistered) {
 $formElem = $xmlDoc.CreateElement("Form", "http://v8.1c.ru/8.3/MDClasses")
 $formElem.InnerText = $FormName
@@ -906,7 +1001,8 @@ if ($defaultPropName) {
 }
 
 $defaultUpdated = $false
-if ($SetDefault -or $isFirstFormForPurpose) {
+# Local: -RegisterExisting не назначает основную форму, даже если слот пуст.
+if (-not $RegisterExisting -and ($SetDefault -or $isFirstFormForPurpose)) {
 	if ($defaultNode) {
 		$defaultNode.InnerText = $defaultValue
 		$defaultUpdated = $true
@@ -953,7 +1049,7 @@ $objFileName = [System.IO.Path]::GetFileName($ObjectPath)
 $objDirName = Split-Path $ObjectPath -Parent
 $objBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ObjectPath)
 
-Write-Host "Created:"
+Write-Host $(if ($RegisterExisting) { "Existing form files (not modified):" } else { "Created:" })
 Write-Host "  Metadata: $objDirName\$objBaseName\Forms\$FormName.xml"
 Write-Host "  Form:     $objDirName\$objBaseName\Forms\$FormName\Ext\Form.xml"
 Write-Host "  Module:   $objDirName\$objBaseName\Forms\$FormName\Ext\Form\Module.bsl"
@@ -965,6 +1061,8 @@ if ($alreadyRegistered) {
 }
 if ($defaultUpdated) {
 	Write-Host "${defaultPropName}: $defaultValue"
+} elseif ($RegisterExisting) {
+	Write-Host "Основная форма не менялась (-RegisterExisting)"
 } elseif (-not $defaultPropName) {
 	# Молчать здесь нельзя: пользователь ждёт, что форма станет основной, а свойства под неё
 	# у платформы нет (форма набора записей, произвольная форма).

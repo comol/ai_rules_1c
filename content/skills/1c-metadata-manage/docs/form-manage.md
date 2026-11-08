@@ -40,10 +40,12 @@ Creates a managed form (metadata XML + Form.xml + Module.bsl) and registers it i
 | Purpose | no | primary form of the kind | Purpose — see the table below. Empty = the kind's primary form: object form of a catalog / document, record form of an information register, list form of a journal or an accumulation register |
 | Synonym | no | = FormName | Form synonym |
 | --set-default | no | auto | Set as default form (auto for the first form of that purpose) |
+| -RegisterExisting | no | — | Local, PowerShell only: register a form whose files already exist, write nothing else — see below |
 
 **Command:**
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1 -ObjectPath "<ObjectPath>" -FormName "<FormName>" [-Purpose "<Purpose>"] [-Synonym "<Synonym>"] [-SetDefault]
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1 -ObjectPath "<ObjectPath>" -FormName "<FormName>" -RegisterExisting
 ```
 
 The format version of `Form.xml` comes from the object's own root XML (or the nearest `Configuration.xml` / external-processor root); `xmlns:dcssch` in the form header follows the configuration's compatibility mode (declared always from 8.3.19, otherwise only when used).
@@ -103,6 +105,15 @@ A purpose the kind does not have is refused with the list of valid ones (an info
 #### Supported Object Types
 
 Every kind of the purpose table above. The kind is the first element under `MetaDataObject`, not a name search.
+
+#### Registering an existing form (`-RegisterExisting`)
+
+For carrying a ready form onto a new dump (the form files were copied from the previous version into `<ObjectDir>/Forms/`). Ordinary creation over an existing `Forms/<FormName>.xml` stays refused — a new form would get a new uuid. With `-RegisterExisting` the tool only adds `<Form>FormName</Form>` to the owner's `ChildObjects`; it writes no form file, keeps every uuid and leaves `Default*Form` / `Auxiliary*Form` as they are, even an empty slot (assign one afterwards with `meta-edit -Operation modify-property` if needed).
+
+- Required on disk: `Forms/<FormName>.xml`, `Forms/<FormName>/Ext/Form.xml`, `Forms/<FormName>/Ext/Form/Module.bsl`. A missing one is exit 1, nothing written.
+- Also refused (exit 1): a path that leaves the owner's `Forms` directory or goes through a symlink / junction; a descriptor that is not `MetaDataObject/Form`, whose `Properties/Name` is not `FormName`, or whose uuid is invalid or already used by the owner or another of its forms; a `Form.xml` that is not a managed form (`logform:Form`). `-SetDefault`, `-Synonym`, `-Purpose` together with it are exit 2.
+- Already registered — exit 0, nothing written. A descriptor or `Form.xml` in another format version than the owner is a `[WARN]`; `meta-validate` / `form-validate` report the mismatch.
+- The support guard applies as for ordinary creation. `form-add.py` has no `-RegisterExisting` yet.
 
 ---
 
@@ -168,6 +179,9 @@ The script refuses a real deletion without `-Force`. It parses and serializes ev
 
 # EPF / ERF form (same unified script — pass the path to the EPF root XML)
 1c-form-scaffold add src/MyProcessor.xml MainForm --synonym "Main Form" --set-default
+
+# A form carried over from the previous dump: register it, write nothing else
+1c-form-scaffold add Catalogs/Products.xml CustomItemForm --register-existing
 
 # Preview, then remove a form (works for both config objects and EPF/ERF)
 1c-form-scaffold remove MyProcessor OldForm -DryRun
@@ -316,7 +330,7 @@ A borrowed form (`<BaseForm>`) is detected automatically. Name the extension's o
 
 #### Element keys, events, types
 
-Same DSL as `1c-form-compile` — element keys, `command` / `stdCommand`, event names and attribute types are in [`form-compile-dsl.md`](form-compile-dsl.md); the companion elements each type receives are listed in its *Auto-generation* section. Unlike `form-compile`, an event outside the catalog is only a `[WARN]` here (upstream behaviour). Handler stubs for new bindings are appended to `Module.bsl` exactly as `form-compile` does (§3).
+Same DSL as `1c-form-compile` — element keys, `command` / `stdCommand`, event names and attribute types are in [`form-compile-dsl.md`](form-compile-dsl.md); the companion elements each type receives are listed in its *Auto-generation* section. The local `input` key `autoEditMode` (`<AutoEditMode>`, format 2.21 only, `true` / `false` only) works on add and in `set`; `null` in `set` removes it. Unlike `form-compile`, an event outside the catalog is only a `[WARN]` here (upstream behaviour). Handler stubs for new bindings are appended to `Module.bsl` exactly as `form-compile` does (§3).
 
 A `DynamicList` attribute **must** carry `settings.mainTable` and/or `settings.query` (local rule). Without a source the designer accepts the XML, but the form fails to open (`не задан ни текст запроса, ни основная таблица`). `form-edit` refuses that JSON before writing; `form-validate` reports the same gap on an existing form. All `settings` keys of `form-compile` are accepted (filters, order, conditional appearance, fields, parameters).
 

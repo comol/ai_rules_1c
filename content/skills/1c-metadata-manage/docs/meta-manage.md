@@ -238,6 +238,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-edit/scr
 | Operation | Inline operation (alternative to DefinitionFile) |
 | Value | Value for inline operation |
 | DefinitionFile | JSON file with operations (alternative to Operation) |
+| SourceFile | `import-attribute` only: XML of the same object from the previous dump |
 | NoValidate | Skip the automatic validation after editing — the only opt-out |
 
 ## Results, Refusals and Validation
@@ -247,6 +248,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-edit/scr
 - After a successful edit the validator runs automatically and **its exit code is the run's result**: `meta-validate` from `1c-meta-validate` for configuration objects, `epf-validate` from `1c-epf-validate` for an external data processor / report. A missing validator is a refusal raised before the edit is written, never a silent skip. The Python runtime has no `epf-validate.py`: for an EPF / ERF it runs `epf-validate.ps1` through `pwsh` (or Windows PowerShell) and refuses before the write when no PowerShell host exists.
 - `modify-property` writes canonical XML: enum values are normalized (synonyms, case) and unknown ones rejected, the key is matched case-insensitively and written in its canonical case, an empty multilingual property is written as XML, `CodeLength` / `NumberLength` `0` also drops `Code` / `Number` from `InputByString`. In an extension a missing `RegisterRecords` is created on a borrowed document.
 - **External data sources**: on a source file `meta-edit` adds fields, tables (`add.tables` creates `<Source>/Tables/<Table>.xml` and registers it) and functions with the `meta-compile` syntax; removing a table is `meta-remove ExternalDataSource.<Source>.Table.<Table>`. Re-running `meta-compile` over an existing source is refused without `-Force` (it would give the source a new uuid).
+- **Carrying an attribute onto a new dump** (local, PowerShell only): `-Operation import-attribute -SourceFile <previous XML of the same object> -Value <Name>` copies the native `<Attribute>` element with its **original uuid** and every property — `add-attribute` would give it a new uuid. A different owner (kind or name), the same file, a missing attribute or invalid uuid, a target attribute of that name with other content, a uuid already used in the target file — exit 1, nothing written. An identical attribute already in the target is a no-op (the file is not rewritten). If `meta-validate` fails, the original bytes of the target are restored. The uuid is checked inside the target file only; check the whole dump with `uuid-check` ([uuid-check.md](uuid-check.md)). Details: [child-operations.md](../tools/1c-meta-edit/child-operations.md#import-attribute).
 
 ## Operations — Summary Table
 
@@ -271,6 +273,7 @@ Batch via `;;` in all operations. Detailed syntax in linked reference files.
 | `modify-attribute` | `Name: key=value` | `"OldName: name=NewName, type=String(500)"` |
 | `modify-ts-attribute` | `TS.Name: key=value` | `"Товары.Attr: name=NewName"` |
 | `modify-ts` | `TS: key=value` | `"Товары: synonym=Product Items"` |
+| `import-attribute` | `Name` + `-SourceFile` | `-SourceFile "old/Catalogs/Товары.xml" -Value "Артикул"` — native element with its uuid (local, PowerShell only) |
 
 Positional insert: `"Склад: CatalogRef.Склады >> after Организация"`.
 
@@ -310,6 +313,9 @@ For combined operations (add + remove + modify in one file), key/type synonyms, 
 
 # Catalog owners
 -Operation set-owners -Value "Catalog.Контрагенты ;; Catalog.Организации"
+
+# Carry an attribute (with its uuid) from the previous dump of the same object
+-Operation import-attribute -SourceFile "old-dump/Catalogs/Товары.xml" -Value "ДопАртикул"
 ```
 
 ## Verification

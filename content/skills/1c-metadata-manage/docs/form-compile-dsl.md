@@ -164,6 +164,7 @@ In an extension form (`<BaseForm>`) a handler with a `callType` is named `<NameP
 | `maxWidth` / `maxHeight` | Hard size cap | numbers; usually paired with `autoMaxWidth: false` |
 | `horizontalStretch: true` | Stretch horizontally | |
 | `textEdit: false` | Disable free text editing — leaves only choice from a list | reference fields used as picklists |
+| `autoEditMode: true` / `false` | `<AutoEditMode>` (local; format 2.21 / 8.5 only — refused in an older form). JSON boolean only — `"true"` or `1` is refused. Written at its XSD place: after the field properties, before `Width`. PowerShell runtime only (`form-compile.py` does not know it yet) | |
 
 ### Checkbox
 

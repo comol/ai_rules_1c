@@ -7,6 +7,11 @@
 # raised before the write, -NoValidate is the one opt-out and the validator's
 # exit code is ours; the support guard reads .dev.env SUPPORT_GUARD first and
 # fails closed on an unreadable Ext/ParentConfigurations.bin.
+# Local (2026-11-08): import-attribute (-SourceFile + -Value) copies a native
+# <Attribute> with its own uuid from the same object of a previous dump
+# (Section 9.6); every refusal comes before the write, a repeated import of an
+# identical attribute writes nothing, and a failed auto-validation restores the
+# target's original bytes. Not ported to meta-edit.py.
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[string]$DefinitionFile,
@@ -30,10 +35,14 @@ param(
 		"modify-enumValue", "modify-column",
 		"modify-property",
 		"set-owners", "set-registerRecords", "set-basedOn", "set-inputByString",
-		"set-dataLockFields", "set-registeredDocuments"
+		"set-dataLockFields", "set-registeredDocuments",
+		"import-attribute"
 	)]
 	[string]$Operation,
 	[string]$Value,
+
+	# Local: import-attribute only — XML of the same object from the previous dump
+	[string]$SourceFile,
 
 	[switch]$NoValidate
 )
@@ -125,6 +134,15 @@ if ($DefinitionFile -and $Operation) {
 }
 if (-not $DefinitionFile -and -not $Operation) {
 	Write-Error "Either -DefinitionFile or -Operation is required"
+	exit 1
+}
+# Local: -SourceFile belongs to import-attribute only — elsewhere it would be ignored silently.
+if ($SourceFile -and $Operation -ne 'import-attribute') {
+	[Console]::Error.WriteLine("[ERROR] -SourceFile is only valid with -Operation import-attribute. Nothing changed.")
+	exit 1
+}
+if ($Operation -eq 'import-attribute' -and -not $SourceFile) {
+	[Console]::Error.WriteLine("[ERROR] -Operation import-attribute requires -SourceFile <XML of the same object from the previous dump>. Nothing changed.")
 	exit 1
 }
 
@@ -4091,8 +4109,127 @@ function Add-PredefinedItems($items) {
 	$script:addCount += $n
 }
 
+# ============================================================
+# Section 9.6 (local): import-attribute — готовый реквизит из прошлой выгрузки
+# ============================================================
+#
+# Перенос доработок на новую выгрузку поставщика: реквизит уже есть в прошлой версии того же
+# объекта, и его uuid менять нельзя — по нему платформа сопоставляет реквизит с данными базы.
+# add-attribute выдал бы новый uuid, поэтому элемент <Attribute> копируется целиком, как есть.
+# Все проверки — до записи; реквизит, который в цели уже совпадает побайтно, не пишется вовсе.
+# Общей проверки uuid по всей конфигурации у meta-edit нет: коллизия ищется в файле цели,
+# по выгрузке целиком — uuid-check.
+
+$script:importOriginalBytes = $null
+
+function Get-DocumentUuids($doc) {
+	# Носители те же, что у uuid-check: атрибут uuid и xr:TypeId / xr:ValueId.
+	$set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+	foreach ($a in $doc.SelectNodes('//@uuid')) { [void]$set.Add($a.Value.Trim()) }
+	foreach ($e in $doc.SelectNodes("//*[local-name()='TypeId' or local-name()='ValueId']")) { [void]$set.Add($e.InnerText.Trim()) }
+	return ,$set
+}
+
+function Import-NativeAttributes([string]$sourcePath, [string]$valueList) {
+	$names = @(("$valueList" -split ';;') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+	if ($names.Count -eq 0) { Die "[ERROR] import-attribute: укажите имя реквизита в -Value (несколько — через ;;). Ничего не изменено." }
+	if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { Die "[ERROR] import-attribute: файл-источник не найден: $sourcePath. Ничего не изменено." }
+	$srcFull = (Resolve-Path -LiteralPath $sourcePath).ProviderPath
+	if ([string]::Equals([System.IO.Path]::GetFullPath($srcFull), [System.IO.Path]::GetFullPath($resolvedPath), [System.StringComparison]::OrdinalIgnoreCase)) {
+		Die "[ERROR] import-attribute: источник и цель — один и тот же файл ($resolvedPath). В -SourceFile нужен XML объекта из прошлой выгрузки. Ничего не изменено."
+	}
+	$srcDoc = New-Object System.Xml.XmlDocument
+	$srcDoc.PreserveWhitespace = $true
+	try { $srcDoc.Load($srcFull) } catch { Die "[ERROR] import-attribute: источник не разбирается как XML ($srcFull): $($_.Exception.Message). Ничего не изменено." }
+	$srcObj = $null
+	if ($srcDoc.DocumentElement -and $srcDoc.DocumentElement.LocalName -eq 'MetaDataObject') {
+		foreach ($ch in $srcDoc.DocumentElement.ChildNodes) { if ($ch.NodeType -eq 'Element') { $srcObj = $ch; break } }
+	}
+	if (-not $srcObj) { Die "[ERROR] import-attribute: источник — не выгрузка объекта метаданных (нет MetaDataObject): $srcFull. Ничего не изменено." }
+	$srcProps = $null; $srcCo = $null; $srcName = ''
+	foreach ($ch in $srcObj.ChildNodes) {
+		if ($ch.NodeType -ne 'Element') { continue }
+		if ($ch.LocalName -eq 'Properties') { $srcProps = $ch }
+		if ($ch.LocalName -eq 'ChildObjects') { $srcCo = $ch }
+	}
+	if ($srcProps) {
+		foreach ($ch in $srcProps.ChildNodes) { if ($ch.NodeType -eq 'Element' -and $ch.LocalName -eq 'Name') { $srcName = $ch.InnerText.Trim(); break } }
+	}
+	# Владелец — тот же объект: тот же вид и то же имя (имена 1С регистронезависимы). uuid самого
+	# объекта не сравнивается: в новой выгрузке и после повторного заимствования он бывает другим.
+	if ($srcObj.LocalName -cne $script:objType -or $srcObj.NamespaceURI -ne $script:mdNs -or $srcName -ne $script:objName) {
+		Die "[ERROR] import-attribute: источник — $($srcObj.LocalName).$srcName, цель — $($script:objType).$($script:objName). Реквизит переносится только между версиями одного и того же объекта. Ничего не изменено."
+	}
+	if ($script:validChildTypes.ContainsKey($script:objType) -and ($script:validChildTypes[$script:objType] -notcontains 'attributes')) {
+		Die "[ERROR] import-attribute: у $($script:objType) нет реквизитов. Ничего не изменено."
+	}
+	$srcVersion = $srcDoc.DocumentElement.GetAttribute('version')
+	if ($srcVersion -and $srcVersion -ne $script:formatVersion) {
+		Warn "import-attribute: формат источника $srcVersion, цели $($script:formatVersion) — свойства реквизита копируются как есть, совместимость с форматом цели проверит meta-validate"
+	}
+	# Текстовые QName (xs:string, cfg:CatalogRef.X) импорт не переименовывает: каждый префикс, которым
+	# пользуется реквизит, цель должна объявлять с тем же пространством имён.
+	$srcNs = @{}; $tgtNs = @{}
+	foreach ($a in $srcDoc.DocumentElement.Attributes) { if ($a.Prefix -eq 'xmlns') { $srcNs[$a.LocalName] = $a.Value } }
+	foreach ($a in $script:xmlDoc.DocumentElement.Attributes) { if ($a.Prefix -eq 'xmlns') { $tgtNs[$a.LocalName] = $a.Value } }
+
+	$targetUuids = Get-DocumentUuids $script:xmlDoc
+	$existingNames = Get-AllChildNames
+	$script:importOriginalBytes = [System.IO.File]::ReadAllBytes($resolvedPath)
+	$identical = 0
+	foreach ($name in $names) {
+		$srcAttr = if ($srcCo) { Find-ElementByName $srcCo 'Attribute' $name } else { $null }
+		if (-not $srcAttr) { Die "[ERROR] import-attribute: в источнике нет реквизита '$name' ($srcFull). Ничего не изменено." }
+		$uuid = $srcAttr.GetAttribute('uuid')
+		if ($uuid -cnotmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z' -or $uuid -eq '00000000-0000-0000-0000-000000000000') {
+			Die "[ERROR] import-attribute: у реквизита '$name' в источнике некорректный uuid '$uuid'. Ничего не изменено."
+		}
+		$existing = if ($script:childObjectsEl) { Find-ElementByName $script:childObjectsEl 'Attribute' $name } else { $null }
+		if ($existing) {
+			# Повторный импорт: совпадение побайтно (с точностью до перевода строки) — ничего не делать.
+			if (($existing.OuterXml -replace "`r`n", "`n") -ceq ($srcAttr.OuterXml -replace "`r`n", "`n")) {
+				Info "Attribute '$name' is already identical in the target — skipped"
+				$identical++
+				continue
+			}
+			Die "[ERROR] import-attribute: в цели уже есть реквизит '$name' (uuid $($existing.GetAttribute('uuid'))), и он отличается от реквизита источника (uuid $uuid). Существующий реквизит не перезаписывается — сравните их вручную. Ничего не изменено."
+		}
+		if ($existingNames.ContainsKey($name)) {
+			Die "[ERROR] import-attribute: имя '$name' в цели уже занято элементом <$($existingNames[$name])>. Ничего не изменено."
+		}
+		if ($targetUuids.Contains($uuid)) {
+			Die "[ERROR] import-attribute: uuid $uuid реквизита '$name' в цели уже занят другим элементом ($resolvedPath). Ничего не изменено."
+		}
+		$outer = $srcAttr.OuterXml
+		foreach ($p in @($srcNs.Keys)) {
+			if ($outer -cmatch ('(?<![\w.:-])' + [regex]::Escape($p) + ':\w') -and $tgtNs[$p] -cne $srcNs[$p]) {
+				Die "[ERROR] import-attribute: реквизит '$name' использует префикс '${p}:' ($($srcNs[$p])), а корень цели объявляет его $(if ($tgtNs[$p]) { "как $($tgtNs[$p])" } else { 'не объявляет' }). Ничего не изменено."
+			}
+		}
+		Ensure-ChildObjectsOpen
+		$indent = Get-ChildIndent $script:childObjectsEl
+		$node = $script:xmlDoc.ImportNode($srcAttr, $true)
+		$refNode = Find-InsertionPoint "Attribute" @{}
+		Insert-BeforeElement $script:childObjectsEl $node $refNode $indent
+		[void]$targetUuids.Add($uuid)
+		$existingNames[$name] = 'Attribute'
+		Info "Imported attribute: $name (uuid $uuid)"
+		$script:addCount++
+	}
+	if ($script:addCount -eq 0) {
+		Write-Host ""
+		Write-Host "=== meta-edit summary ===" -ForegroundColor Green
+		Write-Host "  Object:   $($script:objType).$($script:objName)"
+		Write-Host "  Imported: 0, already identical: $identical — the target file is not written" -ForegroundColor Yellow
+		exit 0
+	}
+}
+
 # --- Inline mode conversion ---
-if ($Operation) {
+if ($Operation -eq 'import-attribute') {
+	Import-NativeAttributes $SourceFile $Value
+	$def = [pscustomobject]@{}
+} elseif ($Operation) {
 	$def = Convert-InlineToDefinition $Operation $Value
 }
 if (-not $def) {
@@ -4270,7 +4407,11 @@ if (-not $NoValidate) {
 	Write-Host "--- Running $($script:validateSkill) ---" -ForegroundColor DarkGray
 	& powershell.exe -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
 	$script:validateExitCode = $LASTEXITCODE
-	if ($script:validateExitCode -ne 0) {
+	if ($script:validateExitCode -ne 0 -and $null -ne $script:importOriginalBytes) {
+		# Local: import-attribute не оставляет непроходящий проверку объект — исходные байты возвращаются.
+		[System.IO.File]::WriteAllBytes($resolvedPath, $script:importOriginalBytes)
+		[Console]::Error.WriteLine("[ERROR] $($script:validateSkill) завершился с кодом $($script:validateExitCode): import-attribute отменён, файл цели восстановлен побайтно. Разберите вывод выше.")
+	} elseif ($script:validateExitCode -ne 0) {
 		[Console]::Error.WriteLine("[ERROR] $($script:validateSkill) завершился с кодом $($script:validateExitCode): изменение записано, но объект не проходит проверку. Разберите вывод выше перед загрузкой в базу.")
 	}
 }

@@ -435,6 +435,7 @@ form-compile и form-edit дописывают в модуль формы (`<к�
 | `spinButton` | bool | Показывать кнопку прокрутки |
 | `dropListButton` | bool | Показывать кнопку раскрытия |
 | `markIncomplete` | bool | Автопометка незаполненных (`<AutoMarkIncomplete>`, факт. значение true/false) |
+| `autoEditMode` | bool | Local: `<AutoEditMode>` — только формат 2.21 (8.5), только JSON-булево; место по XSD — после свойств поля, перед `Width`. Только PowerShell (`form-compile.ps1`, `form-edit`) |
 | `extendedEdit` | bool | Расширенное редактирование (`<ExtendedEdit>`) |
 | `editTextUpdate` | string | Обновление текста при редактировании: `Always`, `OnValueChange`, `DontUse` |
 | `warningOnEdit` | string/object | Предупреждение при редактировании (`<WarningOnEdit>`, мультиязычный текст). Доступно также на `check`/`radio`/`labelField` (не только `input`). Парный enum `warningOnEditRepresentation` (`Show`/`DontShow`) — generic-скаляр на любом поле |
