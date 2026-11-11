@@ -98,4 +98,4 @@ Beyond the inherited scope rules and the hard gates of `content/rules/verificati
 - **Future:** caching strategy for [area]; background processing for [operation]
 ```
 
-Run only when a performance concern was actually raised (boundaries — `content/rules/subagents.md → Subagent catalog`); never auto-trigger after edits or deploys, and measure before optimizing.
+Run only when a performance concern was actually raised; never auto-trigger after edits or deploys, and measure before optimizing.

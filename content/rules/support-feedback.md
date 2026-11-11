@@ -1,172 +1,76 @@
 ---
-description: Поддержка: /support, /supportstatus, /checkupdates. Загружай при подозрении на дефект MCP или правил, вопросе об обновлениях, просрочке /checkupdates, перед /support.
+description: "Support channel contract: when a ticket may be proposed or sent (/support, /supportstatus), the evidence threshold, the approval gate. Load on a suspected defect in MCP or the rules and before /support."
 alwaysApply: false
 category: workflow
 ---
 
-# Канал поддержки: MCP и правила
+# Support channel: MCP and rules
 
-Обращение уходит на сервис поддержки (`SUPPORT_API_URL`).
-Новое обращение получает статус **`новый`**; оператор разбирает его и переводит в
-**`закрыт`**, приложив при необходимости ответ. Ответ приходит на `SUPPORT_EMAIL`.
+A ticket goes to the support service (`SUPPORT_API_URL`). A new ticket has status **`новый`**; the operator handles it and moves it to **`закрыт`**, with an answer when needed. The answer arrives at `SUPPORT_EMAIL`.
 
-| Команда | Что делает | Кто инициирует |
+| Command | What it does | Who starts it |
 |---|---|---|
-| `/support` | отправляет обращение о проблеме в MCP или в правилах | пользователь или модель — **всегда** с явным одобрением |
-| `/supportstatus` | статус своих обращений, ответы оператора, закрытие своего обращения | пользователь; модель — по просьбе |
-| `/checkupdates` | есть ли обновления образов MCP и набора правил (только чтение) | пользователь; модель — раз в ~30 дней и по разовым поводам |
+| `/support` | sends a ticket about a problem in MCP or in the rules | the user, or the model — **always** with explicit approval |
+| `/supportstatus` | status of own tickets, operator answers, closing an own ticket | the user; the model on request |
+| `/checkupdates` | whether MCP images and the ruleset have updates (read-only) | the user; the model about every 30 days (`content/commands/checkupdates.md → Proactive run`) |
 
-Процедуры — `content/commands/support.md`, `content/commands/supportstatus.md`,
-`content/commands/checkupdates.md`. Здесь — контракт: когда можно, когда нельзя, что
-считается достаточным основанием.
+Procedures, ticket fields, image tags and data scrubbing — `content/commands/support.md`, `content/commands/supportstatus.md`, `content/commands/checkupdates.md`. This file is the contract: when a ticket is allowed, when it is not, and what counts as enough evidence.
 
-## 1. Предусловия — жёсткие
+## 1. Preconditions — hard
 
-Канал работает **только** когда в `.dev.env` проекта заполнены **оба** параметра:
+The channel works **only** when the project `.dev.env` has **both** values:
 
-- `SUPPORT_KEY` — общий ключ поддержки из дистрибутива MCP (`config.env`, раздел 6);
-- `SUPPORT_EMAIL` — рабочий e-mail автора обращения.
+- `SUPPORT_KEY` — the shared support key from the MCP distribution (`config.env`, section 6);
+- `SUPPORT_EMAIL` — the working e-mail of the ticket author.
 
-`SUPPORT_API_URL` необязателен: пустое значение раскрывается в
-`http://104.249.10.238:18082`.
+`SUPPORT_API_URL` is Defaulted (`dev-standards-env-process.md → Support-channel parameters`).
 
-Пусто хоть одно из двух — обращение **не отправляется**, и это не повод для обходных путей.
-Скажи, чего не хватает и откуда взять (`INSTALL.md` дистрибутива → ШАГ 6; свежий ключ —
-личный кабинет https://vibecoding1c.ru/). Не подставляй ключ из другого проекта, не проси
-пользователя прислать проблему «куда-нибудь ещё», не откладывай молча.
+If either is empty, nothing is sent and no workaround is taken. Say what is missing and where to get it (the distribution's `INSTALL.md` → step 6; a fresh key — the personal cabinet https://vibecoding1c.ru/). Never borrow a key from another project, never ask the user to send the problem "somewhere else", never defer silently.
 
-Ключ — секрет: он не печатается в чат, не попадает в логи, в текст обращения и в `context`.
+The key is a secret: it never appears in chat, logs, the ticket text or `context`.
 
-## 2. Когда модель инициирует `/support` сама
+## 2. When the model proposes `/support` itself
 
-Ты обязан **предложить** обращение, когда у тебя есть обоснованное и уверенное подозрение
-на дефект в поставляемом продукте — в правиле набора `1c-rules` или в MCP-сервере.
-«Уверенное» — это не ощущение, а выполненный порог доказанности.
+**Propose** a ticket when you have a well-founded, confident suspicion of a defect in the shipped product — a rule of the `1c-rules` set or an MCP server. "Confident" is a met threshold, not a feeling.
 
-### Порог доказанности (нужны все четыре пункта)
+### Evidence threshold (all four)
 
-1. **Дефект в поставке, а не в проекте.** Проблема в тексте правила / команды набора или в
-   поведении MCP-сервера, а не в коде пользователя, не в его конфигурации и не в его
-   `.dev.env`.
-2. **Проверено на фактах.** Правило противоречит документации платформы или другому
-   правилу набора; шаг команды ссылается на несуществующий файл / ключ / инструмент;
-   инструмент MCP отдаёт результат, опровергаемый прямой проверкой (например, `standards`
-   не находит раздел, который заведомо есть в корпусе, и это подтверждено вторым запросом).
-   Одна неудачная попытка — не доказательство.
-3. **Воспроизводится.** Ты повторил сценарий и получил тот же результат, либо ошибка
-   детерминирована по построению (битая ссылка в правиле воспроизводится всегда).
-4. **Не лечится на месте.** Это не то, что чинится правкой кода проекта или переформулировкой
-   запроса.
+1. **A defect in the product, not in the project.** The problem is in the text of a rule / command of the set or in an MCP server's behaviour — not in the user's code, configuration or `.dev.env`.
+2. **Checked against facts.** The rule contradicts platform documentation or another rule of the set; a command step names a file / key / tool that does not exist; an MCP tool returns a result a direct check refutes (for example `standards` does not find a section that is in the corpus, confirmed by a second request). One failed attempt is not evidence.
+3. **Reproducible.** You repeated the scenario with the same result, or the error is deterministic by construction (a broken link in a rule always reproduces).
+4. **Not fixable in place.** It is not something a project code change or a reworded request repairs.
 
-Порог не выполнен — не предлагай. Молчаливое «на всякий случай» обращение хуже отсутствия
-обращения: оно засоряет очередь оператора и обесценивает поток.
+Threshold not met — do not propose. A "just in case" ticket is worse than none: it clutters the operator's queue.
 
-### Что дефектом **не** считается
+### Not a defect
 
-- Ошибка в коде или метаданных пользователя, даже если правило её не поймало.
-- Отсутствие данных: не заполнены `PATH_METADATA` / `PATH_CODE`, не построен индекс,
-  не опубликована HTTP-служба — это настройка, а не дефект.
-- Пустой лицензионный ключ, ключ другого сервера или ключ, выданный до 27.09.2026, —
-  известная ситуация, решается `/updatemcp` и личным кабинетом.
-- Твоё несогласие со стилем или строгостью правила. Правило может быть неудобным и при этом
-  корректным.
-- Единичный сетевой сбой, таймаут, «контейнер не поднялся после перезагрузки».
-- То, что уже разобрано в `/doctor`, `/checkmcp` или в разделе «Устранение неполадок»
-  документации.
+- An error in the user's code or metadata, even if a rule did not catch it.
+- Missing data: `PATH_METADATA` / `PATH_CODE` not set, the index not built, an HTTP service not published — setup, not a defect.
+- An empty licence key, the key of another server, or a key issued before 27.09.2026 — a known situation, solved by `/updatemcp` and the personal cabinet.
+- Disagreement with a rule's style or strictness. A rule can be inconvenient and still correct.
+- A single network failure, a timeout, "the container did not come up after a reboot".
+- Anything already covered by `/doctor`, `/checkmcp` or the troubleshooting section of the documentation.
+- Something an update fixes: before proposing a ticket, run `/checkupdates`; if the problem is fixed by an update, suggest `/updatemcp` or `/updaterules` instead.
 
-### Обязательный шлюз одобрения
+### Approval gate
 
-Инициатива модели заканчивается **предложением**, а не отправкой. Одним блоком покажи:
+The model's initiative ends with a **proposal**, never a send. Show it as one block, in Russian:
 
-> Похоже на дефект `<в правиле X | в сервере Y>`. Что видел: `<факт>`. Чем подтверждается:
-> `<проверка>`. Предлагаю отправить обращение в поддержку — вот текст: `<полное тело>`.
-> Отправляем? (да / нет / поправить)
+> Похоже на дефект `<в правиле X | в сервере Y>`. Что видел: `<факт>`. Чем подтверждается: `<проверка>`. Предлагаю отправить обращение в поддержку — вот текст: `<полное тело>`. Отправляем? (да / нет / поправить)
 
-Без явного «да» от человека `/support` не выполняется. Ни автоматически, ни «раз уж всё
-равно собрал текст», ни при повторе той же ошибки. В отправленном обращении ставь
-`source: "model"` — по этому полю оператор отделяет найденное моделью от найденного
-человеком.
+Without an explicit "да" from the person, `/support` does not run — not automatically, not "since the text is ready", not on a repeat of the same error. A ticket sent on the model's initiative carries `source: "model"`, which the operator uses to tell model findings from human ones.
 
-### Ограничение частоты
+### Frequency
 
-Не больше **одного** предложения на один дефект за сессию, и не больше двух предложений за
-сессию вообще. Отказались — тема закрыта: не возвращайся к ней в этой сессии и не
-переформулируй то же самое под другим соусом. Основную задачу пользователя предложение не
-прерывает: сначала доводи работу до конца, обращение предлагай в конце ответа одной вставкой.
+At most **one** proposal per defect per session and at most two proposals per session overall. A declined proposal closes the topic for the session; do not reword it. The proposal never interrupts the user's task: finish the work, then add the proposal at the end of the answer.
 
-## 3. `/support` против `/evolve` — не путать
+## 3. `/support` versus `/evolve`
 
-| Признак | `/evolve` | `/support` |
+| Sign | `/evolve` | `/support` |
 |---|---|---|
-| Куда пишет | локальный `LLM-RULES.md` этого проекта | внешний сервис поддержки |
-| Что фиксирует | поведение агента, которое надо изменить **в этом проекте** | дефект поставляемого правила или MCP-сервера |
-| Кому адресовано | самому себе на следующие сессии | сопровождению продукта |
-| Пример | «в нашем проекте не ставить маркеры доработки» | «правило ссылается на несуществующий файл» |
+| Writes to | this project's local `LLM-RULES.md` | the external support service |
+| Records | agent behaviour to change **in this project** | a defect of a shipped rule or MCP server |
+| Addressed to | yourself in later sessions | the product maintainers |
+| Example | "в нашем проекте не ставить маркеры доработки" | "правило ссылается на несуществующий файл" |
 
-Правило неудобно / избыточно / конфликтует с договорённостями проекта → `/evolve`.
-Правило неверно как таковое или инструмент врёт → `/support`. Сомневаешься — это `/evolve`:
-локальная поправка обратима, обращение в поддержку — нет.
-
-## 4. Проактивный `/checkupdates`
-
-`/checkupdates` только читает и ничего не устанавливает (кроме штампа `lastUpdatesCheckAt`
-в `.ai-rules.json`). Запускай по своей инициативе **не чаще раза в ~30 дней**, плюс
-разовые поводы ниже. Не прерывай основную задачу: проверку делай в конце хода, один раз
-за сессию.
-
-**Ежемесячный ритм.** На первой нетривиальной задаче сессии прочитай `.ai-rules.json`:
-поле `lastUpdatesCheckAt`, если его нет — `updatedAt`, если нет и его — `installedAt`.
-Дата старше 30 суток или все три поля пусты — выполни `/checkupdates` (процедура
-`content/commands/checkupdates.md`). Свежая дата — не запускай «на всякий случай».
-Штамп пишет сама команда после завершённой проверки.
-
-Разовые поводы (даже если 30 дней ещё не вышли):
-
-- ошибка похожа на уже исправленную (сервер отвечает не так, как описано в документации);
-- пользователь спрашивает «а нет ли обновлений», «почему у меня не так, как в инструкции»;
-- перед тем как заводить обращение через `/support`: если проблема чинится обновлением,
-  обращение не нужно — сначала предложи `/updatemcp` или `/updaterules`.
-
-**Напоминание про MCP.** Если в сессии нет инструментов 1C MCP и при этом пуст
-`SUPPORT_KEY`, а `integrations.mcp.mode` не `external` — в конце отчёта напомни, что
-правила эффективнее всего работают с MCP-серверами https://vibecoding1c.ru/mcp_server
-(тот же текст, что после `init` / `/updaterules`). Ключ есть или внешняя установка
-найдена, а инструменты всё равно не видны — одна строка «MCP не подключены,
-`/installmcp` или перезапуск клиента», без страницы покупки.
-
-Вердикт «есть обновление» не даёт права запускать `/updatemcp` или `/updaterules` — они
-пересоздают контейнеры и переписывают файлы, это решение пользователя.
-
-## 5. Теги образов
-
-С 27.09.2026 канал один — stable: образы MCP публикуются под тегами вариантов
-`latest` / `light` / `arm64`. Это влияет на канал поддержки напрямую:
-
-- в обращении по MCP **обязателен** `image_tag`, взятый из фактически запущенного
-  контейнера (`docker inspect <имя> --format '{{.Config.Image}}'`), а не из `config.env` —
-  пользователь мог поменять тег вручную; `channel` всегда `stable`;
-- «воспроизводится в `light`» и «воспроизводится в `latest`» — разные факты; если
-  проверил только один вариант, так и напиши, не обобщай;
-- контейнер на теге `*-beta` (в том числе слитное `latestbeta`) или на образе старше
-  27.09.2026 устарел: такие теги больше не публикуются. Сначала `/updatemcp` и повторная
-  проверка на текущем образе, обращение — только если ошибка осталась;
-- у каждого сервера свой ключ `LICENSE_KEY_<СЕРВЕР>`, поэтому `Invalid LICENSE_KEY` после
-  обновления — не дефект сервера, а ключ другого сервера или устаревший ключ (раздел 4
-  `config.env`);
-- при сравнении версий тег сопоставляется с тем же тегом на Docker Hub. Сравнение
-  `light` с `latest` бессмысленно.
-
-## 6. Гигиена данных
-
-Всё, что уходит в `title`, `text` и `context`, покидает машину пользователя. До показа на
-одобрение вычисти:
-
-- ключи и токены: `LICENSE_KEY_*`, `EMBEDDING_API_KEY`, `CHAT_API_KEY`, `ONEC_AI_TOKEN`,
-  `SUPPORT_KEY`, пароли, строки подключения к ИБ;
-- персональные данные из базы, реальные ФИО, адреса, суммы договоров;
-- пути с именами пользователей и внутренние адреса, когда они не нужны для сути;
-- длинные листинги: фрагмента в 10–30 строк вокруг проблемного места достаточно
-  (предел `text` — 60 000 символов, `context` — 40 000).
-
-Сомневаешься, можно ли отправлять фрагмент, — не отправляй его, а спроси у пользователя
-одной строкой при одобрении.
+A rule that is inconvenient, excessive or in conflict with the project's agreements is friction: a `rule-friction:` memory note and, when `AGENTS.md → Rules self-improvement` allows, a recommendation of `/evolve`. A rule that is wrong as such, or a tool that returns false results, is `/support`. In doubt — treat it as friction, not a ticket: a local correction is reversible, a ticket is not.

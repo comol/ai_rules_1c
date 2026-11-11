@@ -17,17 +17,19 @@ Modification markers are used **only when modifying typical (standard) code** in
 ### Format
 - Opening comment: value of `{COMMENT_OPEN}` from `.dev.env`
 - Closing comment: value of `{COMMENT_CLOSE}` from `.dev.env`
+- The template values already start with `//`: insert them as they are, never prefix another `//`
+- `{DATE}` — the date format of the module's existing markers; otherwise `dd.MM.yyyy`
 - A space is mandatory after `//`
 
 ### Typical Code Modification
 Removed typical code — **comment out, DO NOT delete**:
 
 ```bsl
-// {COMMENT_OPEN}
+{COMMENT_OPEN}
 НовоеЗначение = {PREFIX}ПреобразоватьЗначение(Значение1);
 // ТиповаяПроцедура(Значение1, Значение2);
 ТиповаяПроцедура(НовоеЗначение, Значение2);
-// {COMMENT_CLOSE}
+{COMMENT_CLOSE}
 ```
 
 ### New Procedures in Typical Modules
@@ -35,10 +37,10 @@ Comment is placed **inside** the procedure, after the header:
 
 ```bsl
 Функция НоваяФункция(Параметр) Экспорт
-	// {COMMENT_OPEN}
+	{COMMENT_OPEN}
 	// ... code ...
 	Возврат Результат;
-	// {COMMENT_CLOSE}
+	{COMMENT_CLOSE}
 КонецФункции
 ```
 

@@ -11,7 +11,15 @@ The argument narrows the check: `mcp` — images only, `rules` — rules only, e
 
 For MCP images load `content/rules/mcp-deployment.md` and inspect the recorded deployment host/context, including an optional shared Debian/Ubuntu Engine. Apply that target to the Docker examples below; use host-native paths and shell syntax. Without host access, report image versions/digests as unverified and continue the independent rules check. Never infer remote versions from local containers or require Docker Desktop on a client.
 
-Proactive run — **about once every 30 days** (plus one-off triggers). The contract and how to count the period — `content/rules/support-feedback.md §4 → "Проактивный /checkupdates"`.
+## Proactive run
+
+The model may start this check on its own **at most about once every 30 days**, plus the one-off triggers below — once per session, at the end of the turn, never interrupting the main task.
+
+- **Monthly rhythm.** On the first non-trivial task of a session read `.ai-rules.json`: `lastUpdatesCheckAt`, else `updatedAt`, else `installedAt`. Older than 30 days, or all three empty — run this command. A fresh date — do not run it "just in case". The command itself writes the stamp after a completed check.
+- **One-off triggers**, even within 30 days: an error looks like one already fixed (a server answers differently from its documentation); the user asks whether updates exist or why something differs from the instructions; before proposing `/support` — when an update fixes the problem, suggest `/updatemcp` or `/updaterules` instead of a ticket.
+- **MCP reminder.** If the session has no 1C MCP tools, `SUPPORT_KEY` is empty and `integrations.mcp.mode` is not `external`, remind at the end of the report that the rules work best with the MCP servers at https://vibecoding1c.ru/mcp_server (the same text as after `init` / `/updaterules`). With a key or an external install present but no tools visible — one line «MCP не подключены, `/installmcp` или перезапуск клиента», without the purchase page.
+
+A verdict "an update exists" does not authorize `/updatemcp` or `/updaterules`: they recreate containers and rewrite files — the user's decision.
 
 ## Part A. The `1c-rules` ruleset
 

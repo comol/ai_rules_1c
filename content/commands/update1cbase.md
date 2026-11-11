@@ -7,7 +7,7 @@ argumentHint: "[full|partial|git|all]"
 
 Load the configuration (`/LoadConfigFromFiles`) from the current repository directory into the infobase defined in `.dev.env`, then update the database structure (`/UpdateDBCfg`). With the `all` argument (or an explicit "with extensions" request) the command loads the **full snapshot** — main configuration plus every extension from `EXTENSION_NAMES` — see "Full-snapshot mode" at the end.
 
-Read `content/rules/getconfigfiles.md → Configuration file synchronization contract`. A partial load is a first-class branch of this update procedure: **load → checks → database apply → requested directory refresh**. Do not stop after importing files or merely offer the database update when the user has already requested it.
+Read `content/rules/config-sync-contract.md`. A partial load is a first-class branch of this update procedure: **load → checks → database apply → requested directory refresh**. Do not stop after importing files or merely offer the database update when the user has already requested it.
 
 **Target before mode:** follow `content/rules/extension-workspace.md`. Select the current project, exact main/extension target and its source root before selecting `full` / `partial` / `git`. Substitute the resolved pass values in the templates below and carry them through load, checks, apply and any return dump. Do not change `EXTENSION_NAME` or redirect `EXPORT_PATH` in settings to select another extension. A Git diff spanning several roots must be split and validated per target; never feed its combined list into one extension load.
 
@@ -102,7 +102,7 @@ Map `.dev.env` keys to Designer flags:
     {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
-    /DisableStartupMessages `
+    /DisableStartupMessages /DisableStartupDialogs `
     /LoadConfigFromFiles '{EXPORT_PATH}' `
     -updateConfigDumpInfo `
     -Extension {EXTENSION_NAME} `
@@ -134,7 +134,7 @@ Whenever this run loads an extension (`EXTENSION_NAME` filled, or an extension p
     {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
-    /DisableStartupMessages `
+    /DisableStartupMessages /DisableStartupDialogs `
     /CheckModules -ThinClient -Server -ExternalConnection -Extension {EXTENSION_NAME} `
     /Out '{LOG_PATH}' `
     /DumpResult '{RESULT_PATH}'
@@ -151,7 +151,7 @@ For the main configuration alone the ladder is optional — run `/CheckModules` 
     {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
-    /DisableStartupMessages `
+    /DisableStartupMessages /DisableStartupDialogs `
     /UpdateDBCfg -Dynamic+ -SessionTerminate force `
     -Extension {EXTENSION_NAME} `
     /Out '{LOG_PATH}' `

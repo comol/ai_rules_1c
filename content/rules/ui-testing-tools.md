@@ -26,7 +26,7 @@ Any interactive exploration or debugging needed to author/fix the suite still fo
 
 ## Preflight before web UI tests (hard gate)
 
-Runs before an authorized interactive web UI test, once the web route is selected (saved suites use the preceding section). First apply `TOOL_AGENT_BROWSER` and `TOOL_BROWSER` (`content/rules/mcp-policy.md → Tool availability`). In `auto`, use the preflight below. With `TOOL_AGENT_BROWSER=off`, skip its probes/install question and select an eligible built-in browser. With `required`, a missing agent-browser blocks execution. If no permitted web driver works, report the web test unrun; do not substitute desktop automation for a web scenario. A selected built-in driver's `required` failure also blocks the test.
+Runs before an authorized interactive web UI test, once the web route is selected (saved suites use the preceding section). First apply `TOOL_AGENT_BROWSER` and `TOOL_BROWSER` (`content/rules/tool-policy.md`). In `auto`, use the preflight below. With `TOOL_AGENT_BROWSER=off`, skip its probes/install question and select an eligible built-in browser. With `required`, a missing agent-browser blocks execution. If no permitted web driver works, report the web test unrun; do not substitute desktop automation for a web scenario. A selected built-in driver's `required` failure also blocks the test.
 
 1. **Detect `agent-browser`.** Available if **either**:
    - CLI on `PATH` (`agent-browser --version` succeeds), **or**
@@ -34,7 +34,7 @@ Runs before an authorized interactive web UI test, once the web route is selecte
 2. **If available** — proceed with preference order below. No prompt.
 3. **If missing — stop before any browser action** and ask the user in Russian (one message, do not bury it in prose):
 
-   > Для веб-тестов 1С рекомендую поставить `agent-browser` — headless-браузер со снимками accessibility-дерева, сильно экономит токены по сравнению со скриншотами / vision. Установить сейчас через `/install-agent-browser`?  
+   > Для веб-тестов 1С рекомендую поставить `agent-browser` — браузер для агентов со снимками accessibility-дерева, сильно экономит токены по сравнению со скриншотами / vision. Установить сейчас через `/install-agent-browser`?  
    > - **да** — установлю и продолжу тесты  
    > - **нет** — продолжу на встроенном browser MCP (дороже по токенам)
 
@@ -48,8 +48,8 @@ Once a driver is chosen, load `web-client-driving.md` before the first action �
 
 ## Web driver order (hard)
 
-1. **`agent-browser`** (https://github.com/vercel-labs/agent-browser) — **default for 1C web client tests**. Use accessibility-tree snapshots (`snapshot` / MCP equivalents), refs (`@eN`), and typed interactions. Screenshots only for evidence in the test report, not as the primary observe loop. Install: `/install-agent-browser`.
-2. **Built-in browser MCP** of the active client (`cursor-ide-browser`, Playwright / `browser-use`, etc.) — eligible fallback after the preflight above (agent-browser disabled, declined, or absent with no operator). Same human-like typing / TAB / wait rules as in `1c-tester`.
+1. **`agent-browser`** (https://github.com/vercel-labs/agent-browser) — **default for 1C web client tests**. Use accessibility-tree snapshots (`snapshot` / MCP equivalents), refs (`@eN`), and typed interactions. Screenshots only for evidence in the test report, not as the primary observe loop. Run it headed (`--headed`) for the 1C web client (`web-client-driving.md → 1`). Install: `/install-agent-browser`.
+2. **Built-in browser MCP** of the active client (`cursor-ide-browser`, Playwright / `browser-use`, etc.) — eligible fallback after the preflight above (agent-browser disabled, declined, or absent with no operator). Same interaction rules — `web-client-driving.md → 5. Filling fields`.
 
 Never invent a parallel stack (PowerShell screenshot loops, custom OCR, ad-hoc vision pipelines) while a tool from this list can cover the need.
 
@@ -83,8 +83,4 @@ Installing a tool does not change `UI_TESTING` or `TOOL_*` and does not set `INF
 
 ## Interaction rules (web tools)
 
-Unchanged from `1c-tester` / `/deploy-and-test` Step 4:
-
-- Human-like typing with short delays; TAB between fields.
-- Wait for elements before interact / assert.
-- Screenshot key states for the report (open, filled, saved/posted, errors) — evidence, not the observe loop.
+Owner — `web-client-driving.md` (headed run, typing and its paste fallback, TAB, waits, anti-loop limit). Screenshots of key states (open, filled, saved / posted, errors) are report evidence, not the observe loop.

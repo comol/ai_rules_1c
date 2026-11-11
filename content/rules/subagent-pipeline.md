@@ -24,16 +24,14 @@ Full-cycle alone does **not** trigger the pipeline. The **standard path** is the
 
 ### Stage 1 — Triage (parent agent)
 
-Apply the matrix from `AGENTS.md → Triage: Quick-fix vs Docs-fix vs Spec-authoring vs Full-cycle`. **Only** full-cycle tasks for which delegation was chosen enter the pipeline; other full-cycle tasks follow the standard path (direct execution by the parent per `AGENTS.md`, same closing gate). For quick-fix, edit directly and select gates by `verification-policy.md → Quick-fix gate`, including depth, explicit review requests and promotion triggers. Pure metadata XML requires Gate 5; metadata that embeds or generates BSL follows that policy's combined Gates 1–3 + 5 rule. Tasks on the **docs-fix** path (Markdown / rules / docs only) bypass the pipeline and the BSL validators — apply the structural checks from `AGENTS.md → Triage` instead. Tasks on the **spec-authoring** path (OpenSpec artifacts with 1C facts) also bypass the pipeline but carry the MCP evidence obligations from `sdd-propose.md`.
-
-The detailed promotion triggers (transactional paths, public exports, adopted objects, subscriptions / jobs / RLS, wired metadata) and the isolated-metadata-addition eligibility are owned by `verification-policy.md → Triage details` — apply them as written. When in doubt, full-cycle wins.
+**Only** full-cycle tasks for which delegation was chosen (`subagents.md → Delegation principle`) enter the pipeline. Every other task — direct full-cycle, quick-fix, docs-fix, spec-authoring — follows its own path from `AGENTS.md → Triage` and `verification-policy.md`, which also owns the promotion triggers. When in doubt, full-cycle wins.
 
 ### Stage 2 — Plan (delegate to a planning subagent)
 
 Choose by task shape:
 
 - **`1c-analytic`** — when a written PRD / specification / area study is needed before any plan exists. Output: a written analysis, no code.
-- **`1c-explorer`** — for broad read-only mapping before the plan: locating related modules, metadata, entry points, dependencies, and callers. Use this project agent only — never the host built-in Explore / `explore` (`subagents.md → Host-tool built-in explorers`).
+- **`1c-explorer`** — for broad read-only mapping before the plan: locating related modules, metadata, entry points, dependencies, and callers — this project agent only (`subagents.md → Host-tool built-in explorers`).
 - **`1c-architect`** — for new subsystems, multi-module designs, integrations, or extension boundaries. Output: an architecture document with module boundaries and data flow.
 - **`1c-arch-reviewer`** — only when the user explicitly asked to validate an existing design and `subagents.md → Reviewer model gate` is satisfied; the pipeline never launches it on its own. With the gate not satisfied the parent performs the requested review.
 - **`1c-planner`** — for everything else that fits in one feature: produces a numbered task list.
@@ -72,20 +70,11 @@ The implementation subagent is bound by the plan from stage 2; out-of-plan chang
 
 Stage 3 is **sequential by default**: 1C metadata is densely cross-referenced, and parallel subagents on the same configuration corrupt UUIDs and break references. Parallelize only subtasks that are provably independent (e.g. one new report plus one new common-module function with no shared metadata).
 
-The implementation subagent is responsible for:
-
-- editing the BSL / XML;
-- running the validators selected by `verification-policy.md` (depth, promotion floor, review requests and budget) in order on every touched module, plus Gate 5 for metadata XML; recording per-artifact fingerprints, validator results, run counts and relevant execution context after the final edit so Stage 5 can reuse matching evidence without duplicate calls;
-- preserving module headers, regions and the project's code style (`standards(name="dev-standards-code-style")`);
-- removing only the imports / variables / procedures **that its own changes made unused** — never pre-existing dead code;
-- summarizing the diff against the plan, file by file;
-- producing a structured **Handoff** block when the same change continues under another implementation subagent (next section).
+The implementation subagent's own duties — the gates its depth selects with fingerprinted evidence after the final edit, scope, the file-by-file diff summary and the Handoff block — are `subagent-core.md → Validator chain (mutating agents)`, `Scope and done criteria` and `Handoff in / out (implementation subagents)`. Stage 5 reuses that evidence instead of repeating calls.
 
 ### Stage 3 — Handoff between implementation subagents
 
-When stage 3 is split across multiple implementation subagents inside the same change (typical chain: `1c-metadata-manager` produces stubs and metadata, then `1c-developer` fills the BSL bodies; or `1c-developer` writes the bulk and `1c-refactoring` consolidates), the parent avoids repeated discovery of unchanged inventory and decisions. The downstream agent still reads its current edit target and verifies evidence fingerprints: shared-workspace files may have changed after the handoff. Saving context never justifies editing stale content.
-
-The block format and the subagent-side rules (emit at the very top of the report; preserve decisions, check current artifact state) — `subagent-core.md → Handoff in / out (implementation subagents)`. Parent agent obligations:
+When stage 3 is split across implementation subagents inside one change (typical chain: `1c-metadata-manager` produces stubs and metadata, then `1c-developer` fills the BSL bodies), the Handoff block carries the inventory and the decisions so nobody rediscovers them; its format and the subagent-side rules are in `subagent-core.md`. Parent agent obligations:
 
 - include the upstream Handoff block **verbatim** in the next subagent's prompt under a heading `## Upstream Handoff` — no paraphrasing, re-formatting or selective omission; paraphrasing is the dominant source of drift between stages;
 - put the parent's own additional instructions (extra constraints, new user feedback) in a separate section **after** `## Upstream Handoff`, never mixed into it;
@@ -129,10 +118,4 @@ Run planned behavioural confirmation, including UI as `UI_TESTING` allows, fix f
 
 ## When to deviate
 
-Once inside the pipeline, deviate from its stages only with an explicit reason:
-
-- pure documentation tasks (`docs-fix`) — parent directly, no plan / dev / review pipeline; a documentation subtask within an already delegated full-cycle change may use `1c-doc-writer` under the catalog's scope;
-- pure UI test runs against an existing build — `1c-tester` directly, only when `UI_TESTING` allows it (`verification-delivery.md → Soft gate D`);
-- a pure architectural review the user asked for, with no code change — `1c-arch-reviewer` directly when the reviewer model gate is satisfied; otherwise the parent performs the requested review.
-
-Document the deviation in the delivery summary so the user can audit the choice.
+Inside a delegated change, a documentation subtask may go to `1c-doc-writer` and the UI confirmation of Stage 5 to `1c-tester` when `UI_TESTING` allows it. Work that is not a delegated full-cycle change — a docs-fix, a UI run against an existing build, an architectural review the user asked for — does not enter the pipeline at all. Record any deviation from the stages, with its reason, in the delivery summary.

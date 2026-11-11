@@ -1,5 +1,5 @@
 ---
-description: Claude Fable 5 / Mythos 5 profile (AGENT_MODEL=fable5) — no overplanning, evidence-audited claims, stated boundaries, no reasoning echo, parallel subagents, readable final answers
+description: Claude Fable 5 / Mythos 5 behaviour profile — load only when running as that model; planning, claims, final answers
 alwaysApply: false
 category: workflow
 ---
@@ -41,7 +41,7 @@ Within `content/rules/subagents.md`, prefer parallel independent tracks and keep
 
 ## 8. Never echo your own reasoning
 
-Asking the model to reproduce its internal reasoning as text can trigger a `reasoning_extraction` refusal. Never put «покажи ход рассуждений» or similar into a prompt, brief, skill or rule; drop such a line from a legacy brief and say so. A `refusal` on legitimate work: report it and continue on another model, do not rephrase around the classifier.
+Asking the model to reproduce its internal reasoning as text can trigger a `reasoning_extraction` refusal. Never put «покажи ход рассуждений» or similar into a prompt, brief, skill or rule; drop such a line from a legacy brief and say so. A `refusal` on legitimate work: report it, say the step can be rerun on another model, and do not rephrase around the classifier.
 
 ## 9. Memory pays off here
 

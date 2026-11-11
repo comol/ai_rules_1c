@@ -8,9 +8,9 @@ The full procedure — parameters, `repoobjects.txt`, the `ibcmd` / Designer too
 
 Quick facts (details and templates — in the rule):
 
-- All parameters come from `.dev.env`. Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for. Only `INFOBASE_PATH` and `PLATFORM_PATH` are blocking — if either is empty, ask the user once and write the value to `.dev.env`. Also read: `IB_USER` / `IB_PASSWORD`, `LOG_PATH`, `IBCMD_CONFIG`.
+- All parameters come from `.dev.env`. Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for. Only `INFOBASE_PATH` and `PLATFORM_PATH` are blocking — if either is empty, ask the user once and write the value to `.dev.env`. Also read: `IB_USER` / `IB_PASSWORD`, `LOG_PATH`, `RESULT_PATH`, `IBCMD_CONFIG`.
 - Build `repoobjects.txt` from verified metadata names in the selected export tool's notation, one per line. Remove empty entries and duplicates; an empty selection must not trigger a full dump. Include separate development objects only when needed.
 - The `ibcmd` path requires both `{PLATFORM_PATH}\bin\ibcmd.exe` and a filled `IBCMD_CONFIG`; clustered server infobases always use Designer.
-- Inspect `{LOG_PATH}` for errors before starting any edits.
+- Before any edit, read the verdict from all three signals — exit code, `{RESULT_PATH}`, `{LOG_PATH}` with success phrases classified first (`content/rules/designer-batch-checks.md → The verdict is three signals, not the exit code`).
 - **EDT projects** (`.dev.env` `USE_EDT=true`): the export is a Designer XML dump. If the working tree is an EDT (`src/**/*.mdo`) workspace, export to a separate directory and never mix the two trees — `content/rules/edt-workflow.md`.
-- `/loadfrom1cbase partial` delegates its selected-object refresh here and retains the dirty-directory guard. After editing, `/update1cbase partial` loads a separate list of **file paths**, runs checks, then updates the database. Never reuse `repoobjects.txt` as the load list; follow the rule's synchronization contract.
+- `/loadfrom1cbase partial` delegates its selected-object refresh here and retains the dirty-directory guard. After editing, `/update1cbase partial` loads a separate list of **file paths**, runs checks, then updates the database. Never reuse `repoobjects.txt` as the load list; follow `content/rules/config-sync-contract.md`.

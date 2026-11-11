@@ -16,7 +16,7 @@ category: tooling
 
 | Fact | Consequence |
 |---|---|
-| **Headed only.** The 1C web client does not run reliably headless. | Launch the driver in headed mode. A headless run that "works" is usually rendering a login page and nothing else. |
+| **Headed only.** The 1C web client does not run reliably headless. | Launch the driver in headed mode (`agent-browser --headed` or `AGENT_BROWSER_HEADED=1`; a saved Playwright suite — `headless: false`). A headless run that "works" is usually rendering a login page and nothing else. |
 | **Cold start is 30–60 s.** First connect loads the whole managed-application client. | Wait for the section panel to appear in the snapshot before the first action. Do not treat a slow first load as a failure and retry — the retry restarts the same 60 s. |
 | **1C emits non-breaking spaces (` `)**, not regular spaces, in captions, numbers and totals. | Normalize ` ` → space on **both** sides before comparing snapshot text to an expected string. A "не найдено" on a caption you can plainly see in a screenshot is almost always this. |
 | **Section panel must display text.** With "Картинка" (icon-only) display mode the section names are not in the accessible tree. | If sections are unreadable, switch the panel to "Картинка и текст" / "Текст" in the client settings, or navigate by metadata path (§2) instead. |
@@ -28,7 +28,7 @@ Preference order — cheapest and most robust first:
 
 1. **By metadata path (`Shift+F11`).** Opens the "Перейти по ссылке" dialog; accepts `Документ.ЗаказКлиента`, `Справочник.Контрагенты`, `РегистрНакопления.ЗаказыКлиентов`. Bypasses the section panel and the command panel entirely. This is the fastest way to reach a specific object in tests, and it is immune to interface / subsystem layout differences between configurations.
 2. **Section → command.** Click the section in the panel, then the command in the function panel. Use when the test is *about* the command interface, or when the object has no direct link.
-3. **External processor / report (`*.epf` / `*.erf`)** — "Файл → Открыть". The platform raises a **security confirmation dialog** ("Открытие файла... небезопасно") before loading. Expect it and confirm it; a hang here reads as "the processor never opened".
+3. **External processor / report (`*.epf` / `*.erf`)** — "Файл → Открыть". The platform raises a **security confirmation dialog** ("Открытие файла... небезопасно") before loading. Expect it. Confirm it only for a file this task built or the user named; otherwise hand it to the person, as on the QA route. A hang here reads as "the processor never opened".
 
 After any navigation, re-snapshot before acting — refs from a previous snapshot are stale.
 

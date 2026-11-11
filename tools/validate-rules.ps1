@@ -94,6 +94,16 @@
     Byte ceiling for one rule description (Cursor lists agent-requested rule
     descriptions in every session).
 
+.PARAMETER SkillDescriptionTotalMaxBytes
+    Byte ceiling for all skill descriptions together. A per-file ceiling does
+    not stop the listing from growing one file at a time; ratchet it downward.
+
+.PARAMETER AgentDescriptionTotalMaxBytes
+    Byte ceiling for all agent descriptions together.
+
+.PARAMETER RuleDescriptionTotalMaxBytes
+    Byte ceiling for all rule descriptions together.
+
 .PARAMETER Strict
     Treat warnings as errors (exit code 1).
 
@@ -113,6 +123,9 @@ param(
     [int]$SkillDescriptionMaxBytes = 300,
     [int]$AgentDescriptionMaxBytes = 250,
     [int]$RuleDescriptionMaxBytes = 250,
+    [int]$SkillDescriptionTotalMaxBytes = 6144,
+    [int]$AgentDescriptionTotalMaxBytes = 3072,
+    [int]$RuleDescriptionTotalMaxBytes = 11264,
     [switch]$Strict
 )
 
@@ -888,9 +901,9 @@ function Get-DescriptionText {
 }
 
 $descriptionBudgets = @(
-    @{ Kind = 'Skill'; Files = $skillFiles; Max = $SkillDescriptionMaxBytes },
-    @{ Kind = 'Agent'; Files = $agentFiles; Max = $AgentDescriptionMaxBytes },
-    @{ Kind = 'Rule';  Files = $ruleFiles;  Max = $RuleDescriptionMaxBytes }
+    @{ Kind = 'Skill'; Files = $skillFiles; Max = $SkillDescriptionMaxBytes; TotalMax = $SkillDescriptionTotalMaxBytes },
+    @{ Kind = 'Agent'; Files = $agentFiles; Max = $AgentDescriptionMaxBytes; TotalMax = $AgentDescriptionTotalMaxBytes },
+    @{ Kind = 'Rule';  Files = $ruleFiles;  Max = $RuleDescriptionMaxBytes; TotalMax = $RuleDescriptionTotalMaxBytes }
 )
 foreach ($budget in $descriptionBudgets) {
     $total = 0
@@ -901,7 +914,10 @@ foreach ($budget in $descriptionBudgets) {
             Add-Problem -Level error -File $file.FullName -Line 1 -Message ($budget.Kind.ToLower() + ' description budget exceeded: ' + $bytes + ' bytes > ' + $budget.Max + '. Hosts list it in every session - keep the trigger, move detail into the body.')
         }
     }
-    Write-Host ('{0} descriptions: {1:N0} bytes in {2} files, per-file ceiling {3:N0}' -f $budget.Kind, $total, @($budget.Files).Count, $budget.Max)
+    Write-Host ('{0} descriptions: {1:N0} bytes in {2} files, per-file ceiling {3:N0}, total ceiling {4:N0}' -f $budget.Kind, $total, @($budget.Files).Count, $budget.Max, $budget.TotalMax)
+    if ($total -gt $budget.TotalMax) {
+        Add-Problem -Level error -File (Join-Path $Root 'AGENTS.md') -Message ($budget.Kind.ToLower() + ' descriptions total exceeded: ' + $total + ' bytes > ' + $budget.TotalMax + '. Every host session lists them - shorten descriptions instead of raising the ceiling.')
+    }
 }
 
 # --------------------------------------------------------------------------

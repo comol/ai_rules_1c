@@ -1,5 +1,5 @@
 ---
-description: Model profile for Claude Sonnet 5 (AGENT_MODEL=sonnet5) — literal instruction following and explicit scope, effort calibration, keeping adaptive thinking on for tool use, coverage-first review briefs, token-budget awareness and lean context
+description: Claude Sonnet 5 behaviour profile — load only when running as that model; scope, effort, review briefs
 alwaysApply: false
 category: workflow
 ---

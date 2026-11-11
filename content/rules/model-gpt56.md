@@ -1,5 +1,5 @@
 ---
-description: Model profile for GPT-5.6 (AGENT_MODEL=gpt56) — lean context and each instruction once, reasoning-effort and verbosity calibration, autonomy boundaries for local vs. external actions, intent-level briefs, no contradictory instructions
+description: GPT-5.6 behaviour profile — load only when running as that model; context, effort, autonomy boundaries
 alwaysApply: false
 category: workflow
 ---
@@ -22,7 +22,7 @@ Load what the triggers select and nothing "for context"; the reads a gate mandat
 
 Draw the boundary; do not suppress the initiative.
 
-- **Proceed without asking** on safe, local, reversible work: MCP reads and searches, project-file edits, validators, `1c-metadata-manage` tools, OpenSpec artefacts, memory notes.
+- **Proceed without asking** on safe, local, reversible work inside the plan-approval and `CONFUSION` gates: MCP reads and searches, project-file edits, validators, `1c-metadata-manage` tools on an approved or isolated change, OpenSpec artefacts, memory notes.
 - **Ask first** for anything that changes state outside your own edits or is hard to reverse: infobase mutations (`/update1cbase`, `/loadfrom1cbase`, `/UpdateDBCfg`, publication), deletions, `git push` / history rewrite, anything reaching an external system, any material scope expansion. A destructive-action confirmation is a one-line question; `CONFUSION` is for genuine forks.
 - Never use a destructive shortcut past an obstacle — no bypassed checks, no discarding files you did not create, no rewriting a failing validation away.
 
@@ -32,7 +32,7 @@ The model infers goal and level of work from context. Brief a subagent with goal
 
 ## 5. Conflicts inside the ruleset
 
-A conflict inside the ruleset is a friction signal (`remember` with the `rule-friction:` prefix, then recommend `/evolve`), not something to patch inline. Structure long briefs with named sections (`<task>`, `<constraints>`, `<scope>`, `<done_when>`) so nothing has to be restated.
+A conflict inside the ruleset is a friction signal (`remember` with the `rule-friction:` prefix; recommend `/evolve` only as `AGENTS.md → Rules self-improvement` allows), not something to patch inline. Structure long briefs with named sections (`<task>`, `<constraints>`, `<scope>`, `<done_when>`) so nothing has to be restated.
 
 ## 6. Levers worth knowing (client-side)
 
