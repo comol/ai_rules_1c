@@ -2,6 +2,7 @@
  "tools": [
   {
    "name": "syntaxcheck",
+   "title": "Check BSL code",
    "description": "Analyzes BSL code for syntax errors using bsl-analyzer.\n\nThis tool takes a string of BSL code, saves it to a temporary file,\nruns bsl-analyzer on it, and returns the analysis report as a string\nin TOON format (one document under an \"events\" key: a \"start\" event, a\n\"file\" event whose diagnostics are written as one table, and a \"done\"\nsummary event).\n\n'file_name' says what the code is: give it 'ObjectModule.bsl' and the\nanalyzer sees an object module under that name, and every location in the\nanswer is that name rather than a temporary path of this server's. It is a\nname and not a location - a path separator, a parent segment, an absolute\nor drive-qualified form, a control character, an empty stem or an extension\nbsl-analyzer does not read fails the call with the reason rather than being\nquietly replaced, because a name this server repaired is a difference the\ncaller cannot see. Omit it and the call behaves exactly as it did before\nthe argument existed.\n\nBeside the analyzer's findings the report carries platform names the\nplatform does not have, checked against the analyzer's own platform model:\nUnknownPlatformMethod (a method of a variable created by Новый <Тип> in the\nsame method), UnknownPlatformProperty, UnknownSystemEnumValue,\nUnknownPlatformType (Новый <Имя>) and, for code sent here as text,\nPlatformApiUnavailableOnClient (a server-only type or global function in a\n&НаКлиенте method). \"provenance\": {\"platform_names\": ...} says whether the\nmodel was ready for the call.",
    "inputSchema": {
     "additionalProperties": false,
@@ -13,6 +14,22 @@
      "file_name": {
       "default": "",
       "description": "Optional logical module name for the submitted code, e.g. \"ObjectModule.bsl\". A bare file name ending in .bsl - never a path. Empty analyses the code under a generic name.",
+      "type": "string"
+     },
+     "min_severity": {
+      "default": "",
+      "description": "Optional lowest severity to return: \"Error\" (same as \"Critical\") keeps errors such as ParseError, \"Warning\" adds Major and Warning. Empty returns everything. When set, summary.by_severity counts all that was found.",
+      "enum": [
+       "",
+       "Blocker",
+       "Critical",
+       "Error",
+       "Major",
+       "Warning",
+       "Minor",
+       "Information",
+       "Hint"
+      ],
       "type": "string"
      }
     },
@@ -98,6 +115,13 @@
        "truncated": {
         "type": "boolean",
         "description": "Whether this response is an incomplete rendering of the analysis. Filtering and suppression are described by the flags and by total versus returned, not by this."
+       },
+       "by_severity": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "integer"
+        },
+        "description": "Present when min_severity was given: what the analyzer produced, counted by severity."
        }
       },
       "required": [
@@ -116,7 +140,7 @@
        },
        "severity_filter_applied": {
         "type": "boolean",
-        "description": "Always false: this product applies no severity filter."
+        "description": "Whether min_severity narrowed the list."
        },
        "suppression_applied": {
         "type": "boolean"
@@ -167,7 +191,16 @@
          "ready",
          "failed"
         ],
-        "description": "Whether the whole configuration was available to this call, and therefore whether a cross-module reference was checked at all. absent: this server keeps no index, so an unresolved call or field was not looked for. building: it is indexing and had not finished. ready: every check ran, this one included. failed: the index could not be built and the call was answered without one. A clean report means different things under absent and under ready, and this is how to tell them apart."
+        "description": "Whether the whole configuration was available to this call, and therefore whether a cross-module reference was checked at all. absent: this server keeps no index, so an unresolved call or field was not looked for. building: it is indexing and had not finished. ready: the index was built; whether it answered for this file is cross_module_checks. failed: the index could not be built and the call was answered without one. A clean report means different things under absent and under ready, and this is how to tell them apart."
+       },
+       "cross_module_checks": {
+        "type": "string",
+        "enum": [
+         "ran",
+         "not_in_index",
+         "not_run"
+        ],
+        "description": "Whether this call's file was checked against the index: unresolved calls, fields and query metadata and the &Перед/&После/&Вместо interceptor checks. ran: the index answered for the file. not_in_index: the index is ready but does not hold the file - it lies outside the indexed configuration and its extensions - so none of those checks ran. not_run: no index (see index), the index did not answer within the call's budget, or the call checked code sent as text."
        },
        "platform_names": {
         "type": "string",
@@ -187,6 +220,7 @@
        "line_base",
        "file_metrics_scope",
        "index",
+       "cross_module_checks",
        "platform_names"
       ],
       "additionalProperties": false
@@ -258,6 +292,10 @@
     ],
     "additionalProperties": false
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "fastmcp": {
      "tags": []
@@ -266,7 +304,8 @@
   },
   {
    "name": "syntaxcheck_file",
-   "description": "Analyzes a BSL file from the mounted files directory for syntax errors.\n\nThis is a project-file read mode, and that is its contract, and where\na directory is mounted it is the way to check code that lives in it:\nthe file is analysed under its own name and in its own place, and\n`syntaxcheck` is for code that has no file yet.\n\nWhat this tool can say depends on whether the container keeps an index.\nWithout one - the default - three diagnostics are switched off, because\na call analysing one module cannot resolve a call, a field or a query's\nmetadata against the rest of the configuration and would report every\ncross-module reference as unresolved. Started with FULLINDEX=true the\ncontainer indexes the mounted directory and takes those three from that\nindex once it is ready, which costs seconds per call rather than\nmilliseconds. Either way the answer says which it was, in\n\"provenance\": {\"index\": ...} - absent, building, ready or failed - so a\nclean report can be read for what it is.\n\nPlatform names are checked whatever the index state, as in\n`syntaxcheck`: UnknownPlatformMethod, UnknownPlatformProperty,\nUnknownSystemEnumValue and UnknownPlatformType, with\n\"provenance\": {\"platform_names\": ...} saying whether the analyzer's\nplatform model was ready. Availability on the client is the analyzer's\nown UnavailableInEnvironment here, because the file's path tells it\nwhat kind of module it is.\n\nThe directory mounted at FILES_DIR is the project root; 'file_path' is\nscoped to it; the boundary is enforced on the resolved target, with\nsymbolic links followed, so a link out of the project is refused rather\nthan read. The caller's own file is what bsl-analyzer is given - not a\ncopy under a generic name - and if 'lines' is provided, only\ndiagnostics that affect the specified lines are returned.\n\nWhat comes back is expressed in the caller's terms, not the server's.\nThe \"file\" event names the analysed file relative to the project root,\nin POSIX form, so the answer can be acted on and used again unchanged;\nno path of this server's own appears in any field of any event, or in\nthe payload of a refusal. Every range is 1-based - the same base the\n'lines' argument is written in - and the report declares it by carrying\n\"line_base\": 1 on its \"start\" event, so a call narrowed to \"10-20\"\nreads a \"start_line\" back between 10 and 20.",
+   "title": "Check a BSL file",
+   "description": "Analyzes a BSL file from the mounted files directory for syntax errors.\n\nThis is a project-file read mode, and that is its contract, and where\na directory is mounted it is the way to check code that lives in it:\nthe file is analysed under its own name and in its own place, and\n`syntaxcheck` is for code that has no file yet.\n\nWhat this tool can say depends on whether the container keeps an index.\nWithout one - the default - three diagnostics are switched off, because\na call analysing one module cannot resolve a call, a field or a query's\nmetadata against the rest of the configuration and would report every\ncross-module reference as unresolved. Started with FULLINDEX=true the\ncontainer indexes the mounted directory and takes those three from that\nindex once it is ready, which costs seconds per call rather than\nmilliseconds. Either way the answer says which it was, in\n\"provenance\": {\"index\": ...} - absent, building, ready or failed - so a\nclean report can be read for what it is. The index also answers the\nextension interceptor checks WeavingAnnotationNotApplicable and\nWeavingSignatureMismatch, and \"provenance\": {\"cross_module_checks\": ...}\nsays whether it answered for this file: ran, not_in_index (a ready\nindex that does not hold the file) or not_run.\n\nPlatform names are checked whatever the index state, as in\n`syntaxcheck`: UnknownPlatformMethod, UnknownPlatformProperty,\nUnknownSystemEnumValue and UnknownPlatformType, with\n\"provenance\": {\"platform_names\": ...} saying whether the analyzer's\nplatform model was ready. Availability on the client is the analyzer's\nown UnavailableInEnvironment here, because the file's path tells it\nwhat kind of module it is.\n\nThe directory mounted at FILES_DIR is the project root - or a parent\nof projects, one directory each, and then 'file_path' starts with the\nproject's directory. A file_not_found refusal names the top-level\ndirectories in \"detail\": {\"files_dir_entries\"} and the paths that do\nhold the file in \"detail\": {\"candidates\"}; retry with a candidate.\n'file_path' is scoped to FILES_DIR; the boundary is enforced on the\nresolved target, with symbolic links followed, so a link out of the\nproject is refused rather than read. The caller's own file is what bsl-analyzer is given - not a\ncopy under a generic name - and if 'lines' is provided, only\ndiagnostics that affect the specified lines are returned.\n\nWhat comes back is expressed in the caller's terms, not the server's.\nThe \"file\" event names the analysed file relative to the project root,\nin POSIX form, so the answer can be acted on and used again unchanged;\nno path of this server's own appears in any field of any event, or in\nthe payload of a refusal. Every range is 1-based - the same base the\n'lines' argument is written in - and the report declares it by carrying\n\"line_base\": 1 on its \"start\" event, so a call narrowed to \"10-20\"\nreads a \"start_line\" back between 10 and 20.",
    "inputSchema": {
     "additionalProperties": false,
     "properties": {
@@ -277,6 +316,22 @@
      "lines": {
       "default": "",
       "description": "Optional 1-based lines to check, e.g. \"5, 10-20, 35\". Empty string checks the whole file.",
+      "type": "string"
+     },
+     "min_severity": {
+      "default": "",
+      "description": "Optional lowest severity to return: \"Error\" (same as \"Critical\") keeps errors such as ParseError, \"Warning\" adds Major and Warning. Empty returns everything. When set, summary.by_severity counts all that was found.",
+      "enum": [
+       "",
+       "Blocker",
+       "Critical",
+       "Error",
+       "Major",
+       "Warning",
+       "Minor",
+       "Information",
+       "Hint"
+      ],
       "type": "string"
      }
     },
@@ -362,6 +417,13 @@
        "truncated": {
         "type": "boolean",
         "description": "Whether this response is an incomplete rendering of the analysis. Filtering and suppression are described by the flags and by total versus returned, not by this."
+       },
+       "by_severity": {
+        "type": "object",
+        "additionalProperties": {
+         "type": "integer"
+        },
+        "description": "Present when min_severity was given: what the analyzer produced, counted by severity."
        }
       },
       "required": [
@@ -380,7 +442,7 @@
        },
        "severity_filter_applied": {
         "type": "boolean",
-        "description": "Always false: this product applies no severity filter."
+        "description": "Whether min_severity narrowed the list."
        },
        "suppression_applied": {
         "type": "boolean"
@@ -431,7 +493,16 @@
          "ready",
          "failed"
         ],
-        "description": "Whether the whole configuration was available to this call, and therefore whether a cross-module reference was checked at all. absent: this server keeps no index, so an unresolved call or field was not looked for. building: it is indexing and had not finished. ready: every check ran, this one included. failed: the index could not be built and the call was answered without one. A clean report means different things under absent and under ready, and this is how to tell them apart."
+        "description": "Whether the whole configuration was available to this call, and therefore whether a cross-module reference was checked at all. absent: this server keeps no index, so an unresolved call or field was not looked for. building: it is indexing and had not finished. ready: the index was built; whether it answered for this file is cross_module_checks. failed: the index could not be built and the call was answered without one. A clean report means different things under absent and under ready, and this is how to tell them apart."
+       },
+       "cross_module_checks": {
+        "type": "string",
+        "enum": [
+         "ran",
+         "not_in_index",
+         "not_run"
+        ],
+        "description": "Whether this call's file was checked against the index: unresolved calls, fields and query metadata and the &Перед/&После/&Вместо interceptor checks. ran: the index answered for the file. not_in_index: the index is ready but does not hold the file - it lies outside the indexed configuration and its extensions - so none of those checks ran. not_run: no index (see index), the index did not answer within the call's budget, or the call checked code sent as text."
        },
        "platform_names": {
         "type": "string",
@@ -451,6 +522,7 @@
        "line_base",
        "file_metrics_scope",
        "index",
+       "cross_module_checks",
        "platform_names"
       ],
       "additionalProperties": false
@@ -522,6 +594,10 @@
     ],
     "additionalProperties": false
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "fastmcp": {
      "tags": []
@@ -530,6 +606,7 @@
   },
   {
    "name": "plugin_state",
+   "title": "Plugin state",
    "description": "Reports the state of the plugin subsystem.\n\nLists every plugin file that was read, the hooks and tables it declares,\nthe classification of each hook, whether each is enabled or disabled, the\nerror that disabled it, its failure count and the time accumulated in it,\nplus the order the files run in and the current plugin epoch.\n\nReturns:\n    A JSON object describing the plugin subsystem.",
    "inputSchema": {
     "additionalProperties": false,
@@ -548,6 +625,10 @@
     "type": "object",
     "x-fastmcp-wrap-result": true
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "fastmcp": {
      "tags": []
@@ -556,6 +637,7 @@
   },
   {
    "name": "plugin_reload",
+   "title": "Reload plugins",
    "description": "Re-reads the plugin directory without restarting the server.\n\nEvery plugin file is read again, the hooks in force are replaced in one\nstep and a new plugin epoch begins. If any file no longer loads, nothing\nis replaced: the previously loaded set stays in force and the response\nnames the file that failed and why.\n\nReturns:\n    A JSON object describing what is in force after the reload.",
    "inputSchema": {
     "additionalProperties": false,
@@ -573,6 +655,12 @@
     ],
     "type": "object",
     "x-fastmcp-wrap-result": true
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
    },
    "_meta": {
     "fastmcp": {

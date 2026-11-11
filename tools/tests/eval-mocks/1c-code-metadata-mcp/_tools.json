@@ -2,7 +2,7 @@
  "tools": [
   {
    "name": "metadatasearch",
-   "description": "Search in XML metadata files of 1C configuration.\n\nThe result count is ``limit`` (there is no ``top_k``); a call with a\nparameter this tool does not have is refused before it runs, naming\nthe accepted parameters.\n\nWhen ``object_type`` is provided, retrieval is constrained to matching\ntop-level metadata categories such as ``Справочники`` or ``Документы``.\n\nWhen ``names_only`` is ``True``, returns only a compact list of matching\nmetadata object names (with full_path, object_type, and synonym) instead\nof raw text chunks.  **Prefer names_only=True when you need to identify\nwhich configuration objects are relevant** — their detailed attributes\nand tabular parts can then be fetched via ``get_metadata_details``.\n\nWhile background indexing is still populating the metadata collection,\nthe tool transparently falls back to grep-level scanning of the source\n``.txt`` files and marks the response with ``search_layer: \"grep\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``origin`` scopes the result to where an artifact came from\n(CODE-SAVED-1126930): ``base`` for the configuration itself,\n``extension`` for any configuration extension, a named extension\nidentity for one of them, and ``all`` - the default - for everything.\nThe applied filter is reported under ``origin_filter``, and every\nresult carries an ``origin`` block naming the configuration it came\nfrom and, for an extending definition, its mode and base reference.\nAn applied filter constrains retrieval, not the finished page, and the\nindexed lane reports what it covered under ``origin_scan`` - including\nwhether a short answer was exhaustive or bounded (MCP-R-01).",
+   "description": "Search in XML metadata files of 1C configuration.\n\nThe result count is ``limit`` (there is no ``top_k``); a call with a\nparameter this tool does not have is refused before it runs, naming\nthe accepted parameters.\n\nWhen ``object_type`` is provided, retrieval is constrained to matching\ntop-level metadata categories such as ``Справочники`` or ``Документы``.\n\nWhen ``names_only`` is ``True``, returns only a compact list of matching\nmetadata object names (with full_path, object_type, and synonym) instead\nof raw text chunks.  **Prefer names_only=True when you need to identify\nwhich configuration objects are relevant** — their detailed attributes\nand tabular parts can then be fetched via ``get_metadata_details``.\nAn attribute name is answered with the object that declares it: such a\nrow carries ``matched_attributes`` (name, synonym, type, tabular part).\n\nUntil a first index is published, or while the metadata collection is\nempty, the tool falls back to grep-level scanning of the source\n``.txt`` files and marks the response with ``search_layer: \"grep\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.\n\n``origin`` scopes the result to where an artifact came from: ``base``\nfor the configuration itself, ``extension`` for any configuration\nextension, a named extension identity for one of them, and ``all`` -\nthe default - for everything. The applied filter is reported under\n``origin_filter``, and every result carries an ``origin`` block naming\nthe configuration it came from and, for an extending definition, its\nmode and base reference. An applied filter constrains retrieval, not the\nfinished page, and the indexed lane reports what it covered under\n``origin_scan`` - including whether a short answer was exhaustive or\nbounded.",
    "inputSchema": {
     "properties": {
      "query": {
@@ -30,6 +30,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -50,6 +55,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -58,7 +67,7 @@
   },
   {
    "name": "codesearch",
-   "description": "Search in object modules and common modules of 1C.\n\nFalls back to file-level grep over ``.bsl`` when the code collection\nis still empty (background indexing in progress); response then has\n``search_layer: \"grep\"`` on success.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``origin`` scopes the result to where the code came from\n(CODE-SAVED-1126930): ``base``, ``extension``, a named extension\nidentity, or ``all`` - the default. The applied filter is reported\nunder ``origin_filter``, and every result carries an ``origin`` block;\na result from an extension module additionally carries the\nmodifications that module declares, with their modes and base\nreferences. An applied filter constrains retrieval, not the finished\npage, and the indexed lane reports what it covered under\n``origin_scan`` - including whether a short answer was exhaustive or\nbounded (MCP-R-01).",
+   "description": "Search in object modules and common modules of 1C.\n\nFalls back to file-level grep over ``.bsl`` until a first index is\npublished or while the code collection is empty; response then has\n``search_layer: \"grep\"`` on success.\n\nThe answer is the nearest ``limit`` chunks, so a full answer has no\ntotal: ``items_total`` is ``null`` with\n``items_total_reason=\"candidate_cap_reached\"``; the cursor pages within\nthose ``limit`` chunks. ``metadata.is_export`` / ``directive`` of a method\nchunk are read from its declaration.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.\n\n``origin`` scopes the result to where the code came from: ``base``,\n``extension``, a named extension identity, or ``all`` - the default.\nThe applied filter is reported under ``origin_filter``, and every\nresult carries an ``origin`` block; a result from an extension module\nadditionally carries the modifications that module declares, with their\nmodes and base references. An applied filter constrains retrieval, not\nthe finished page, and the indexed lane reports what it covered under\n``origin_scan`` - including whether a short answer was exhaustive or\nbounded.",
    "inputSchema": {
     "properties": {
      "query": {
@@ -78,6 +87,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -98,6 +112,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -106,7 +124,7 @@
   },
   {
    "name": "helpsearch",
-   "description": "Search in HTML help files of 1C configuration.\n\nUses the same hybrid RAG pipeline as metadatasearch/codesearch:\nvector overfetch → BM25 reranking → optional cross-encoder.\nFalls back to grep over ``.html`` when the help index is empty.",
+   "description": "Search in HTML help files of 1C configuration.\n\nUses the same hybrid RAG pipeline as metadatasearch/codesearch:\nvector overfetch → BM25 reranking → optional cross-encoder.\nFalls back to grep over ``.html`` until a first index is published or\nwhile the help index is empty.",
    "inputSchema": {
     "properties": {
      "query": {
@@ -122,6 +140,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -130,7 +152,7 @@
   },
   {
    "name": "search_function",
-   "description": "Search for BSL procedures and functions by name.\n\nExact mode: full name match (case-insensitive).\nFuzzy mode: FTS5 prefix matching over the normalized identifier, so\n``ОбработкаПров`` and ``Проведения`` both reach ``ОбработкаПроведения``.\nAutomatically falls back from exact to fuzzy on empty result.\nIf both searches are empty, up to five ``suggestions`` offer similar\ncanonical names, modules and ``next_call`` arguments. These are advisory\nspelling suggestions, not search results; module/origin scope still applies.\nWhen the structural index is still being populated, falls back to\na regex scan over ``.bsl`` files and returns ``search_layer=\"grep\"``.\n\nOutput controls (all optional, defaults reproduce the previous payload):\n\n* ``include_body`` (default ``True``) - when ``False``, each result omits\n  ``body`` and carries ``signature`` instead: the first non-empty line of\n  the body, at most 500 characters.\n* ``max_body_chars`` (default ``0`` = unlimited) - when greater than zero,\n  ``body`` is truncated to that many characters and the result carries\n  ``body_truncated=true``.\n* ``module_path`` (default empty) - case-insensitive substring filter on\n  the module path, applied before the limit.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.\n\nExtension provenance (CODE-SAVED-1126930):\n\n* ``origin`` scopes the search to ``base``, ``extension``, one named\n  extension identity, or ``all`` (the default). The applied filter is\n  reported under ``origin_filter`` and every result carries an\n  ``origin`` block.\n* ``explain_effective`` (default ``True``) adds ``effective_definition``:\n  which definition of *name* is in effect, the competing definitions\n  with their origins and modes, and the **rule** that decided -\n  ``Вместо`` supersedes the base, ``Перед``/``После`` leave it in\n  effect and are reported as intercepting, and\n  ``ИзменениеИКонтроль`` adopts without superseding. When two or more\n  extensions modify the same member the response reports a\n  ``collision`` naming every participant and does **not** pick one:\n  the platform resolves that by extension load order, which is a\n  property of the information base and is absent from a file export.",
+   "description": "Search for BSL procedures and functions by name.\n\nExact mode: full name match (case-insensitive).\nFuzzy mode: FTS5 prefix matching over the normalized identifier, so\n``ОбработкаПров`` and ``Проведения`` both reach ``ОбработкаПроведения``.\nAutomatically falls back from exact to fuzzy on empty result.\nIf both searches are empty, up to five ``suggestions`` offer similar\ncanonical names, modules and ``next_call`` arguments. These are advisory\nspelling suggestions, not search results; module/origin scope still applies.\nWhen the structural index is still being populated, falls back to\na regex scan over ``.bsl`` files and returns ``search_layer=\"grep\"``.\nA hit in the structural index itself is ``search_layer=\"structural\"``\n(SQLite, and FTS5 when the name is not exact). A failed full-text\nlane stays ``fts5``. The label is not ``vector+bm25``: this tool\ndoes not query the vector store (support e4ac198d).\n\nOutput controls (all optional):\n\n* ``include_body`` (default ``True``) - when ``False``, each result omits\n  ``body`` and carries ``signature`` instead: the declaration through the\n  parenthesis closing its parameters, on one line, at most 500 characters.\n* ``max_body_chars`` (default ``0`` = unlimited) - when greater than zero,\n  ``body`` is truncated to that many characters and the result carries\n  ``body_truncated=true``.\n* ``module_path`` (default empty) - case-insensitive substring filter on\n  the module path, applied before the limit.\n\n``limit`` bounds the rows read; the cursor pages within them. When\n``limit`` rows came back the full count is not known: ``items_total`` is\n``null`` with ``items_total_reason=\"candidate_cap_reached\"`` - raise\n``limit`` (or narrow by ``module_path``) to see more.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.\n\nExtension provenance:\n\n* ``origin`` scopes the search to ``base``, ``extension``, one named\n  extension identity, or ``all`` (the default). The applied filter is\n  reported under ``origin_filter`` and every result carries an\n  ``origin`` block.\n* ``explain_effective`` (default ``True``) adds ``effective_definition``:\n  which definition of *name* is in effect, the competing definitions\n  with their origins and modes, and the **rule** that decided -\n  ``Вместо`` and ``ИзменениеИКонтроль`` supersede the base (the latter\n  runs its modified copy of the method), ``Перед``/``После`` leave it\n  in effect and are reported as intercepting. The verdict is per\n  module; ``module_path`` narrows it to that module. When two or more\n  extensions modify the same member and one of them replaces it, the\n  response reports a ``collision`` naming every participant and does\n  **not** pick one: the platform resolves that by extension load\n  order, which the information base holds and a file export does\n  not. Several extensions that only intercept all run; ``order_note``\n  says their order is unknown.",
    "inputSchema": {
     "properties": {
      "name": {
@@ -166,6 +188,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -198,6 +225,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -206,7 +237,7 @@
   },
   {
    "name": "get_module_structure",
-   "description": "Get full structure of a BSL module: procedures, functions, regions, exports.\n\nReturns all procedures/functions with line numbers, export flag, compilation\ndirective, region tree with nesting, and summary statistics.\nWhile the structural index is still being populated, returns an\nempty-safe payload with ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "description": "Get full structure of a BSL module: procedures, functions, regions, exports.\n\nReturns all procedures/functions with line numbers, export flag, compilation\ndirective, region tree with nesting, and summary statistics.\nWhile the structural index is still being populated, returns an\nempty-safe payload with ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.\n\n``origin`` is the same filter as ``search_function``: ``base``,\n``extension``, or ``ext:<Имя>``. A relative path that exists in the base\nconfiguration and in an extension is not answered with the base module:\nthe answer names every candidate until ``origin`` selects one\n(support eb6e184d). An exact stored path stays unique.",
    "inputSchema": {
     "properties": {
      "module_path": {
@@ -222,6 +253,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -231,12 +267,20 @@
      "include_provenance": {
       "default": false,
       "type": "boolean"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
      }
     },
     "required": [
      "module_path"
     ],
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -246,7 +290,7 @@
   },
   {
    "name": "get_method_call_hierarchy",
-   "description": "Get the call hierarchy of a BSL method, under an explicit budget.\n\ndirection: ``callers`` (who calls this), ``callees`` (what this calls), ``both``.\ndepth: recursion depth for hierarchy traversal (default 3).\n\nThe traversal is bounded so a hot method name at ``depth>=2`` on a large\ncall graph answers instead of running until the caller gives up:\n\n* ``max_nodes`` (default 2000) - maximum unique nodes expanded.\n* ``max_edges`` (default 20000) - maximum call edges traversed.\n* ``timeout_ms`` (default 5000) - wall-clock budget; ``0`` disables it.\n* ``module_path`` / ``object_name`` - scope the seed lookup and every\n  expansion to one module path substring, or to one object written as\n  the Russian plural reference (``Документы.ЗаявкаНаРемонт``).\n\nThe result always carries ``partial``; when it is ``true`` it also\ncarries ``reason`` (``max_nodes`` / ``max_edges`` / ``timeout_ms``),\n``nodes_seen`` and ``edges_seen``.\nWhile the structural index is still being populated, returns an\nempty-safe payload with ``indexing_status=\"in_progress\"``.\n\nAn empty, completed incoming-call lookup also reports ``declarative_usage``:\nconfirmed form event bindings, or why they could not be resolved. Platform\nbindings stay separate from BSL ``callers``; no callers does not mean unused.\nA handler passed by name is an edge too, marked ``via``:\n``notify_description`` (``Новый ОписаниеОповещения(\"Имя\", ЭтотОбъект)`` or\na common module) or ``idle_handler`` (``ПодключитьОбработчикОжидания``).\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "description": "Get the call hierarchy of a BSL method, under an explicit budget.\n\ndirection: ``callers`` (who calls this), ``callees`` (what this calls), ``both``.\ndepth: recursion depth for hierarchy traversal (default 3).\n\nThe traversal is bounded, so a hot method name at ``depth>=2`` on a large\ncall graph still answers:\n\n* ``max_nodes`` (default 2000) - maximum unique nodes expanded.\n* ``max_edges`` (default 20000) - maximum call edges traversed.\n* ``timeout_ms`` (default 5000) - wall-clock budget; ``0`` disables it.\n* ``module_path`` / ``object_name`` - scope the seed lookup and every\n  expansion to one module path substring, or to one object written as\n  the Russian plural reference (``Документы.ЗаявкаНаРемонт``).\n\nThe result always carries ``partial``; when it is ``true`` it also\ncarries ``reason`` (``max_nodes`` / ``max_edges`` / ``timeout_ms``),\n``nodes_seen`` and ``edges_seen``. Levels are expanded breadth first, so\na spent budget cuts the deepest level, not the direct callers.\nWhile the structural index is still being populated, returns an\nempty-safe payload with ``indexing_status=\"in_progress\"``.\n\nAn empty, completed incoming-call lookup also reports ``declarative_usage``:\nconfirmed form event bindings, or why they could not be resolved. Platform\nbindings stay separate from BSL ``callers``; no callers does not mean unused.\nA handler passed by name is an edge too, marked ``via``:\n``notify_description`` (``Новый ОписаниеОповещения(\"Имя\", ЭтотОбъект)`` or\na common module) or ``idle_handler`` (``ПодключитьОбработчикОжидания``).\n\nEach call carries ``resolution_status`` (``resolved`` / ``unresolved`` /\n``nothing_to_resolve``) with ``resolution`` or ``reason``. A caller is\nlisted under the routine it reaches (``target_module``); a call through an\nunknown receiver is in ``unresolved_candidates``. A callee is followed\nonly when resolved. An empty side gives ``empty_reason``: ``no_calls``,\n``unresolved_only`` or ``limit_reached``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.",
    "inputSchema": {
     "properties": {
      "method_name": {
@@ -295,6 +339,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -311,6 +360,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -319,7 +372,7 @@
   },
   {
    "name": "graph_dependencies",
-   "description": "Get dependency graph for a 1C configuration object.\n\nShows which objects reference and are referenced by the given object.\ndirection: ``forward`` (uses), ``reverse`` (used by), ``both``.\nWhen the dependency graph is still building or has no edges for the\nrequested object, a live XML reverse/forward scan is attempted\n(``search_layer=\"live_xml\"``, ``partial=true`` when the walk was\ncapped); if that also yields nothing, returns an empty-safe payload\nwith ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "description": "Get dependency graph for a 1C configuration object.\n\nShows which objects reference and are referenced by the given object.\ndirection: ``forward`` (uses), ``reverse`` (used by), ``both``.\nWhen the dependency graph is still building or has no edges for the\nrequested object, a live XML reverse/forward scan is attempted\n(``search_layer=\"live_xml\"``, ``partial=true`` when the walk was\ncapped); if that also yields nothing, returns an empty-safe payload\nwith ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.",
    "inputSchema": {
     "properties": {
      "object_name": {
@@ -348,6 +401,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -364,6 +422,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -372,7 +434,7 @@
   },
   {
    "name": "get_metadata_details",
-   "description": "Get detailed metadata for a 1C configuration object.\n\nReturns attributes with types, tabular parts, dimensions, resources,\npredefined items.  Falls back to fuzzy search if exact name not found.\nWhen the metadata detail store is still building or has no record for\nthe requested object, a live XML parse is attempted\n(``search_layer=\"live_xml\"``); if that also yields nothing, the\nresponse carries ``indexing_status=\"in_progress\"``.\n\nA catalog, document or register card also carries\n``standard_attributes`` - the standard fields the object really has,\nderived from its properties (``Код`` only with a code length,\n``Владелец`` only with owners, ``Период`` only for a periodic\ninformation register, ...) as ``{name, name_en, type}`` - and a register\ncard ``virtual_tables``: its query tables (``Остатки``, ``Обороты``,\n``СрезПоследних``, ``ОборотыДтКт``, ``База<Регистр>``, ...) with their\nparameters in positional order and, unless ``detail_level=outline``, the\nfield names a query uses (``КоличествоОстаток``, ``СуммаОборотДт``,\n``Субконто1``). Tables the register does not have are not listed;\n``virtual_tables_notes`` says what was left out and why.\n\n``sections`` projects the answer: a comma-separated subset of\n``attributes``, ``tabular_parts``, ``properties``, ``predefined``,\n``virtual_tables``, ``standard_attributes`` (default: all of them).\n``tabular_part`` names one tabular part and\nreturns only its columns - the way to read one section of a document\nwith 24 of them without paging through 441 attributes. The cursor is\nbound to the projection. ``attributes_total`` still counts the\nobject's own attributes, so a projected answer is not mistaken for an\nobject that has none. Empty ``properties`` / ``predefined`` /\n``based_on`` / ``print_forms`` are omitted rather than sent as ``{}``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.\n\nEvery successful response additionally carries ``attributes_total``\nand ``attributes_returned`` - always, not only when something was\nleft out (CODE-ERR-TILDA-20260709-METADATA-TAIL, design D5).  They\nare scoped to the object's own attribute list, which ``items_total``\ncannot answer because it spans the tabular-part columns too; they\nnever replace or vary the shared envelope, which stays the single\nsource of ``truncated`` and ``next_cursor``.\n\n``origin`` scopes the lookup to ``base``, ``extension``, one named\nextension identity, or ``all`` - the default. The response reports the\napplied filter under ``origin_filter`` and carries the resolved\nobject's ``origin`` (CODE-SAVED-1126930).",
+   "description": "Get detailed metadata for a 1C configuration object.\n\nReturns attributes with types, tabular parts, dimensions, resources,\npredefined items.  Falls back to fuzzy search if exact name not found.\nWhen the metadata detail store is still building or has no record for\nthe requested object, a live XML parse is attempted\n(``search_layer=\"live_xml\"``); if that also yields nothing, the\nresponse carries ``indexing_status=\"in_progress\"``.\n\nA catalog, document or register card also carries\n``standard_attributes`` - the standard fields the object really has,\nderived from its properties (``Код`` only with a code length,\n``Владелец`` only with owners, ``Период`` only for a periodic\ninformation register, ...) as ``{name, name_en, type}`` - and a register\ncard ``virtual_tables``: its query tables (``Остатки``, ``Обороты``,\n``СрезПоследних``, ``ОборотыДтКт``, ``База<Регистр>``, ...) with their\nparameters in positional order and, unless ``detail_level=outline``, the\nfield names a query uses (``КоличествоОстаток``, ``СуммаОборотДт``,\n``Субконто1``). Tables the register does not have are not listed;\n``virtual_tables_notes`` says what was left out and why.\n\n``forms`` and ``commands`` list the object's forms and commands by name.\nOn an object an extension borrows, every attribute, tabular-part column,\nform and command the extension adds is listed beside the base's members\nwith ``origin`` ``{origin_kind: extension, origin_id: ext:<Имя>}``; the\ncard itself stays the base configuration's.\n\n``sections`` projects the answer: a comma-separated subset of\n``attributes``, ``tabular_parts``, ``forms``, ``commands``,\n``properties``, ``predefined``, ``virtual_tables``,\n``standard_attributes`` (default: all of them).\n``tabular_part`` names one tabular part and\nreturns only its columns - the way to read one tabular part without\npaging through all the object's attributes. The cursor is bound to the\nprojection. Empty ``forms`` / ``commands`` / ``properties`` /\n``predefined`` / ``based_on`` / ``print_forms`` are omitted rather than\nsent empty.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.\n\nEvery successful response also carries ``attributes_total`` and\n``attributes_returned``, always. They count the object's own attribute\nlist (``items_total`` also spans tabular-part columns), and\n``attributes_total`` keeps counting them in a projected answer, so it is\nnot mistaken for an object that has none. ``truncated`` and\n``next_cursor`` remain the only paging signal.\n\n``origin`` scopes the lookup to ``base``, ``extension``, one named\nextension identity, or ``all`` - the default. The response reports the\napplied filter under ``origin_filter`` and carries the resolved\nobject's ``origin``.",
    "inputSchema": {
     "properties": {
      "object_name": {
@@ -388,6 +450,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -424,6 +491,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -432,7 +503,7 @@
   },
   {
    "name": "search_forms",
-   "description": "Search across all 1C configuration forms (elements, attributes, commands).\n\nUses hybrid search (vector + full-text candidates fused by RRF, then\nreranked) over the ``forms`` collection of the zvec vector index,\nwhere each document is the structured text summary of\none form (object/form name, title, indented element tree with type\nlabels and DataPath, attributes with types, commands, handlers).\nThis is the path that lets queries describing form *content*\n(e.g. element types like ``Гиперссылка``, DataPath fragments like\n``URL``, structural concepts like ``табличная часть``) resolve to\nthe matching forms.\n\nFalls back to a filesystem glob over ``**/Forms/*/Form.xml`` with\n``search_layer=\"grep\"`` while code indexing is running or while the\nSQLite ``FormIndex`` or the ``forms`` collection is still empty. When the\nhybrid path returns zero results against a populated collection,\nfalls back once to ``FormIndex.search_metadata_forms`` so\nidentifier-only queries that the vector path under-ranks still\nresolve.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.",
+   "description": "Search across all 1C configuration forms (elements, attributes, commands).\n\nHybrid search (vector + full-text, reranked) over one structured text\nsummary per form (object/form name, title, indented element tree with\ntype labels and DataPath, attributes with types, commands, handlers),\nso queries describing form *content* (e.g. element types like\n``Гиперссылка``, DataPath fragments like ``URL``, structural concepts\nlike ``табличная часть``) resolve to the matching forms.\n\nFalls back to a filesystem glob over ``**/Forms/*/Form.xml`` with\n``search_layer=\"grep\"`` while code indexing is running or while the form\nindex or the ``forms`` collection is still empty. When the hybrid search\nreturns nothing against a populated collection, a lookup over object\nname, form name and title runs once, so identifier-only queries still\nresolve.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.",
    "inputSchema": {
     "properties": {
      "query": {
@@ -452,6 +523,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -472,6 +548,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -480,7 +560,7 @@
   },
   {
    "name": "inspect_form_layout",
-   "description": "Get full element tree, attributes, commands, and handlers for a form.\n\nReturns hierarchical form element tree with types, data bindings,\nvisibility, accessibility, commands, and event handlers.\n\n``object_name`` accepts the canonical Russian *singular* qualified\nreference (``Документ.ЗаявкаНаРемонт``); it is rewritten to the plural\nidentifier the form index stores (``Документы.ЗаявкаНаРемонт``) before\nthe lookup, and the response then reports ``match=\"normalized\"`` while\n``requested`` keeps the spelling that was asked for.\nWhile the form index is still being populated, returns an empty-safe\npayload with ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response measured\non the final payload, ``max_items`` caps one page, ``detail_level`` is\n``outline`` or ``full``, and ``cursor`` continues a truncated\nresponse. Every response carries ``items_total``, ``items_returned``,\n``truncated`` and ``next_cursor`` with the compact query API's\nsemantics. An item with a real ``file:start:end`` carries ``item_id``,\n``location`` and ``evidence_path``; an item without one shows them only\nwith ``include_provenance=true``, and ``budget`` is reported only when it\nclamped or truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.",
+   "description": "Get full element tree, attributes, commands, and handlers for a form.\n\nReturns hierarchical form element tree with types, data bindings,\nvisibility, accessibility, commands, and event handlers.\n\n``object_name`` accepts the canonical Russian *singular* qualified\nreference (``Документ.ЗаявкаНаРемонт``); it is rewritten to the plural\nidentifier the form index stores (``Документы.ЗаявкаНаРемонт``) before\nthe lookup, and the response then reports ``match=\"normalized\"`` while\n``requested`` keeps the spelling that was asked for.\nWhile the form index is still being populated, returns an empty-safe\npayload with ``indexing_status=\"in_progress\"``.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page,\n``detail_level`` is ``outline`` or ``full``, ``cursor`` continues a\ntruncated response. Every response carries ``items_total``,\n``items_returned``, ``truncated`` and ``next_cursor`` with the same semantics as ``compact_search``. An item with a real\n``file:start:end`` carries ``item_id``, ``location`` and\n``evidence_path``; an item without one shows them only with\n``include_provenance=true``. ``budget`` is reported only when it clamped\nor truncated the answer.\n\n``item_id`` returns that one item, resolved directly by its stable\nidentifier without re-running the search; ``index_identity`` names the\nindex state it was issued against and a mismatch reads as\n``item_id_stale``.",
    "inputSchema": {
     "properties": {
      "object_name": {
@@ -500,6 +580,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -527,6 +612,10 @@
      "object_name"
     ],
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -569,6 +658,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -578,6 +672,10 @@
     },
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -586,7 +684,7 @@
   },
   {
    "name": "get_role_artifact",
-   "description": "Read one role's declared rights, or the roles granting rights on an object.\n\nWith ``role_name`` or ``artifact_id``: the role's stable identifier,\nname, synonym and the rights it declares - each naming the metadata\nobject in canonical form, the right, and whether it is granted - with\nprovenance naming the ``Roles/<Name>/Ext/Rights.xml`` it was read from.\nA right on a member keeps the member's path\n(``Справочники.X.Реквизиты.Y``, ``Документы.X.ТабличныеЧасти.T.Реквизиты.Z``)\nand names the object in ``owner_path``. ``granted=false`` is an explicit\ndenial; a right that is not listed is not declared. A granted right\nrestricted by condition (RLS) has ``conditional=true`` and a\n``restriction_ref``. ``rights_total`` counts every declared right.\n\n``restrictions`` - ``conditions``, ``templates`` or ``all`` - returns the\nrole's restriction texts instead of its rights: the RLS condition of each\nconditional right (narrowed to one by ``restriction_ref``) and the\nrole's restriction templates. The texts are paged: ``max_chars`` caps a\npage, ``cursor`` continues it, and a long text continues on the next\npage (``text_offset`` / ``text_length``).\n\nWith ``object_name`` alone: the reverse direction, listing the roles\nthat declare rights on that object or its members.\n\nThese are **declared configuration rights**. They are not the effective\npermissions of any user, session or profile: deciding those requires a\nrunning information base, which this server neither has nor starts.\n``operation`` is reserved and only ``read`` is accepted.\n\nThe rights list and the reverse list of roles are budgeted too. Without\n``max_chars`` the server default applies: 32768 characters, or\n``RESPONSE_MAX_CHARS`` (``0`` = no cap). ``max_items`` caps one page,\n``cursor`` continues it (``items_total``, ``items_returned``,\n``truncated``, ``next_cursor``); ``rights_total`` still counts every\ndeclared right. A cursor continues the kind of answer that issued it.",
+   "description": "Read one role's declared rights, or the roles granting rights on an object.\n\nWith ``role_name`` or ``artifact_id``: the role's stable identifier,\nname, synonym and the rights it declares - each naming the metadata\nobject in canonical form, the right, and whether it is granted - with\nprovenance naming the ``Roles/<Name>/Ext/Rights.xml`` it was read from.\nA right on a member keeps the member's path\n(``Справочники.X.Реквизиты.Y``, ``Документы.X.ТабличныеЧасти.T.Реквизиты.Z``)\nand names the object in ``owner_path``; the configuration's own rights\n(``MainWindowModeNormal``, ``ThinClient`` …) are on\n``Конфигурация.<Имя>``. ``granted=false`` is an explicit\ndenial; a right that is not listed is not declared. A granted right\nrestricted by condition (RLS) has ``conditional=true`` and a\n``restriction_ref``. ``rights_total`` counts every declared right.\n\n``restrictions`` - ``conditions``, ``templates`` or ``all`` - returns the\nrole's restriction texts instead of its rights: the RLS condition of each\nconditional right (narrowed to one by ``restriction_ref``) and the\nrole's restriction templates. The texts are paged: ``max_chars`` caps a\npage, ``cursor`` continues it, and a long text continues on the next\npage (``text_offset`` / ``text_length``).\n\nWith ``object_name`` alone: the reverse direction, listing the roles\nthat declare rights on that object or its members.\n\nThese are **declared configuration rights**. They are not the effective\npermissions of any user, session or profile: deciding those requires a\nrunning information base, which this server neither has nor starts.\n``operation`` is reserved and only ``read`` is accepted.\n\nThe rights list and the reverse list of roles are budgeted too. Without\n``max_chars`` the server default applies: 32768 characters, or\n``RESPONSE_MAX_CHARS`` (``0`` = no cap). ``max_items`` caps one page,\n``cursor`` continues it (``items_total``, ``items_returned``,\n``truncated``, ``next_cursor``); ``rights_total`` still counts every\ndeclared right. A cursor continues the kind of answer that issued it.",
    "inputSchema": {
     "properties": {
      "role_name": {
@@ -633,10 +731,19 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      }
     },
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -646,7 +753,7 @@
   },
   {
    "name": "get_report_artifact",
-   "description": "Read one report's structure: its forms, templates and composition schema.\n\nReturns the report's stable identifier and canonical path, its name and\nsynonym, its forms and templates as references, its declared attributes\nand tabular parts, and - when the export declares a data composition\nschema - that schema's location together with its dataset and field\nnames.\n\nNothing is executed and no result is composed. When a schema is present\nin the export but not parsed by this build, the answer says so\nexplicitly rather than omitting the field, because an omitted field\nreads as \"this report has no schema\" - a different and wrong fact.\n``operation`` is reserved and only ``read`` is accepted.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page\nof forms, templates, attributes, tabular parts and schema datasets and\nfields, ``detail_level=\"outline\"`` drops synonyms and paths, and\n``cursor`` continues a truncated response (``items_total``,\n``items_returned``, ``truncated``, ``next_cursor``).",
+   "description": "Read one report's structure: its forms, templates and composition schema.\n\nReturns the report's stable identifier and canonical path, its name and\nsynonym, its forms and templates as references, its declared attributes\nand tabular parts, and - when the export declares a data composition\nschema - that schema's location together with its dataset and field\nnames.\n\nNothing is executed and no result is composed. When a schema is present\nin the export but not parsed by this build, the answer says so\nexplicitly rather than omitting the field. ``operation`` is reserved and\nonly ``read`` is accepted.\n\nResponse budget (optional). Without ``max_chars`` the server default\napplies: 32768 characters, or ``RESPONSE_MAX_CHARS`` (``0`` = no cap).\n``max_chars`` caps the serialized response, ``max_items`` caps one page\nof forms, templates, attributes, tabular parts and schema datasets and\nfields, ``detail_level=\"outline\"`` drops synonyms and paths, and\n``cursor`` continues a truncated response (``items_total``,\n``items_returned``, ``truncated``, ``next_cursor``).",
    "inputSchema": {
     "properties": {
      "report_name": {
@@ -671,6 +778,11 @@
      },
      "detail_level": {
       "default": "",
+      "enum": [
+       "",
+       "outline",
+       "full"
+      ],
       "type": "string"
      },
      "cursor": {
@@ -680,6 +792,10 @@
     },
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -688,7 +804,7 @@
   },
   {
    "name": "list_artifact_links",
-   "description": "Resolve an artifact's links to external run and test results.\n\nTraversable in both directions: give ``artifact_id`` for the results\nlinked to one artifact, or ``result_uri`` for the artifacts linked to\none result. Both directions are served from the same stored row, so\nthey always agree.\n\nEach link is returned with a typed status computed now - ``resolved``,\n``dangling`` (an endpoint artifact no longer exists), ``stale``\n(``expected_digest`` differs from the recorded one) or ``out_of_scope``\n(an endpoint belongs to another project). A link that no longer\nresolves is returned *with its status* rather than omitted, so \"no\nlink\" stays distinguishable from \"a link that no longer resolves\".\n\nResolution is built entirely from stored reference metadata. The\nreferenced URI is never fetched, followed or executed.\n``operation`` is reserved and only ``read`` is accepted.",
+   "description": "Resolve an artifact's links to external run and test results.\n\nTraversable in both directions: give ``artifact_id`` for the results\nlinked to one artifact, or ``result_uri`` for the artifacts linked to\none result. Both directions read the same stored row, so they always\nagree.\n\nEach link is returned with a typed status computed now - ``resolved``,\n``dangling`` (an endpoint artifact no longer exists), ``stale``\n(``expected_digest`` differs from the recorded one) or ``out_of_scope``\n(an endpoint belongs to another project). A link that no longer\nresolves is returned *with its status*, never omitted.\n\nResolution is built entirely from stored reference metadata. The\nreferenced URI is never fetched, followed or executed.\n``operation`` is reserved and only ``read`` is accepted.",
    "inputSchema": {
     "properties": {
      "artifact_id": {
@@ -710,6 +826,10 @@
     },
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -718,7 +838,7 @@
   },
   {
    "name": "register_external_result_link",
-   "description": "Record a reference to an immutable, externally produced result.\n\nThe result is produced elsewhere - by a sibling MCP that runs tests, a\nCI job, whatever your pipeline uses. This server stores a *reference* to\nit: the stable URI, the content digest that makes it verifiable later,\nthe producing system, and the time it was recorded. It never produces,\nruns, re-runs, fetches, mutates or deletes a result.\n\nA reference without a content digest is refused with ``link_invalid``:\nwithout one there is no way to tell the result you linked from whatever\nis at that URL now, so ``stale`` could never be detected and the link\nwould be a false promise of immutability. A reference to an artifact of\nanother project is refused with ``out_of_scope``.\n\nThis is the one write on the artifact surface, and it writes one row\ninto this server's own metadata store - never into the configuration\nexport, and never into the referenced result. ``operation`` is reserved\nand only ``read`` is accepted.",
+   "description": "Record a reference to an immutable, externally produced result.\n\nThe result is produced elsewhere - by a sibling MCP that runs tests, a\nCI job, whatever your pipeline uses. This server stores a *reference* to\nit: the stable URI, the content digest that makes it verifiable later,\nthe producing system, and the time it was recorded. It never produces,\nruns, re-runs, fetches, mutates or deletes a result.\n\nA reference without a content digest is refused with ``link_invalid``\n(without one a changed result could never be detected as ``stale``). A\nreference to an artifact of another project is refused with\n``out_of_scope``.\n\nThis is the one write on the artifact surface, and it writes one row\ninto this server's own metadata store - never into the configuration\nexport, and never into the referenced result. ``operation`` is reserved\nand only ``read`` is accepted.",
    "inputSchema": {
     "properties": {
      "artifact_id": {
@@ -746,6 +866,12 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -762,6 +888,12 @@
      },
      "member_type": {
       "default": "all",
+      "enum": [
+       "all",
+       "methods",
+       "properties",
+       "events"
+      ],
       "type": "string"
      }
     },
@@ -769,6 +901,10 @@
      "context"
     ],
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -778,7 +914,7 @@
   },
   {
    "name": "get_xsd_schema",
-   "description": "Get the XSD schema for a 1C metadata object type.\n\nSupported types: Справочник, Документ, РегистрСведений, Форма, СКД, etc.\nWhile the help phase (which runs XSD generation) is still pending,\nreturns an empty-safe payload with ``indexing_status=\"in_progress\"``.",
+   "description": "Get the XSD schema for a 1C metadata object type.\n\nSupported types: every Designer object type in Russian or English\n(Справочник/Catalog, РегламентноеЗадание/ScheduledJob, ...), Конфигурация,\nФорма, СКД, Макет, and the Ext parts ПраваРоли, ПредопределенныеДанные,\nКомандныйИнтерфейс, РасписаниеРегламентногоЗадания, СоставПланаОбмена,\nКартаМаршрута.\nWhile the help phase (which runs XSD generation) is still pending,\nreturns an empty-safe payload with ``indexing_status=\"in_progress\"``.",
    "inputSchema": {
     "properties": {
      "object_type": {
@@ -790,6 +926,10 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -798,7 +938,7 @@
   },
   {
    "name": "verify_xml",
-   "description": "Validate XML content against the XSD schema for the given object type.\n\nReturns validation result with status ``valid``, ``invalid``, or ``error``.",
+   "description": "Validate XML content against the XSD schema for the given object type.\n\nThe schema is generated from the configuration export itself, so a file\nthe platform wrote is ``valid``. Returns status ``valid``, ``invalid``,\n``error`` or ``not_found`` (an object type the server does not know).",
    "inputSchema": {
     "properties": {
      "xml_content": {
@@ -813,6 +953,10 @@
      "object_type"
     ],
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -857,6 +1001,10 @@
      "query"
     ],
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -903,6 +1051,10 @@
      }
     },
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -971,6 +1123,10 @@
     },
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -1017,6 +1173,10 @@
     },
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -1025,15 +1185,25 @@
   },
   {
    "name": "reindex",
-   "description": "Trigger re-indexing of the 1C configuration (runs in background).\n\nUses the same phased orchestrator as startup: ``metadata`` is always\nindexed first, followed by ``code`` and ``help``. Returns immediately;\nmonitor progress via ``stats()`` under the ``indexing`` key.\n\n* ``force=False`` — **incremental**: every phase invokes\n  ``_index_file_list`` with the full on-disk list and the tracker\n  classifies each file by SHA-256 content hash into\n  ``new`` / ``modified`` / ``unchanged`` / ``deleted``. Unchanged\n  files are skipped; modified files have their old chunks deleted\n  before the new ones are embedded; deleted files have their chunks\n  removed from the vector store — which removes their full-text rows\n  with them — and their tracker rows cleared. Requires\n  ``INCREMENTAL_INDEXING=true`` (default). When\n  ``INCREMENTAL_INDEXING=false`` the legacy ``count() == 0`` skip is\n  preserved and no tracker reconciliation happens.\n* ``force=True`` — every lane re-runs unconditionally inside a **fresh\n  generation** in which every source file is classified ``new``. Nothing\n  is carried over, and the published generation keeps serving, intact,\n  until the forced generation seals and publishes: a forced rebuild no\n  longer wipes what the tools are reading from (CODE-COMP-005 AC7).\n\nWhen another process already owns the project's writer lease the call\nreturns the typed result ``writer_busy``, naming the owner and the\nin-flight ``generation_id``; no second build starts and no run is queued.\n\nPer-phase counts in ``stats().data.indexing.per_phase[*].counts``\ninclude ``new``, ``modified``, ``unchanged``, ``deleted``, and the\nlegacy ``vector_indexed`` (files for which at least one chunk was\nsuccessfully written during this run).",
+   "description": "Trigger re-indexing of the 1C configuration (runs in background).\n\nPhases run as at startup: ``metadata`` first, then ``code`` and\n``help``. Returns immediately; monitor progress via ``stats()`` under\nthe ``indexing`` key.\n\n* ``force=False`` — **incremental**: every on-disk file is classified by\n  SHA-256 content hash into ``new`` / ``modified`` / ``unchanged`` /\n  ``deleted``. Unchanged files are skipped; modified files have their\n  old chunks deleted before the new ones are embedded; deleted files\n  have their chunks and full-text rows removed. Requires\n  ``INCREMENTAL_INDEXING=true`` (default); with\n  ``INCREMENTAL_INDEXING=false`` there is no per-file reconciliation and\n  a phase embeds only when its collection is empty.\n* ``force=True`` — every lane re-runs unconditionally inside a **fresh\n  generation** in which every source file is ``new``. Nothing is carried\n  over, and the published generation keeps serving, intact, until the\n  forced generation seals and publishes.\n* ``force=True, origin=\"extension\"`` or ``origin=\"ext:<Имя>\"`` — only\n  the files of every extension layer, or of that one, are read again;\n  the base configuration and the other extensions are carried over as in\n  an incremental run, and embeddings of text that did not change come\n  from the journal.\n\nWhen another process already owns the project's writer lease the call\nreturns the typed result ``writer_busy``, naming the owner and the\nin-flight ``generation_id``; no second build starts and no run is queued.\n\nPer-phase counts in ``stats().data.indexing.per_phase[*].counts``:\n``new``, ``modified``, ``unchanged``, ``deleted`` and ``vector_indexed``\n(files with at least one chunk written during this run).",
    "inputSchema": {
     "properties": {
      "force": {
       "default": false,
       "type": "boolean"
+     },
+     "origin": {
+      "default": "",
+      "type": "string"
      }
     },
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -1043,10 +1213,14 @@
   },
   {
    "name": "stats",
-   "description": "Get server statistics: document counts, embedding provider, index status.\n\nThe ``indexing`` key exposes the orchestrator snapshot with the\ncurrent phase, per-phase status (``pending``/``running``/``completed``/\n``failed``/``disabled``), start/completion timestamps, and any\nphase-local error. Phases switched off via ``INDEX_METADATA`` /\n``INDEX_CODE`` / ``INDEX_HELP`` are reported as ``disabled`` and are\nnever scheduled.\n\nEach entry under ``indexing.per_phase[<phase>].counts`` carries\ninteger fields ``new``, ``modified``, ``unchanged``, ``deleted`` (from\nthe tracker-driven incremental pass) and the legacy ``vector_indexed``\n(files with at least one chunk successfully embedded this run), plus\nany phase-specific extras such as ``details_indexed`` / ``xsd_generated``.\n\n``indexing.last_incremental_at`` is an ISO-8601 timestamp of the most\nrecent **successful** incremental run (force=False). It is ``null``\nuntil the first such run completes. ``force=true`` rebuilds do not\nupdate this timestamp.\n\n``indexing.last_outcome`` is how the most recent finished run ended --\n``completed``, ``failed``, ``cancelled`` (a shutdown was requested) or\n``degraded`` (the run published or skipped while a vector lane still\ncannot be written; ``indexing.error`` names the lane(s) and the\nremediation is ``reindex(force=true)``) -- and is ``null`` until the\nfirst run of this process finishes. A run that ends before its first\nphase, while it is still taking the inventory or resolving its builder,\nreports ``failed`` there and names the failure in ``indexing.error``\nrather than leaving the snapshot describing a build that is no longer\nhappening.\n\n``indexing.sources`` lists every configuration source the run\nencountered (CODE-SAVED-1187299): the configuration being indexed, and\nany configuration nested inside it such as a supplier configuration\nunder ``Ext/ParentConfigurations``. Each entry carries the\n``source_id``, its ``root`` relative to the configuration being indexed,\nits ``kind``, whether it was ``processed`` or ``skipped``, the\n``reason`` for a skip -- ``policy_excluded`` for a policy decision and\n``source_unreadable:<error>`` for one that could not be read, so the two\nare never confused -- and per-source ``counts``.\n``indexing.source_policy`` is the effective include/exclude decision per\nkind, and ``indexing.current_source`` names the source being processed\nright now, so progress is observable mid-run and is ``null`` once the\nphase is terminal.\n\n``index_lanes`` carries, per derived-state lane (``forms``,\n``symbols``), the content-table row count, the full-text row count and a\n``complete`` / ``incomplete`` / ``disabled`` / ``unavailable`` verdict.\nIt is derived from stored counts, so a populated content table beside an\nempty search index is visible without issuing a search, and a phase is\nnever reported ``completed`` while one of its lanes is incomplete\n(CODE-ERR-TILDA-05).\n\n``sub_index_gates`` carries, per SQLite sub-index, the outcome of the\nintegrity and coverage gates that run before a phase is marked\n``completed``: ``passed``, ``failed`` (with the failing checks named\nunder ``reasons``), or ``not_run``. A store that was never gated stays\n``not_run`` so it is never mistaken for a clean one.\n\n``embedding_provider`` carries the typed embedding-provider state\n(CODE-ERR-TILDA-04): the resolved ``provider`` (``remote``/``local``), the\n``status`` (``ok`` / ``unreachable`` / ``unauthorized`` /\n``model_not_found`` / ``budget_exceeded`` / ``not_configured``, and\n``unknown`` before the first provider call), the ``selection_reason`` the\nprovider was reached by, the ``model``, the ``endpoint_host`` for a remote\nprovider, and -- for a local one -- ``memory_budget_mb``,\n``estimated_model_mb`` and the sampled ``process_rss_mb``. It never\ncontains the API key in any form.\n\n``generation`` carries the immutable-generation lifecycle\n(CODE-COMP-005): the ``published`` generation id with its publish\ntimestamp, per-lane typed state and ``new``/``changed``/``deleted``/\n``unchanged`` counts; the ``in_flight`` generation and its typed state\nwhile a build is running; ``last_failed`` with the typed ``reason`` of the\nmost recent non-published generation; the ``retained`` ids available for\nrollback; the ``pinned`` generations a reader still holds; the writer\n``lease``; and the ``manifest`` status, which reports a typed\n``manifest_unreadable`` / ``manifest_schema_unsupported`` /\n``manifest_inconsistent`` rather than raising. The section is read without\nthe writer lease, so it never blocks a build.\n\n``release`` carries the release identity (CODE-ERR-TILDA-20260804-HTTP-OPS):\nthe ``version`` and ``build_digest`` of the running build, the\n``index_layout`` range of on-disk layouts it can open, the ``source`` the\nidentity was resolved from (``manifest_file`` / ``environment`` /\n``source``) and, when ``MCP_IMAGE_REF`` is set, whether that deployment\nreference is immutable and matches this build.\n\n``sessions`` carries the transport session bounds and their counters:\n``current`` / ``peak`` sessions, ``reclaimed_idle`` /\n``reclaimed_lifetime`` / ``rejected_cap``, and the effective ``limits``\n(idle TTL, maximum lifetime, concurrent cap, cleanup interval) with the\n``mode`` they run in (``enforce`` or ``report``).\n\n``vector_store_health`` carries the vector-store optimize and integrity\nstate. ``terminal`` is ``null`` on a healthy process, or the\n``{collection, reason, detail}`` of the first store that reached a\nterminal state (``store_corruption`` / ``write_failures_exceeded``).\n``collections[<name>]`` reports, per lane: whether optimize is\n``enabled``, the ``last_outcome`` and ``last_elapsed_sec`` of its merge,\nthe documents still ``pending_docs`` for the next merge, the current\n``write_health`` and ``terminal_reason``, the\n``consecutive_write_failures`` against the configured\n``write_failure_threshold``, the effective ``write_mode``\n(``insert``/``upsert``) with its ``insert_fallbacks`` count, and whether\nthe lane is ``quarantined``.",
+   "description": "Get server statistics: document counts, embedding provider, index status.\n\n``indexing``: the current phase, per-phase status (``pending``/\n``running``/``completed``/``failed``/``disabled``, or ``incomplete`` with\nreason ``lane_incomplete:<lane>``), start/completion\ntimestamps and any phase-local error. Phases switched off via\n``INDEX_METADATA`` / ``INDEX_CODE`` / ``INDEX_HELP`` are ``disabled``\nand never scheduled.\n\n``indexing.per_phase[<phase>].counts``: integers ``new``, ``modified``,\n``unchanged``, ``deleted``, ``vector_indexed`` (files with at least one\nchunk embedded this run), plus phase-specific extras such as\n``details_indexed`` / ``xsd_generated``.\n\n``indexing.last_incremental_at``: ISO-8601 time of the most recent\n**successful** incremental run (force=False); ``null`` until the first\none completes; ``force=true`` rebuilds do not update it.\n\n``indexing.last_outcome``: how the most recent finished run ended --\n``completed``, ``failed``, ``cancelled`` (a shutdown was requested) or\n``degraded`` (the run published or skipped while a vector lane still\ncannot be written; ``indexing.error`` names the lane(s) and the\nremediation is ``reindex(force=true)``); ``null`` until the first run\nof this process finishes. A run that ends before its first phase (while\ntaking the inventory or resolving its builder) reports ``failed`` and\nnames the failure in ``indexing.error``.\n\n``indexing.sources``: every configuration source the run encountered -\nthe configuration being indexed and any configuration nested inside it,\nsuch as a supplier configuration under ``Ext/ParentConfigurations``.\nEach entry carries ``source_id``, ``root`` (relative to the configuration\nbeing indexed), ``kind``, whether it was ``processed`` or ``skipped``,\nthe skip ``reason`` -- ``policy_excluded`` for a policy decision,\n``source_unreadable:<error>`` for one that could not be read -- and\nper-source ``counts``. ``indexing.source_policy`` is the effective\ninclude/exclude decision per kind; ``indexing.current_source`` names the\nsource being processed right now and is ``null`` once the phase is\nterminal.\n\n``index_lanes``: per derived-state lane (``forms``, ``symbols``), the\ncontent-table row count, the full-text row count and a ``complete`` /\n``incomplete`` / ``disabled`` / ``unavailable`` verdict. It is derived\nfrom stored counts, so a populated content table beside an empty search\nindex is visible without issuing a search, and a phase is never reported\n``completed`` while one of its lanes is incomplete.\n\n``sub_index_gates``: per SQLite sub-index, the outcome of the integrity\nand coverage gates run before a phase is marked ``completed`` --\n``passed``, ``failed`` (failing checks named under ``reasons``) or\n``not_run`` (never gated, which is not the same as clean).\n\n``embedding_provider``: the resolved ``provider`` (``remote``/``local``),\nthe ``status`` (``ok`` / ``unreachable`` / ``unauthorized`` /\n``model_not_found`` / ``budget_exceeded`` / ``not_configured``, and\n``unknown`` before the first provider call), the ``selection_reason`` the\nprovider was reached by, the ``model``, the ``endpoint_host`` for a\nremote provider, and -- for a local one -- ``memory_budget_mb``,\n``estimated_model_mb`` and the sampled ``process_rss_mb``. It never\ncontains the API key in any form.\n\n``generation``: the ``published`` generation id with its publish\ntimestamp, per-lane typed state and ``new``/``changed``/``deleted``/\n``unchanged`` counts; the ``in_flight`` generation and its typed state\nwhile a build is running; ``last_failed`` with the typed ``reason`` of the\nmost recent non-published generation; the ``retained`` ids available for\nrollback; the ``pinned`` generations a reader still holds; the writer\n``lease``; and the ``manifest`` status (a typed ``manifest_unreadable`` /\n``manifest_schema_unsupported`` / ``manifest_inconsistent`` rather than an\nerror). Reading it never blocks a build.\n\n``release``: the ``version`` and ``build_digest`` of the running build,\nthe ``index_layout`` range of on-disk layouts it can open, the ``source``\nthe identity was resolved from (``manifest_file`` / ``environment`` /\n``source``) and, when ``MCP_IMAGE_REF`` is set, whether that deployment\nreference is immutable and matches this build.\n\n``sessions``: transport session counters ``current`` / ``peak``,\n``reclaimed_idle`` / ``reclaimed_lifetime`` / ``rejected_cap``, and the\neffective ``limits`` (idle TTL, maximum lifetime, concurrent cap, cleanup\ninterval) with their ``mode`` (``enforce`` or ``report``).\n\n``vector_store_health``: ``terminal`` is ``null`` on a healthy process,\nor the ``{collection, reason, detail}`` of the first store that reached a\nterminal state (``store_corruption`` / ``write_failures_exceeded``).\n``collections[<name>]`` per lane: whether optimize is ``enabled``, the\n``last_outcome`` and ``last_elapsed_sec`` of its merge, ``pending_docs``\nfor the next merge, ``write_health`` and ``terminal_reason``,\n``consecutive_write_failures`` against ``write_failure_threshold``, the\neffective ``write_mode`` (``insert``/``upsert``) with its\n``insert_fallbacks`` count, and whether the lane is ``quarantined``.",
    "inputSchema": {
     "properties": {},
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -1060,6 +1234,10 @@
    "inputSchema": {
     "properties": {},
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -1084,6 +1262,13 @@
      },
      "include": {
       "default": "summary",
+      "enum": [
+       "summary",
+       "structure",
+       "module",
+       "all",
+       ""
+      ],
       "type": "string"
      },
      "max_chars": {
@@ -1096,6 +1281,12 @@
      "workspace_path"
     ],
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -1129,6 +1320,12 @@
     ],
     "type": "object"
    },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -1141,6 +1338,12 @@
    "inputSchema": {
     "properties": {},
     "type": "object"
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {

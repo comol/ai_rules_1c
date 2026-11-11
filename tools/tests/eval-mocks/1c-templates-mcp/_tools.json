@@ -6,6 +6,7 @@
    "inputSchema": {
     "properties": {
      "query": {
+      "description": "What to find: the task or 1C functionality, in words (Russian preferred)",
       "type": "string"
      }
     },
@@ -26,6 +27,10 @@
     ],
     "type": "object",
     "x-fastmcp-wrap-result": true
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -64,6 +69,10 @@
     "type": "object",
     "x-fastmcp-wrap-result": true
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -76,6 +85,7 @@
    "inputSchema": {
     "properties": {
      "template_id": {
+      "description": "Template ID, as templatesearch (the ID line) and list_templates return it",
       "type": "string"
      }
     },
@@ -97,6 +107,10 @@
     "type": "object",
     "x-fastmcp-wrap-result": true
    },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -109,6 +123,7 @@
    "inputSchema": {
     "properties": {
      "content": {
+      "description": "Note text to store, at least 5 characters",
       "type": "string"
      }
     },
@@ -130,6 +145,12 @@
     "type": "object",
     "x-fastmcp-wrap-result": true
    },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false
+   },
    "_meta": {
     "_fastmcp": {
      "tags": []
@@ -142,6 +163,7 @@
    "inputSchema": {
     "properties": {
      "query": {
+      "description": "What to recall, in words (Russian or English)",
       "type": "string"
      }
     },
@@ -162,6 +184,10 @@
     ],
     "type": "object",
     "x-fastmcp-wrap-result": true
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {
@@ -188,6 +214,10 @@
     ],
     "type": "object",
     "x-fastmcp-wrap-result": true
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "openWorldHint": false
    },
    "_meta": {
     "_fastmcp": {

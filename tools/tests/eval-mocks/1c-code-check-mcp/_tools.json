@@ -38,7 +38,7 @@
     "type": "object"
    },
    "outputSchema": {
-    "description": "Результат инструмента, возвращающего только текст.",
+    "description": "Текстовый результат инструмента, принимающего ``files``.",
     "properties": {
      "answer": {
       "default": "",
@@ -76,6 +76,60 @@
        "type": "object"
       },
       "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      },
      "sources": {
       "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
@@ -123,48 +177,6 @@
        "type": "object"
       },
       "type": "array"
-     },
-     "fallback_reason": {
-      "anyOf": [
-       {
-        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
-        "properties": {
-         "kind": {
-          "description": "Перечислимый вид причины",
-          "type": "string"
-         },
-         "capability": {
-          "description": "Возможность, о которой идёт речь",
-          "type": "string"
-         },
-         "capability_state": {
-          "description": "Разрешённое состояние возможности",
-          "type": "string"
-         },
-         "detail": {
-          "default": "",
-          "description": "Записанные факты, без догадок",
-          "type": "string"
-         },
-         "skipped_before_issue": {
-          "default": true,
-          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
-          "type": "boolean"
-         }
-        },
-        "required": [
-         "kind",
-         "capability",
-         "capability_state"
-        ],
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "default": null,
-      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
      }
     },
     "type": "object"
@@ -183,7 +195,7 @@
   {
    "name": "check_1c_code",
    "title": "Check 1C code for errors",
-   "description": "Basic check of 1C:Enterprise code — syntax errors, logical issues, and performance problems.\nUse this tool for a technical correctness check: will the code compile, are there bugs,\nare there N+1 queries or other performance anti-patterns.\n\nIn direct mode the upstream syntax capability produces both the syntax result and the\nlogic-and-performance analysis within a single discussion. When that capability is not\navailable, or the call does not succeed, the answer comes from the prompt path and the\nresult carries a machine-readable `fallback_reason` saying which capability was\nconcerned and what state it resolved to.\n\nFor style/standards compliance, use review_1c_code instead.\nFor an AI-proposed rewrite of the code, use rewrite_1c_code instead.",
+   "description": "Basic check of 1C:Enterprise code — syntax errors, logical issues, and performance problems.\nUse this tool for a technical correctness check: will the code compile, are there bugs,\nare there N+1 queries or other performance anti-patterns.\n\nIn direct mode the upstream syntax capability produces both the syntax result and the\nlogic-and-performance analysis within a single discussion. When that capability is not\navailable, or the call does not succeed, the answer comes from the prompt path and the\nresult carries a machine-readable `fallback_reason` saying which capability was\nconcerned and what state it resolved to.\n\n`checks` says for `syntax` and `logic_performance` whether each was performed,\npartial (code cut to the input limit) or skipped, by the analyzer or the model,\nand why; `trace` records the path, attempts and how much code was sent.\n\nFor style/standards compliance, use review_1c_code instead.\nFor an AI-proposed rewrite of the code, use rewrite_1c_code instead.",
    "inputSchema": {
     "additionalProperties": false,
     "properties": {
@@ -211,7 +223,7 @@
     "type": "object"
    },
    "outputSchema": {
-    "description": "Результат инструмента, возвращающего только текст.",
+    "description": "Результат check_1c_code: ответ и что именно в нём проверено.",
     "properties": {
      "answer": {
       "default": "",
@@ -249,6 +261,60 @@
        "type": "object"
       },
       "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      },
      "sources": {
       "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
@@ -297,38 +363,150 @@
       },
       "type": "array"
      },
-     "fallback_reason": {
+     "checks": {
+      "description": "По записи на каждую запрошенную проверку",
+      "items": {
+       "description": "Одна проверка check_1c_code — по фактам вызова, а не по оценке модели.",
+       "properties": {
+        "check": {
+         "description": "syntax или logic_performance",
+         "type": "string"
+        },
+        "status": {
+         "description": "performed, partial или skipped",
+         "type": "string"
+        },
+        "by": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "analyzer — синтаксический анализатор 1C.ai, model — текст модели; null у skipped"
+        },
+        "reason": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "Почему не performed: code_truncated, section_missing, input_refused, unexpected_error или код из error"
+        },
+        "detail": {
+         "default": "",
+         "description": "То же словами",
+         "type": "string"
+        }
+       },
+       "required": [
+        "check",
+        "status"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "trace": {
       "anyOf": [
        {
-        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "description": "Как прошёл вызов check_1c_code: путь, попытки, сколько кода ушло.",
         "properties": {
-         "kind": {
-          "description": "Перечислимый вид причины",
+         "tool_call_mode": {
+          "description": "MCP_TOOL_CALL_MODE: direct или standard",
           "type": "string"
          },
          "capability": {
-          "description": "Возможность, о которой идёт речь",
-          "type": "string"
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "default": null,
+          "description": "Возможность прямого вызова"
          },
          "capability_state": {
-          "description": "Разрешённое состояние возможности",
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "default": null,
+          "description": "Её состояние на момент вызова"
+         },
+         "path": {
+          "description": "Последний путь, которым отправлялся код: direct, fallback_prompt, prompt; none — код не отправлялся. При error — путь, который не удался",
           "type": "string"
          },
-         "detail": {
-          "default": "",
-          "description": "Записанные факты, без догадок",
-          "type": "string"
+         "direct_attempts": {
+          "default": 0,
+          "description": "Попыток прямого вызова",
+          "type": "integer"
          },
-         "skipped_before_issue": {
-          "default": true,
-          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+         "prompt_attempts": {
+          "default": 0,
+          "description": "Попыток prompt-пути",
+          "type": "integer"
+         },
+         "truncated": {
+          "default": false,
+          "description": "Код передан не полностью",
           "type": "boolean"
+         },
+         "lines_sent": {
+          "default": 0,
+          "description": "Строк кода отправлено",
+          "type": "integer"
+         },
+         "lines_total": {
+          "default": 0,
+          "description": "Строк кода всего",
+          "type": "integer"
+         },
+         "chars_sent": {
+          "default": 0,
+          "description": "Символов кода отправлено",
+          "type": "integer"
+         },
+         "chars_total": {
+          "default": 0,
+          "description": "Символов кода всего",
+          "type": "integer"
+         },
+         "outcome": {
+          "description": "answered, error или refused",
+          "type": "string"
+         },
+         "error": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "default": null,
+          "description": "Код сбоя, как в error"
          }
         },
         "required": [
-         "kind",
-         "capability",
-         "capability_state"
+         "tool_call_mode",
+         "path",
+         "outcome"
         ],
         "type": "object"
        },
@@ -337,7 +515,7 @@
        }
       ],
       "default": null,
-      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+      "description": "След вызова"
      }
     },
     "type": "object"
@@ -384,7 +562,7 @@
     "type": "object"
    },
    "outputSchema": {
-    "description": "Результат инструмента, возвращающего только текст.",
+    "description": "Текстовый результат инструмента, принимающего ``files``.",
     "properties": {
      "answer": {
       "default": "",
@@ -422,6 +600,60 @@
        "type": "object"
       },
       "type": "array"
+     },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      },
      "sources": {
       "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
@@ -469,48 +701,6 @@
        "type": "object"
       },
       "type": "array"
-     },
-     "fallback_reason": {
-      "anyOf": [
-       {
-        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
-        "properties": {
-         "kind": {
-          "description": "Перечислимый вид причины",
-          "type": "string"
-         },
-         "capability": {
-          "description": "Возможность, о которой идёт речь",
-          "type": "string"
-         },
-         "capability_state": {
-          "description": "Разрешённое состояние возможности",
-          "type": "string"
-         },
-         "detail": {
-          "default": "",
-          "description": "Записанные факты, без догадок",
-          "type": "string"
-         },
-         "skipped_before_issue": {
-          "default": true,
-          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
-          "type": "boolean"
-         }
-        },
-        "required": [
-         "kind",
-         "capability",
-         "capability_state"
-        ],
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "default": null,
-      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
      }
     },
     "type": "object"
@@ -601,6 +791,60 @@
       },
       "type": "array"
      },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
+     },
      "sources": {
       "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
       "items": {
@@ -647,48 +891,6 @@
        "type": "object"
       },
       "type": "array"
-     },
-     "fallback_reason": {
-      "anyOf": [
-       {
-        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
-        "properties": {
-         "kind": {
-          "description": "Перечислимый вид причины",
-          "type": "string"
-         },
-         "capability": {
-          "description": "Возможность, о которой идёт речь",
-          "type": "string"
-         },
-         "capability_state": {
-          "description": "Разрешённое состояние возможности",
-          "type": "string"
-         },
-         "detail": {
-          "default": "",
-          "description": "Записанные факты, без догадок",
-          "type": "string"
-         },
-         "skipped_before_issue": {
-          "default": true,
-          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
-          "type": "boolean"
-         }
-        },
-        "required": [
-         "kind",
-         "capability",
-         "capability_state"
-        ],
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "default": null,
-      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
      },
      "has_original": {
       "description": "False — вызов был генерацией, исходника не было",
@@ -875,6 +1077,60 @@
       },
       "type": "array"
      },
+     "fallback_reason": {
+      "anyOf": [
+       {
+        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
+        "properties": {
+         "kind": {
+          "description": "Перечислимый вид причины",
+          "type": "string"
+         },
+         "capability": {
+          "description": "Возможность, о которой идёт речь",
+          "type": "string"
+         },
+         "capability_state": {
+          "description": "Разрешённое состояние возможности",
+          "type": "string"
+         },
+         "detail": {
+          "default": "",
+          "description": "Записанные факты, без догадок",
+          "type": "string"
+         },
+         "skipped_before_issue": {
+          "default": true,
+          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "kind",
+         "capability",
+         "capability_state"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
+     },
      "sources": {
       "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
       "items": {
@@ -921,48 +1177,6 @@
        "type": "object"
       },
       "type": "array"
-     },
-     "fallback_reason": {
-      "anyOf": [
-       {
-        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
-        "properties": {
-         "kind": {
-          "description": "Перечислимый вид причины",
-          "type": "string"
-         },
-         "capability": {
-          "description": "Возможность, о которой идёт речь",
-          "type": "string"
-         },
-         "capability_state": {
-          "description": "Разрешённое состояние возможности",
-          "type": "string"
-         },
-         "detail": {
-          "default": "",
-          "description": "Записанные факты, без догадок",
-          "type": "string"
-         },
-         "skipped_before_issue": {
-          "default": true,
-          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
-          "type": "boolean"
-         }
-        },
-        "required": [
-         "kind",
-         "capability",
-         "capability_state"
-        ],
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "default": null,
-      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
      },
      "has_original": {
       "description": "False — вызов был генерацией, исходника не было",
@@ -1134,53 +1348,6 @@
       },
       "type": "array"
      },
-     "sources": {
-      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
-      "items": {
-       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
-       "properties": {
-        "path": {
-         "description": "Путь, который передала вызывающая сторона",
-         "type": "string"
-        },
-        "resolved_path": {
-         "description": "Путь, который был фактически прочитан",
-         "type": "string"
-        },
-        "encoding": {
-         "description": "Кодировка, которой файл прочитался",
-         "type": "string"
-        },
-        "byte_length": {
-         "description": "Размер файла на диске, в байтах",
-         "type": "integer"
-        },
-        "char_length": {
-         "description": "Длина декодированного текста, в символах",
-         "type": "integer"
-        },
-        "bytes_sha256": {
-         "description": "Хеш байтов файла",
-         "type": "string"
-        },
-        "text_sha256": {
-         "description": "Хеш декодированного текста, сопоставимый с original_hash",
-         "type": "string"
-        }
-       },
-       "required": [
-        "path",
-        "resolved_path",
-        "encoding",
-        "byte_length",
-        "char_length",
-        "bytes_sha256",
-        "text_sha256"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
      "fallback_reason": {
       "anyOf": [
        {
@@ -1222,6 +1389,18 @@
       ],
       "default": null,
       "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      },
      "version_used": {
       "description": "Версия документации, фактически отправленная upstream",
@@ -1235,173 +1414,6 @@
    },
    "annotations": {
     "title": "Search 1C platform documentation",
-    "readOnlyHint": true,
-    "openWorldHint": true
-   },
-   "_meta": {
-    "fastmcp": {
-     "tags": []
-    }
-   }
-  },
-  {
-   "name": "onec_help",
-   "title": "Search 1C platform documentation (deprecated alias)",
-   "description": "DEPRECATED: use search_1c_documentation instead. This name is kept so existing\nconfigurations keep working; it forwards to the same implementation and sends\nidentical arguments upstream for the same query.\n\nSearches 1C:Enterprise platform documentation at the configured default version,\nsupplied by the ONEC_AI_DOC_VERSION setting. It does not track the latest platform\nrelease and never did; the version that answered is reported in `version_used`.",
-   "inputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "query": {
-      "type": "string",
-      "description": "Search query about 1C:Enterprise platform"
-     }
-    },
-    "required": [
-     "query"
-    ],
-    "type": "object"
-   },
-   "outputSchema": {
-    "description": "Результат поиска по документации платформы.",
-    "properties": {
-     "answer": {
-      "default": "",
-      "description": "Текстовый ответ",
-      "type": "string"
-     },
-     "truncation": {
-      "description": "Доказательство обрезки по каждому ограниченному полю",
-      "items": {
-       "description": "Доказательство обрезки одного входного поля.",
-       "properties": {
-        "field": {
-         "description": "Имя ограниченного поля",
-         "type": "string"
-        },
-        "truncated": {
-         "description": "Была ли выполнена обрезка",
-         "type": "boolean"
-        },
-        "original_length": {
-         "description": "Длина, переданная вызывающей стороной, в символах",
-         "type": "integer"
-        },
-        "transmitted_length": {
-         "description": "Длина, отправленная upstream, в символах",
-         "type": "integer"
-        }
-       },
-       "required": [
-        "field",
-        "truncated",
-        "original_length",
-        "transmitted_length"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
-     "sources": {
-      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
-      "items": {
-       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
-       "properties": {
-        "path": {
-         "description": "Путь, который передала вызывающая сторона",
-         "type": "string"
-        },
-        "resolved_path": {
-         "description": "Путь, который был фактически прочитан",
-         "type": "string"
-        },
-        "encoding": {
-         "description": "Кодировка, которой файл прочитался",
-         "type": "string"
-        },
-        "byte_length": {
-         "description": "Размер файла на диске, в байтах",
-         "type": "integer"
-        },
-        "char_length": {
-         "description": "Длина декодированного текста, в символах",
-         "type": "integer"
-        },
-        "bytes_sha256": {
-         "description": "Хеш байтов файла",
-         "type": "string"
-        },
-        "text_sha256": {
-         "description": "Хеш декодированного текста, сопоставимый с original_hash",
-         "type": "string"
-        }
-       },
-       "required": [
-        "path",
-        "resolved_path",
-        "encoding",
-        "byte_length",
-        "char_length",
-        "bytes_sha256",
-        "text_sha256"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
-     "fallback_reason": {
-      "anyOf": [
-       {
-        "description": "Причина, по которой ответ получен prompt-путём, а не прямым вызовом.",
-        "properties": {
-         "kind": {
-          "description": "Перечислимый вид причины",
-          "type": "string"
-         },
-         "capability": {
-          "description": "Возможность, о которой идёт речь",
-          "type": "string"
-         },
-         "capability_state": {
-          "description": "Разрешённое состояние возможности",
-          "type": "string"
-         },
-         "detail": {
-          "default": "",
-          "description": "Записанные факты, без догадок",
-          "type": "string"
-         },
-         "skipped_before_issue": {
-          "default": true,
-          "description": "True — прямой вызов не выполнялся; False — выполнялся и не удался",
-          "type": "boolean"
-         }
-        },
-        "required": [
-         "kind",
-         "capability",
-         "capability_state"
-        ],
-        "type": "object"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "default": null,
-      "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
-     },
-     "version_used": {
-      "description": "Версия документации, фактически отправленная upstream",
-      "type": "string"
-     }
-    },
-    "required": [
-     "version_used"
-    ],
-    "type": "object"
-   },
-   "annotations": {
-    "title": "Search 1C platform documentation (deprecated alias)",
     "readOnlyHint": true,
     "openWorldHint": true
    },
@@ -1468,53 +1480,6 @@
       },
       "type": "array"
      },
-     "sources": {
-      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
-      "items": {
-       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
-       "properties": {
-        "path": {
-         "description": "Путь, который передала вызывающая сторона",
-         "type": "string"
-        },
-        "resolved_path": {
-         "description": "Путь, который был фактически прочитан",
-         "type": "string"
-        },
-        "encoding": {
-         "description": "Кодировка, которой файл прочитался",
-         "type": "string"
-        },
-        "byte_length": {
-         "description": "Размер файла на диске, в байтах",
-         "type": "integer"
-        },
-        "char_length": {
-         "description": "Длина декодированного текста, в символах",
-         "type": "integer"
-        },
-        "bytes_sha256": {
-         "description": "Хеш байтов файла",
-         "type": "string"
-        },
-        "text_sha256": {
-         "description": "Хеш декодированного текста, сопоставимый с original_hash",
-         "type": "string"
-        }
-       },
-       "required": [
-        "path",
-        "resolved_path",
-        "encoding",
-        "byte_length",
-        "char_length",
-        "bytes_sha256",
-        "text_sha256"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
      "fallback_reason": {
       "anyOf": [
        {
@@ -1556,6 +1521,18 @@
       ],
       "default": null,
       "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      },
      "records": {
       "description": "Записи в порядке, сообщённом upstream",
@@ -1606,7 +1583,7 @@
   {
    "name": "fetch_its",
    "title": "Fetch an ITS document",
-   "description": "Fetch the content of a specific ITS document, catalogue or database by its identifier.\nTypically used after its_help, passing the `id` field of a returned record.\n\nThe identifier is validated for shape before any upstream request. An identifier\nmatching none of the recognised forms — `root`, `superior`, `v8std`, `its-...-hdoc`,\n`its-...-hdir`, `its-...-buh30` — fails as a malformed-identifier error and no request\nis issued. A well-formed identifier upstream cannot resolve is reported as a not-found\ncondition, which is a different problem with a different remedy.",
+   "description": "Fetch the content of a specific ITS document, catalogue or database by its identifier.\nTypically used after its_help, passing the `id` field of a returned record.\n\n`answer` is one page of the document's own text as Fetch_ITS returned it, and `page`\nsays where it is; read on with `offset` = `page.next_offset` while `page.has_more`.\n`content_origin`: `its_document`, or `model_answer` when no document text came back.\n\nThe identifier is validated for shape before any upstream request. An identifier\nmatching none of the recognised forms — `root`, `superior`, `v8std`, `its-...-hdoc`,\n`its-...-hdir`, `its-...-buh30` — fails as a malformed-identifier error and no request\nis issued. A well-formed identifier upstream cannot resolve is reported as a not-found\ncondition, which is a different problem with a different remedy.",
    "inputSchema": {
     "additionalProperties": false,
     "properties": {
@@ -1614,12 +1591,17 @@
       "default": "root",
       "type": "string",
       "description": "ITS document/catalogue identifier (default: 'root')"
+     },
+     "offset": {
+      "default": 0,
+      "type": "integer",
+      "description": "line of the document to start from, `page.next_offset` of the previous\npage (default 0)"
      }
     },
     "type": "object"
    },
    "outputSchema": {
-    "description": "Результат инструмента, возвращающего только текст.",
+    "description": "Результат получения документа ИТС.",
     "properties": {
      "answer": {
       "default": "",
@@ -1653,53 +1635,6 @@
         "truncated",
         "original_length",
         "transmitted_length"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
-     "sources": {
-      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
-      "items": {
-       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
-       "properties": {
-        "path": {
-         "description": "Путь, который передала вызывающая сторона",
-         "type": "string"
-        },
-        "resolved_path": {
-         "description": "Путь, который был фактически прочитан",
-         "type": "string"
-        },
-        "encoding": {
-         "description": "Кодировка, которой файл прочитался",
-         "type": "string"
-        },
-        "byte_length": {
-         "description": "Размер файла на диске, в байтах",
-         "type": "integer"
-        },
-        "char_length": {
-         "description": "Длина декодированного текста, в символах",
-         "type": "integer"
-        },
-        "bytes_sha256": {
-         "description": "Хеш байтов файла",
-         "type": "string"
-        },
-        "text_sha256": {
-         "description": "Хеш декодированного текста, сопоставимый с original_hash",
-         "type": "string"
-        }
-       },
-       "required": [
-        "path",
-        "resolved_path",
-        "encoding",
-        "byte_length",
-        "char_length",
-        "bytes_sha256",
-        "text_sha256"
        ],
        "type": "object"
       },
@@ -1746,6 +1681,91 @@
       ],
       "default": null,
       "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
+     },
+     "content_origin": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "its_document — answer это текст документа, как его вернул Fetch_ITS; model_answer — текст написала модель 1C.ai, текста документа не пришло; null — документа нет, answer говорит почему"
+     },
+     "page": {
+      "anyOf": [
+       {
+        "description": "Где в документе ИТС находится отданный текст — так, как это сообщил upstream.",
+        "properties": {
+         "id": {
+          "description": "Идентификатор документа, который вернул upstream",
+          "type": "string"
+         },
+         "offset": {
+          "description": "С какой строки документа начинается текст (с 0)",
+          "type": "integer"
+         },
+         "total_lines": {
+          "anyOf": [
+           {
+            "type": "integer"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "default": null,
+          "description": "Строк во всём документе"
+         },
+         "next_offset": {
+          "anyOf": [
+           {
+            "type": "integer"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "default": null,
+          "description": "offset для следующего вызова fetch_its; null — документ дочитан"
+         },
+         "has_more": {
+          "default": false,
+          "description": "True — у документа есть продолжение",
+          "type": "boolean"
+         },
+         "truncated": {
+          "default": false,
+          "description": "True — upstream сам обрезал этот фрагмент",
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "id",
+         "offset"
+        ],
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Положение текста в документе; есть, когда upstream его сообщил"
      }
     },
     "type": "object"
@@ -1828,53 +1848,6 @@
       },
       "type": "array"
      },
-     "sources": {
-      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
-      "items": {
-       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
-       "properties": {
-        "path": {
-         "description": "Путь, который передала вызывающая сторона",
-         "type": "string"
-        },
-        "resolved_path": {
-         "description": "Путь, который был фактически прочитан",
-         "type": "string"
-        },
-        "encoding": {
-         "description": "Кодировка, которой файл прочитался",
-         "type": "string"
-        },
-        "byte_length": {
-         "description": "Размер файла на диске, в байтах",
-         "type": "integer"
-        },
-        "char_length": {
-         "description": "Длина декодированного текста, в символах",
-         "type": "integer"
-        },
-        "bytes_sha256": {
-         "description": "Хеш байтов файла",
-         "type": "string"
-        },
-        "text_sha256": {
-         "description": "Хеш декодированного текста, сопоставимый с original_hash",
-         "type": "string"
-        }
-       },
-       "required": [
-        "path",
-        "resolved_path",
-        "encoding",
-        "byte_length",
-        "char_length",
-        "bytes_sha256",
-        "text_sha256"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
      "fallback_reason": {
       "anyOf": [
        {
@@ -1916,6 +1889,18 @@
       ],
       "default": null,
       "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      }
     },
     "type": "object"
@@ -1993,53 +1978,6 @@
       },
       "type": "array"
      },
-     "sources": {
-      "description": "Файлы, прочитанные этим вызовом. Пустой список — не читалось ничего; поле присутствует всегда, чтобы его отсутствие было дефектом, а не молчаливым утверждением",
-      "items": {
-       "description": "Доказательство того, что именно было прочитано из одного файла.\n\n``text_sha256`` берётся тем же алгоритмом и в той же кодировке, что и\n``original_hash`` предложения, поэтому при ровно одном прочитанном файле их\nможно сравнивать напрямую: равенство означает, что предложение построено на\nэтом файле целиком. ``bytes_sha256`` отвечает на другой вопрос — изменился\nли файл на диске.",
-       "properties": {
-        "path": {
-         "description": "Путь, который передала вызывающая сторона",
-         "type": "string"
-        },
-        "resolved_path": {
-         "description": "Путь, который был фактически прочитан",
-         "type": "string"
-        },
-        "encoding": {
-         "description": "Кодировка, которой файл прочитался",
-         "type": "string"
-        },
-        "byte_length": {
-         "description": "Размер файла на диске, в байтах",
-         "type": "integer"
-        },
-        "char_length": {
-         "description": "Длина декодированного текста, в символах",
-         "type": "integer"
-        },
-        "bytes_sha256": {
-         "description": "Хеш байтов файла",
-         "type": "string"
-        },
-        "text_sha256": {
-         "description": "Хеш декодированного текста, сопоставимый с original_hash",
-         "type": "string"
-        }
-       },
-       "required": [
-        "path",
-        "resolved_path",
-        "encoding",
-        "byte_length",
-        "char_length",
-        "bytes_sha256",
-        "text_sha256"
-       ],
-       "type": "object"
-      },
-      "type": "array"
-     },
      "fallback_reason": {
       "anyOf": [
        {
@@ -2081,6 +2019,18 @@
       ],
       "default": null,
       "description": "Заполнено, когда ответ получен prompt-путём в direct-режиме"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "description": "Код сбоя, когда полезного ответа нет (результат тогда помечен isError): operation_timeout, transport_failure, upstream_empty_answer, upstream_error, no_result, input_refused, unexpected_error. null — ответ есть"
      }
     },
     "type": "object"
