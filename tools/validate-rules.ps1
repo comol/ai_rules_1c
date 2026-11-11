@@ -35,7 +35,8 @@
          permanent cost on every task.
       6. Load-set budgets - a single rule stays under -RuleMaxBytes; the rules a
          typical full-cycle BSL change loads ($hotPathFiles) stay under
-         -HotPathMaxBytes; what a subagent reads at start (AGENTS.md +
+         -HotPathMaxBytes; what a quick-fix BSL edit loads ($quickFixFiles)
+         stays under -QuickFixMaxBytes; what a subagent reads at start (AGENTS.md +
          subagent-core.md + its own prompt) stays under -SubagentStartMaxBytes.
          Growth of any of them is a per-task token cost, so it has to be a
          visible decision, not drift.
@@ -72,6 +73,12 @@
     Byte ceiling for the combined files a typical full-cycle BSL change loads.
     Ratchet it downward as the set shrinks.
 
+.PARAMETER QuickFixMaxBytes
+    Byte ceiling for the files a quick-fix BSL edit loads. The quick-fix path
+    closes on verification-policy.md alone, without the gates / delivery /
+    playbooks files; this ceiling keeps it from drifting back to the
+    full-cycle set.
+
 .PARAMETER SubagentStartMaxBytes
     Byte ceiling for AGENTS.md + content/rules/subagent-core.md + the largest
     agent prompt - the context every subagent pays before its first action.
@@ -101,6 +108,7 @@ param(
     [int]$AgentsMaxBytes = 11264,
     [int]$RuleMaxBytes = 40960,
     [int]$HotPathMaxBytes = 126976,
+    [int]$QuickFixMaxBytes = 61440,
     [int]$SubagentStartMaxBytes = 28672,
     [int]$SkillDescriptionMaxBytes = 300,
     [int]$AgentDescriptionMaxBytes = 250,
@@ -814,6 +822,28 @@ foreach ($rel in $hotPathFiles) {
 Write-Host ('Full-cycle load set: {0:N0} bytes (~{1:N0} tokens), ceiling {2:N0}' -f $hotBytes, [math]::Round($hotBytes / 3.7), $HotPathMaxBytes)
 if ($hotBytes -gt $HotPathMaxBytes) {
     Add-Problem -Level error -File (Join-Path $Root 'AGENTS.md') -Message ('full-cycle load set exceeded: ' + $hotBytes + ' bytes > ' + $HotPathMaxBytes + '. Deduplicate against the owning rule or move trigger-only detail out of the set.')
+}
+
+# What a quick-fix BSL edit loads: triage with its self-contained Quick-fix gate, tool
+# and MCP policy, the router and the validate skill, the standards index and memory.
+# verification-gates / verification-delivery / tooling-playbooks are deliberately absent:
+# a quick-fix that needs them again has lost its short path, so the set has its own
+# ceiling. Keep in sync with AGENTS.md -> Triage and verification-policy.md -> Quick-fix gate.
+$quickFixFiles = @(
+    'AGENTS.md',
+    'content/rules/verification-policy.md', 'content/rules/tool-policy.md', 'content/rules/mcp-policy.md',
+    'content/rules/coding-standards.md', 'content/rules/project-memory.md',
+    'content/skills/mcp-1c-tools/SKILL.md', 'content/skills/1c-validate/SKILL.md'
+)
+$quickBytes = 0
+foreach ($rel in $quickFixFiles) {
+    $path = Join-Path $Root $rel
+    if (Test-Path -LiteralPath $path) { $quickBytes += Get-BudgetBytes $path }
+    else { Add-Problem -Level error -File $path -Message 'quick-fix budget: listed file is missing - update $quickFixFiles' }
+}
+Write-Host ('Quick-fix load set: {0:N0} bytes (~{1:N0} tokens), ceiling {2:N0}' -f $quickBytes, [math]::Round($quickBytes / 3.7), $QuickFixMaxBytes)
+if ($quickBytes -gt $QuickFixMaxBytes) {
+    Add-Problem -Level error -File (Join-Path $Root 'content/rules/verification-policy.md') -Message ('quick-fix load set exceeded: ' + $quickBytes + ' bytes > ' + $QuickFixMaxBytes + '. A quick-fix closes on the Quick-fix gate alone; move full-cycle detail back to its owner.')
 }
 
 $corePath = Join-Path $Root 'content/rules/subagent-core.md'
