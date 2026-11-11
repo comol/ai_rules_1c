@@ -2,7 +2,7 @@
 
 Graph metadata server: scoped Neo4j graph, BSL call graph, forms, evidence, impact and project lifecycle. Structural/template tools are deterministic; `answer_metadata_question` and natural-language `search_metadata` require an LLM unless the deployment is in graph-only mode.
 
-> Load this file only if `1c-graph-metadata-mcp` is actually exposed in the current session. The published surface varies with `MCP_TOOL_PROFILE` and feature gates; `list_graph_capabilities` / `get_graph_tool_schema` are authoritative.
+> Load this file only if `1c-graph-metadata-mcp` is actually exposed in the current session. The published surface varies with `MCP_TOOL_PROFILE` (default `standard`) and feature gates; `list_graph_capabilities` / `get_graph_tool_schema` are authoritative.
 
 ## Contract and scope — read before calling
 
@@ -26,7 +26,7 @@ Graph metadata server: scoped Neo4j graph, BSL call graph, forms, evidence, impa
 
 ### Tools not automatically project-scoped
 
-Discovery/health/contract tools (`get_metadata_prompt`, `get_indexing_status`, `health_graph`, `get_graph_capabilities`, `list_graph_capabilities`, `get_graph_tool_schema`, `metadata_report`), project lifecycle tools, plugin reload, and ordinary-form file tools receive only universal paging controls from the wrapper. A `project_id` shown in their own schema is a normal domain argument.
+Discovery/health/contract tools (`get_metadata_prompt`, `get_indexing_status`, `health_graph`, `get_graph_capabilities`, `list_graph_capabilities`, `get_graph_tool_schema`), project lifecycle tools, plugin reload, and ordinary-form file tools receive only universal paging controls from the wrapper. A `project_id` shown in their own schema is a normal domain argument.
 
 ## Recommended workflow
 
@@ -170,16 +170,15 @@ An ordinary `Form.bin` is a binary container, not XML. Do not edit it directly. 
 |---|---|
 | `health_graph` | Process, Neo4j, provider and per-lane readiness; pass `project_id` for exact lane state |
 | `get_indexing_status` | Background tasks plus `source_refresh` drift, skipped ticks and last refresh/error; `completed` alone does not certify current sources |
-| `get_graph_schema` | Node and edge kinds in the selected project |
-| `get_graph_stats` | Graph/evidence counters for the selected project; no domain `label` filter |
-| `list_graph_indexes` | Neo4j index state/population |
+| `get_graph_schema` | Node and edge kinds in the selected project; `admin` profile only |
+| `get_graph_stats` | Graph/evidence counters for the selected project; no domain `label` filter; `admin` profile only |
+| `list_graph_indexes` | Neo4j index state/population; `admin` profile only |
 | `get_graph_capabilities` | Local analysis vs delegated capabilities and graph-only degradation |
 | `list_graph_capabilities` | Published tools, contract version/profile/feature gates/limits, disabled lanes (e.g. business search) and the installation notices (`GRAPH_SCOPE_ENFORCED`, `REFERENCE_EVIDENCE_ENABLED`, active generation) — these are reported here once, not on every answer |
 | `get_graph_tool_schema` | Exact JSON Schema, annotations and example for one tool — after a schema rejection, or for a tool this file does not describe; not a preamble |
 | `get_metadata_prompt` | Graph schema, the JSON operation catalogue and the Cypher template list (~40 KB); read once per session at most, only when the tables above do not answer; does **not** authorize raw Cypher |
 | `run_graph_cypher_template` | Execute one allow-listed read-only `template_id`; values travel separately in `arguments`, and project-scope names are forbidden there |
 | `list_plugins` | Loaded plugins, hooks/tables/presets, failures and plugin epoch |
-| `metadata_report` | Tombstone explaining replacements for the removed monolithic report |
 
 In graph-only mode, structural graph/template/fulltext functions continue while LLM/vector-dependent lanes report explicit degradation. Do not call missing providers a total outage; inspect `health_graph` and capabilities.
 
@@ -193,11 +192,11 @@ A disabled business-search lane is absent from `tools/list` on current builds an
 | `get_graph_project_status` | `project_id`, optional `operation_id`, `generation` | Active/staging generations, readiness and recorded operation progress |
 | `register_graph_project` | `project_id`, `configuration_root`, `operation_id`, `mode="full"` | Register a source; idempotent operation ID. After a container restart the in-memory registry is empty until this is called again for the same base project |
 | `refresh_graph_project` | `project_id`, `operation_id`, `mode="incremental"`, optional `changed_paths`, `expected_generation` | Mode-dependent rebuild; read the mutation and failure boundaries below |
-| `refresh_extension_layers` | `operation_id`, optional `layers` (list of names) | Admin-only reread of this installation's extension catalog; no `project_id` selector |
+| `refresh_extension_layers` | `operation_id`, optional `layers` (list of names) | Reread of this installation's extension catalog (not in `read-only`); no `project_id` selector |
 | `delete_graph_project` | `project_id`, `operation_id` | Destructive scoped deletion |
 | `reload_plugins` | `operation_id` | Atomic plugin reload; derived-state hooks affect the next build and invalidate old cursors |
 
-`MCP_TOOL_PROFILE=admin` publishes lifecycle, plugin reload and ordinary-form write tools. `read-only` omits them from `tools/list`; do not attempt to call hidden tools. Plugins are enabled by default in current source. Call-scoped hooks affect the next call; derived-state hooks change the build fingerprint and require a new generation.
+`MCP_TOOL_PROFILE` defaults to `standard`: everything except the operator diagnostics `get_graph_schema`, `get_graph_stats` and `list_graph_indexes`, with `register_graph_project`, `refresh_graph_project` and `delete_graph_project` published only when `GRAPH_SCOPE_ENFORCED=true` (`refresh_graph_project` also with `SOURCE_UNIT_MANIFEST_ENABLED=true`) — without it they cannot succeed. `admin` publishes every tool. `read-only` omits lifecycle, plugin reload, `refresh_extension_layers` and the ordinary-form write tools. Do not attempt to call hidden tools; `list_graph_capabilities` names what this installation withholds and why. Plugins are enabled by default in current source. Call-scoped hooks affect the next call; derived-state hooks change the build fingerprint and require a new generation.
 
 Lifecycle tools own independent base-project sources. They do not turn separately registered projects into extension layers. If the deployment uses an extension catalog, ingest the catalog through the server deployment and query every layer under the returned base `project_id`.
 

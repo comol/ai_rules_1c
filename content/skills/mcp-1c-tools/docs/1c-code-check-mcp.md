@@ -34,7 +34,6 @@ The image published since 2026-08-24 bounds a whole upstream operation by one bu
 | Tool | Purpose | When to use |
 |---|---|---|
 | **search_1c_documentation** | Search platform documentation for a specific version (`v8.3.25`) | Verify method signatures in a specific version, version-specific platform features |
-| **onec_help** | Deprecated compatibility alias for `search_1c_documentation` using the server's concrete default version | Existing callers only; new calls should use `search_1c_documentation(query, version)` and inspect `version_used` |
 | **its_help** | Search the ITS knowledge base (standards, methodology) | Find ITS standards, best practices. **Returns document IDs → use `fetch_its`** |
 | **fetch_its** | Read the full content of an ITS document by ID | **Always after `its_help`** — read every found article. Special IDs: `root`, `v8std` |
 | **diff_1c_documentation_versions** | Compare documentation between platform versions | Changes between versions (`v8.3.25` → `v8.5.1`) |
