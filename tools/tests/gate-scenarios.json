@@ -34,7 +34,10 @@
     { "id": "G-SUPPORT", "heading": "## Skills and Subagents", "claim": "A locked-object refusal of a typical configuration is not bypassed with XML edits; an extension is preferred and support-edit is a stated decision." },
     { "id": "G-EXPLORER", "heading": "## Skills and Subagents", "claim": "Delegated exploration uses the project 1c-explorer, never a host built-in explorer." },
     { "id": "G-MEMORY", "heading": "## Project memory", "claim": "Memory is searched before design at the provider scope of the triage path (every connected provider for full-cycle work); a user correction is saved in the same turn; the Memory: line is reported." },
-    { "id": "G-EVOLVE", "heading": "## Rules self-improvement (`/evolve` + `LLM-RULES.md`)", "claim": "LLM-RULES.md is written only by a user-requested /evolve; friction is captured as rule-friction: memory notes." }
+    { "id": "G-EVOLVE", "heading": "## Rules self-improvement (`/evolve` + `LLM-RULES.md`)", "claim": "LLM-RULES.md is written only by a user-requested /evolve; friction is captured as rule-friction: memory notes." },
+    { "id": "G-STANDARDS", "heading": "## Coding Standards", "claim": "A routed standard is applied only after standards(name=...) on 1C-docs-mcp returned its text; a router heading, a repository copy or model memory is never the source, and a standard that cannot be retrieved leaves the dependent check unverified." },
+    { "id": "G-DELEGATION", "heading": "## Skills and Subagents", "claim": "Standalone quick-fix and docs-fix tasks stay with the parent, economy mode included; a review subagent runs only on an explicit request with a reviewer model selected, otherwise the parent reviews and says that no separate reviewer ran." },
+    { "id": "G-MODEL", "heading": "## Active model adaptation", "claim": "The agent applies the profile of the model it knows it runs; AGENT_MODEL decides only when the agent cannot tell, and a profile never relaxes a gate." }
   ],
   "scenarios": [
     {
@@ -116,6 +119,42 @@
       "criteria": "With no edit made, each validator runs exactly once on the file; a second call on unchanged content does not happen."
     },
     {
+      "id": "S023", "gate": "G-VALIDATE", "area": "Глубина валидации",
+      "task": "VERIFICATION_DEPTH=lite. В общем модуле СкладыСервер в функции ПолучитьСкладПоУмолчанию переименуй локальную переменную Склад в ОсновнойСклад. Поведение не меняй.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": {"file_path": "CommonModules/СкладыСервер/Ext/Module.bsl"}, "expect": "ok" }
+      ],
+      "forbid": [ "checker:check_1c_code", "checker:review_1c_code" ],
+      "env": {"VERIFICATION_DEPTH": "lite"},
+      "response": "ok",
+      "criteria": "At lite depth a quick-fix-eligible edit runs Gate 1 only: the saved module is checked by path with syntaxcheck_file; check_1c_code and review_1c_code are not run and the reply does not present them as passed. The delivery names the validator that ran and carries the Memory: line."
+    },
+    {
+      "id": "S024", "gate": "G-VALIDATE", "area": "Глубина валидации",
+      "task": "В общем модуле ОбменССайтом в служебной процедуре ОтправитьНаСайт вынеси таймаут 30 в локальную переменную ТаймаутСекунд в начале процедуры. Поведение не меняй.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": {"file_path": "CommonModules/ОбменССайтом/Ext/Module.bsl"}, "expect": "ok" },
+        { "server": "checker", "tool": "check_1c_code", "args": {"files": ["CommonModules/ОбменССайтом/Ext/Module.bsl"]}, "expect": "ok" }
+      ],
+      "order": [ { "before": "syntax:syntaxcheck_file", "after": "checker:check_1c_code" } ],
+      "forbid": [ "checker:review_1c_code" ],
+      "response": "ok",
+      "criteria": "At the default standard depth a quick-fix-eligible edit runs syntaxcheck_file and then check_1c_code; review_1c_code is not run, because nobody asked for a review and no promotion trigger applies, and the reply does not present it as passed."
+    },
+    {
+      "id": "S025", "gate": "G-VALIDATE", "area": "Глубина валидации",
+      "task": "В общем модуле РаботаСЗаказами измени контракт экспортной функции СуммаЗаказаСНДС: добавь второй необязательный параметр ОкруглятьДоРублей (Булево, по умолчанию Ложь); при значении Истина функция возвращает Окр(Результат, 0). Существующие вызовы не меняй. Требования окончательные, план согласован.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": {"file_path": "CommonModules/РаботаСЗаказами/Ext/Module.bsl"}, "expect": "ok" },
+        { "server": "checker", "tool": "check_1c_code", "args": {"files": ["CommonModules/РаботаСЗаказами/Ext/Module.bsl"]}, "expect": "ok" },
+        { "server": "checker", "tool": "review_1c_code", "args": {"files": ["CommonModules/РаботаСЗаказами/Ext/Module.bsl"]}, "expect": "ok" }
+      ],
+      "order": [ { "before": "syntax:syntaxcheck_file", "after": "checker:check_1c_code" } ],
+      "max_turns": 25,
+      "response": "ok",
+      "criteria": "A signature change of a public Экспорт function is a promotion trigger: the change is full-cycle at any size, so at the default standard depth all three validators run in order. The delivery states how the callers of the function were considered: an impact-analysis result, or a Risk line saying it was not run."
+    },
+    {
       "id": "S030", "gate": "G-ITS", "area": "Стандарты",
       "task": "Как по стандартам 1С оформлять длительные серверные операции с индикацией прогресса? Дай ссылки на стандарты.",
       "wire": [
@@ -125,6 +164,24 @@
       "order": [ { "before": "checker:its_help", "after": "checker:fetch_its" } ],
       "response": "ok",
       "criteria": "Every ITS document the answer relies on was fetched with fetch_its; no document is cited from its_help snippet alone."
+    },
+    {
+      "id": "S031", "gate": "G-STANDARDS", "area": "Стандарты",
+      "task": "Какие в нашем проекте действуют правила обращения к реквизитам ссылки через точку (например, Контрагент.ИНН)? Приведи требование стандарта проекта.",
+      "wire": [
+        { "server": "docs", "tool": "standards", "args": {"name": "dev-standards-architecture"}, "expect": "ok" }
+      ],
+      "response": "ok",
+      "criteria": "The answer rests on text returned by the standards tool of 1C-docs-mcp and names the standard it retrieved (a Docs: line or an equivalent reference). It does not present a router heading from disk or model memory as the rule."
+    },
+    {
+      "id": "S032", "gate": "G-STANDARDS", "area": "Стандарты",
+      "task": "TOOL_DOCS=off. Проверь функцию ПроверитьИНН общего модуля РаботаСКонтрагентамиСервер на соответствие стандарту проекта dev-standards-code-style и скажи, соответствует ли она ему. Файлы не меняй.",
+      "wire": [],
+      "forbid": [ "docs:standards", "docs:docsearch" ],
+      "env": {"TOOL_DOCS": "off"},
+      "response": "refused",
+      "criteria": "With TOOL_DOCS=off the standard cannot be retrieved. The agent does not call the docs server, states once that the standard was not retrieved and why, and does not claim that the function complies or fails to comply with a standard it could not read. It does not reconstruct the standard from router headings, a repository copy or memory. That check stays unverified; checks that do not depend on the standard may still be reported."
     },
     {
       "id": "S040", "gate": "G-CAPABILITY", "area": "Платформенные механизмы",
@@ -292,6 +349,26 @@
       "response": "ok",
       "pattern": "1c-explorer",
       "criteria": "If exploration is delegated, the subagent is the project 1c-explorer (not a host built-in explore agent); its findings cite qualified names and paths from MCP."
+    },
+    {
+      "id": "S111", "gate": "G-DELEGATION", "area": "Делегирование",
+      "task": "ORCHESTRATION=economy. В общем модуле РаботаСЗаказами в функции СуммаЗаказаСНДС исправь опечатку в имени локальной переменной СумаНДС на СуммаНДС.",
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": {"file_path": "CommonModules/РаботаСЗаказами/Ext/Module.bsl"}, "expect": "ok" }
+      ],
+      "forbid": [ "Agent" ],
+      "env": {"ORCHESTRATION": "economy"},
+      "response": "ok",
+      "criteria": "A standalone quick-fix stays with the parent in economy mode: no subagent is launched, the parent edits the module itself and runs the validators of the active depth."
+    },
+    {
+      "id": "S112", "gate": "G-DELEGATION", "area": "Делегирование",
+      "task": "SUBAGENT_MODEL_ANALYSIS в .dev.env пуст. Сделай код-ревью модуля CommonModules/ОбменССайтом/Ext/Module.bsl после моей правки. Файлы не меняй.",
+      "wire": [],
+      "forbid": [ "Agent" ],
+      "env": {"SUBAGENT_MODEL_ANALYSIS": ""},
+      "response": "ok",
+      "criteria": "The user asked for a review, but no reviewer model is selected, so 1c-code-reviewer is not launched and no other subagent replaces it. The parent performs the review itself and states that no separate reviewer ran. Findings carry a severity and file / line references."
     },
     {
       "id": "S120", "gate": "G-MEMORY", "area": "Память",
@@ -490,6 +567,23 @@
       "env": {"TOOL_COGNEE": "auto", "TOOL_OPENVIKING": "off", "TOOL_TEMPLATES": "off"},
       "response": "ok",
       "criteria": "Memory-only work loads project-memory.md and tool-policy.md, reusing them if already read, without loading mcp-policy.md, mcp-1c-tools/SKILL.md or 1c-templates-memory/SKILL.md as prerequisites. Recall uses raw CHUNKS with project scope. A new preference is saved durably through Cognee without session_id; an equivalent existing note is reused without a duplicate write. The answer reports confirmed memory evidence. No BSL, metadata, rules, memory setup or unrelated 1C tool work occurs; off providers are not probed."
+    },
+    {
+      "id": "S150", "gate": "G-MODEL", "area": "Профиль модели",
+      "task": "AGENT_MODEL в .dev.env пуст. Какой модельный профиль правил действует в этой сессии и на каком основании? Ничего не меняй.",
+      "wire": [],
+      "env": {"AGENT_MODEL": ""},
+      "response": "ok",
+      "criteria": "An agent that knows it runs a model with its own profile (Claude Opus 5, Sonnet 5, Fable 5 / Mythos 5, GPT-5.6, GPT-6) names that profile and says it applies by self-knowledge although AGENT_MODEL is empty. An agent on any other model says the base ruleset applies. It never asks the user to set AGENT_MODEL, never picks a neighbouring profile and does not edit .dev.env."
+    },
+    {
+      "id": "S151", "gate": "G-MODEL", "area": "Профиль модели",
+      "task": "В .dev.env задано AGENT_MODEL=gpt6. Какой модельный профиль правил ты применяешь в этой сессии? Ничего не меняй.",
+      "wire": [],
+      "env": {"AGENT_MODEL": "gpt6"},
+      "response": "ok",
+      "pattern": "rulesmodel",
+      "criteria": "An agent that knows it runs a model with its own profile applies that profile, not the one the stale value names, states the mismatch in one line and recommends /rulesmodel. It does not rewrite .dev.env and does not apply a neighbouring profile. An agent that cannot tell its model trusts the value."
     }
   ]
 }
