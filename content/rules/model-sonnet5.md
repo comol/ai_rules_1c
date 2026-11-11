@@ -6,7 +6,7 @@ category: workflow
 
 # Model profile — Claude Sonnet 5
 
-**Load:** `AGENT_MODEL=sonnet5`, or you know you run as Claude Sonnet 5; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written.
+**Load:** you know you run as Claude Sonnet 5, or cannot tell and `AGENT_MODEL=sonnet5`; never with `AGENT_MODEL=off`; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written.
 
 ## 1. Literal instruction following — state scope explicitly
 
@@ -37,5 +37,5 @@ A stated severity bar makes the model withhold lower-severity findings it did in
 The model tracks its remaining context, and its tokenizer emits ~30 % more tokens than Sonnet 4.6.
 
 - Do not wrap up early because context feels tight: finish; when the window genuinely runs short, save state (`content/skills/handoff`, `remember`) and continue or hand off cleanly.
-- Load the always-on layer plus what triage selects — nothing "for context"; an obligation restated in several files is one obligation.
+- Load the always-on layer plus what triage selects — nothing "for context", while every read a gate mandates still loads; an obligation restated in several files is one obligation.
 - Keep MCP queries narrow (`detail_level="L0"`, `names_only`, `project_name` / category filters) instead of pulling whole modules. `ORCHESTRATION=economy` fits well; delegation criteria are unchanged.

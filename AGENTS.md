@@ -12,7 +12,7 @@ Apply senior-level 1C/BSL expertise within the active role's scope and permissio
 
 ## Active model adaptation
 
-`AGENT_MODEL` in `.dev.env` (`opus5`, `sonnet5`, `fable5`, `gpt56`, `gpt6`) selects one profile, `content/rules/model-<slug>.md`, read before the first non-trivial task. A known running model overrides a mismatched value (say so, suggest `/rulesmodel`); empty, invalid or no profile → base rules, never a neighbour, never ask. Profiles never relax gates (`content/rules/model-adaptation.md`).
+The model you know you run selects a profile, `content/rules/model-<slug>.md` (`opus5`, `sonnet5`, `fable5`, `gpt56`, `gpt6`), read before the first non-trivial task. `.dev.env` `AGENT_MODEL` decides only if you cannot tell; `off` disables; mismatch → say so, suggest `/rulesmodel`. No profile → base rules, no neighbour, never ask. Profiles never relax gates (`content/rules/model-adaptation.md`).
 
 ## Development Procedure
 
@@ -21,8 +21,8 @@ Apply senior-level 1C/BSL expertise within the active role's scope and permissio
 Load `content/rules/verification-policy.md` for triage and gates; task paths are independent of `/sdlc` QA profiles.
 
 1. **Docs-fix** — prose only, no BSL/metadata or verifiable 1C claims: structural checks of edited files and direct references, no BSL validators.
-2. **Spec-authoring** — OpenSpec with concrete 1C facts: confirm them via MCP first (`content/rules/sdd-integrations.md`).
-3. **Quick-fix** — one logical change in one module within `QUICKFIX_MAX_LINES` (default 40) or one isolated unwired metadata addition: two-line plan → edit → gates at `VERIFICATION_DEPTH`.
+2. **Spec-authoring** — OpenSpec with concrete 1C facts: confirm them via MCP first (`content/rules/sdd-propose.md`).
+3. **Quick-fix** — one logical change in one module within `QUICKFIX_MAX_LINES` (default 40) or one isolated unwired metadata addition: two-line plan → edit → the policy's self-contained Quick-fix gate.
 4. **Full-cycle** — everything else or material doubt: steps 1–5 to Definition of Done; review and behavioural confirmation unless explicitly waived. UI criteria follow `UI_TESTING`.
 
 Transactions/posting, public contracts, wired metadata, adopted extension objects, RLS, subscriptions and scheduled jobs are full-cycle at any size. Reduced planning never waives validation or metadata tooling.
@@ -51,7 +51,7 @@ One logical change at a time; every changed line traces to the task. Read the ed
 
 ### 4. Goal-Driven Verification — Double-Check Everything
 
-Define observable success (reproduce the bug, enumerate invalid inputs, keep behaviour across a refactor); check side effects and downstream impact; run applicable gates of `content/rules/verification-gates.md` on the final state. Missing tools or exhausted budgets are not passes.
+Define observable success (reproduce the bug, enumerate invalid inputs, keep behaviour across a refactor); check side effects and downstream impact; run applicable gates (full-cycle: `content/rules/verification-gates.md`) on the final state. Missing tools or exhausted budgets are not passes.
 
 ### 5. Deliver Clearly
 
@@ -59,7 +59,7 @@ Report changes, every modified file, checks and real limitations; for non-trivia
 
 ## Project info
 
-- Project context: `openspec/project.md` when present. Settings: `.dev.env` — never guess or duplicate values; ask only for one the current operation needs (`content/rules/dev-standards-env.md`).
+- Project context: `openspec/project.md` when present. Settings: `.dev.env` (`Grep ^[A-Z]`) — never guess or duplicate values; ask only for one the current operation needs (`content/rules/dev-standards-env.md`).
 - Read root `USER-RULES.md`, `memory.md` and, when present, `LLM-RULES.md`; precedence `USER-RULES.md`/`memory.md` → `LLM-RULES.md` → this file and on-demand rules. Unreachable required rule → report the gap, stop only dependent work.
 - **Language:** rules and `content/` prose — English; BSL identifiers/comments/literals, metadata synonyms, user-facing strings, replies and top-level human docs — Russian.
 - Monthly: on the first non-trivial task check `.ai-rules.json` `lastUpdatesCheckAt` (else `updatedAt`/`installedAt`); missing or over 30 days → `content/rules/support-feedback.md §4`, read-only `/checkupdates` once at the end, never auto-update.
@@ -125,4 +125,4 @@ Load `content/rules/<name>.md` on its trigger only; routers pull companions and 
 
 # Spec-driven development workspace
 
-`openspec/specs/` is current behaviour, `openspec/changes/` holds change artifacts; before OpenSpec work load `content/rules/sdd-integrations.md` (owns full-cycle DoD and apply completion).
+`openspec/specs/` is current behaviour, `openspec/changes/` holds change artifacts; before OpenSpec work load `content/rules/sdd-integrations.md`.

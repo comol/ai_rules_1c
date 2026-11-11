@@ -97,4 +97,4 @@ In 1C form modules, local variables **must not** be named after standard form-el
 
 ## Module Structure
 
-The 5-region template for form modules — `module-structure.md → Form Module`; all 5 regions are mandatory even when empty.
+The region template for form modules — `module-structure.md → Form Module`; its regions are mandatory even when empty.

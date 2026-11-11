@@ -28,6 +28,10 @@ Load the owner that matches the task; do not preload the whole set. Routed stand
 
 Before writing new code: `search_function`, `ssl_search`, `templatesearch`, `codesearch` — an existing export method, a БСП API or a template beats new code. A `templatesearch` hit for the same task is the base (`mcp-policy.md → A.9`); a specialized capability (cryptography, СЛАУ, data analysis, collaboration system, integration bus, full-text search, regex) triggers the platform-capability check before any custom implementation (`mcp-policy.md → A.7`).
 
+### Check reuse before a new helper
+
+Before writing a **new helper method whose behaviour is not dictated by customer-specific business rules**, make a short, targeted search for an existing public platform, БСП or typical-configuration/project API. Use available MCP first: `docsearch` for platform capabilities, `ssl_search` for БСП and `search_code` / the project index for configuration code, selecting the relevant layers by the helper's purpose. Confirm the candidate's public interface and applicability; reuse sufficient fresh evidence and stop once a suitable method is found, without mechanically querying every source or duplicating MCP with file search. If MCP is unavailable, use the available project code or documentation and record the exact limitation; MCP absence alone does not block implementation and does not mean "no analogue exists". Record the result as `Typical reuse:` under `verification-delivery.md`; customer-specific business logic alone does not trigger this step.
+
 ## Project rules stricter than the ITS standard
 
 Rules tagged **`[Project rule — stricter than ITS standard]`** are project decisions, not ITS requirements: refer to them as such, state the delta vs ITS when asked, and never weaken them silently "to match ITS" — raise the question and let the user decide. Following the convention already used by the code you edit is not weakening.

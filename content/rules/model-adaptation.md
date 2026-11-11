@@ -6,7 +6,7 @@ category: workflow
 
 # Active model adaptation
 
-**When to load this file:** when you need the routing / precedence contract of the model layer — at the start of a session where `AGENT_MODEL` is set in `.dev.env`, when the user runs `/rulesmodel`, when a profile and a base rule appear to conflict, or when the value in `.dev.env` does not match the model you are actually running. For the concrete behavioural deltas load the profile file itself (`content/rules/model-<slug>.md`); this file is the router, not the content.
+**When to load this file:** when you need the routing / precedence contract of the model layer — the user runs `/rulesmodel`, a profile and a base rule appear to conflict, a profile is being edited, or `AGENT_MODEL` in `.dev.env` names a model other than the one you are running. **Not at session start:** for ordinary work the profile file (`content/rules/model-<slug>.md`) is self-sufficient; this file is the router, not the content.
 
 ## 1. What this layer is
 
@@ -18,24 +18,28 @@ Sources of the deltas: the Anthropic prompting best-practices set (`platform.cla
 
 ## 2. Selecting the profile
 
-| `AGENT_MODEL` | Model | Profile file |
-|---|---|---|
-| `opus5` | Claude Opus 5 | `content/rules/model-opus5.md` |
-| `sonnet5` | Claude Sonnet 5 | `content/rules/model-sonnet5.md` |
-| `fable5` | Claude Fable 5 (and Claude Mythos 5) | `content/rules/model-fable5.md` |
-| `gpt56` | GPT-5.6 | `content/rules/model-gpt56.md` |
-| `gpt6` | GPT-6 Astra | `content/rules/model-gpt6.md` |
-| *empty / missing / unknown* | any other model | *no profile — the base ruleset applies as written* |
+The profile follows **the model you know you are running**. `AGENT_MODEL` in `.dev.env` is the fallback for an agent that cannot tell, and the project's off switch.
 
-- **`AGENT_MODEL` is Defaulted** (`content/rules/dev-standards-env.md → "AGENT_MODEL — active-model profile of the parent agent"`): missing file, missing key, empty or unrecognised value means "no model layer". Never ask for it at task time, never guess it, never treat its absence as a defect — the base ruleset is complete without it. The canonical editor is the `/rulesmodel` command (`content/commands/rulesmodel.md`).
+| Model you run | Slug | Profile file |
+|---|---|---|
+| Claude Opus 5 | `opus5` | `content/rules/model-opus5.md` |
+| Claude Sonnet 5 | `sonnet5` | `content/rules/model-sonnet5.md` |
+| Claude Fable 5 (and Claude Mythos 5) | `fable5` | `content/rules/model-fable5.md` |
+| GPT-5.6 | `gpt56` | `content/rules/model-gpt56.md` |
+| GPT-6 Astra | `gpt6` | `content/rules/model-gpt6.md` |
+| any other model | — | *no profile — the base ruleset applies as written* |
+
+- **Self-knowledge first.** If you know you are running a model that has a profile, apply **that** profile whatever `AGENT_MODEL` holds — empty, missing, unrecognised or the slug of another model. `AGENT_MODEL` is a project setting and may have been written for a different client: when it names another model, state the mismatch in one line and recommend `/rulesmodel` — do not silently rewrite `.dev.env` mid-task.
+- **`AGENT_MODEL` decides only when you cannot tell what you are running:** a slug from the table selects that profile; an empty, missing or unrecognised value means no model layer.
+- **`AGENT_MODEL=off` switches the layer off for the project** — no profile is applied even when you know your model. `/rulesmodel off` writes it; `/rulesmodel reset` clears the key again.
+- **Never ask** for the value at task time, never guess it, never treat its absence as a defect — the base ruleset is complete without a profile. The canonical editor is the `/rulesmodel` command (`content/commands/rulesmodel.md`).
 - **Load once per session**, before the first non-trivial task, together with the rest of the always-on layer. A profile is small (≈1–2k tokens); do not re-read it per task and do not load more than one.
-- **Self-knowledge wins over a stale value.** `AGENT_MODEL` is a project setting and may have been written for a different client. If you know you are running a model that has a profile, apply **that** profile, state the mismatch in one line, and recommend `/rulesmodel` — do not silently rewrite `.dev.env` mid-task. If the value names a model that has a profile and you cannot tell what you are running, trust the value.
 - **No family guessing.** A model without its own profile (Claude Opus 4.8 / 4.6, Sonnet 4.6, GPT-5.5 and earlier, and every non-Anthropic / non-OpenAI model) runs the base ruleset. GPT-5.6 (`gpt56`) and GPT-6 Astra (`gpt6`) are different profiles — do not apply one to the other. Applying a neighbouring profile "because it is close" is wrong — profiles encode deltas that are only correct for the named model. The user may still opt in explicitly through `/rulesmodel <slug>`; then honour the choice and say which profile is active.
-- **Not the same thing as `SUBAGENT_MODEL_*`.** `AGENT_MODEL` describes the model **you** (the parent agent) run on and tunes your behaviour. `SUBAGENT_MODEL_CODING` / `_ANALYSIS` / `_LIGHT` are the concrete models the **installer** stamps into subagent files per tier (`content/rules/subagents.md → Model-tier routing`, edited by `/economymode models`). Changing one never changes the other. A subagent running a different model applies its own profile only if its client resolves one; the parent does not translate profiles for it.
+- **Subagents select their own profile.** `AGENT_MODEL` describes the model the **parent** runs on; `SUBAGENT_MODEL_CODING` / `_ANALYSIS` / `_LIGHT` are the concrete models the **installer** stamps into subagent files per tier (`content/rules/subagents.md → Model-tier routing`, edited by `/economymode models`). Changing one never changes the other. A subagent applies a profile only from its own knowledge of the model it runs and never takes one from `AGENT_MODEL`; the parent does not translate profiles for it (`content/rules/subagent-core.md`).
 
 ## 3. Accepted spellings (normalisation)
 
-Free-form input (`/rulesmodel` or a manual `.dev.env` edit) resolves to a slug from §2 by **family + major version**, case-insensitive, ignoring spaces, dashes, dots, underscores, vendor prefixes, client-side effort suffixes and language (`anthropic/claude-opus-5#xhigh` → `opus5`). Ambiguous or unsupported input (`gpt-5.5`, `opus 4.8`, `haiku`, a bare `claude` or `5`, …) resolves to **nothing** — base ruleset, never a silently coerced neighbour. The value written is always the dot-free slug of §2 (`gpt56`, `gpt6`) — rule file names and the `AGENTS.md` path rewriting require it. Alias table — `content/commands/rulesmodel.md → Accepted spellings`.
+Free-form input (`/rulesmodel` or a manual `.dev.env` edit) resolves to a slug from §2 by **family + major version**, case-insensitive, ignoring spaces, dashes, dots, underscores, vendor prefixes, client-side effort suffixes and language (`anthropic/claude-opus-5#xhigh` → `opus5`). Ambiguous or unsupported input (`gpt-5.5`, `opus 4.8`, `haiku`, a bare `claude` or `5`, …) resolves to **nothing** — no slug is written, never a silently coerced neighbour. The value written is always the dot-free slug of §2 (`gpt56`, `gpt6`) — rule file names and the `AGENTS.md` path rewriting require it. Alias table — `content/commands/rulesmodel.md → Accepted spellings`.
 
 ## 4. Precedence — what a profile may and may not change
 
@@ -54,7 +58,7 @@ A profile tunes **how much the agent does on its own initiative** and **how it c
 
 **A profile MUST NOT** touch any of these, and any reading of a profile that seems to do so is a misreading:
 
-- the hard gates — `1c-metadata-manage` for metadata mutations and infobase-operation tooling (`AGENTS.md → Skills and Subagents`), MCP-first search (`content/rules/mcp-first-search.md`), the platform-capability check and `templatesearch` / `recall` obligations (`AGENTS.md → MCP Tool Calling → A`), and the memory gates (`AGENTS.md → Project memory`);
+- the hard gates **and the reads they mandate** — the load gate of `AGENTS.md → MCP Tool Calling` (`mcp-policy.md`, the router, the operation skill), `coding-standards.md` and `project-memory.md` before 1C work, `1c-metadata-manage` for metadata mutations and infobase-operation tooling (`AGENTS.md → Skills and Subagents`), MCP-first search (`content/rules/mcp-first-search.md`), the platform-capability check and `templatesearch` / `recall` obligations (`AGENTS.md → MCP Tool Calling → A`), and the memory gates (`AGENTS.md → Project memory`). "Lean context" in a profile trims optional reading, never a mandated one;
 - the validator chain and its budget (`syntaxcheck → check_1c_code → review_1c_code`, `mcp-policy.md → B.1`) or the gates in `content/rules/verification-gates.md`. **Mandated validator calls are tool evidence, not self-verification** — a profile that damps "over-verification" damps only the extra passes the agent invents for itself;
 - triage (`content/rules/verification-policy.md`), the `CONFUSION` obligation on material forks, the completeness / no-placeholders principle, the source-language policy, or the evidence one-liners (`Template:`, `Memory:`, `Metadata tooling:`, `IB tooling:`);
 - the requirement to confirm destructive or hard-to-reverse actions.

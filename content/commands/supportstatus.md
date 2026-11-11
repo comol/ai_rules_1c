@@ -10,7 +10,7 @@ Shows the tickets sent by `/support` from this `SUPPORT_EMAIL`. There are only t
 
 ## Preconditions
 
-The same as for `/support`: `SUPPORT_KEY` and `SUPPORT_EMAIL` are filled in `.dev.env` (`SUPPORT_API_URL` is Defaulted). Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for. Empty — do not go to the network; say what is missing and where to get it (`/support` → *Preconditions*).
+The same as for `/support`: `SUPPORT_KEY` and `SUPPORT_EMAIL` are filled in `.dev.env` (`SUPPORT_API_URL` is Defaulted). Parameters, classes and defaults — `content/rules/dev-standards-env-process.md`; Defaulted keys are never asked for. Empty — do not go to the network; say what is missing and where to get it (`/support` → *Preconditions*).
 
 A client key sees **only its own** tickets: the service filters them by `SUPPORT_EMAIL`. Other people's tickets are not returned for this key — that is not a failure.
 

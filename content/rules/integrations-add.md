@@ -26,7 +26,7 @@ For the full MCP playbook see `tooling-playbooks.md → Integrations`.
 ## 3. HTTP client
 
 - Use platform `HTTPСоединение` / `HTTPЗапрос` or the БСП wrapper. `КомпонентаHTTPСервисы` and third-party COM objects are forbidden (see `standards(name="dev-standards-architecture") §3 → "Cross-Platform Compatibility"`).
-- Connection timeout and read timeout MUST be set **explicitly** — use values from `.dev.env` or configuration constants, not magic numbers in code.
+- Connection timeout and read timeout MUST be set **explicitly** — take the values from a constant or a settings register, not magic numbers in code.
 - Any response code different from the expected one MUST be turned into a meaningful exception with `ПодробноеПредставлениеОшибки(ИнформацияОбОшибке())` written to the event log. See `standards(name="dev-standards-architecture") §3 → "Error Handling"`.
 
 ## 4. Serialization and data contract
@@ -37,7 +37,7 @@ For the full MCP playbook see `tooling-playbooks.md → Integrations`.
 
 ## 5. Security
 
-- Credentials, tokens, API keys — only via **write-protected configuration constants** or the БСП "Безопасное хранение паролей" subsystem. Hardcoding is forbidden (`standards(name="dev-standards-architecture") §3 → "Security"`).
+- Credentials, tokens, API keys — only via the БСП safe storage (`БезопасноеХранилище`; confirm the API with `ssl_search`). A configuration without БСП needs an explicit decision on secret storage (`CONFUSION`), not a plain constant. Hardcoding is forbidden (`standards(name="dev-standards-architecture") §3 → "Security"`).
 - Validate the token/session before each request; implement token refresh centrally.
 
 ## 6. Idempotency and retries

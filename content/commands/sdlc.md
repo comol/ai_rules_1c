@@ -5,7 +5,7 @@ argumentHint: "[lite|standard|full|status]"
 
 # /sdlc — named SDLC QA profiles
 
-Select the project's verification profile through `VERIFICATION_DEPTH` in `.dev.env`. Load `content/rules/verification-policy.md` before acting; it owns gate selection and retry budgets. Parameters and defaults — `content/rules/dev-standards-env.md`.
+Select the project's verification profile through `VERIFICATION_DEPTH` in `.dev.env`. Load `content/rules/verification-policy.md` before acting; it owns gate selection and retry budgets. Parameters and defaults — `content/rules/dev-standards-env-process.md`.
 
 ## Profiles and task paths
 
@@ -27,7 +27,7 @@ Trim whitespace and compare case-insensitively:
 
 ## Apply a profile
 
-1. Read the current `VERIFICATION_DEPTH` and `UI_TESTING`. Missing / empty / invalid values use their defaults from `dev-standards-env.md`.
+1. Read the current `VERIFICATION_DEPTH` and `UI_TESTING`. Missing / empty / invalid values use their defaults (`VERIFICATION_DEPTH` — `dev-standards-env-process.md`, `UI_TESTING` — `dev-standards-env.md`).
 2. Set `VERIFICATION_DEPTH` to the selected profile. Preserve `UI_TESTING` for every profile; explicit UI control is `/uitests on|manual|off|status` (`content/commands/uitests.md`).
 3. Edit only `VERIFICATION_DEPTH` in `.dev.env`, replacing the existing line or appending a missing key. Preserve all other content. If the file is missing, apply the choice to the current session only, say it is not persisted, and point to `install.ps1 init` for project setup; do not create a partial file or start installation as part of this command.
 4. Apply the effective profile immediately. No re-render, `install.ps1 update`, or client restart is required.

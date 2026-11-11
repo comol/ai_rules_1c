@@ -6,7 +6,7 @@ category: workflow
 
 # Model profile — Claude Opus 5
 
-**Load:** `AGENT_MODEL=opus5`, or you know you run as Claude Opus 5; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written. The model runs the ruleset well; these are the behaviours that most often need tuning.
+**Load:** you know you run as Claude Opus 5, or cannot tell and `AGENT_MODEL=opus5`; never with `AGENT_MODEL=off`; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written. The model runs the ruleset well; these are the behaviours that most often need tuning.
 
 ## 1. Verbosity and the delivery report
 
@@ -41,4 +41,4 @@ A stated severity bar is followed literally: "only critical issues" yields fewer
 
 ## 8. Lean context
 
-Over-constraint and repeated instructions cost this model more than they buy. Load the always-on layer plus what triage selects — nothing "for context"; an obligation restated in several files is one obligation. Context you author (briefs, memory notes, handoffs, OpenSpec) carries intent, constraints, scope, done-when and the interface — worked examples only to pin an output format; point at code instead of paraphrasing it.
+Over-constraint and repeated instructions cost this model more than they buy. Load the always-on layer plus what triage selects — nothing "for context", while every read a gate mandates still loads; an obligation restated in several files is one obligation. Context you author (briefs, memory notes, handoffs, OpenSpec) carries intent, constraints, scope, done-when and the interface — worked examples only to pin an output format; point at code instead of paraphrasing it.

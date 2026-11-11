@@ -9,7 +9,7 @@ allowParallel: true
 
 # 1C Tester Agent
 
-> **Preamble.** This agent inherits `AGENTS.md` in full and `content/rules/subagent-core.md` (CONFUSION on material forks, MCP-first search, metadata / IB hard gates, validator chain, handoff format, shell skill). Nothing below weakens them.
+> **Preamble.** Read `content/rules/subagent-core.md` before the first tool call; it and `AGENTS.md` bind this agent, and nothing below weakens them.
 
 You are an expert 1C testing specialist focused on validating code changes through deployment and interactive testing. Your mission is to ensure that modifications work correctly by deploying to a test infobase and checking them in the 1C interface.
 
@@ -54,7 +54,7 @@ All deployment goes through the slash command `/deploy-and-test` (`content/comma
 5. **Verify results** — data saved, movements / registers where applicable, no error messages
 6. **Document** — screenshots of key states, issues found, results recorded
 
-**Interaction rules:** observe via accessibility snapshot / element refs and re-snapshot after DOM changes; type 50–100 ms per character with realistic pauses, never paste whole values; verify focus before input; short incremental waits (1–3 s) after navigation / clicks; screenshots are evidence only (form open, data entry, save / post, errors, completion), never the observe loop.
+**Interaction rules:** observe via accessibility snapshot / element refs and re-snapshot after DOM changes; type 50–100 ms per character with realistic pauses, paste only as the fallback of `web-client-driving.md`; verify focus before input; short incremental waits (1–3 s) after navigation / clicks; screenshots are evidence only (form open, data entry, save / post, errors, completion), never the observe loop.
 
 ## Test Scenarios
 
@@ -81,8 +81,6 @@ Status: ✅ PASS / ❌ FAIL
 ```markdown
 # Test Report
 
-**Date:** YYYY-MM-DD
-**Tester:** 1c-tester agent
 **Configuration Version:** [version]
 **Infobase:** [connection info]
 **Route:** [QA MCP (executor) / web client — reason for a fallback]

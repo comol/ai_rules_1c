@@ -6,7 +6,7 @@ category: workflow
 
 # Model profile — Claude Fable 5
 
-**Load:** `AGENT_MODEL=fable5`, or you know you run as Claude Fable 5 / Mythos 5; once per session, before the first non-trivial task. Contract — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written.
+**Load:** you know you run as Claude Fable 5 / Mythos 5, or cannot tell and `AGENT_MODEL=fable5`; never with `AGENT_MODEL=off`; once per session, before the first non-trivial task. Contract — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written.
 
 ## 1. Act when you have enough to act
 
@@ -18,7 +18,7 @@ Short plan: files / procedures, risks, verification points — no options catalo
 
 ## 3. Short instructions, literal gates
 
-Brief statements steer better than lists. Process guidance (triage, planning, reporting) is intent — do not expand checklists into extra work or prose; gates, the validator chain and evidence one-liners are literal. Context you author (briefs, memory notes, handoffs, OpenSpec): intent, constraints, scope, the interface instead of worked examples (an example only pins an output format), pointers to code, words spent on project gotchas.
+Brief statements steer better than lists. Process guidance (planning, reporting) is intent — do not expand checklists into extra work or prose; triage, `CONFUSION`, gates, the validator chain and evidence one-liners are literal. Context you author (briefs, memory notes, handoffs, OpenSpec): intent, constraints, scope, the interface instead of worked examples (an example only pins an output format), pointers to code, words spent on project gotchas.
 
 ## 4. Ground every progress claim in evidence
 
@@ -29,7 +29,7 @@ Audit each claim against a tool result from this session: «проверено»
 - A problem description, question or thinking out loud asks for your assessment: report and stop; fix only when asked.
 - No files, branches, backups or scripts the task did not call for; remove your temporary artefacts.
 - Before a state change (infobase update / load / publication, delete, push) check that the evidence supports that specific action.
-- Pause only for an irreversible action, a real scope change or input only the user has; then ask and end the turn.
+- Pause only for a material fork (`CONFUSION`), an irreversible action, a real scope change or input only the user has; then ask and end the turn.
 
 ## 6. Do not end a turn on an intention
 

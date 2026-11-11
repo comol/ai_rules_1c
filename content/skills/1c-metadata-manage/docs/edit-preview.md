@@ -10,7 +10,7 @@ The trade this makes: the wrapper cannot know what a tool *intends* to write, on
 
 ## When preview runs
 
-`METADATA_PREVIEW` in `.dev.env` (`dev-standards-env.md → Process-tuning parameters`) is **Defaulted** — empty / invalid = `auto`. The agent never asks for the value; the editor is `/previewmode`.
+`METADATA_PREVIEW` in `.dev.env` (`dev-standards-env-process.md → Process-tuning parameters`) is **Defaulted** — empty / invalid = `auto`. The agent never asks for the value; the editor is `/previewmode`.
 
 | Value | Meaning |
 |---|---|

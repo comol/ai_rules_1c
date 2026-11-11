@@ -76,7 +76,7 @@ The outer `#Если Сервер Или ТолстыйКлиентОбычно�
 #КонецОбласти
 ```
 
-All 5 form-module regions are **mandatory**, even when empty. For every form tabular section create a separate region `ОбработчикиСобытийЭлементовТаблицыФормы<ИмяТаблицы>` (replace `<ИмяТаблицы>` with the actual tabular-section name).
+The form-module regions above are **mandatory**, even when empty, and keep this order. The table region is one per form table: `ОбработчикиСобытийЭлементовТаблицыФормы<ИмяТаблицы>` named after the actual table — none when the form has no table, several when it has several, never a literal `ИмяТаблицы`. The `form-add` tool also creates `ОбработчикиОповещений` (between the command handlers and the service region); keep it.
 
 ## Global Rules
 

@@ -15,12 +15,12 @@ This file is the **router** for managed-form work. Load it first, then load only
 | Task | Load |
 |---|---|
 | Design a form layout from scratch, or when requirements do not specify element placement | `standards(name="form-patterns")` |
-| Create or structurally modify `Form.xml` | `forms-add.md`, `metadata-xml-workarounds.md` |
+| Create or structurally modify `Form.xml` | `forms-add.md` (`metadata-xml-workarounds.md` only for a hand edit under a skill exception) |
 | Programmatic modification of typical forms (element placement, fill checking, form commands) | `forms-add.md → Form-Presentation Rules` |
 | Add or rename form event handlers | `form-module.md → Adding Form Event Handlers` |
 | Edit `Form.Module.bsl` logic | `form-module.md` |
 | Server-side form-module code (reserved names `ПараметрыВыбора`, `СвязиПараметровВыбора`, `СписокВыбора`, `ПараметрыОтбора`, `ОтборСтрок`) | `form-module.md → Reserved Names` |
-| Set up module regions in a new form module | `module-structure.md → Form Module` (5 mandatory regions) |
+| Set up module regions in a new form module | `module-structure.md → Form Module` (mandatory regions) |
 | Client-server architecture (directives, round trips) | `standards(name="dev-standards-architecture") §3 → "Client-Server Interaction"`, `standards(name="anti-patterns") → "Excessive Client-Server Calls"`, `standards(name="anti-patterns") → "Using &НаСервере Instead of &НаСервереБезКонтекста"` |
 | Client-side async code (`Асинх` / `Ждать`) | `standards(name="async-methods")` |
 | Working on an adopted form of an extension | `standards(name="extension-patterns")`, `standards(name="dev-standards-architecture") §2` |

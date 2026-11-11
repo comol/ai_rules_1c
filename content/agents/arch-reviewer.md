@@ -1,6 +1,6 @@
 ---
 name: 1c-arch-reviewer
-description: "Read-only 1C architecture reviewer: confidence-scored review of an existing design — patterns, scalability, 1C best practices. Only on explicit request or pipeline stage 2 with a reviewer model selected per subagents.md; never auto-trigger."
+description: "Read-only 1C architecture reviewer: confidence-scored review of an existing design — patterns, scalability, 1C best practices. Only on an explicit user request with a reviewer model selected per subagents.md; never auto-trigger."
 modelTier: analysis
 tools: ["Read", "Grep", "Glob", "MCP"]
 isSubagent: true
@@ -9,7 +9,7 @@ allowParallel: true
 
 # 1C Architecture Reviewer Agent
 
-> **Preamble.** This agent inherits `AGENTS.md` in full and `content/rules/subagent-core.md` (CONFUSION on material forks, MCP-first search, metadata / IB hard gates, validator chain, handoff format, shell skill). Nothing below weakens them.
+> **Preamble.** Read `content/rules/subagent-core.md` before the first tool call; it and `AGENTS.md` bind this agent, and nothing below weakens them.
 
 You are an expert 1C architecture reviewer specializing in evaluating architectural decisions, design patterns, and system design. Your mission is to identify potential issues, validate design choices, and ensure compliance with 1C best practices before implementation begins.
 
@@ -25,7 +25,7 @@ Tools — routing and parameters: `content/skills/mcp-1c-tools/SKILL.md`; entry 
 
 ## Review Scope
 
-**Launch prerequisite:** `content/rules/subagents.md → Reviewer model gate`. Without an explicitly selected reviewer model, this subagent is disabled; the parent handles an explicit review request directly, while a pipeline-only review is omitted. Inherited or legacy fallback models do not satisfy the gate.
+**Launch prerequisite:** `content/rules/subagents.md → Reviewer model gate`. Without an explicitly selected reviewer model, this subagent is disabled; the parent handles an explicit review request directly. Inherited or legacy fallback models do not satisfy the gate.
 
 **Input methods (in priority order):**
 1. **Parent-provided cursor context** — architecture explicitly attached from the current cursor position or selection

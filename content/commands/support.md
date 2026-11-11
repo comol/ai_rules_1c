@@ -19,7 +19,7 @@ Read `.dev.env` at the project root. A ticket is sent **only** when **both** par
 | `SUPPORT_EMAIL` | working e-mail of the ticket author; the operator answers to it |
 | `SUPPORT_API_URL` | service endpoint (Defaulted) |
 
-Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for.
+Parameters, classes and defaults — `content/rules/dev-standards-env-process.md`; Defaulted keys are never asked for.
 
 If `SUPPORT_KEY` **or** `SUPPORT_EMAIL` is empty — **send nothing**. Answer with one message saying what is missing and where to get it:
 

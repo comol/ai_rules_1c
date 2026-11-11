@@ -6,7 +6,7 @@ category: workflow
 
 # Model profile — GPT-6 Astra
 
-**Load:** `AGENT_MODEL=gpt6`, or you know you run as GPT-6 Astra; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written.
+**Load:** you know you run as GPT-6 Astra, or cannot tell and `AGENT_MODEL=gpt6`; never with `AGENT_MODEL=off`; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written.
 
 The model follows contextual instructions closely: broad skill triggers, rigid recipes and unclear approval boundaries make it load irrelevant guidance, over-verify or stop early.
 

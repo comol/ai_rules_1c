@@ -2508,7 +2508,7 @@ function Read-AgentModelChoice {
     Write-Info '    [3] Claude Fable 5 / Mythos 5   (fable5)'
     Write-Info '    [4] GPT-5.6                     (gpt56)'
     Write-Info '    [5] GPT-6 Astra                 (gpt6)'
-    Write-Info '    [6] другая модель / не задавать (базовый свод правил, профиль не применяется)'
+    Write-Info '    [6] другая модель / не задавать (агент сам применит профиль своей модели, если он есть)'
     Write-Info '    [7] ввести название модели самому (в любом написании)'
     $choice = Read-Required '  Выбор модели головного агента' '6'
     switch ($choice) {
@@ -2518,10 +2518,10 @@ function Read-AgentModelChoice {
         '4' { return 'gpt56' }
         '5' { return 'gpt6' }
         '7' {
-            $raw = Read-Required '  Название модели (Enter — без профиля)' ''
+            $raw = Read-Required '  Название модели (Enter — не задавать)' ''
             $slug = Resolve-AgentModelSlug -Raw $raw
             if (-not $slug -and $raw) {
-                Write-Warn "  модель '$raw' не распознана — профиль не применяется, действует базовый свод правил (сменить позже: /rulesmodel)"
+                Write-Warn "  модель '$raw' не распознана — значение не записано, агент сам применит профиль своей модели, если он есть (сменить позже: /rulesmodel)"
             }
             return $slug
         }
@@ -4054,8 +4054,9 @@ function Place-RootTemplates {
 #   LOG_PATH    (empty = $env:TEMP\1cv8.log),
 #   SUBAGENT_MODEL_CODING / SUBAGENT_MODEL_ANALYSIS / SUBAGENT_MODEL_LIGHT
 #   (empty = AI client default model; see SECTION 7b),
-#   AGENT_MODEL (empty = no model profile, base model-neutral ruleset; the
-#   parent agent's behaviour profile, toggled by the /rulesmodel command),
+#   AGENT_MODEL (empty = the agent applies the profile of the model it knows
+#   it runs; a slug decides only for an agent that cannot tell; off = no
+#   profile; edited by the /rulesmodel command),
 #   ORCHESTRATION (empty = standard; toggled by the /economymode command),
 #   QUICKFIX_MAX_LINES (empty = 40; quick-fix line budget),
 #   DEBUG_FAST_PATH (empty = standard; debugging fast-path mode),
@@ -4374,7 +4375,8 @@ function Place-DevEnv {
 
     # Persist the parent agent's model profile (AGENT_MODEL). Asked once here,
     # only while the file is being created — an existing .dev.env is never
-    # touched, and an empty value is fully valid (no profile, base ruleset).
+    # touched, and an empty value is fully valid (the agent then selects the
+    # profile by the model it knows it runs).
     $agentModel = Resolve-AgentModel -Root $Root
     if ($agentModel) { $text = Set-DevEnvValue -Text $text -Key $script:AgentModelKey -Value $agentModel }
 
@@ -4407,7 +4409,7 @@ function Place-DevEnv {
         Write-Info ("    AGENT_MODEL = $agentModel (" + [string]$script:AgentModelProfiles[$agentModel] + ") — профиль правил model-$agentModel.md")
     }
     else {
-        Write-Info '    AGENT_MODEL не задан — профиль модели не применяется, действует базовый свод правил (задать: /rulesmodel <модель>)'
+        Write-Info '    AGENT_MODEL не задан — агент сам применит профиль своей модели, если он есть (задать явно: /rulesmodel <модель>, выключить: /rulesmodel off)'
     }
 
     # Final sanity check: report only operation-scoped empty fields. No field
@@ -4919,18 +4921,22 @@ function Write-RulesModelAnnouncement {
     param([string]$Root)
 
     $current = ''
+    $disabled = $false
     if ($Root) {
         $envPath = Join-Path $Root $script:DevEnvFileName
         if (Test-Path $envPath) {
             $keys = Read-DevEnvKeys -Path $envPath
             if ($keys.Contains($script:AgentModelKey)) {
-                $current = Resolve-AgentModelSlug -Raw ([string]$keys[$script:AgentModelKey])
+                $rawModel = [string]$keys[$script:AgentModelKey]
+                $disabled = ($rawModel.Trim() -eq 'off')
+                $current = Resolve-AgentModelSlug -Raw $rawModel
             }
         }
     }
     Write-Info ""
-    Write-Info "Адаптация правил под модель: введите /rulesmodel <модель> в чате AI-клиента (название — в любом"
-    Write-Info "написании, команда сама его распознает; /rulesmodel auto — определить текущую модель)."
+    Write-Info "Адаптация правил под модель: агент сам применяет профиль своей модели, если он есть. Задать явно —"
+    Write-Info "/rulesmodel <модель> в чате AI-клиента (название — в любом написании; /rulesmodel auto — определить"
+    Write-Info "текущую модель, /rulesmodel off — выключить профили)."
     Write-Info "Поддерживаемые профили: opus5 (Claude Opus 5), sonnet5 (Claude Sonnet 5), fable5 (Claude Fable 5),"
     Write-Info "gpt56 (GPT-5.6), gpt6 (GPT-6 Astra). Команда пишет AGENT_MODEL в .dev.env — действует на весь проект, включая новые чаты;"
     Write-Info "перерендер и перезапуск клиента не нужны. Профиль настраивает только стиль и инициативу (длина"
@@ -4938,8 +4944,11 @@ function Write-RulesModelAnnouncement {
     if ($current) {
         Write-Info ("Сейчас: AGENT_MODEL=$current (" + [string]$script:AgentModelProfiles[$current] + "). Выключить — /rulesmodel off.")
     }
+    elseif ($disabled) {
+        Write-Info "Сейчас: AGENT_MODEL=off — профили выключены, действует базовый (модель-нейтральный) свод правил. Включить — /rulesmodel reset."
+    }
     else {
-        Write-Info "Сейчас: AGENT_MODEL не задан — действует базовый (модель-нейтральный) свод правил."
+        Write-Info "Сейчас: AGENT_MODEL не задан — агент сам применяет профиль своей модели, если он есть."
     }
 }
 
