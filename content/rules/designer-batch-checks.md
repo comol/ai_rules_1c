@@ -13,7 +13,7 @@ Two situations make it mandatory:
 1. **Before applying an extension** to an infobase (`/deploy-and-test`, `/update1cbase`, `/restore-testbase`, `/build-release`). An `&Вместо` / `&ИзменениеИКонтроль` interceptor that names a method the vendor has renamed is invisible to `syntaxcheck`, `verify_xml` and `cfe-validate` alike — all three see well-formed source. `/CheckCanApplyConfigurationExtensions` is the only thing that catches it before the base breaks.
 2. **When the Gate 1–3 validators are not exposed** in the session. Use the platform fallback when a matching dev/test configuration can be established through an authorized workflow. A configured infobase alone is insufficient: checks against an older loaded version do not validate local edits (`verification-gates.md → Graceful degradation for Gates 1–3 — when a validator is not exposed`).
 
-Parameters and the ask-policy are canon in `dev-standards-env.md`; the placeholders below (`{PLATFORM_PATH}`, `{INFOBASE_FLAG}`, `{INFOBASE_PATH}`, `{IB_USER}`, `{IB_PASSWORD}`, `{EXTENSION_NAME}`, `{LOG_PATH}`) resolve exactly as in `/update1cbase`.
+Parameters and the ask-policy are canon in `dev-standards-env.md`; the placeholders below (`{PLATFORM_PATH}`, `{INFOBASE_FLAG}`, `{INFOBASE_PATH}`, `{IB_USER}`, `{IB_PASSWORD}`, `{EXTENSION_NAME}`, `{LOG_PATH}`, `{RESULT_PATH}`) resolve exactly as in `/update1cbase`.
 
 ---
 
@@ -25,9 +25,9 @@ A Designer batch run reports through three independent channels, and **any one o
 |---|---|---|
 | Process exit code | `ExitCode` of the launched `1cv8.exe` | non-zero, or the process was killed on timeout |
 | `/DumpResult {RESULT_PATH}` | the file holds the batch result as a **number**; `0` = success | any non-zero number, or the file was never written |
-| `/Out {LOG_PATH}` | diagnostics text | any error / warning line (see the trap below) |
+| `/Out {LOG_PATH}` | diagnostics text | any error line in every launch; a warning line fails a check launch (the ladder below) and is reported, not failed, in a load / dump / apply launch (see the trap below) |
 
-`/DumpResult` is the cheapest of the three and the one this ruleset was missing — **add it to every batch launch**, next to `/Out`. Exit code 0 with a non-zero `/DumpResult` is a routine outcome for a failed check.
+`/DumpResult` is the cheapest of the three; every batch launch carries it next to `/Out`. Exit code 0 with a non-zero `/DumpResult` is a routine outcome for a failed check.
 
 **One batch command per launch.** A Designer command line runs only its **last** batch command and silently drops the others: `/LoadConfigFromFiles … /CheckCanApplyConfigurationExtensions` in one line exits 0 with an empty log, and nothing is loaded (upstream measurement on 8.3.24). Run every check of the ladder as its own launch; the `db-*` / `epf-*` tools refuse a batch command passed through `PLATFORM_ARGS` / `-AdditionalV8Arguments` for the same reason.
 
@@ -43,20 +43,19 @@ A naive "does the log contain `Ошибка` / `Error`" test is **wrong**, and i
 Classify a log line in this order:
 
 1. **Recognize success fragments only.** Neutralize exact phrases such as `ошибок не обнаружено` / `предупреждений не обнаружено`, `ошибок: 0` / `предупреждений: 0`, `errors were not found`, `0 errors`; require phrase / numeric boundaries, so `0` never matches the beginning of `01` or another non-zero count. Never skip the whole line because one fragment is clean.
-2. **Then inspect every remaining fragment — any diagnostic fails the line.** `ошибк*` / `предупреждени*` in any case form, `не найден метод`, `не может быть применен*`, `невозможно`, and `error` / `fatal` / `failed` / `failure` / `exception`.
+2. **Then inspect every remaining fragment — any diagnostic fails the line.** Error stems fail every launch: `ошибк*` in any case form, `не найден метод`, `не может быть применен*`, `невозможно`, and `error` / `fatal` / `failed` / `failure` / `exception`. Warning stems (`предупреждени*`, `warning`) fail a check launch; in a load / dump / apply launch they are reported as findings without failing the run.
 3. Everything else is informational.
 
-Regression cases: `Ошибок: 0; предупреждений: 1` fails; `Ошибок не обнаружено. Не найден метод ...` fails; `Ошибок: 0; предупреждений: 0` passes the diagnostic-text signal. The other two signals still must pass.
+Regression cases: `Ошибок: 0; предупреждений: 1` fails a check launch; `Ошибок не обнаружено. Не найден метод ...` fails; `Ошибок: 0; предупреждений: 0` passes the diagnostic-text signal. The other two signals still must pass.
 
 `Не найден метод ...` is the signature failure of a broken extension interceptor, and it is routinely emitted **with process exit code 0**. That is why the exit code alone is never the verdict.
 
-**Warnings fail a check gate.** In a check run (unlike a load), a warning is a finding — `/UpdateDBCfg -WarningsAsErrors` will refuse the same content later, so accepting it here only moves the failure downstream.
+**Warnings fail a check gate.** In a check run (unlike a load), a warning is a finding: it names a defect the apply step would carry into the base.
 
 ## Common launch shape
 
 ```powershell
-$resultPath = Join-Path $env:TEMP '1cv8-result.txt'
-Remove-Item $resultPath -ErrorAction SilentlyContinue   # a stale file reads as this run's verdict
+Remove-Item '{RESULT_PATH}' -ErrorAction SilentlyContinue   # a stale file reads as this run's verdict
 
 $designerArgs = @(
     'DESIGNER',
@@ -66,13 +65,13 @@ $designerArgs = @(
     '/DisableStartupMessages', '/DisableStartupDialogs',
     # ---- the check itself goes here ----
     '/Out', '{LOG_PATH}',
-    '/DumpResult', $resultPath
+    '/DumpResult', '{RESULT_PATH}'
 )
 $p = Start-Process -FilePath '{PLATFORM_PATH}\bin\1cv8.exe' -ArgumentList $designerArgs -PassThru -WindowStyle Hidden
 if (-not $p.WaitForExit(600000)) { Stop-Process -Id $p.Id -Force }   # PID-scoped only
 ```
 
-Drop empty optional keys (`/N`, `/P`). `/DisableStartupDialogs` belongs next to `/DisableStartupMessages` — without it a modal dialog can hang the run until the timeout. Kill **only the PID this run started**; never blanket-kill `1cv8` (canon — `content/commands/update1cbase.md → Update retry loop`, step 2).
+Drop empty optional keys (`/N`, `/P`). A resolved `{LOG_PATH}` / `{RESULT_PATH}` that contains `$env:` goes in double quotes — single quotes do not expand it. `/DisableStartupDialogs` belongs next to `/DisableStartupMessages` — without it a modal dialog can hang the run until the timeout. Kill **only the PID this run started**; never blanket-kill `1cv8` (canon — `content/commands/update1cbase.md → Update retry loop`, step 2).
 
 ## Bind the check to the current artifact
 
@@ -101,22 +100,21 @@ Run in this order. Each step costs more than the one before it, and a failure at
 | 1 | **Syntax control** | `/CheckModules -ThinClient -Server -ExternalConnection [-Extension {EXTENSION_NAME}]` | BSL syntax and context errors per runtime |
 | 2 | **Applicability** (extensions only) | `/CheckCanApplyConfigurationExtensions [-Extension {EXTENSION_NAME}]` | missing intercepted methods, incompatible adopted objects, broken extension mapping |
 | 3 | **Full configuration check** | `/CheckConfig -ConfigLogIntegrity -IncorrectReferences -ThinClient -Server -ExternalConnection -HandlersExistence -ExtendedModulesCheck [-Extension {EXTENSION_NAME}]` | logical integrity, references to deleted objects, missing handlers, errors in `.`-access |
-| 4 | **Apply** | `/UpdateDBCfg -Dynamic- -WarningsAsErrors -Extension {EXTENSION_NAME}` | — (mutating; see below) |
-| 5 | **Artifact verification** | `/DumpDBCfg '{CFE_PATH}' -Extension {EXTENSION_NAME}` | proves a non-empty database extension serializes; assert the `.cfe` exists and is non-zero |
+
+An extension runs all three; the main configuration alone skips step 2. The ladder ends there: **applying is not a check**. The owning command applies after a clean ladder (`/update1cbase` Step 3 — `/UpdateDBCfg` against a confirmed dev/test base), and this file never applies a DB update on its own.
 
 Notes on the switches:
 
 - `/CheckModules` **requires at least one mode key** — it does nothing without one. Documented keys: `-ThinClient`, `-WebClient`, `-Server`, `-ExternalConnection`, `-ThickClientOrdinaryApplication`. Pick the ones the configuration actually runs in; the three in the table are the usual managed-application set.
 - `-ExtendedModulesCheck` (checks method / property access "through the dot") is documented for `/CheckConfig`. Current 8.3 platforms also accept it on `/CheckModules` — try it there, and drop it if the log reports an unknown key rather than assuming the check ran.
 - `/CheckConfig` accepts many more mode keys (`-WebClient`, `-MobileClient`, `-ThickClient*`, `-DistributiveModules`, `-UnreferenceProcedures`, `-EmptyHandlers`, …). Add the ones matching the project's run modes; the row above is the baseline, not the maximum.
-- Step 4 uses **`-Dynamic-`** deliberately: a dynamic update leaves running sessions on the old configuration, so "it applied" tells you nothing about whether it applies cleanly. This is the *verification* form. The deployment commands (`/deploy-and-test`, `/update1cbase`) use `-Dynamic+ -SessionTerminate force` against a confirmed dev/test base for speed — a different intent, and both are correct in their place.
-- Steps 1–3 are read-only. Step 4 mutates the infobase and is subject to the same dev/test confirmation as every deployment command.
+- All three steps are read-only against the infobase; loading the artifact that they check is a mutation and follows the dev/test gate of the owning command.
 
 **Budget.** One run per check per artifact state. A failing check is fixed at the source and re-run once against the changed state — re-running an unchanged artifact is forbidden, same as for the MCP validators (`mcp-policy.md → C.1`).
 
 ## Extension apply and rollback
 
-Applying an extension to a base that already has one under that name is a **replacement**, and the platform keeps no undo for you. Preserve both states first — they are different things:
+Applying an extension to a base that already has one under that name is a **replacement**, and the platform keeps no undo for you. Preserve both states first — they are different things (`{BACKUP_DIR}` is a task-local directory outside the source tree, named in the report):
 
 | Backup | Command | What it is |
 |---|---|---|

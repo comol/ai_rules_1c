@@ -53,7 +53,7 @@ Things to actively look for, because they change what to do next:
 
 ## 5. Filling fields
 
-- **Typing stays the default** — human-like typing with 50–100 ms between characters, `TAB` between fields, per `1c-tester` → "Browser Interaction Guidelines". Reference fields need real input events for the typeahead (подбор) to fire, and typing produces them.
+- **Typing stays the default** — human-like typing with 50–100 ms between characters, `TAB` between fields. Reference fields need real input events for the typeahead (подбор) to fire, and typing produces them.
 - **Clipboard paste is the documented fallback**, not the default: if a typed value does not register (the field clears on `TAB`, or the platform never fires its change event), fill via clipboard paste, then `TAB` and verify the field kept the value. Note the fallback in the test report — a field that only accepts paste is itself a finding.
 - **Clearing a field is `Shift+F4`**, not selecting the text and deleting. Deleting characters leaves reference fields in a "partially typed" state that the platform may re-resolve on exit.
 - **Reference fields:** `F4` opens the selection form (use it when the typeahead is ambiguous — pick the row explicitly), `F8` creates a new catalog item from the field.

@@ -10,7 +10,7 @@ category: workflow
 
 ## Common obligations
 
-Every subagent inherits `AGENTS.md` in full — its hard gates are not repeated in agent prompts. This section adds only what is **subagent-specific**; every agent prompt opens with a one-line preamble pointing here. Parent agents and subagent authors must not weaken any item.
+Every subagent inherits `AGENTS.md` in full — its hard gates are not repeated in agent prompts. A model profile is taken only from your own known model — `AGENT_MODEL` describes the parent. This section adds only what is **subagent-specific**; every agent prompt opens with a one-line preamble pointing here. Parent agents and subagent authors must not weaken any item.
 
 ### CONFUSION on material forks
 
@@ -92,5 +92,5 @@ Severity of findings: `critical` (blocks delivery) / `major` (must be addressed 
 ### Shell and SDD
 
 - Agents whose frontmatter lists `Shell` follow the `powershell-windows` skill for every shell command.
-- If the project has an `openspec/` workspace — `content/rules/sdd-integrations.md` (MCP evidence for 1C facts, `Subagent → OpenSpec artifact mapping`, traceability updates after implementation).
+- If the brief names an active `openspec/changes/<id>/` change or asks for an OpenSpec artifact — `content/rules/sdd-integrations.md` (ownership, phase files); a bare `openspec/` folder does not trigger it.
 

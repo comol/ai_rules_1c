@@ -35,7 +35,7 @@ Delegated while the mode is on (tier per `subagents.md → Model-tier routing`):
 - implementation from a ready plan — `1c-developer` / `1c-metadata-manager` (`coding`);
 - planning, analysis, documentation — `1c-planner` / `1c-analytic` / `1c-doc-writer` (`analysis`);
 - mechanical multi-file edits — a bounded worker with a non-overlapping write scope (`worker-bounded-edit` template);
-- quick error fixes — `1c-error-fixer` (`coding` — it authors production code).
+- error fixes above the quick-fix line — `1c-error-fixer` (`coding` — it authors production code).
 
 Output rule: the parent's own text stays minimal — decisions, specs, summaries. While the mode is on, the parent does not write file bodies for non-trivial changes; the quick-fix exception below still applies.
 
@@ -43,7 +43,7 @@ Output rule: the parent's own text stays minimal — decisions, specs, summaries
 
 The mode changes **who executes**, never **which gates apply**. On any conflict, the stricter existing rule wins. Explicitly:
 
-- **`subagent-pipeline.md` stays intact** — same stages, same hard gates. The mode only makes stage 2/3 delegation the default for full-cycle tasks and pushes bulk reads of stage 2 scouting to `1c-explorer`. Stages 4a (spec-compliance review) and 5 (verification gate) remain the parent's own work.
+- **`subagent-pipeline.md` stays intact** — same stages, same hard gates. The mode only makes stage 2/3 delegation the default for full-cycle tasks and pushes bulk reads of stage 2 scouting to `1c-explorer`. Stages 4a (spec-compliance review), 4b (code-quality review) and 5 (verification gate) remain the parent's own work.
 - **Triage from `AGENTS.md` is unchanged** — quick-fix and docs-fix tasks are still executed directly by the parent: launching a subagent for a trivial edit costs more than it saves (`subagents.md → Delegation principle`). The mode never forces delegation of trivial work.
 - **Spec-authoring stays outside the implementation pipeline.** The parent owns decisions and acceptance of the specification; bounded research and artifact drafting may be delegated by `sdd-integrations.md → Subagent → OpenSpec artifact mapping`. "The parent keeps specs" means ownership and delegation briefs, not a ban on those artifact writers. Authoring a spec does not authorize apply.
 - **QA profiles are independent.** Any `VERIFICATION_DEPTH` (`lite`, `standard`, `full`) combines with either orchestration value. Select the applicable gates by task risk and depth before assigning their executor; delegation neither adds optional validators nor removes mandatory ones. Economy mode changes neither `VERIFICATION_DEPTH` nor `UI_TESTING`.
@@ -58,7 +58,7 @@ The mode changes **who executes**, never **which gates apply**. On any conflict,
 - A spec for a subagent contains ready decisions: the subagent executes, it does not invent. Handoffs between implementation subagents follow `subagent-pipeline.md → Handoff`.
 - Independent tasks run in parallel; while subagents work, the parent does not idle and does not duplicate their work.
 - Scouting reports are spot-checked against primary sources (a targeted read of a fragment) before decisions are based on them — light models hallucinate; verification is mandatory.
-- Review of delegated results is selective (key files, the most contentious decisions), not a full re-read — a full re-read eats the savings.
+- Spot-checks of subagent reports stay selective (key files, the most contentious decisions) — re-reading everything eats the savings. The Stage 4b review of a full-cycle change still covers the whole delegated diff.
 - Escalation: if a subagent failed twice on a clear spec, the parent does the work itself — a third iteration costs more than direct execution. Record the escalation in the delivery summary.
 - While the mode is on, note in the delivery summary that economy mode was active and which subagents executed the work.
 

@@ -6,9 +6,9 @@ argumentHint: "[on|off|auto|status|lite|full|ultra]"
 
 # /caveman — communication style toggle
 
-Control the terse `caveman` answer style. Canonical behaviour of the style and its modes — the `caveman` skill (`content/skills/caveman/SKILL.md`); the `CAVEMAN` key, its values and default — `content/rules/dev-standards-env.md → "CAVEMAN — caveman auto-activation"` (installed copies; match by file name per the path convention in `AGENTS.md`). Load the skill before acting.
+Control the terse `caveman` answer style. Canonical behaviour of the style and its modes — the `caveman` skill (`content/skills/caveman/SKILL.md`); the `CAVEMAN` key, its values and default — `content/rules/dev-standards-env-process.md → "CAVEMAN — caveman auto-activation"` (installed copies; match by file name per the path convention in `AGENTS.md`). Load the skill before acting.
 
-Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for.
+Parameters, classes and defaults — `content/rules/dev-standards-env-process.md`; Defaulted keys are never asked for.
 
 Two scopes, do not mix them:
 

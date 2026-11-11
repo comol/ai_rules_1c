@@ -6,9 +6,9 @@ argumentHint: "[on|auto|off|once|status]"
 
 # /previewmode — metadata preview before the write
 
-Control when `Invoke-1CEdit.ps1 -Preview` (run the tool, show a unified diff, restore the tree) runs before a metadata write. Canonical behaviour and the case list — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`; the `METADATA_PREVIEW` key, its values and default — `content/rules/dev-standards-env.md → "METADATA_PREVIEW"` (installed copies; match by file name per the path convention in `AGENTS.md`). Load `content/skills/1c-metadata-manage/docs/edit-preview.md` before acting.
+Control when `Invoke-1CEdit.ps1 -Preview` (run the tool, show a unified diff, restore the tree) runs before a metadata write. Canonical behaviour and the case list — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`; the `METADATA_PREVIEW` key, its values and default — `content/rules/dev-standards-env-process.md → "METADATA_PREVIEW"` (installed copies; match by file name per the path convention in `AGENTS.md`). Load `content/skills/1c-metadata-manage/docs/edit-preview.md` before acting.
 
-Parameters, classes and defaults — `content/rules/dev-standards-env.md §1`; Defaulted keys are never asked for.
+Parameters, classes and defaults — `content/rules/dev-standards-env-process.md`; Defaulted keys are never asked for.
 
 Two scopes, do not mix them:
 

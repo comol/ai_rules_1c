@@ -18,7 +18,7 @@ Do not duplicate that sequence here.
 - **XSD validation is mandatory** after any XML edit — `verify_xml` against the schema returned by `get_xsd_schema(object_type="Форма")`. A form that parses in your editor is not a form that loads in Designer.
 - **Form-element naming.** Elements added to a typical form must carry the `{PREFIX}` prefix from `.dev.env`. Elements inside a newly created form (object already prefixed) do **not** repeat the prefix on every element — see `dev-standards-change-markers.md → "Metadata Naming"`.
 - **Common pitfalls** are catalogued in `metadata-xml-workarounds.md` — read it before hand-editing the XML.
-- **Region structure of the form module** — `module-structure.md → Form Module` (5 mandatory regions).
+- **Region structure of the form module** — `module-structure.md → Form Module` (mandatory regions).
 
 ## Form-Presentation Rules
 

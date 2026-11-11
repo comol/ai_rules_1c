@@ -63,12 +63,3 @@ The collection ships **inside the `1C-docs-mcp` image** — nothing is mounted o
 The bodies are authored **in the `1C-docs-mcp` repository** — `data/corpora/1c-standards/content/standards/<stem>.md`, one file per routed standard, with `content.lock.json` beside them recording each document's hash. This ruleset holds only the routers in `content/rules/` (retrieval instructions and headings); editing a router does not update the corpus body, and editing a body does not update a router's heading tree — `tools/validate-rules.ps1 -StandardsDir <path>` checks that the two trees still agree.
 
 **A merged edit is not evidence of a deployed corpus update.** The maintainer's sync contract records the source commit, body hashes, and resulting image identity, then verifies retrieval from that image. Runtime consumers use only identifiers and provenance actually returned by the connected server; do not invent version parameters or infer a deployed revision from the local checkout. If correspondence with a changed standard matters and cannot be established, report corpus freshness as unverified.
-
-## Success criteria
-
-- ✅ Standards fetched with `standards`, never with `docsearch` / `docinfo` and never with a `corpus` argument.
-- ✅ The governing rule fetched whole by name; `query` used to *find* a rule, not to read one section at a time.
-- ✅ Paged documents followed to the parts actually needed.
-- ✅ No section applied from its heading alone.
-- ✅ MCP-only runtime retrieval; source bodies used only for ruleset maintenance.
-- ✅ Unavailable content stated once, dependent requirements left blocked / unverified, and independent work continued.

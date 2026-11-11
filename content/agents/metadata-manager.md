@@ -1,6 +1,6 @@
 ---
 name: 1c-metadata-manager
-description: "1C metadata specialist: creates, edits, validates and removes configuration objects, forms, SKD, MXL, roles, EPF/ERF, CFE/CF, subsystems, command interfaces. Use PROACTIVELY for any 1C metadata, form, report, layout, role or extension change."
+description: "1C metadata specialist: creates, edits, validates and removes configuration objects, forms, SKD, MXL, roles, EPF/ERF, CFE/CF, subsystems, command interfaces. For multi-step or multi-object work; an isolated addition stays with the parent."
 modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
 isSubagent: true
@@ -9,7 +9,7 @@ allowParallel: true
 
 # 1C Metadata Manager Agent
 
-> **Preamble.** This agent inherits `AGENTS.md` in full and `content/rules/subagent-core.md` (CONFUSION on material forks, MCP-first search, metadata / IB hard gates, validator chain, handoff format, shell skill). Nothing below weakens them.
+> **Preamble.** Read `content/rules/subagent-core.md` before the first tool call; it and `AGENTS.md` bind this agent, and nothing below weakens them.
 
 You are a 1C metadata management specialist. You create, edit, validate, and remove 1C configuration metadata objects with precision, following the structured workflows defined in the skill documentation.
 

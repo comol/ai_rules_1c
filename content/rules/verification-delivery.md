@@ -6,7 +6,7 @@ category: quality
 
 # Verification Delivery — Soft Gates and Reporting
 
-**When to load this file:** after hard gates, for reproduction, plan adherence, testing, review or delivery.
+**When to load this file:** after the hard gates of a full-cycle change — for reproduction, plan adherence, testing, review or delivery. A quick-fix delivery is defined by `verification-policy.md → Quick-fix gate`.
 
 Hard validator, impact, and XML gates live in `verification-gates.md`; task depth and triage live in `verification-policy.md`.
 
@@ -35,7 +35,7 @@ Checklist (same shape regardless of plan source):
 - Every task / step in the plan was executed; no task was silently skipped.
 - The diff against the plan was summarized file by file in the delivery report (use `git diff --name-only` to verify).
 - No file outside the plan was edited; if it was, the deviation is explicitly justified in the delivery summary.
-- OpenSpec: reconcile DoD with current verification/review evidence before completion (`sdd-integrations.md`). Checkboxes and CLI `all_done` alone never suffice; record explicit waivers and unfinished criteria. Update deltas when behaviour changes.
+- OpenSpec: reconcile DoD with current verification/review evidence before completion (`sdd-apply.md`). Checkboxes and CLI `all_done` alone never suffice; record explicit waivers and unfinished criteria. A behaviour change the deltas do not describe goes through `/opsx:update`, never a silent delta edit.
 - For the subagent pipeline specifically: Stage 4a (spec-compliance review by the parent agent) was executed and passed before Stage 5. **Reuse its evidence** — when 4a passed after the latest edit, this gate is satisfied by confirming that result is still fresh; do not re-run the file-by-file diff comparison (same principle as `verification-gates.md → "Gate execution and evidence reuse"`).
 
 ### Soft gate C — Code review
@@ -44,7 +44,17 @@ Full-cycle: review is required unless the user explicitly prohibits it; otherwis
 
 ### Soft gate D — UI confirmation policy
 
-Behaviour needs expected-vs-actual evidence (Gate 3a or UI), not static checks/review alone. `/uitests` sets `UI_TESTING`: `essential` / empty = the important new or changed user-visible behaviour, automatically once the change is on the dev/test base; `auto` = every applicable scenario automatically; `manual` = explicit request; `off` = disabled. Routes: QA MCP first, the web client (`INFOBASE_PUBLISH_URL`) as fallback. Canon: `dev-standards-env.md`; routes and drivers: `ui-testing-tools.md`. Unconfirmed essential DoD scenarios stay unverified (`sdd-integrations.md`).
+Behaviour needs expected-vs-actual evidence (Gate 3a or UI), not static checks/review alone. `/uitests` sets `UI_TESTING`: `essential` / empty = the important new or changed user-visible behaviour, automatically once the change is on the dev/test base; `auto` = every applicable scenario automatically; `manual` = explicit request; `off` = disabled. Routes: QA MCP first, the web client (`INFOBASE_PUBLISH_URL`) as fallback. Canon: `dev-standards-env.md`; routes and drivers: `ui-testing-tools.md`. Unconfirmed DoD-linked scenarios stay unverified.
+
+## Full-cycle Definition of Done
+
+A full-cycle change is done when all three hold on the final artifact state:
+
+1. every acceptance criterion of the task has expected-vs-actual evidence — a hard-gate result, a Gate 3a check, UI confirmation where the criterion is user-visible (Soft gate D), or the rerun reproduction case;
+2. the applicable hard gates of `verification-gates.md` passed;
+3. the final review ran (Soft gate C).
+
+Report each criterion as `passed`, `failed`, `blocked / unverified` or `waived by user`. Only the user waives UI confirmation or review, and waiving one waives nothing else; a depth setting, `UI_TESTING=off`, a disabled reviewer subagent or a missing tool is not a waiver. Anything short of this is reported as partial work with the open criteria named. When the change runs through OpenSpec, the artifacts carry the same contract — `sdd-integrations.md → Full-cycle Definition of Done`.
 
 ## Delivery summary — what the user sees
 
@@ -58,7 +68,7 @@ After all gates pass, the delivery report MUST contain:
 4. **Risks / nuances** — only real ones. For tool-dependent gaps name the `TOOL_*` policy, actual state (disabled / absent / failed / unsuitable scope), fallback evidence and remaining unverified requirement. `required` remains incomplete; `off` is never reported as a passing check. Use `verification-gates.md` wording for degraded gates. Omit when no risk applies.
 5. **Follow-ups** — any defects observed but **not** fixed (out-of-scope dead code, pre-existing lints, downstream callers flagged by Gate 4 that need future review). Empty = omit.
 
-**Evidence lines are conditional, never placeholders.** Each of `Memory:`, `Template:`, `Typical reuse:`, `Docs:`, `Metadata tooling:`, `IB tooling:`, `Repository tooling:` appears only when its channel applied to this task: `Memory:` on every non-trivial task (`project-memory.md → Gates (hard)`); `Template:` whenever `templatesearch` ran or was owed (`mcp-policy.md → A.9`, including «no fitting template»); `Typical reuse:` for each new helper covered by `sdd-integrations.md → Check reuse before a new helper`, using `<method> — <source/query> → reused <public API> | not found | rejected: <reason> | limited: <unavailable source and remaining gap>` (only an actual search supports "not found"); `Docs:` when documentation answered a claim; the three tooling lines only when a metadata mutation, infobase operation or repository operation happened. Never write `IB tooling: n/a` or similar filler — an absent line already means «not applicable». A typical quick-fix delivery is: what was done, the file, the validators run, the `Memory:` line, and Risks only if real.
+**Evidence lines are conditional, never placeholders.** Each of `Memory:`, `Template:`, `Typical reuse:`, `Docs:`, `Metadata tooling:`, `IB tooling:`, `Repository tooling:` appears only when its channel applied to this task: `Memory:` on every non-trivial task (`project-memory.md → Gates (hard)`); `Template:` whenever `templatesearch` ran or was owed (`mcp-policy.md → A.9`, including «no fitting template»); `Typical reuse:` for each new helper covered by `coding-standards.md → Check reuse before a new helper`, using `<method> — <source/query> → reused <public API> | not found | rejected: <reason> | limited: <unavailable source and remaining gap>` (only an actual search supports "not found"); `Docs:` when documentation answered a claim; the three tooling lines only when a metadata mutation, infobase operation or repository operation happened. Never write `IB tooling: n/a` or similar filler — an absent line already means «not applicable». A typical quick-fix delivery is: what was done, the file, the validators run, the `Memory:` line, and Risks only if real.
 
 Do not include in the delivery summary:
 
@@ -68,11 +78,3 @@ Do not include in the delivery summary:
 - markdown sections added "for structure" with no content.
 
 **Package instead of an edit.** When a person must apply the change (vendor lock kept, ordinary form, repository lock held by someone else, MCP-only sources) or the user asks for a diff / review, the deliverable is the package of `content/skills/1c-change-package/SKILL.md`.
-
-## Anti-patterns
-
-- **Skipping Gate 1** "because the edit was tiny" — `syntaxcheck` is the cheapest gate; skipping it never saves time.
-- **Running gates in the wrong order** — running `check_1c_code` before `syntaxcheck` wastes the AI checker on syntax-broken code.
-- **Looping on AI non-determinism** — if `check_1c_code` returns different items each run on the **same** code, take the strictest set and stop. Do not burn the 3-call budget on noise.
-- **Marking the task done** with un-removed `Debug.*` log entries or temporary `ПоказатьЗначение` calls — soft gate A failure.
-- **Auto-running `1c-code-reviewer`** when the user did not ask — soft gate C failure, and a direct violation of `subagents.md`.

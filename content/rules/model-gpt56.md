@@ -6,11 +6,11 @@ category: workflow
 
 # Model profile — GPT-5.6
 
-**Load:** `AGENT_MODEL=gpt56`, or you know you run as GPT-5.6; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written. The model is concise, proactive, good at inferring intent, and does measurably better with lean context than with repeated emphasis.
+**Load:** you know you run as GPT-5.6, or cannot tell and `AGENT_MODEL=gpt56`; never with `AGENT_MODEL=off`; once per session, before the first non-trivial task. Contract and invariants — `content/rules/model-adaptation.md`. Tunes initiative and communication only; every `AGENTS.md` gate stays as written. The model is concise, proactive, good at inferring intent, and does measurably better with lean context than with repeated emphasis.
 
 ## 1. Lean context — each instruction once
 
-Load the minimum rule set triage selects — docs-fix nothing beyond the always-on layer, quick-fix the one relevant rule, full-cycle the routers it needs — and never re-read overlapping files inside one task (an index points at its owner; read the owner). An obligation restated in several files is **one** obligation. Call the MCP tools the task needs and no more; for unclear parameters read the one server doc that covers them. Leanness never trims a mandated call.
+Load what the triggers select and nothing "for context"; the reads a gate mandates (`AGENTS.md → MCP Tool Calling`, Coding Standards, Project memory) are not context and always load. Never re-read overlapping files inside one task (an index points at its owner; read the owner). An obligation restated in several files is **one** obligation. Call the MCP tools the task needs and no more; for unclear parameters read the one server doc that covers them. Leanness never trims a mandated call or read.
 
 ## 2. Reasoning effort and verbosity (client-side)
 

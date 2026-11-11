@@ -1,5 +1,5 @@
 ---
-description: Common XML generation pitfalls for 1C metadata and managed forms (`TabularSection` `LineNumber`, `PagesGroupExtInfo` typo, `Page.enabled`, UID uniqueness, post-edit validation). Load when authoring or fixing metadata XML or `Form.xml` by hand.
+description: Pitfalls of hand-edited 1C metadata XML — UID uniqueness, post-edit validation, plus EDT-format traps for review. Load when fixing metadata XML or `Form.xml` by hand under a skill exception, or reviewing a broken file.
 alwaysApply: false
 category: metadata
 ---
@@ -13,6 +13,8 @@ Concrete recurring mistakes when generating or editing 1C metadata XML / MDO and
 > **Never use hand-editing to get around a support refusal.** If the skill's tools refused the edit because the object belongs to a typical configuration on vendor support and is locked ("на замке"), that refusal holds here too: a direct XML edit silently breaks future vendor updates. The answer is an extension (`cfe-borrow` / `cfe-patch-method`) or a deliberate support-state change via `support-edit` — canon: `content/skills/1c-metadata-manage/docs/support-manage.md`. A configuration on support is recognizable by `Ext/ParentConfigurations.bin` next to `Configuration.xml`.
 
 ---
+
+> **Sections 1–3 show EDT-format syntax (`*.mdo`, `*.form`).** Those files are never hand-edited (`content/rules/edt-workflow.md → The one thing that really changes: source format`): use the three traps to recognise a broken file in review and route the fix through EDT. A Designer `Form.xml` spells these elements differently (`<Pages>`, `<Page>`), so do not look for them there. Sections 4–5 apply to both formats.
 
 ## 1. TabularSections — no `LineNumber` standard attribute
 
@@ -69,9 +71,10 @@ All UIDs and UUIDs of new metadata objects, attributes, tabular sections must be
 - Generate each UUID separately via `[guid]::NewGuid()` (PowerShell) or `uuid.uuid4()` (Python).
 - Never reuse a UUID by copy-paste.
 - Never use placeholder / sequential UUIDs (`a1b2c3d4...`, `b2c3d4e5...`).
-- After bulk metadata generation, run a duplicate-UUID check across the source tree.
+- After bulk metadata generation, run the duplicate-UUID check across the source tree (`/check-uuid`, `content/skills/1c-metadata-manage/docs/uuid-check.md`).
+- Keep the BOM and the line endings of an edited file as they were.
 
-When adding metadata objects — also update `Configuration.xml` (`<childObjects>` ordering matters).
+When adding metadata objects — also update `Configuration.xml` (`<ChildObjects>` ordering matters).
 
 ---
 
@@ -80,6 +83,6 @@ When adding metadata objects — also update `Configuration.xml` (`<childObjects
 Whenever editing metadata XML by hand, after the change run:
 
 - `verify_xml` from `1c-code-metadata-mcp` against the appropriate XSD (`get_xsd_schema` first if unsure of the type).
-- Then a sanity load via `1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1`.
+- Then `meta-validate` of the `1c-metadata-manage` skill, when the skill is installed (`content/skills/1c-metadata-manage/docs/meta-manage.md`).
 
 This catches structural issues (missing required elements, wrong type names, broken references) before they reach the platform.
