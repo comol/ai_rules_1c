@@ -55,4 +55,4 @@ Run `/install-rtk` (`content/commands/install-rtk.md`) — install, wire into th
 
 ## Constraints (always)
 
-The mode never overrides stricter rules: quick-fix / docs-fix tasks stay with the parent, `1c-code-reviewer` runs only on an explicit user request, UI testing stays gated by `UI_TESTING`, validator chains and the verification gate are unchanged, model-tier routing stays authoritative. Details — `orchestrator-economy.md → Consistency with the existing orchestration rules`.
+The mode never overrides stricter rules: quick-fix / docs-fix tasks stay with the parent, `1c-code-reviewer` runs only on an explicit user request, UI testing stays gated by `UI_TESTING`, validator chains and the verification gate are unchanged, model-tier routing stays authoritative. Details — `orchestrator-economy.md → What the mode does not change`.

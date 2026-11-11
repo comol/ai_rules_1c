@@ -5,7 +5,7 @@ argumentHint: "[full|changes|partial|all]"
 
 # /loadfrom1cbase — dump from infobase to repository
 
-Refresh configuration files from the infobase defined in `.dev.env`: full dump, incremental refresh or selected-object export. Read `content/rules/getconfigfiles.md → Configuration file synchronization contract` before choosing the scope. With `all` (or an explicit "with extensions" request), dump the **full snapshot** — main configuration plus every extension from `EXTENSION_NAMES`; see "Full-snapshot mode" below.
+Refresh configuration files from the infobase defined in `.dev.env`: full dump, incremental refresh or selected-object export. Read `content/rules/config-sync-contract.md` before choosing the scope. With `all` (or an explicit "with extensions" request), dump the **full snapshot** — main configuration plus every extension from `EXTENSION_NAMES`; see "Full-snapshot mode" below.
 
 This is the directory-refresh stage of the workflow shared with `/update1cbase`. It does not load files into the infobase or apply the database configuration.
 
@@ -75,7 +75,7 @@ Map `.dev.env` keys to Designer flags:
     {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
-    /DisableStartupMessages `
+    /DisableStartupMessages /DisableStartupDialogs `
     /DumpConfigToFiles '{EXPORT_PATH}' `
     -Format Hierarchical `
     -Extension {EXTENSION_NAME} `

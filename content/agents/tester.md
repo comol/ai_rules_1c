@@ -25,7 +25,7 @@ Tools — routing and parameters: `content/skills/mcp-1c-tools/SKILL.md`; entry 
 
 ## Testing Prerequisites
 
-- Project parameters — `content/rules/dev-standards-env.md §1` (`.dev.env` is the single source of truth). Blocking keys for this role: `PLATFORM_PATH`, `INFOBASE_PATH`, plus `INFOBASE_PUBLISH_URL` when a requested UI test has to run in the web client — an empty blocking key is asked for (never guessed) and persisted back into `.dev.env`; defaulted keys are never asked up front.
+- Project parameters — `content/rules/dev-standards-env.md §1` (`.dev.env` is the single source of truth). Blocking keys for this role: `PLATFORM_PATH`, `INFOBASE_PATH`, plus `INFOBASE_PUBLISH_URL` when a requested UI test has to run in the web client — an empty blocking key is reported to the parent as a blocker (never guessed; this agent has no write tools); defaulted keys are never asked up front.
 - Resolve effective `UI_TESTING` before prerequisites — `content/rules/dev-standards-env.md → "UI_TESTING — UI-testing mode"`. `off` blocks UI without asking for setup; `essential` limits automatic checks to the important new or changed user-visible behaviour. With no route (no QA MCP, empty publication URL) automatic UI checks are skipped as unverified; an explicit permitted UI request makes the missing prerequisite blocking. Enabling policy alone never authorizes deployment.
 - Pick the route by `content/rules/ui-testing-tools.md → Route order`: QA MCP first, the web client as fallback.
 

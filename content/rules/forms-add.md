@@ -6,11 +6,7 @@ category: forms
 
 # Adding or Modifying a Managed Form
 
-This file owns the **rules**, not the MCP sequence. The pre-edit and post-edit MCP playbooks live in:
-
-- `tooling-playbooks.md → Form Analysis and Generation` — full ordered list of MCP calls (`search_forms` → `inspect_form_layout` → `metadatasearch` → `get_xsd_schema` → write/modify XML → `verify_xml` → compile via the `1c-metadata-manage` skill).
-
-Do not duplicate that sequence here.
+This file owns the **rules**, not the MCP sequence: the ordered pre- and post-edit calls live in `tooling-playbooks.md → Form Analysis and Generation`, where the `1c-metadata-manage` tools write `Form.xml`.
 
 ## Rules specific to creating / modifying a form
 

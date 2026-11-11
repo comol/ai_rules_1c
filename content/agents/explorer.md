@@ -86,4 +86,4 @@ Set by the parent; default **medium**. Stop once the question is answered with v
 [Optional last line: the handoff recommendation from Hard Boundaries.]
 ```
 
-Drop empty sections — a compressed brief, not a transcript. Boundaries — `content/rules/subagents.md → Subagent catalog`; writing, designing, or opinionated review belongs to another agent — say so instead of doing it.
+Drop empty sections — a compressed brief, not a transcript. Writing, designing, or opinionated review belongs to another agent — say so instead of doing it.

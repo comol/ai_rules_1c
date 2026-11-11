@@ -25,8 +25,6 @@ Tools — routing and parameters: `content/skills/mcp-1c-tools/SKILL.md`; entry 
 
 ## Review Scope
 
-**Launch prerequisite:** `content/rules/subagents.md → Reviewer model gate`. Without an explicitly selected reviewer model, this subagent is disabled; the parent handles an explicit review request directly. Inherited or legacy fallback models do not satisfy the gate.
-
 **Input methods (in priority order):**
 1. **Parent-provided cursor context** — architecture explicitly attached from the current cursor position or selection
 2. **Specific files** — files specified via `@file.bsl` or path

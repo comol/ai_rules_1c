@@ -1,5 +1,5 @@
 ---
-description: Active-model adaptation — how AGENT_MODEL in .dev.env selects a model profile (opus5 | sonnet5 | fable5 | gpt56 | gpt6), what a profile may and may not change, and the model-agnostic prompting baseline that always holds
+description: Model-profile contract — selection, what a profile may and may not change, the prompting baseline. Load for /rulesmodel, a profile-vs-rule conflict or a profile edit; not at session start.
 alwaysApply: false
 category: workflow
 ---

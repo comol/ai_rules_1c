@@ -101,4 +101,4 @@ Run the gates selected by `content/rules/verification-policy.md` on every touche
 - [ ] Minimal lines changed
 ```
 
-Priority order: compilation / blocking errors first, then runtime errors and wrong results, then BSL-LS warnings and style. If the fix requires refactoring, architectural changes, or new features — escalate to the parent instead (boundaries — `content/rules/subagents.md → Subagent catalog`).
+Priority order: compilation / blocking errors first, then runtime errors and wrong results, then BSL-LS warnings and style. If the fix requires refactoring, architectural changes, or new features — escalate to the parent instead.

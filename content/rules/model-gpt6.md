@@ -1,5 +1,5 @@
 ---
-description: Behaviour profile for GPT-6 Astra. Load for AGENT_MODEL=gpt6 or a known GPT-6 Astra session.
+description: GPT-6 Astra behaviour profile — load only when running as that model; completion, prose, delegation
 alwaysApply: false
 category: workflow
 ---
@@ -28,7 +28,7 @@ Define completion before acting: deliverable, applicable checks, requested execu
 
 ## 3. Writing style
 
-Default answers run long, list-heavy and formulaic. Lead with the outcome in concise paragraphs; lists only for genuinely parallel, sequential or comparable items; no nested lists, slop openers or closers, unrequested "X, not Y" contrasts or invented hyphenated labels. Delivery report: outcome, files, material caveats; no extra sections.
+Default answers run long, list-heavy and formulaic. Lead with the outcome in concise paragraphs; lists only for genuinely parallel, sequential or comparable items; no nested lists, slop openers or closers, unrequested "X, not Y" contrasts or invented hyphenated labels. Delivery report: outcome, files, the checks run and the evidence lines that apply, material caveats; no extra sections.
 
 ## 4. Delegation
 
@@ -36,7 +36,7 @@ The model under-delegates: when independent work can run in parallel and `conten
 
 ## 5. Verification — proportionate to completion
 
-Run the gates `verification-policy.md` requires and the checks the completion criteria need; once they pass, stop unless a new change, a failure or an unresolved concern justifies more. Mandated validators are not a licence for a self-review pass or a verifier subagent.
+Run the gates the task path and depth select (`verification-policy.md`; full-cycle closing gates — `verification-gates.md`) and the checks the completion criteria need; once they pass, stop unless a new change, a failure or an unresolved concern justifies more. Mandated validators are not a licence for a self-review pass or a verifier subagent.
 
 ## 6. Reasoning effort and client levers
 

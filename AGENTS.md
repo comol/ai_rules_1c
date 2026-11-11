@@ -62,7 +62,7 @@ Report changes, every modified file, checks and real limitations; for non-trivia
 - Project context: `openspec/project.md` when present. Settings: `.dev.env` (`Grep ^[A-Z]`) — never guess or duplicate values; ask only for one the current operation needs (`content/rules/dev-standards-env.md`).
 - Read root `USER-RULES.md`, `memory.md` and, when present, `LLM-RULES.md`; precedence `USER-RULES.md`/`memory.md` → `LLM-RULES.md` → this file and on-demand rules. Unreachable required rule → report the gap, stop only dependent work.
 - **Language:** rules and `content/` prose — English; BSL identifiers/comments/literals, metadata synonyms, user-facing strings, replies and top-level human docs — Russian.
-- Monthly: on the first non-trivial task check `.ai-rules.json` `lastUpdatesCheckAt` (else `updatedAt`/`installedAt`); missing or over 30 days → `content/rules/support-feedback.md §4`, read-only `/checkupdates` once at the end, never auto-update.
+- Monthly: on the first non-trivial task check `.ai-rules.json` `lastUpdatesCheckAt` (else `updatedAt`/`installedAt`); missing or over 30 days → read-only `/checkupdates` (`content/commands/checkupdates.md`) once at the end, never auto-update.
 
 ### Path convention — source vs. installed copies
 

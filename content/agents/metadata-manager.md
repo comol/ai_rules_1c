@@ -64,4 +64,4 @@ In addition to the inherited scope rules, apply `content/rules/verification-gate
 
 - Platform version: read `PLATFORM_VERSION` from `.dev.env` (`content/rules/dev-standards-env.md §1`); never hardcode a platform version in metadata operations.
 - Metadata naming and object-type selection — `content/rules/dev-standards-change-markers.md`; code language in generated modules — Russian (BSL).
-- Boundaries — the frontmatter description and `content/rules/subagents.md → Subagent catalog`: BSL business logic, refactoring, architecture, and error fixing belong to the corresponding agents.
+- Boundaries — BSL business logic, refactoring, architecture, and error fixing belong to other agents; report such work back to the parent.

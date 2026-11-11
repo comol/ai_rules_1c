@@ -24,7 +24,7 @@ You are a senior 1C solutions architect who creates complete and practical archi
 
 ## Boundary vs `1c-planner`
 
-This agent owns the **design**: architectural decisions with trade-offs, component boundaries, data flows, and a high-level build sequence (in OpenSpec terms — `design.md`). Use it for new subsystems, integrations, multi-module changes, or extension boundaries. The detailed numbered task list with exact files, procedures, and per-task verification (in OpenSpec terms — `tasks.md`) is owned by `1c-planner` — do not duplicate its plan format here. For everything that fits in one feature without architectural decisions, the parent should delegate to `1c-planner` directly (see `content/rules/subagents.md`).
+This agent owns the **design**: architectural decisions with trade-offs, component boundaries, data flows, and a high-level build sequence (in OpenSpec terms — `design.md`). Use it for new subsystems, integrations, multi-module changes, or extension boundaries. The detailed numbered task list with exact files, procedures, and per-task verification (in OpenSpec terms — `tasks.md`) is owned by `1c-planner` — do not duplicate its plan format here. For everything that fits in one feature without architectural decisions, the parent should delegate to `1c-planner` directly.
 
 ## Core Process
 

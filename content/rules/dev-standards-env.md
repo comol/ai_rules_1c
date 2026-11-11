@@ -14,9 +14,7 @@ Section number 1 is a stable anchor for `§1` references.
 
 `.dev.env` is the **single source of truth** for project parameters across the whole rules set. There is no `infobasesettings.md`, no separate per-command settings file — all rules, on-demand instructions, slash commands and subagents read from `.dev.env`.
 
-An optional source-contour catalog (`content/rules/multi-contour-search.md`) owns only source identities, search roles and index mappings. It neither duplicates operation defaults nor restricts source analysis to `EXTENSION_NAME`. It does not override `EXTENSION_NAMES` load order or the dump/load path conventions below; resolve the target through the operation's dedicated procedure.
-
-For a shared main-configuration/extension project, load `content/rules/extension-workspace.md`. Keep one settings file: an explicitly selected operation target overrides the single-target default for that pass without rewriting `EXTENSION_NAME`, `EXTENSION_NAMES` or the configured roots. The recommended new-project `src/cf`, `src/cfe/<Name>` layout is an explicit setup choice; existing paths and the defaults below remain supported.
+A main configuration with extensions — `content/rules/extension-workspace.md`; several source contours — `content/rules/multi-contour-search.md`. Both resolve the target of a pass without rewriting `EXTENSION_NAME`, `EXTENSION_NAMES` or the configured roots, and neither overrides the defaults below.
 
 Read `.dev.env` **only when the current task actually depends on a parameter** (prefix / naming, modification comments, platform-version choices, metadata placement, infobase commands, deploy, UI tests). Guessing values is PROHIBITED. **Read the key lines, not the commentary:** `Grep` `^[A-Z]` over `.dev.env` returns every `KEY=value` line; the comments in the file repeat these rules and cost many times more than the values.
 

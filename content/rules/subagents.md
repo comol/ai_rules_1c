@@ -10,23 +10,7 @@ category: workflow
 
 ## Delegation principle
 
-13 specialized subagents are available in the project. Source prompt files live in `content/agents/` and use short file names without the `1c-` prefix:
-
-| Subagent id | Source prompt file |
-|---|---|
-| `1c-explorer` | `content/agents/explorer.md` |
-| `1c-analytic` | `content/agents/analytic.md` |
-| `1c-planner` | `content/agents/planner.md` |
-| `1c-architect` | `content/agents/architect.md` |
-| `1c-arch-reviewer` | `content/agents/arch-reviewer.md` |
-| `1c-developer` | `content/agents/developer.md` |
-| `1c-metadata-manager` | `content/agents/metadata-manager.md` |
-| `1c-refactoring` | `content/agents/refactoring.md` |
-| `1c-performance-optimizer` | `content/agents/performance-optimizer.md` |
-| `1c-error-fixer` | `content/agents/error-fixer.md` |
-| `1c-tester` | `content/agents/tester.md` |
-| `1c-code-reviewer` | `content/agents/code-reviewer.md` |
-| `1c-doc-writer` | `content/agents/doc-writer.md` |
+13 specialized subagents are available (catalog below); the prompt of `1c-<name>` is `content/agents/<name>.md`, installed under the active tool.
 
 **Delegate when at least one countable fact holds:**
 
@@ -41,22 +25,16 @@ First apply triage: standalone `docs-fix` and `quick-fix` tasks stay with the pa
 
 All 13 agents declare `allowParallel: true`. That licenses parallel **read-only** tracks; two mutating subagents run in parallel on one configuration only when their write scopes are provably disjoint — `subagent-pipeline.md → Stage 3`.
 
-**Model profile.** The active-model profile (`content/rules/model-adaptation.md`) may tune **how eagerly** you delegate within these criteria: some models delegate too readily and their profile biases toward direct execution and low spawn counts, others sustain parallel subagents well and their profile encourages independent parallel tracks. The criteria above, the per-subagent "when NOT to call" column, the built-in-explorer ban, and every common obligation stay unchanged — a profile never adds a subagent the rules forbid, and never removes one they require. In particular, no profile authorises a subagent spawned to double-check your own work.
+**Model profile.** The active-model profile may tune **how eagerly** you delegate within these criteria, never the criteria themselves, the "when NOT to call" column, the built-in-explorer ban or the common obligations. No profile authorises a subagent spawned to double-check your own work.
 
-**Economy mode.** When `.dev.env` has `ORCHESTRATION=economy` (toggled by `/economymode`; empty / missing = `standard`), load `content/rules/orchestrator-economy.md`: delegation of execution becomes the default — the parent keeps decisions, specs, and verification, subagents do the reading and writing. Check the key when loading this file for a non-trivial task. The mode only widens delegation; every constraint of this file stays intact, and model selection still resolves from `SUBAGENT_MODEL_*` per tier.
+**Economy mode.** Check `ORCHESTRATION` when loading this file for a non-trivial task; on `economy` load `content/rules/orchestrator-economy.md`: delegation of execution becomes the default, and every constraint of this file stays intact.
 
 ## Host-tool built-in explorers (hard ban)
 
-Cursor (and some other hosts) ship a **built-in** Explore helper — e.g. Cursor Task `subagent_type: "explore"` — with a fixed, non-overridable system prompt. That helper is **not** this project's explorer. It does not run the MCP-first fallback chain, does not prefer 1C graph / code-metadata tools, and does not return the structured report from `content/agents/explorer.md`.
+Hosts ship **built-in** explore helpers (Cursor Task `subagent_type: "explore"`, generic codebase scouts) with a fixed prompt that runs no MCP-first chain and none of this project's rules. **Hard rule for the parent:**
 
-**Hard rule for the parent:**
-
-1. For any delegated read-only exploration that matches the `1c-explorer` row in the catalog below — launch **`1c-explorer`** (source: `content/agents/explorer.md`; installed custom agent under the active tool, e.g. `.cursor/agents/explorer.md`, `.claude/agents/explorer.md`, …).
-2. **Do not** launch the host's built-in Explore / `explore` / generic codebase scout for that work. Prefer an explicit custom-agent invocation (`/1c-explorer …`, or the host's "use the 1c-explorer subagent" / Task launch by custom agent name) over a built-in `explore` type.
-3. If the session's Task / subagent API only exposes built-in types and **cannot** start the installed `1c-explorer` — **do not** silently substitute built-in Explore. Either (a) run the exploration on the parent with MCP-first search, or (b) tell the user that `1c-explorer` is not launchable in this session. Falling back to built-in Explore is a defect.
-4. `AGENTS.md` / project rules steer the **parent**; they do not rewrite the built-in Explore prompt — so "putting explore instructions in rules" is not a substitute for calling `1c-explorer`.
-
-This ban is Cursor-shaped (built-in Explore is the common failure) but applies to **any** host-native generic explorer that bypasses the project agent prompt.
+1. Delegated read-only exploration goes to **`1c-explorer`**, launched by its custom agent name (`/1c-explorer …`, a Task launch by name), never to a built-in explore type.
+2. If the session can start only built-in types, do not substitute one: explore on the parent with MCP-first search, or tell the user that `1c-explorer` is not launchable here. A built-in explorer fallback is a defect — rules steer the parent, not that helper's prompt.
 
 ## Common obligations
 
@@ -82,18 +60,11 @@ Owned by `content/rules/subagent-core.md` — CONFUSION on material forks, MCP-f
 
 ## Tool declarations
 
-Like `modelTier`, the `tools` frontmatter of a source agent file is an **abstract vocabulary**, not a host tool list: `Read`, `Write`, `Edit`, `Grep`, `Glob`, `Shell`, `MCP`. `Shell` means "may run shell commands" and `MCP` means "may call the project's MCP servers"; neither is a tool name in any AI client. The installer resolves the list into what the active tool actually understands — `disallowedTools` for Claude Code / Kimi / Qwen / ZCode / Command Code, `readonly: true` for Cursor, a `permission` object for OpenCode / MiMo Code, dropped entirely for hosts that have no per-agent tool control (`AGENT-INSTALL.md → Lean placement`, step 4).
-
-Two consequences for anyone editing these files or diagnosing a subagent:
-
-- **Read the source list as capabilities, not as the session's tool inventory.** An installed agent may legitimately see more tools than its source list names (it inherits the parent pool minus the denied capabilities). What the list guarantees is the other direction: a capability the list withholds is denied.
-- **Never "fix" a subagent by deleting its `tools` line.** That is how the read-only agents (`1c-explorer`, `1c-code-reviewer`, `1c-arch-reviewer`) lose their write and shell boundary and end up guarded by prompt text alone. If an installed agent is missing shell or MCP, the installer mapping is what needs re-running.
+The `tools` frontmatter of a source agent is an abstract capability list (`Read`, `Write`, `Edit`, `Grep`, `Glob`, `Shell`, `MCP`) that the installer maps per host (`AGENT-INSTALL.md → Lean placement`, step 4). An installed agent may see more tools than its list names; what the list guarantees is that a withheld capability is denied. **Never "fix" a subagent by deleting its `tools` line** — that strips the write and shell boundary of the read-only agents; a missing shell or MCP means re-running the installer mapping.
 
 ## Model-tier routing
 
-Host limitation: the new Kimi Code runtime ignores custom-agent `model` fields. Its adapter drops the resolved model hint; `SUBAGENT_MODEL_*` cannot select per-agent models there. Command Code needs `tools: "*"` plus native `disallowedTools` to inherit MCP while preserving read-only roles. Follow the adapter, not another client's defaults.
-
-Subagent source files do **not** hard-code model names. Each agent declares an abstract tier in its frontmatter — `modelTier: coding`, `modelTier: analysis`, or `modelTier: light` — and the installer resolves the tier into a concrete model from `.dev.env` (`SUBAGENT_MODEL_CODING` / `SUBAGENT_MODEL_ANALYSIS` / `SUBAGENT_MODEL_LIGHT`, all Defaulted: empty = the AI client's default model; see `dev-standards-env-process.md → "Subagent model parameters"`). Model names live only in project settings, never in rules or agent prompts. On first install the installer proposes a benchmark-based profile (`Balanced` / `Economy` / `Quality`, derived from <https://onec-llm-bench.lovable.app/>); the recommendation lives in the installer / `.dev.env`, not here.
+Each agent declares an abstract `modelTier` (`coding` / `analysis` / `light`); the installer resolves it from `SUBAGENT_MODEL_CODING` / `_ANALYSIS` / `_LIGHT` (`dev-standards-env-process.md → "Subagent model parameters"`; empty = the client's default model). Model names live only in project settings, never in rules or agent prompts. Host adapters may not honour a per-agent model (the Kimi Code runtime ignores it) — follow the adapter.
 
 The three tiers:
 
@@ -106,7 +77,7 @@ Routing rules:
 - **Good candidates for the `light` tier** (when the active tool supports a per-invocation model override, the parent may route these down even to a `coding`-tier agent): initial project-source scouting and candidate lists; navigation / reference gathering for objects, modules, forms, procedures; impact lists ("where is X used"); mechanical verification after edits; small bounded edits in strictly assigned files.
 - **Never use the `light` tier as the final authority** for architecture, metadata / form design, transactions, registers, complex queries, security, data integrity, or release-critical decisions. Output of a light-tier run is working material, not a source of truth — the parent agent owns decomposition, source boundaries, the final decision, verification, and integration.
 - **Do not delegate trivial single-step tasks at all** — the launch overhead exceeds the saving.
-- The tier system does not change validation obligations: whatever tier produced the change, the applicable validator chain and closing gate from `verification-gates.md` still apply, including quick-fixes.
+- The tier system does not change validation obligations: whatever tier produced the change, the gates `verification-policy.md` selects still apply.
 
 ## Reviewer model gate
 

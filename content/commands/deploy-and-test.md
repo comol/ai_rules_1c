@@ -10,7 +10,7 @@ Resolve project, main/named-extension target and source root through `content/ru
 
 When the user asks to deploy the full snapshot ("all" / "with extensions"), resolve inventory even if `EXTENSION_NAMES` is empty, then run Steps 2–3 as main followed by each selected extension per `/update1cbase → Full-snapshot mode` (`content/commands/update1cbase.md`). Confirmed no extensions means main only; a stored single-extension default cannot narrow `all`.
 
-**Load scope is owned by `/update1cbase → Select load scope`.** For partial / Git deployment, follow that command's complete load → checks → apply sequence, including file-list validation and baseline handling, then continue here at Step 4. Do not execute the full-load examples below as well. A failed load or apply blocks UI tests. A requested return export follows `/loadfrom1cbase` after apply with the same target and scope guards (`content/rules/getconfigfiles.md → Configuration file synchronization contract`).
+**Load scope is owned by `/update1cbase → Select load scope`.** For partial / Git deployment, follow that command's complete load → checks → apply sequence, including file-list validation and baseline handling, then continue here at Step 4. Do not execute the full-load examples below as well. A failed load or apply blocks UI tests. A requested return export follows `/loadfrom1cbase` after apply with the same target and scope guards (`content/rules/config-sync-contract.md`).
 
 ## Step 0. Check `.dev.env` parameters
 
@@ -74,7 +74,7 @@ Read `{LOG_PATH}`. On errors, show the relevant log fragment and **do not run** 
     {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
-    /DisableStartupMessages `
+    /DisableStartupMessages /DisableStartupDialogs `
     /LoadConfigFromFiles '{EXPORT_PATH}' `
     -updateConfigDumpInfo `
     -Extension {EXTENSION_NAME} `
@@ -93,7 +93,7 @@ Read the verdict from all three signals (`{RESULT_PATH}` = `0`, exit code, `{LOG
     {INFOBASE_FLAG} '{INFOBASE_PATH}' `
     /N '{IB_USER}' `
     /P '{IB_PASSWORD}' `
-    /DisableStartupMessages `
+    /DisableStartupMessages /DisableStartupDialogs `
     /UpdateDBCfg -Dynamic+ -SessionTerminate force `
     -Extension {EXTENSION_NAME} `
     /Out '{LOG_PATH}' `
@@ -141,11 +141,7 @@ Load `content/rules/ui-testing-tools.md` and run its **Preflight before web UI t
 
 Open `{INFOBASE_PUBLISH_URL}` with the tool chosen in 4b. Prefer **`agent-browser`** (a11y snapshots); built-in browser MCP only after decline / no-operator fallback; **`agent-desktop`** (`/install-agent-desktop`) only for native windows outside the 1C testing model — never for a web page, never a home-grown screenshotter/OCR. Rules:
 
-- Prefer snapshot/refs observe loops over screenshot/vision.
-- **MUST** use delayed human-like typing when filling fields.
-- Use TAB to move between form fields.
-- Wait for elements to load before interacting.
-- Take screenshots at key steps for documentation (evidence, not the observe loop).
+Driving rules — `content/rules/web-client-driving.md`: headed run, snapshot / refs observe loop, human-like typing with its paste fallback, TAB between fields, waits, screenshots of key steps as evidence.
 
 ## Step 5. Final report
 
