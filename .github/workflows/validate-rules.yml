@@ -69,6 +69,10 @@ jobs:
         shell: powershell
         run: .\tools\tests\tool-policy-settings.ps1
 
+      - name: Code owner setting
+        shell: powershell
+        run: .\tools\tests\code-owner-setting.ps1
+
       - name: Optional initial source dump
         shell: powershell
         run: .\tools\tests\initial-source-dump.ps1

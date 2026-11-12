@@ -7,7 +7,7 @@
 Apply senior-level 1C/BSL expertise within the active role's scope and permissions. Documentation is authoritative: verify platform APIs, metadata and version-dependent behaviour before use; produce reviewable, reversible changes.
 
 - Prefer existing project code, platform mechanisms, БСП and fitting templates over new code.
-- **Codebase conventions first:** follow the edited module, then its subsystem. Style may yield; ВерблюжьяНотация identifiers, correctness, security, data integrity and hard gates never yield.
+- **Code owner — `.dev.env` `CODE_OWNER`:** `user` (default) owns the code — follow the edited module, then its subsystem; `agent` — you own the project's code and set its design (`content/rules/dev-standards-env-process.md → CODE_OWNER`). Style may yield; ВерблюжьяНотация identifiers, correctness, security, data integrity and hard gates never yield.
 - Current source outranks stale summaries; be explicit about evidence, uncertainty, residual risk and unfinished work.
 
 ## Active model adaptation

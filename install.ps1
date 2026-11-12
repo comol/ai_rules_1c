@@ -128,6 +128,11 @@ $script:LlmRulesFileName = 'LLM-RULES.md'
 $script:DevEnvFileName = '.dev.env'
 $script:DevEnvExampleName = '.dev.env.example'
 $script:UseEdtKey = 'USE_EDT'
+# CODE_OWNER: who owns the project code (user | agent). Asked at most once per
+# run - see Resolve-CodeOwnerAnswer.
+$script:CodeOwnerKey = 'CODE_OWNER'
+$script:CodeOwnerAnswer = $null
+$script:CodeOwnerAsked = $false
 $script:SupportKeys = @('SUPPORT_KEY', 'SUPPORT_EMAIL', 'SUPPORT_API_URL')
 $script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'pi', 'other')
 # OpenCode configs belong to the user, including files tracked by older
@@ -4035,11 +4040,13 @@ function Place-RootTemplates {
 #
 # Behaviour:
 #   - If the file already exists in the project root — preserve every user
-#     value. Migrations may append missing USE_EDT and TOOL_* keys.
+#     value. Migrations may append missing USE_EDT, CODE_OWNER and TOOL_*
+#     keys; a missing CODE_OWNER is asked when a person can answer.
 #   - If missing — render from the source `.dev.env.example` template,
 #     auto-fill what we can detect (PLATFORM_VERSION from Configuration.xml,
 #     PLATFORM_PATH from C:\Program Files\1cv8\, PREFIX from extension's
-#     NamePrefix), ask once whether the project uses EDT, and either prompt the
+#     NamePrefix), ask once whether the project uses EDT and who owns the
+#     code (CODE_OWNER), and either prompt the
 #     user for the remaining setup values (interactive mode) or use documented
 #     defaults / leave optional values empty with a warning (non-interactive).
 #
@@ -4373,6 +4380,12 @@ function Place-DevEnv {
     }
     $text = Set-DevEnvValue -Text $text -Key $script:UseEdtKey -Value $edtUsage
 
+    # Code owner (CODE_OWNER): asked with an explanation of both owners when a
+    # person can answer, otherwise the default 'user'. If the template lacks
+    # the key, Ensure-CodeOwnerSetting appends it and reuses this answer.
+    $codeOwner = Resolve-CodeOwnerAnswer
+    $text = Set-DevEnvValue -Text $text -Key $script:CodeOwnerKey -Value $codeOwner
+
     # Persist the parent agent's model profile (AGENT_MODEL). Asked once here,
     # only while the file is being created — an existing .dev.env is never
     # touched, and an empty value is fully valid (the agent then selects the
@@ -4405,6 +4418,7 @@ function Place-DevEnv {
     if ($detectedPath)    { Write-Info "    autodetected PLATFORM_PATH    = $detectedPath" }
     if ($detectedPrefix)  { Write-Info "    autodetected PREFIX           = $detectedPrefix" }
     Write-Info "    USE_EDT = $edtUsage"
+    Write-Info "    CODE_OWNER = $codeOwner"
     if ($agentModel) {
         Write-Info ("    AGENT_MODEL = $agentModel (" + [string]$script:AgentModelProfiles[$agentModel] + ") — профиль правил model-$agentModel.md")
     }
@@ -4501,6 +4515,78 @@ function Ensure-EdtUsageSetting {
     }
     Write-Info "  .dev.env: added USE_EDT=$edtUsage (по умолчанию 1C:EDT не используется)"
     Write-Info '    Проект разрабатывается в 1C:EDT? Запустите /installtools или /install-edt-mcp — они спросят и запишут USE_EDT=true (можно просто исправить значение в .dev.env).'
+}
+
+function Test-CodeOwnerPromptAllowed {
+    # The code-owner question needs a person at the console. With
+    # -NonInteractive, or when input is redirected (an agent shell, CI), no
+    # prompt is shown: an update must never block or fail on it.
+    if ($NonInteractive) { return $false }
+    try { return -not [Console]::IsInputRedirected } catch { return $false }
+}
+
+function Read-CodeOwnerChoice {
+    # Explains both owners and returns 'user' or 'agent'. Enter, an unknown
+    # answer or a failing prompt keep the default 'user'.
+    Write-Info ''
+    Write-Info '  Кто владелец кода проекта? От ответа зависит, чьим правилам агент следует при правках.'
+    Write-Info '    [1] Пользователь (по умолчанию). Правила задаёте вы: агент следует архитектуре и соглашениям,'
+    Write-Info '        которые уже есть в коде, меняет только то, что нужно задаче, а о посторонних проблемах сообщает.'
+    Write-Info '    [2] Модель. Правила устройства кода задаёт агент: он ведёт собственный код проекта как владелец,'
+    Write-Info '        по ходу задачи объединяет дублирующийся код и исправляет связанную структуру.'
+    Write-Info '        Правок и расхода токенов заметно больше, итоговый diff нужно просматривать внимательнее.'
+    Write-Info '    В обоих случаях типовой код поставщика, обязательные проверки и подтверждение опасных действий не меняются.'
+    $choice = '1'
+    try { $choice = [string](Read-Required '  Владелец кода (1 — пользователь, 2 — модель)' '1') } catch { $choice = '1' }
+    if ($choice.Trim() -match '^(2|agent|модель)$') { return 'agent' }
+    return 'user'
+}
+
+function Resolve-CodeOwnerAnswer {
+    # Returns the CODE_OWNER value for this run; the question fires at most once.
+    if ($null -ne $script:CodeOwnerAnswer) { return $script:CodeOwnerAnswer }
+    $script:CodeOwnerAsked = [bool](Test-CodeOwnerPromptAllowed)
+    $script:CodeOwnerAnswer = if ($script:CodeOwnerAsked) { Read-CodeOwnerChoice } else { 'user' }
+    return $script:CodeOwnerAnswer
+}
+
+function Ensure-CodeOwnerSetting {
+    # Migration for a .dev.env that predates CODE_OWNER. Unlike USE_EDT, the
+    # key is asked on update / add / init over an existing file as well: the
+    # owner changes how agents edit code, so an explicit answer beats a silent
+    # default. The question appears only where a person can answer
+    # (Test-CodeOwnerPromptAllowed); otherwise 'user' is written and reported.
+    # A present key - empty or invalid included - is the user's and is never
+    # touched.
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest
+    )
+
+    $target = Join-Path $Root $script:DevEnvFileName
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { return }
+    $values = Read-DevEnvKeys -Path $target
+    if ($values.Contains($script:CodeOwnerKey)) { return }
+
+    $codeOwner = Resolve-CodeOwnerAnswer
+    $text = Read-TextFile $target
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $text += $newline }
+    $text += $newline +
+        '# Владелец кода: user — агент следует правилам, уже принятым в коде (по умолчанию);' + $newline +
+        '# agent — устройство собственного кода проекта задаёт агент (dev-standards-env-process.md → CODE_OWNER).' + $newline +
+        $script:CodeOwnerKey + '=' + $codeOwner + $newline
+    Write-TextFile -Path $target -Content $text
+    if ($Manifest.files.Contains($script:DevEnvFileName)) {
+        $Manifest.files[$script:DevEnvFileName]['installedHash'] = Get-FileSha256 $target
+    }
+    if ($script:CodeOwnerAsked) {
+        Write-Info "  .dev.env: added CODE_OWNER=$codeOwner"
+    }
+    else {
+        Write-Info '  .dev.env: added CODE_OWNER=user — владелец кода пользователь; вопрос не задан, потому что запуск идёт без интерактивного ввода.'
+        Write-Info '    Чтобы устройство кода задавал агент, впишите в .dev.env CODE_OWNER=agent.'
+    }
 }
 
 function Ensure-SupportSettings {
@@ -4837,6 +4923,7 @@ function Invoke-Init {
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
     Invoke-LegacyInfobaseSettingsMigration -Root $Root -Manifest $manifest
     Ensure-EdtUsageSetting -Root $Root -Manifest $manifest
+    Ensure-CodeOwnerSetting -Root $Root -Manifest $manifest
     Ensure-SupportSettings -Root $Root -Manifest $manifest
 
     Write-Section 'Phase 7b: OpenSpec project.md (1C autodetect)'
@@ -5428,6 +5515,7 @@ function Invoke-Update {
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
     Invoke-LegacyInfobaseSettingsMigration -Root $Root -Manifest $manifest
     Ensure-EdtUsageSetting -Root $Root -Manifest $manifest
+    Ensure-CodeOwnerSetting -Root $Root -Manifest $manifest
     Ensure-SupportSettings -Root $Root -Manifest $manifest
 
     Write-Section 'OpenSpec project.md (update / 1C autodetect)'
@@ -5527,6 +5615,7 @@ function Invoke-Add {
     Place-DevEnv -Root $Root -SourceRoot $sourceRoot -Manifest $manifest
     Invoke-LegacyInfobaseSettingsMigration -Root $Root -Manifest $manifest
     Ensure-EdtUsageSetting -Root $Root -Manifest $manifest
+    Ensure-CodeOwnerSetting -Root $Root -Manifest $manifest
     Ensure-SupportSettings -Root $Root -Manifest $manifest
     $extMcp = Resolve-ExternalMcpMode -ProjectRoot $Root
     if ($extMcp.Mode -eq 'external') {

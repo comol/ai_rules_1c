@@ -6,7 +6,7 @@ category: development
 
 # Development Standards — Environment Parameters
 
-**When to load this file:** when the task depends on project parameters, infobase / deployment, EDT (`USE_EDT`) or UI testing. Read only the relevant section; no code-style-only lookup. `TOOL_*` keys — `content/rules/tool-policy.md`. Subagent / model routing, orchestration, triage and debugging defaults, verification depth, metadata preview, communication style and the support channel — `content/rules/dev-standards-env-process.md`.
+**When to load this file:** when the task depends on project parameters, infobase / deployment, EDT (`USE_EDT`) or UI testing. Read only the relevant section; no code-style-only lookup. `TOOL_*` keys — `content/rules/tool-policy.md`. Subagent / model routing, orchestration, code ownership (`CODE_OWNER`), triage and debugging defaults, verification depth, metadata preview, communication style and the support channel — `content/rules/dev-standards-env-process.md`.
 
 Section number 1 is a stable anchor for `§1` references.
 
@@ -25,7 +25,7 @@ No field in `.dev.env` blocks the entire ruleset. **Every parameter is task-scop
 - **Advisory** — empty is silently valid; a documented fallback applies. **MUST NOT be asked about**, ever (not at install time per task, not on apply phase, not in subagents).
 - **Highly desirable for a specific operation** — empty does not block unrelated work, but the operation that needs the value cannot complete. Ask the user **only when that operation is in scope of the current task**. Do not gather empties up front "for completeness".
 - **Defaulted** — empty resolves to a documented default; no question, no fallback noise.
-- **Install-time selection** — the installer asks once while creating `.dev.env`, persists the answer, and regular tasks never re-ask it.
+- **Install-time selection** — the installer asks once while creating `.dev.env` (`CODE_OWNER` also when an existing file lacks it), persists the answer, and regular tasks never re-ask it.
 
 ### Code-generation parameters
 
