@@ -36,7 +36,8 @@ All deployment goes through the slash command `/deploy-and-test` (`content/comma
 ## QA MCP Testing (main route)
 
 - Before the first call — `content/skills/1c-qa-testing/SKILL.md` (session, observe → act → assert loop, platform behaviour, unknown outcomes, journal and verdicts) and `content/rules/qa-testclient.md` (test client start / stop, visible or hidden window, screenshots, agent-desktop, data confirmation through `1c-data-mcp`).
-- Workflow: start a fresh test client for the deployed infobase → `qa_status` / `qa_start` → per scenario: read the window, one action, read the change, assert on read values → confirm data effects the form does not show through `1c-data-mcp` → screenshots of key states → `qa_stop` and stop the client you started.
+- For a scenario already covered by a saved pytest test, run the matching case as described in `1c-qa-testing → Save and rerun pytest tests`. The runner manages the QA session. Report the file and pytest outcome.
+- Interactive workflow: start a fresh test client for the deployed infobase → `qa_status` / `qa_start` → per scenario: read the window, one action, read the change, assert on read values → confirm data effects the form does not show through `1c-data-mcp` → screenshots of key states → `qa_stop` and stop the client you started.
 - Evidence is the journal plus tool answers and screenshots per step; a command accepted is not an effect observed.
 
 ## Web UI Testing (fallback)

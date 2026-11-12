@@ -37,8 +37,8 @@ Missing / empty = `auto`; the installer appends missing keys as `auto` without o
 | `TOOL_DATA` | `1c-data-mcp`: live-IB checks |
 | `TOOL_EDT` | EDT-MCP; workflow still requires `USE_EDT=true` |
 | `TOOL_AGENT_BROWSER` | agent-browser, MCP and CLI |
-| `TOOL_BROWSER` | Active client's built-in browser tools and saved UI test runners |
+| `TOOL_BROWSER` | Active client's built-in browser tools and saved web-client test runners |
 | `TOOL_AGENT_DESKTOP` | Vercel Labs agent-desktop for native windows |
-| `TOOL_QA` | `1c-qa` (QA MCP): UI checks in the 1C thin client |
+| `TOOL_QA` | `1c-qa` (QA MCP): interactive thin-client checks and saved pytest runs through `qa-tests` |
 | `TOOL_UI_TEST` | Optional `MCP_Test` / `1C Visual UI Test` |
 | `TOOL_CONVERSION` | `1c-kd20` (KD20): «Конвертация данных» 2.0 exchange rules and read-only EnterpriseData checks; installed separately |

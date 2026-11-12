@@ -1,6 +1,6 @@
 ---
 name: 1c-qa-testing
-description: "UI checks in the 1C thin client through QA MCP (`1c-qa`, `qa_*` / `ui_*`): session, observe → act → assert, platform behaviour, unknown outcomes, journal and verdicts. Main UI route when connected and TOOL_QA allows it; the web client is the fallback."
+description: "Check the 1C thin client through QA MCP (`1c-qa`): drive forms interactively, assert observed results, and save or rerun repeatable UI scenarios as pytest files on native QA MCP 0.8.0+."
 argument-hint: "<feature or scenario to check>"
 ---
 
@@ -14,7 +14,7 @@ All of these hold:
 
 - `UI_TESTING` allows the check (`content/rules/dev-standards-env.md → UI_TESTING`): `essential` / `auto` after the change reached the dev/test infobase, `manual` on an explicit request, never under `off`.
 - `TOOL_QA` is not `off` (`content/rules/mcp-policy.md → Tool availability`).
-- The `qa_*` / `ui_*` tools are exposed in this session and `qa_status` answers. A config entry or `/healthz` proves nothing.
+- For interactive checks, the `qa_*` / `ui_*` tools are exposed in this session and `qa_status` answers. For saved tests, the runner connects to QA MCP itself.
 - The target is an authorized dev/test infobase (`INFOBASE_ROLE`), the one in `.dev.env`.
 
 Otherwise use the web fallback of `ui-testing-tools.md`, or report the check unrun with the reason. `TOOL_QA=required` with the server missing blocks the check; the web client does not replace it.
@@ -60,6 +60,28 @@ The first form may still be loading right after the client starts: repeat read-o
 ## Recipes
 
 Before list navigation, field entry, table editing, save/post or dialog actions, read the matching recipe and its pitfalls in [interaction-recipes.md](docs/interaction-recipes.md). Read-only window inspection needs no recipe. Two failed attempts by one method require a fresh window read, then another method or an explicit unverified result; never vary arguments blindly.
+
+## Save and rerun pytest tests
+
+For a recurring workflow or a reproduced regression, look for a matching `test_*.py` in the project's tests first. Rerun or extend that case. If none covers the behaviour, save the verified actions and expected results as a pytest test in the project's version-controlled tests directory. Use observed form and control names. The agent writes the Python file. The `qa-tests` runner in native QA MCP 0.8.0+ executes it through the MCP endpoint, including in CI.
+
+```python
+from mcp_qa_testing import expect
+
+
+def test_currency_list(app):
+    form = app.open(kind="catalog", metadata_name="Валюты")
+    form.here()
+    expect(form.table("Список")).to_exist(timeout=10)
+```
+
+For the distribution's `servers/qa-compose.yml`, set `QA_TESTS` to the absolute path of the project's test directory, or put the file in the default `servers/qa-tests/` directory. With the configured QA service and a signed-in TestClient on the authorized dev/test base, run the saved file from the distribution root:
+
+```sh
+docker compose --env-file config.env -f servers/qa-compose.yml run --rm qa-tests pytest /tests/test_currency_list.py
+```
+
+On later runs, select the file or case that covers the change under `UI_TESTING`. The `app` fixture closes secondary windows before each test, and writes to the test base persist across runs. Use independent test data for scenarios that write. Report the file, the pytest result and any failure artifacts. If the test was only saved, report it as unrun. [QA MCP pytest guide](https://docs.onerpa.ru/mcp-servery-1c/servery/qa#sokhranyonnye-testy-na-pytest)
 
 ## Platform behaviour (8.3.27.2130, measured)
 

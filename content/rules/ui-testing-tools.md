@@ -12,7 +12,7 @@ Whether a UI check runs at all is gated by `UI_TESTING` — canon: `dev-standard
 
 ## Route order (hard)
 
-1. **QA MCP (`1c-qa`)** — the main route for checks in the 1C interface. It drives the thin client's forms through the platform testing model and reads structured state. Eligible when `TOOL_QA` is not `off` and its `qa_*` / `ui_*` tools are exposed; it needs the project infobase (`INFOBASE_PATH`, `INFOBASE_ROLE`), not a web publication. Load `content/skills/1c-qa-testing/SKILL.md` and `content/rules/qa-testclient.md` (starting the test client, visible / hidden window, screenshots, data confirmation).
+1. **QA MCP (`1c-qa`)** — the main route for checks in the 1C interface. It drives the thin client's forms through the platform testing model and reads structured state. With `TOOL_QA` enabled, interactive checks use the session's `qa_*` / `ui_*` tools and saved pytest tests use the runner below. Both need the project infobase (`INFOBASE_PATH`, `INFOBASE_ROLE`). Load `content/skills/1c-qa-testing/SKILL.md` and `content/rules/qa-testclient.md` (starting the test client, visible / hidden window, screenshots, data confirmation).
 2. **Web client** — the fallback when QA MCP is absent, disabled, cannot connect or cannot cover a step, and the primary route for web-client-specific behaviour or a requested web screenshot. Needs `INFOBASE_PUBLISH_URL`; runs the preflight and driver order below, then `web-client-driving.md`.
 3. **agent-desktop** — windows outside the testing model (OS and file dialogs, platform error windows the test client does not reach, other applications) under the cautions of `qa-testclient.md → agent-desktop`. Use QA MCP for thin-client forms and agent-browser for web pages.
 
@@ -20,9 +20,10 @@ State the chosen route, and the reason for a fallback, once in the report. `TOOL
 
 ## Saved regression suites
 
-`content/skills/1c-ui-regression/SKILL.md` provides optional reusable test authoring. The model may choose it when repeated coverage is useful. A saved suite runs through its verified project runner (for example Playwright Test), under `UI_TESTING`, the authorized dev/test target and `TOOL_BROWSER`. It is distinct from interactive inspection; it does not need agent-browser installation solely to execute saved assertions. `TOOL_BROWSER=off` disables this lane; `required` needs a working runner for the selected suite. Do not substitute another provider to bypass a disabled or required capability.
+Reuse saved tests when they cover the behaviour being checked. Run them under `UI_TESTING` on the authorized dev/test target.
 
-Any interactive exploration or debugging needed to author/fix the suite still follows the preflight and driver order below. Both lanes retain the interaction rules from `web-client-driving.md`; saved tests use observed stable locators rather than ephemeral snapshot refs.
+- **1C thin client:** native QA MCP 0.8.0+ runs saved pytest files through `qa-tests` under `TOOL_QA`. For authoring, test directory and rerun commands, see `content/skills/1c-qa-testing/SKILL.md → Save and rerun pytest tests`.
+- **Web client:** `content/skills/1c-ui-regression/SKILL.md` covers saved suites with a verified project runner such as Playwright Test. `TOOL_BROWSER=off` disables this route, and `required` needs a working runner. A saved browser suite can execute without an agent-browser installation. Interactive web exploration and debugging follow the preflight and driver order below. Use observed stable locators and the interaction rules in `web-client-driving.md`.
 
 ## Preflight before web UI tests (hard gate)
 
