@@ -1,10 +1,13 @@
-﻿# repo-ops v1.1 — 1C configuration repository (хранилище конфигурации) operations
+﻿# repo-ops v1.2 — 1C configuration repository (хранилище конфигурации) operations
 # Part of the 1c-repository-manage skill (1c-rules).
 # Conventions follow 1c-metadata-manage/tools/1c-db-ops (encoding fallback,
 # non-interactive launch, secret masking, exit-0 log-lie detection, /DumpResult).
 # v1.1 (2026-11-01) ports the platform-log learnings of upstream db-repo
 # (Nikolay-Shirokov/cc-1c-skills, MIT; 478e7489 and later): line-by-line verdict per
 # object, root-only capture, owner substitution, received-objects list, connection hints.
+# v1.2 (2026-11-12) fixes found on a live repository (8.3.27): a quote in a commit comment
+# is doubled, diff without -Version resolves the head first, a forced unlock that leaves
+# another user's lock in place is a failure.
 <#
 .SYNOPSIS
     Операции с хранилищем конфигурации 1С в пакетном режиме Конфигуратора.
@@ -66,7 +69,8 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$Comment,
 
-    # -1 = latest version (the -v / -SecondVersion key is omitted entirely)
+    # -1 = latest version: -v is omitted (the platform takes the head); diff reads the head
+    # number first, because /CompareCfg requires -SecondVersion for the repository side
     [Parameter(Mandatory=$false)]
     [int]$Version = -1,
 
@@ -552,6 +556,19 @@ function Get-RepoVerdict {
                 }
                 return 1
             }
+            if ($Log.LockedByOther.Count -gt 0) {
+                # Verified on 8.3.27: the platform names the holder, keeps the lock and still
+                # reports «Отмена захвата объектов в хранилище успешно завершена» with exit 0 —
+                # with -force too, and for a repository administrator too.
+                $held = @($Log.LockedByOther | ForEach-Object { "$($_.Name) — held by $($_.Holder)" })
+                if ($Force) {
+                    Write-NameList "Locked by another user — NOT released (a batch -force does not release another user's lock)" $held 'Red' 'blocked'
+                    Write-Host "Report the holder(s) to the user; the holder releases the lock." -ForegroundColor Yellow
+                    Write-ReceivedObjects $Log.Received
+                    return 1
+                }
+                Write-NameList "Locked by another user — not yours, nothing to release" $held 'Yellow' 'blocked'
+            }
             Write-NameList "Lock released" $Log.Unlocked 'Green' 'unlocked'
             Write-NameList "Not locked by you — nothing to release (no-op)" $Log.NotLocked 'Yellow' 'not-locked'
             if ($Log.Unlocked.Count -eq 0) { Write-Host "Nothing was released — no change." -ForegroundColor Green }
@@ -869,6 +886,32 @@ function Write-ObjectListXml {
     [System.IO.File]::WriteAllText($Path, $sb.ToString(), $enc)
 }
 
+function Get-RepoHeadVersion {
+    # /CompareCfg has no "latest" for a ConfigurationRepository side: without -SecondVersion
+    # the platform answers «Не указана версия хранилища» (verified on 8.3.27). The head
+    # number comes from a one-version report, the same call as -Operation status.
+    # Returns -1 when the number cannot be read.
+    param([string[]]$BaseArgs, [string]$WorkDir)
+    $headReport = Join-Path $WorkDir "head_report.txt"
+    $headLog = Join-Path $WorkDir "head_log.txt"
+    $headArgs = $BaseArgs + @(
+        "/ConfigurationRepositoryReport `"$headReport`"", "-NBegin -1", "-ReportFormat txt",
+        "/Out `"$headLog`"", "/DisableStartupDialogs", "/DisableStartupMessages")
+    $run = Invoke-PlatformProcess $V8Path $headArgs $TimeoutSeconds
+    $report = Read-PlatformTextFile $headReport
+    if (-not $run.TimedOut -and $run.ExitCode -eq 0 -and $report -match '(?m)^Версия:\s*(\d+)') {
+        return [int]$Matches[1]
+    }
+    Write-Host "Error: the repository head version could not be read for diff (code $($run.ExitCode)); pass -Version explicitly or run -Operation status." -ForegroundColor Red
+    $headLogText = Read-PlatformTextFile $headLog
+    if ($headLogText) {
+        Write-Host "--- Log (/Out) ---"
+        Write-Host $headLogText.TrimEnd()
+        Write-Host "--- End ---"
+    }
+    return -1
+}
+
 try {
     # --- Build the argument line (pre-quoted, 1C style) ---
     $arguments = @("DESIGNER")
@@ -900,6 +943,11 @@ try {
             $arguments += "-ReportFormat txt"
         }
         'diff' {
+            if ($Version -lt 0) {
+                $Version = Get-RepoHeadVersion $arguments $tempDir
+                if ($Version -lt 0) { exit 1 }
+                Write-Host "Comparing with the repository head: version $Version"
+            }
             $arguments += "/CompareCfg -FirstConfigurationType MainConfiguration -SecondConfigurationType ConfigurationRepository"
             if ($Version -ge 0) { $arguments += "-SecondVersion $Version" }
             if ($objectsXml) { $arguments += "-Objects `"$objectsXml`"" }
@@ -919,10 +967,11 @@ try {
         }
         'commit' {
             $arguments += "/ConfigurationRepositoryCommit -Objects `"$objectsXml`""
-            # multi-line comments go as repeated -comment keys; internal quotes
-            # escaped the argv way (\") so the platform receives them literally
+            # multi-line comments go as repeated -comment keys; an internal quote is
+            # doubled the 1C way (""). A backslash escape (\") cuts the stored comment at
+            # the quote and drops the rest of the line (verified on 8.3.27).
             foreach ($line in ($Comment.Trim() -replace "`r`n", "`n") -split "`n") {
-                $escLine = $line -replace '"', '\"'
+                $escLine = $line -replace '"', '""'
                 $arguments += "-comment `"$escLine`""
             }
             if ($KeepLocked) { $arguments += "-keepLocked" }
