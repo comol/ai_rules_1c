@@ -51,6 +51,8 @@ Latest-version report (`/ConfigurationRepositoryReport -NBegin -1`). The cheapes
 
 `/CompareCfg -FirstConfigurationType MainConfiguration -SecondConfigurationType ConfigurationRepository`, Brief report with changed/added/deleted objects. Use before `commit` to verify the change set matches the plan, and before `lock` to see whether local copies are stale.
 
+The platform has no "latest" for the repository side: without `-SecondVersion` it answers «Не указана версия хранилища». Without `-Version` the script therefore reads the head number first (the same one-version report as `status`) and prints `Comparing with the repository head: version N`. The comparison needs an infobase bound to this repository — on an unbound one the platform answers «Конфигурация 'Конфигурация хранилища' недоступна»; `status`, `history` and `dump` work from any infobase.
+
 ### lock — take objects for editing
 
 ```powershell
@@ -90,7 +92,9 @@ The output lists `Committed to the repository` and `Unchanged — not committed`
 ... -Operation unlock -Objects "Справочник.Номенклатура" [-IncludeChildObjects]
 ```
 
-`/ConfigurationRepositoryUnLock` without force releases **own** locks on unchanged objects. Releasing a lock while local changes exist loses nothing by itself, but leaves the local configuration diverged — run `diff` first when unsure. «Объект не захвачен для редактирования» is reported as `Not locked by you — nothing to release (no-op)` with exit `0`. Objects with local changes refuse the whole call (exit `1`, the objects are named).
+`/ConfigurationRepositoryUnLock` without force releases **own** locks on unchanged objects. «Объект не захвачен для редактирования» is reported as `Not locked by you — nothing to release (no-op)` with exit `0`. Objects with local changes refuse the whole call («Объект '…' был изменен», exit `1`, the objects are named): commit them, or discard them with `-Force -ConfirmDiscardChanges` — the forced unlock receives the repository version back and the local changes are gone.
+
+An object locked by another user is named by the platform («Объект захвачен для редактирования другим пользователем: … (<holder>)»), the lock stays, and the platform still reports success. Without `-Force` the script lists it as `Locked by another user — not yours, nothing to release` with exit `0`. With `-Force` the lock is still not released — in batch mode, even for a repository administrator — so the script lists it as `NOT released` and exits `1`.
 
 ### dump — export a repository version to CF/CFE
 
@@ -118,7 +122,7 @@ Run it (or the `/getconfigfiles` selected-object export with that list) **before
 |---|---|---|
 | `update -Force -ConfirmForce` | Overwrites locally changed objects with the repository version | `REPOSITORY_ALLOW_FORCE=true` + switch |
 | `commit -Force -ConfirmForce` | Commits despite warnings the platform would otherwise stop on | `REPOSITORY_ALLOW_FORCE=true` + switch |
-| `unlock -Force -ConfirmDiscardChanges` | Releases locks **discarding uncommitted changes** (own or, with repository admin rights, another user's) | `REPOSITORY_ALLOW_FORCE=true` + switch |
+| `unlock -Force -ConfirmDiscardChanges` | Releases **own** locks **discarding uncommitted changes**. Another user's lock is not released in batch mode, even with repository admin rights (exit `1`, see [unlock](#unlock--release-locks)) | `REPOSITORY_ALLOW_FORCE=true` + switch |
 
 Both halves of each gate are the user's decision: never edit `REPOSITORY_ALLOW_FORCE` and never add the confirmation switch without the user's explicit approval of that specific operation in that specific call.
 
@@ -138,6 +142,8 @@ Same iterative discipline as DB updates (`content/skills/1c-metadata-manage/docs
 |---|---|---|
 | `Locked by another user — NOT taken … held by <X>` («Объект захвачен для редактирования другим пользователем») | Lock conflict | Report to the user; do **not** force-unlock. Objects listed as locked by you stay yours |
 | `Not locked by you — lock them first` on commit, or the bare commit failure | Committing objects that were never locked | `lock` the missing objects, re-commit |
+| `Locked by another user — NOT released` on `unlock -Force` | A batch forced unlock does not release another user's lock | Report the holder to the user; the holder releases it |
+| `Конфигурация 'Конфигурация хранилища' недоступна` on `diff` | The infobase is not bound to this repository | Compare from a bound infobase, or `dump` the version and compare the files |
 | `[connection] credentials rejected` (`Неправильное имя или пароль…`) | Wrong `REPOSITORY_USER`/`REPOSITORY_PASSWORD` or IB credentials | Re-ask the user once, per the `dev-standards-env.md` credential policy |
 | `[connection] repository credentials missing` («Соединение с хранилищем конфигурации не установлено», `REPOSITORY_USER` empty) | The platform gives this message for missing credentials too | Ask the user for the repository user / password |
 | `[connection] repository server unreachable at <host>:<port>` (same message, `tcp://` address, user set) | Repository server down, wrong port (default 1542), server version ≠ platform | Verify the server and address with the user |
@@ -150,4 +156,5 @@ Two identical failures in a row = stop and report; never loop the same failing c
 
 ## Changes
 
+- **2026-11-12 — repo-ops v1.2.** Checked against a live file repository on 8.3.27.2342 (two repository users, three infobases). Fixed: a quote in a `commit` comment is doubled (`""`) — the former `\"` stored the comment cut at the quote and dropped the rest of the line; `diff` without `-Version` reads the head number first — it used to fail with «Не указана версия хранилища»; `unlock -Force` that leaves another user's lock in place exits `1` instead of `0` («Nothing was released»), and the plain unlock names the holder. Docs: unlock with local changes is refused, not "loses nothing"; a batch forced unlock does not release another user's lock even for an administrator; `diff` needs a bound infobase. Confirmed on the live repository as documented: `status` (`-NBegin -1` is exactly the head), `history` grouping, partial lock, "already yours", missing objects, empty list, `dump` / `update` with `-Version`, `status` / `history` / `dump` from an unbound infobase. Regression cases added for the three fixes.
 - **2026-11-01 — repo-ops v1.1.** Ported from upstream `db-repo` (cc-1c-skills 478e7489, 33633aaf, 3e816d3e, 1eb565b1, 1c74843c, 4a49eea4; the skill itself is not vendored — it binds / unbinds infobases and administers repositories, which Safety invariants 5–6 forbid): line-by-line verdict per object for `lock` / `update` / `commit` / `unlock` (partial lock, silent "already yours", unlock no-op, "no new version", unbound-infobase check on `update`); root-only lock; owner substitution; received objects saved with a ready `db-dump-xml -ObjectsFile` command; connection hints that tell an unreachable `tcp://` server from missing or rejected credentials. Local additions: `/DumpResult` and `/DisableStartupMessages` on every launch, the `INFOBASE_ROLE=prod` refusal enforced by the script, a relative infobase path anchored at `.dev.env`, `PositionalBinding=$false`, a `trap` against a false exit `0`, a bounded output drain (no hang when a child keeps the pipes open). `-Objects` on `status` / `history` / `dump` is now refused instead of ignored. Kept as before: the double `-Force` gate, no whole-configuration operations, `diff`, `-TimeoutSeconds`, the freshness check of [repo-sdlc.md](repo-sdlc.md). Offline tests: `tools/tests/repo-ops-regression.ps1` (fake platform, sample logs from the platform's message texts); not yet verified against a live repository.
