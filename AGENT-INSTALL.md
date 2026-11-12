@@ -127,10 +127,14 @@ Enumerating each host's own names in `tools` is not the fix either: an allowlist
 | --- | --- | --- | --- |
 | `Write` | `Write`, `NotebookEdit` | `Write` | `write_file` |
 | `Edit` | `Edit`, `NotebookEdit` | `Edit` | `edit` |
-| `Shell` | `Bash`, `PowerShell` | `Bash` | `run_shell_command` |
+| `Shell` | `Bash`, `PowerShell`, `Monitor` | `Bash` | `run_shell_command` |
 | `Read`, `Grep`, `Glob`, `MCP` | *(never denied — inherited)* | *(same)* | *(same)* |
 
-A host tool is denied only when **no** source tool that maps to it is granted (`Write` and `Edit` both map to `NotebookEdit`, so granting either keeps it available). The result is written as the comma-separated string all three hosts document, and the field is omitted entirely when nothing is denied. Example for `1c-explorer` (source `tools: ["Read", "Grep", "Glob", "MCP"]`) under Claude Code:
+A host tool is denied only when **no** source tool that maps to it is granted (`Write` and `Edit` both map to `NotebookEdit`, so granting either keeps it available). The result is written as the comma-separated string all three hosts document, and the field is omitted entirely when nothing is denied.
+
+**Read-only agents and MCP (Claude Code).** Inheriting `MCP` hands a read-only agent the writing MCP tools together with the reading ones: Claude Code has no read/write filter for MCP tools, and its `disallowedTools` takes exact tool names plus the server-level forms `mcp__<server>`, `mcp__<server>__*` and `mcp__*` — no glob on the tool part. The optional `toolsToDenylist.readOnly` block closes that gap for an agent whose source list grants none of `readOnly.whenNoneOf` (`Write`, `Edit`, `Shell`): every entry of `readOnly.deny` is appended to its `disallowedTools`. The Claude Code adapter lists there the state-changing tools of the MCP servers this ruleset installs (by full name), the action-only servers as a whole (`mcp__agent-browser`, `mcp__agent-desktop`) and the built-ins that act outside the session (`EnterWorktree`, `CronCreate`, `RemoteTrigger`). A server the user adds, or a server installed under another id, is not covered — extend the list for it. Server-level entries need Claude Code 2.1.178 or later; older versions ignore them silently.
+
+Example for `1c-explorer` (source `tools: ["Read", "Grep", "Glob", "MCP"]`) under Claude Code:
 
 ```yaml
 ---
@@ -138,11 +142,11 @@ name: 1c-explorer
 description: "Read-only 1C codebase exploration specialist …"
 isSubagent: true
 allowParallel: true
-disallowedTools: "Write, NotebookEdit, Edit, Bash, PowerShell"
+disallowedTools: "Write, NotebookEdit, Edit, Bash, PowerShell, Monitor, EnterWorktree, CronCreate, RemoteTrigger, mcp__1c-data-mcp__vcexecutecode, mcp__1c-templates-mcp__remember, …, mcp__agent-browser, mcp__agent-desktop"
 ---
 ```
 
-The three read-only agents (`1c-explorer`, `1c-code-reviewer`, `1c-arch-reviewer`) keep an enforced read-only boundary; the ten mutating agents deny nothing and simply inherit the full pool.
+The three read-only agents (`1c-explorer`, `1c-code-reviewer`, `1c-arch-reviewer`) keep an enforced read-only boundary for the built-in tools and for the MCP servers listed in `readOnly.deny`; agents that grant `Write`, `Edit` or `Shell` deny only what their source list withholds.
 
 ### OpenCode agents: `tools` array → `permission` object
 

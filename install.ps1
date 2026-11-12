@@ -733,6 +733,24 @@ function Invoke-FrontmatterOps {
                 if ($denied -contains $hostTool) { continue }
                 $denied += $hostTool
             }
+            # Read-only agents (the source list grants none of
+            # `readOnly.whenNoneOf`) also lose `readOnly.deny`: host tool names
+            # the abstract map cannot express, such as the state-changing MCP
+            # tools that `MCP` would otherwise hand over with the read ones.
+            $readOnly = $toolsToDenylist.readOnly
+            if ($readOnly -and $readOnly.whenNoneOf -and $readOnly.deny) {
+                $grantsChange = $false
+                foreach ($srcTool in @($readOnly.whenNoneOf)) {
+                    if ($granted -contains $srcTool) { $grantsChange = $true; break }
+                }
+                if (-not $grantsChange) {
+                    foreach ($hostTool in @($readOnly.deny)) {
+                        if ([string]::IsNullOrWhiteSpace([string]$hostTool)) { continue }
+                        if ($denied -contains $hostTool) { continue }
+                        $denied += $hostTool
+                    }
+                }
+            }
             # Comma-separated string: the form all three hosts document.
             if ($denied.Count -gt 0) { $src[$targetKey] = ($denied -join ', ') }
             elseif ($src.Contains($targetKey)) { $src.Remove($targetKey) }

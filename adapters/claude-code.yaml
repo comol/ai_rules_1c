@@ -49,7 +49,76 @@ agents:
       map:
         Write: [Write, NotebookEdit]
         Edit: [Edit, NotebookEdit]
-        Shell: [Bash, PowerShell]
+        # Monitor runs a shell command in the background under the same
+        # permission rules as Bash, so it belongs to the Shell capability.
+        Shell: [Bash, PowerShell, Monitor]
+      # Read-only agents (the source list grants none of Write / Edit / Shell)
+      # inherit every MCP tool of the session, writers included: the abstract
+      # `MCP` entry cannot say "read-only MCP". Claude Code has no read/write
+      # filter for MCP tools, and `disallowedTools` accepts exact names plus
+      # the server-level forms `mcp__<server>`, `mcp__<server>__*`, `mcp__*`
+      # (no glob on the tool part). So the state-changing tools of the servers
+      # this ruleset installs are denied by full name, action-only servers as
+      # a whole, plus built-ins that act outside the session. User-added
+      # servers are not covered; extend the list for them.
+      readOnly:
+        whenNoneOf: [Write, Edit, Shell]
+        deny:
+          - EnterWorktree
+          - CronCreate
+          - RemoteTrigger
+          - mcp__1c-data-mcp__vcexecutecode
+          - mcp__1c-templates-mcp__remember
+          - mcp__1c-templates-mcp__add_template
+          - mcp__1c-templates-mcp__plugin_reload
+          - mcp__1c-code-metadata-mcp__reindex
+          - mcp__1c-code-metadata-mcp__unpack_ordinary_form
+          - mcp__1c-code-metadata-mcp__build_ordinary_form
+          - mcp__cognee-memory__remember
+          - mcp__cognee-memory__forget
+          - mcp__openviking__remember
+          - mcp__openviking__forget
+          - mcp__edt-mcp__write_module_source
+          - mcp__edt-mcp__create_metadata
+          - mcp__edt-mcp__modify_metadata
+          - mcp__edt-mcp__delete_metadata
+          - mcp__edt-mcp__rename_metadata_object
+          - mcp__edt-mcp__adopt_metadata_object
+          - mcp__edt-mcp__export_common_picture
+          - mcp__edt-mcp__create_launch_config
+          - mcp__edt-mcp__delete_launch_config
+          - mcp__edt-mcp__apply_quick_fix
+          - mcp__edt-mcp__resync_to_disk
+          - mcp__edt-mcp__update_database
+          - mcp__edt-mcp__create_infobase
+          - mcp__edt-mcp__delete_infobase
+          - mcp__edt-mcp__set_infobase_credentials
+          - mcp__edt-mcp__export_configuration_to_xml
+          - mcp__edt-mcp__import_configuration_from_xml
+          - mcp__edt-mcp__build_external_objects
+          - mcp__edt-mcp__clean_project
+          - mcp__edt-mcp__create_project
+          - mcp__edt-mcp__delete_project
+          - mcp__edt-mcp__git
+          - mcp__edt-mcp__create_git_branch
+          - mcp__edt-mcp__switch_git_branch
+          - mcp__edt-mcp__set_branch_infobase
+          - mcp__edt-mcp__enable_toolset
+          - mcp__edt-mcp__cancel_job
+          - mcp__edt-mcp__debug_launch
+          - mcp__edt-mcp__set_breakpoint
+          - mcp__edt-mcp__remove_breakpoint
+          - mcp__edt-mcp__resume
+          - mcp__edt-mcp__step
+          - mcp__edt-mcp__set_variable
+          - mcp__edt-mcp__evaluate_expression
+          - mcp__edt-mcp__terminate_launch
+          - mcp__edt-mcp__start_profiling
+          - mcp__edt-mcp__stop_profiling
+          - mcp__edt-mcp__generate_translation_strings
+          - mcp__edt-mcp__translate_configuration
+          - mcp__agent-browser
+          - mcp__agent-desktop
     keep: [name, description, disallowedTools, modelHint, isSubagent, allowParallel]
     rename:
       modelHint: model
