@@ -837,7 +837,8 @@ if (-not $NoValidate) {
 	if (Test-Path -LiteralPath $validateScript) {
 		Write-Host ""
 		Write-Host "--- Running subsystem-validate ---"
-		& powershell.exe -NoProfile -File $validateScript -SubsystemPath $targetXml
+		$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
+		& $psExe -NoProfile -File $validateScript -SubsystemPath $targetXml
 		$script:validateExitCode = $LASTEXITCODE
 		if ($script:validateExitCode -ne 0) {
 			[Console]::Error.WriteLine("[ERROR] subsystem-validate завершился с кодом $($script:validateExitCode): файл записан, но проверка не пройдена. Разберите вывод выше перед загрузкой в базу.")

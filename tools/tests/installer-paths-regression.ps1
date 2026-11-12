@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $Installer = Join-Path $RepoRoot 'install.ps1'
+$PowerShellHost = (Get-Process -Id $PID).Path
 $Work = Join-Path ([IO.Path]::GetTempPath()) ('installer-paths-' + [guid]::NewGuid().ToString('N'))
 $SourceRoot = Join-Path $Work 'source repository with long name'
 $Utf8 = New-Object Text.UTF8Encoding $false
@@ -21,7 +22,7 @@ function Read-Json([string]$Path) { Get-Content -LiteralPath $Path -Raw | Conver
 function Pass([string]$Name) { $script:Passed++; Write-Host "OK  $Name" }
 function Invoke-Installer([string]$Project, [string[]]$Arguments, [string]$SourcePath = $SourceRoot) {
     $log = Join-Path $Work ('run-' + [guid]::NewGuid().ToString('N') + '.log')
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer @Arguments `
+    & $PowerShellHost -NoProfile -File $Installer @Arguments `
         -ProjectRoot $Project -Source $SourcePath -NonInteractive -McpMode managed *> $log
     Assert-True ($LASTEXITCODE -eq 0) "Installer failed: $(Get-Content -LiteralPath $log -Raw)"
     return (Get-Content -LiteralPath $log -Raw)
@@ -34,6 +35,72 @@ function Assert-Links([string]$Path, [string]$RulesDir, [string]$RulesExt, [stri
         Assert-True ($text.Contains($expected)) "Missing installed reference $expected in $Path"
     }
     Assert-True (-not ($text -match 'content/(rules|agents|commands|skills)/')) "Source reference leaked into $Path"
+}
+function Assert-RelativeLinks([string]$Project, [string]$Tool) {
+    $checked = 0; $placeholders = @(); $notInstalled = @(); $broken = @()
+    $adapter = Get-AdapterForTool -Root $SourceRoot -Tool $Tool
+    $manifest = Read-Json (Join-Path $Project '.ai-rules.json')
+    $contentPrefix = [IO.Path]::GetFullPath((Join-Path $SourceRoot 'content')).TrimEnd('/', '\') + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    foreach ($file in Get-ChildItem -LiteralPath $Project -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+        $rel = Get-InstallerRelativePath -BasePath $Project -ChildPath $file.FullName
+        $entryProperty = $manifest.files.PSObject.Properties[$rel]
+        $sourceFile = $null
+        if ($entryProperty -and $entryProperty.Value.source) {
+            $sourceFile = Join-Path $SourceRoot $entryProperty.Value.source
+            if (Test-Path -LiteralPath $sourceFile -PathType Container) {
+                $marker = '/' + (Split-Path $sourceFile -Leaf) + '/'
+                $offset = ('/' + $rel).IndexOf($marker, [StringComparison]::Ordinal)
+                if ($offset -ge 0) { $sourceFile = Join-Path $sourceFile ('/' + $rel).Substring($offset + $marker.Length) }
+                else { $sourceFile = $null }
+            }
+        }
+        $text = [IO.File]::ReadAllText($file.FullName)
+        foreach ($match in [regex]::Matches($text, '(?m)(?:!?\[[^\]\r\n]*\]\([ \t]*|^[ \t]{0,3}\[[^\]\r\n]+\]:[ \t]*)(?<dest><[^>\r\n]+>|[^\s)\r\n]+)')) {
+            $dest = $match.Groups['dest'].Value.Trim('<', '>')
+            $detail = "$rel -> $dest"
+            if ($dest -match '^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|[/\\#?])') { continue }
+            if ($dest -match 'YYYY-MM') { $placeholders += $detail; continue }
+            $path = [Uri]::UnescapeDataString(($dest -split '[#?]', 2)[0])
+            $section = $null
+            if ($sourceFile -and (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+                $sourceTarget = [IO.Path]::GetFullPath((Join-Path (Split-Path $sourceFile -Parent) $path))
+                if ($sourceTarget.StartsWith($contentPrefix, $comparison)) {
+                    $section = ($sourceTarget.Substring($contentPrefix.Length).Replace('\', '/') -split '/', 2)[0]
+                }
+            }
+            if ($section -in @('rules', 'agents', 'commands', 'skills', 'docs') -and
+                (-not $adapter.Contains($section) -or -not $adapter[$section].copyTo)) {
+                $notInstalled += "$detail (section=$section)"
+            }
+            elseif (-not (Test-Path -LiteralPath (Join-Path $file.DirectoryName $path))) { $broken += $detail }
+            $checked++
+        }
+    }
+    Assert-True ($checked -gt 0) 'No relative links were checked'
+    Assert-True ($broken.Count -eq 0) "Relative links: checked=$checked; broken=$($broken.Count); not-installed-section=$($notInstalled.Count); placeholders=$($placeholders.Count); $($broken -join '; ')"
+    return @{ Checked = $checked; Resolved = $checked - $notInstalled.Count; Broken = $broken.Count; NotInstalled = $notInstalled; Placeholders = $placeholders }
+}
+function Assert-AdapterLinkTargets([string]$Project, [string]$DocumentRel, [string]$Tool) {
+    # Independent check of declared copyTo targets, not just file existence.
+    $adapter = Get-AdapterForTool -Root $SourceRoot -Tool $Tool
+    $file = Join-Path $Project $DocumentRel
+    $labels = @{ rule = 'rules'; agent = 'agents'; command = 'commands'; skill = 'skills' }
+    $checked = 0
+    foreach ($link in [regex]::Matches([IO.File]::ReadAllText($file), '\[(?<label>rule|agent|command|skill)\]\((?<dest>[^)]+)\)')) {
+        $section = $labels[$link.Groups['label'].Value]
+        if (-not $adapter.Contains($section) -or -not $adapter[$section].copyTo) { continue }
+        $expected = ([string]$adapter[$section].copyTo).Replace('{name}', 'probe').TrimEnd('/', '\')
+        if ($section -eq 'skills') { $expected += '/docs/detail.md' }
+        $expectedFull = [IO.Path]::GetFullPath((Join-Path $Project $expected))
+        $dest = [Uri]::UnescapeDataString(($link.Groups['dest'].Value -split '[#?]', 2)[0])
+        $actualFull = [IO.Path]::GetFullPath((Join-Path (Split-Path $file -Parent) $dest))
+        Assert-True ([string]::Equals($actualFull, $expectedFull, [StringComparison]::OrdinalIgnoreCase)) "Foreign adapter target: $DocumentRel -> $dest; expected $expected for $Tool"
+        Assert-True (Test-Path -LiteralPath $actualFull) "Missing adapter target: $DocumentRel -> $dest"
+        $checked++
+    }
+    Assert-True ($checked -gt 0) "No adapter-owned targets checked in $DocumentRel"
+    return $checked
 }
 function Assert-ManifestHashes([string]$Project) {
     $manifest = Read-Json (Join-Path $Project '.ai-rules.json')
@@ -58,7 +125,11 @@ try {
     Write-Fixture (Join-Path $SourceRoot 'content/agents/probe.md') "---`nname: probe`ndescription: Fixture`ntools: [Read, Grep, Glob, MCP]`nisSubagent: true`n---`n# Agent`n$refs"
     Write-Fixture (Join-Path $SourceRoot 'content/commands/probe.md') "---`ndescription: Fixture`n---`n# Command`n$refs"
     Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/SKILL.md') "---`nname: probe`ndescription: Fixture`n---`n# Skill`n$refs"
-    Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/docs/detail.md') "# Detail`n$refs"
+    $relativeRefs = '[rule](../../../rules/probe.md#gate) [agent](../../../agents/probe.md) [command](../../../commands/probe.md) [sibling](local.md) [external](https://example.invalid/rules/probe.md) [placeholder](../../../docs/archive/enhancements/YYYY-MM/feature-name.md)'
+    Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/docs/detail.md') "# Detail`n$refs`n$relativeRefs`n[rule-ref]: ../../../rules/probe.md#gate"
+    Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/docs/local.md') '# Local sibling'
+    Add-Content -LiteralPath (Join-Path $SourceRoot 'content/agents/probe.md') -Value '`n[rule](../rules/probe.md) [command](../commands/probe.md)' -Encoding UTF8
+    Add-Content -LiteralPath (Join-Path $SourceRoot 'content/commands/probe.md') -Value '`n[rule](../rules/probe.md) [agent](../agents/probe.md) [skill](../skills/probe/docs/detail.md)' -Encoding UTF8
     Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/scripts/probe.ps1') "# $refs`nWrite-Output 'verbatim'"
     Write-Fixture (Join-Path $SourceRoot 'content/skills/probe/stale.txt') 'prune this managed file'
     [IO.File]::WriteAllBytes((Join-Path $SourceRoot 'content/skills/probe/payload.bin'), [byte[]](0..255))
@@ -75,11 +146,23 @@ try {
     foreach ($name in @('Resolve-InstallerExistingPath', 'Get-InstallerRelativePath', 'Get-1cProjectInfo',
         'Get-1cFieldValue', 'Get-1cSynonymRu', 'Get-EnvFileValue', 'Read-DevEnvKeys', 'Convert-AgentsMdPaths',
         'Resolve-CanonicalArtifactLayouts', 'Get-AdapterForTool', 'Parse-SimpleYaml', 'Read-TextFile',
-        'Invoke-CodexAgentTemplate', 'ConvertTo-TomlString')) {
+        'ConvertFrom-AdapterYaml', 'Get-YamlIndent', 'Test-YamlBlank', 'Invoke-YamlBlock',
+        'Invoke-YamlBlockArray', 'ConvertFrom-YamlInlineValue', 'Split-YamlFlow', 'ConvertFrom-Scalar',
+        'Invoke-CodexAgentTemplate', 'ConvertTo-TomlString', 'Get-RelativeLinkPath', 'Get-LegacyRelativeLinkPath')) {
         $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
         if ($function) { . ([scriptblock]::Create($function.Extent.Text)) }
     }
     $script:DevEnvFileName = '.dev.env'
+
+    $linkBase = [IO.Path]::GetFullPath((Join-Path $Work 'link project/skills'))
+    $linkTarget = [IO.Path]::GetFullPath((Join-Path $Work 'link project/rules/probe space#name.mdc'))
+    foreach ($baseDir in @($linkBase, ($linkBase + [IO.Path]::DirectorySeparatorChar))) {
+        $relative = Get-RelativeLinkPath -BaseDirectory $baseDir -TargetPath $linkTarget
+        $legacy = Get-LegacyRelativeLinkPath -BaseDirectory $baseDir -TargetPath $linkTarget
+        Assert-True ($relative -ceq '../rules/probe space#name.mdc') "Filesystem relative path corrupted: $relative"
+        Assert-True ($legacy -ceq $relative) "PS5.1 fallback differs: $legacy"
+    }
+    Pass 'Absolute filesystem paths with spaces/hash use Path.GetRelativePath or the equivalent PS5.1 fallback'
 
     $project = Join-Path $Work 'project directory with long name'
     Write-Fixture (Join-Path $project '.dev.env') "EXPORT_PATH=`"src/custom dump`"`nINFOBASE_PATH=`nUSE_EDT=false`n"
@@ -219,40 +302,244 @@ try {
     Assert-True ($init.LastIndexOf('Invoke-OpenSpecProjectMd -Root') -gt $init.IndexOf('Invoke-InitialSourceDump -Root')) 'Initial dump cannot refresh project context'
     Pass 'Context generation follows .dev.env placement and optional initial source export'
 
-    # Run the real init flow with explicit test consent and a local export stub.
-    # This verifies the post-export project.md write, not just function order.
-    Write-Fixture (Join-Path $SourceRoot 'content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1') @'
-param($ConfigDir, $Mode, $InfoBasePath)
-[void][IO.Directory]::CreateDirectory($ConfigDir)
-[IO.File]::WriteAllText((Join-Path $ConfigDir 'Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>DumpedConfig</Name></Properties></Configuration></MetaDataObject>')
-exit 0
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        # Run the real init flow with explicit test consent and a local export stub.
+        # This verifies the post-export project.md write, not just function order.
+        Write-Fixture (Join-Path $SourceRoot 'content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1') @'
+    param($ConfigDir, $Mode, $InfoBasePath)
+    [void][IO.Directory]::CreateDirectory($ConfigDir)
+    [IO.File]::WriteAllText((Join-Path $ConfigDir 'Configuration.xml'), '<MetaDataObject><Configuration><Properties><Name>DumpedConfig</Name></Properties></Configuration></MetaDataObject>')
+    exit 0
 '@
-    $exportProject = Join-Path $Work 'accepted-export-project'
-    Write-Fixture (Join-Path $exportProject '.dev.env') "INFOBASE_PATH=fixture-only`nEXPORT_PATH=`nUSE_EDT=false`n"
-    $wrapper = Join-Path $Work 'accepted-export.ps1'
-    Write-Fixture $wrapper @'
-param($InstallerFile, $ProjectFixture, $SourceFixture)
-$ErrorActionPreference = 'Stop'
-$installerText = [IO.File]::ReadAllText($InstallerFile)
-$dispatch = $installerText.IndexOf('# SECTION 14: MAIN DISPATCH')
-if ($dispatch -lt 0) { throw 'Installer dispatch marker missing' }
-. ([scriptblock]::Create($installerText.Substring(0, $dispatch)))
-function Read-YesNo { param($Prompt, $Default) return $true }
-function Read-Required { param($Prompt, $DefaultValue) return $DefaultValue }
-function Read-Choice { param($Prompt, $Options, $Default) return $Default }
-$script:NonInteractive = $false
-$script:AssumeYes = $false
-$script:McpMode = 'managed'
-Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -RequestedTools @('cursor')
+        $exportProject = Join-Path $Work 'accepted-export-project'
+        Write-Fixture (Join-Path $exportProject '.dev.env') "INFOBASE_PATH=fixture-only`nEXPORT_PATH=`nUSE_EDT=false`n"
+        $wrapper = Join-Path $Work 'accepted-export.ps1'
+        Write-Fixture $wrapper @'
+    param($InstallerFile, $ProjectFixture, $SourceFixture)
+    $ErrorActionPreference = 'Stop'
+    $installerText = [IO.File]::ReadAllText($InstallerFile)
+    $dispatch = $installerText.IndexOf('# SECTION 14: MAIN DISPATCH')
+    if ($dispatch -lt 0) { throw 'Installer dispatch marker missing' }
+    . ([scriptblock]::Create($installerText.Substring(0, $dispatch)))
+    function Read-YesNo { param($Prompt, $Default) return $true }
+    function Read-Required { param($Prompt, $DefaultValue) return $DefaultValue }
+    function Read-Choice { param($Prompt, $Options, $Default) return $Default }
+    $script:NonInteractive = $false
+    $script:AssumeYes = $false
+    $script:McpMode = 'managed'
+    Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -RequestedTools @('cursor')
 '@
-    $exportLog = Join-Path $Work 'accepted-export.log'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -InstallerFile $Installer `
-        -ProjectFixture $exportProject -SourceFixture $SourceRoot *> $exportLog
-    Assert-True ($LASTEXITCODE -eq 0) "Accepted export failed: $(Get-Content -LiteralPath $exportLog -Raw)"
-    Assert-True (([IO.File]::ReadAllText((Join-Path $exportProject 'openspec/project.md'))).Contains('DumpedConfig')) 'Successful initial dump did not refresh project.md'
-    Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
-    Assert-ManifestHashes $exportProject
-    Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+        $exportLog = Join-Path $Work 'accepted-export.log'
+        & $PowerShellHost -NoProfile -File $wrapper -InstallerFile $Installer `
+            -ProjectFixture $exportProject -SourceFixture $SourceRoot *> $exportLog
+        Assert-True ($LASTEXITCODE -eq 0) "Accepted export failed: $(Get-Content -LiteralPath $exportLog -Raw)"
+        Assert-True (([IO.File]::ReadAllText((Join-Path $exportProject 'openspec/project.md'))).Contains('DumpedConfig')) 'Successful initial dump did not refresh project.md'
+        Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
+        Assert-ManifestHashes $exportProject
+        Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+
+    }
+    else { Write-Host 'SKIP  Interactive initial export runs only on Windows; Linux uses the agent workflow.' }
+
+    foreach ($tool in @('cursor', 'claude-code', 'kimi', 'opencode')) {
+        $relativeProject = Join-Path $Work "relative-$tool"
+        [void][IO.Directory]::CreateDirectory($relativeProject)
+        $null = Invoke-Installer $relativeProject @('init', '-Tools', $tool)
+        $first = Assert-RelativeLinks -Project $relativeProject -Tool $tool
+        Assert-True ($first.Placeholders.Count -eq 1) "Placeholder was changed for $tool"
+        $expectedNotInstalled = if ($tool -eq 'kimi') { 2 } else { 0 }
+        Assert-True ($first.NotInstalled.Count -eq $expectedNotInstalled) "Unexpected uninstalled-section links for $tool"
+        $adapter = Get-AdapterForTool -Root $SourceRoot -Tool $tool
+        $copies = @()
+        foreach ($section in @('rules', 'agents', 'commands', 'skills')) {
+            if ($adapter.Contains($section) -and $adapter[$section].copyTo) { $copies += "$section=$($adapter[$section].copyTo)" }
+        }
+        Write-Host "ADAPTER $tool`: $($copies -join '; ')"
+        $ownedDocuments = @($adapter.agents.copyTo.Replace('{name}', 'probe'),
+            ($adapter.skills.copyTo.Replace('{name}', 'probe').TrimEnd('/', '\') + '/docs/detail.md'))
+        if ($adapter.Contains('commands') -and $adapter.commands.copyTo) { $ownedDocuments += $adapter.commands.copyTo.Replace('{name}', 'probe') }
+        $ownedTargets = 0
+        foreach ($document in $ownedDocuments) { $ownedTargets += Assert-AdapterLinkTargets -Project $relativeProject -DocumentRel $document -Tool $tool }
+        Write-Host "OWNER-TARGETS $tool`: $ownedTargets match declared copyTo"
+        # Negative control: an installed section with a missing target must still fail.
+        $ruleFixture = [IO.Path]::GetFullPath((Join-Path $relativeProject $adapter.rules.copyTo.Replace('{name}', 'probe')))
+        Assert-True ($ruleFixture.StartsWith([IO.Path]::GetFullPath($relativeProject) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'Unsafe negative fixture path'
+        $ruleBytes = [IO.File]::ReadAllBytes($ruleFixture)
+        try {
+            Remove-Item -LiteralPath $ruleFixture
+            $refusedMissingTarget = $false
+            try { $null = Assert-RelativeLinks -Project $relativeProject -Tool $tool }
+            catch { $refusedMissingTarget = $_.Exception.Message -match 'broken=[1-9]' }
+            Assert-True $refusedMissingTarget "Missing installed rule was not reported as broken for $tool"
+        }
+        finally { [IO.File]::WriteAllBytes($ruleFixture, $ruleBytes) }
+        $beforeUpdate = @{}
+        foreach ($file in Get-ChildItem -LiteralPath $relativeProject -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+            $beforeUpdate[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        }
+        $null = Invoke-Installer $relativeProject @('update')
+        $second = Assert-RelativeLinks -Project $relativeProject -Tool $tool
+        Assert-True ($first.Checked -eq $second.Checked -and $first.Placeholders.Count -eq $second.Placeholders.Count -and
+            ($first.NotInstalled -join "`n") -ceq ($second.NotInstalled -join "`n")) "Relative link census changed on repeat update for $tool"
+        foreach ($path in $beforeUpdate.Keys) {
+            Assert-True ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $beforeUpdate[$path]) "Repeated update changed $path"
+        }
+        Assert-ManifestHashes $relativeProject
+        Write-Host "LINKS $tool`: checked=$($second.Checked); resolved=$($second.Resolved); broken=$($second.Broken); not-installed-section=$($second.NotInstalled.Count); placeholders=$($second.Placeholders.Count); repeat update byte-identical"
+        foreach ($detail in $second.NotInstalled) { Write-Host "  NOT-INSTALLED-SECTION $tool`: $detail" }
+        foreach ($detail in $second.Placeholders) { Write-Host "  PLACEHOLDER $tool`: $detail" }
+    }
+    Pass 'Cross-section relative links use adapter-owned paths; placeholders and repeat updates are stable'
+
+    foreach ($toolsCase in @('claude-code,opencode', 'opencode,claude-code', 'cursor,claude-code,kimi,opencode')) {
+        $sharedProject = Join-Path $Work ('owner-' + $toolsCase.Replace(',', '-'))
+        [void][IO.Directory]::CreateDirectory($sharedProject)
+        $null = Invoke-Installer $sharedProject @('init', '-Tools', $toolsCase)
+        $sharedDoc = '.claude/skills/probe/docs/detail.md'
+        $sharedTargets = Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $sharedDoc -Tool 'claude-code'
+        $checkedOwned = $sharedTargets
+        foreach ($toolId in ($toolsCase -split ',')) {
+            $caseAdapter = Get-AdapterForTool -Root $SourceRoot -Tool $toolId
+            $checkedOwned += Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $caseAdapter.agents.copyTo.Replace('{name}', 'probe') -Tool $toolId
+            if ($caseAdapter.Contains('commands') -and $caseAdapter.commands.copyTo) {
+                $checkedOwned += Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $caseAdapter.commands.copyTo.Replace('{name}', 'probe') -Tool $toolId
+            }
+            if ($toolId -in @('cursor', 'kimi')) {
+                $skillDoc = $caseAdapter.skills.copyTo.Replace('{name}', 'probe').TrimEnd('/', '\') + '/docs/detail.md'
+                $checkedOwned += Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $skillDoc -Tool $toolId
+            }
+        }
+        $doc = Join-Path $sharedProject $sharedDoc
+        $firstBytes = [IO.File]::ReadAllBytes($doc)
+        # A valid foreign file must be rejected too: existence alone is insufficient.
+        if (-not (Test-Path -LiteralPath (Join-Path $sharedProject '.cursor/rules/probe.mdc'))) {
+            Write-Fixture (Join-Path $sharedProject '.cursor/rules/probe.mdc') '# existing foreign rule'
+        }
+        $foreignDoc = [IO.File]::ReadAllText($doc).Replace('../../../rules-1c/probe.md', '../../../../.cursor/rules/probe.mdc')
+        try {
+            [IO.File]::WriteAllText($doc, $foreignDoc, $Utf8)
+            $refusedForeign = $false
+            try { $null = Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $sharedDoc -Tool 'claude-code' }
+            catch { $refusedForeign = $_.Exception.Message -like 'Foreign adapter target:*' }
+            Assert-True $refusedForeign 'Existing foreign rule was accepted for a Claude-owned shared document'
+        }
+        finally { [IO.File]::WriteAllBytes($doc, $firstBytes) }
+        $before = @{}
+        foreach ($f in Get-ChildItem -LiteralPath $sharedProject -Force -Recurse -File | Where-Object { $_.Extension -in @('.md', '.mdc', '.toml') }) {
+            $before[$f.FullName] = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+        }
+        $null = Invoke-Installer $sharedProject @('update')
+        foreach ($p in $before.Keys) {
+            # Cursor is active in the full multi-client case and refreshes its own rule.
+            if ($toolsCase.StartsWith('cursor,') -and $p -eq (Join-Path $sharedProject '.cursor/rules/probe.mdc')) { continue }
+            Assert-True ((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash -eq $before[$p]) "Owner layouts changed on repeat update: $p"
+        }
+        Assert-True ((Assert-AdapterLinkTargets -Project $sharedProject -DocumentRel $sharedDoc -Tool 'claude-code') -eq $sharedTargets) 'Shared owner changed after update'
+        Assert-ManifestHashes $sharedProject
+        Write-Host "OWNER $toolsCase`: targets=$checkedOwned; foreign-targets=0; shared-rule=.claude/rules-1c/probe.md; repeat update byte-identical"
+    }
+    Pass 'Shared directory owner beats writer order; foreign existing trees are rejected'
+
+    # Adapter entry ownership: CLAUDE.md is written from adapters/claude-code.yaml#entry.
+    # A pristine entry must stay clean across init -> update; update pruning has to
+    # keep its manifest record so Invoke-PlacePhase can recognise and refresh it.
+    $entryCase = 'cursor,claude-code'
+    $entryProject = Join-Path $Work 'entry-clean'
+    [void][IO.Directory]::CreateDirectory($entryProject)
+    $null = Invoke-Installer $entryProject @('init', '-Tools', $entryCase)
+    $entryPath = Join-Path $entryProject 'CLAUDE.md'
+    $entryManifest = Read-Json (Join-Path $entryProject '.ai-rules.json')
+    Assert-True (Test-Path -LiteralPath $entryPath) 'Adapter entry file was not installed'
+    Assert-True ($entryManifest.files.'CLAUDE.md'.source -eq 'adapters/claude-code.yaml#entry') "Unexpected entry source: $($entryManifest.files.'CLAUDE.md'.source)"
+    Assert-True (-not $entryManifest.files.'CLAUDE.md'.userModified) 'Clean entry was marked userModified after init'
+    $entryBytes = [IO.File]::ReadAllBytes($entryPath)
+    $entryHashBefore = (Get-FileHash -LiteralPath $entryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-ManifestHashes $entryProject
+
+    $null = Invoke-Installer $entryProject @('update')
+    $entryManifest = Read-Json (Join-Path $entryProject '.ai-rules.json')
+    Assert-True (-not $entryManifest.files.'CLAUDE.md'.userModified) 'Clean entry became userModified after update'
+    Assert-True (([Convert]::ToBase64String([IO.File]::ReadAllBytes($entryPath))) -eq ([Convert]::ToBase64String($entryBytes))) 'Clean entry bytes changed on update'
+    foreach ($property in $entryManifest.files.PSObject.Properties) { Assert-True (-not $property.Value.userModified) "Clean entry fixture flagged userModified: $($property.Name)" }
+    Assert-ManifestHashes $entryProject
+    $entryHashAfter = (Get-FileHash -LiteralPath $entryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host "ENTRY clean: before=$entryHashBefore after=$entryHashAfter userModified=false manifest-hashes=ok"
+
+    $entrySnapshot = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $entryProject -Force -Recurse -File) {
+        if ($file.Name -eq '.ai-rules.json') { continue }
+        $entrySnapshot[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+    }
+    $null = Invoke-Installer $entryProject @('update')
+    foreach ($path in $entrySnapshot.Keys) {
+        Assert-True ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $entrySnapshot[$path]) "Repeated entry update changed $path"
+    }
+    $entryManifest = Read-Json (Join-Path $entryProject '.ai-rules.json')
+    Assert-True (-not $entryManifest.files.'CLAUDE.md'.userModified) 'Repeated update flagged the clean entry userModified'
+    Assert-ManifestHashes $entryProject
+    Pass 'Clean adapter entry keeps no userModified flag, stable bytes and manifest hashes through init and repeated updates'
+
+    # First install does not keep a pre-existing root instruction file in place:
+    # Invoke-FirstInstallRuleMigration renames it to CLAUDE.md.bak.md and inlines
+    # its text into USER-RULES.md, then installs the clean adapter entry stub.
+    $userEntryProject = Join-Path $Work 'entry-preexisting'
+    $userEntryText = "# Our own CLAUDE.md`nDo not replace.`n"
+    Write-Fixture (Join-Path $userEntryProject 'CLAUDE.md') $userEntryText
+    $null = Invoke-Installer $userEntryProject @('init', '-Tools', $entryCase)
+    $userEntryManifest = Read-Json (Join-Path $userEntryProject '.ai-rules.json')
+    $backupPath = Join-Path $userEntryProject 'CLAUDE.md.bak.md'
+    Assert-True (Test-Path -LiteralPath $backupPath) 'Pre-existing CLAUDE.md was not preserved as a migration backup'
+    Assert-True (([IO.File]::ReadAllText($backupPath)) -ceq $userEntryText) 'Migration backup does not hold the exact original CLAUDE.md text'
+    $userRulesText = [IO.File]::ReadAllText((Join-Path $userEntryProject 'USER-RULES.md'))
+    Assert-True ($userRulesText.Contains($userEntryText.TrimEnd())) 'USER-RULES.md does not contain the migrated CLAUDE.md text'
+    Assert-True ($userRulesText.Contains('Migrated from `CLAUDE.md`')) 'USER-RULES.md has no CLAUDE.md migration block'
+    $stubBytes = [IO.File]::ReadAllBytes((Join-Path $userEntryProject 'CLAUDE.md'))
+    Assert-True (([IO.File]::ReadAllText((Join-Path $userEntryProject 'CLAUDE.md'))).Contains('See @AGENTS.md')) 'Installed entry is not the adapter stub'
+    Assert-True (-not $userEntryManifest.files.'CLAUDE.md'.userModified) 'Migrated clean stub was marked userModified after init'
+    $null = Invoke-Installer $userEntryProject @('update')
+    $userEntryManifest = Read-Json (Join-Path $userEntryProject '.ai-rules.json')
+    Assert-True (([IO.File]::ReadAllText($backupPath)) -ceq $userEntryText) 'Update changed the migration backup'
+    Assert-True (([IO.File]::ReadAllText((Join-Path $userEntryProject 'USER-RULES.md'))).Contains($userEntryText.TrimEnd())) 'Update dropped the migrated text from USER-RULES.md'
+    Assert-True (([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $userEntryProject 'CLAUDE.md')))) -eq ([Convert]::ToBase64String($stubBytes))) 'Update changed the clean migrated stub'
+    Assert-True (-not $userEntryManifest.files.'CLAUDE.md'.userModified) 'Migrated stub lost its clean ownership on update'
+    Assert-ManifestHashes $userEntryProject
+    Write-Host ("ENTRY migrated: backup={0} stub={1} userRules=contains-original entry-userModified=false" -f
+        (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash.ToLowerInvariant(),
+        (Get-FileHash -LiteralPath (Join-Path $userEntryProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant())
+    Pass 'Pre-existing CLAUDE.md is migrated to a backup and USER-RULES.md; the installed entry stays clean through update'
+
+    $editedEntryProject = Join-Path $Work 'entry-edited'
+    [void][IO.Directory]::CreateDirectory($editedEntryProject)
+    $null = Invoke-Installer $editedEntryProject @('init', '-Tools', 'claude-code')
+    $editedEntryText = "# Edited installed entry`nKeep this.`n"
+    Write-Fixture (Join-Path $editedEntryProject 'CLAUDE.md') $editedEntryText
+    $null = Invoke-Installer $editedEntryProject @('update')
+    $editedEntryManifest = Read-Json (Join-Path $editedEntryProject '.ai-rules.json')
+    Assert-True (([IO.File]::ReadAllText((Join-Path $editedEntryProject 'CLAUDE.md'))) -ceq $editedEntryText) 'Update overwrote an edited entry'
+    Assert-True ($editedEntryManifest.files.'CLAUDE.md'.userModified) 'Edited entry was not preserved as user-owned'
+    Write-Host ("ENTRY edited: bytes={0} userModified=true" -f (Get-FileHash -LiteralPath (Join-Path $editedEntryProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant())
+    Pass 'Edited installed entry keeps its bytes and userModified flag through update'
+
+    $entryAdapterPath = Join-Path $SourceRoot 'adapters/claude-code.yaml'
+    $originalAdapter = [IO.File]::ReadAllBytes($entryAdapterPath)
+    $refreshProject = Join-Path $Work 'entry-template-refresh'
+    [void][IO.Directory]::CreateDirectory($refreshProject)
+    $null = Invoke-Installer $refreshProject @('init', '-Tools', 'claude-code')
+    $refreshHashBefore = (Get-FileHash -LiteralPath (Join-Path $refreshProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant()
+    try {
+        [IO.File]::WriteAllText($entryAdapterPath, ([IO.File]::ReadAllText($entryAdapterPath)).Replace(
+            'template: "See @AGENTS.md for project instructions.\n"',
+            'template: "See @AGENTS.md for project instructions.\nFixture refresh 20261027.\n"'), $Utf8)
+        $null = Invoke-Installer $refreshProject @('update')
+        $refreshManifest = Read-Json (Join-Path $refreshProject '.ai-rules.json')
+        Assert-True (([IO.File]::ReadAllText((Join-Path $refreshProject 'CLAUDE.md'))).Contains('Fixture refresh 20261027.')) 'Update did not refresh a clean entry from the changed template'
+        Assert-True (-not $refreshManifest.files.'CLAUDE.md'.userModified) 'Refreshed clean entry was flagged userModified'
+        Assert-ManifestHashes $refreshProject
+        Write-Host ("ENTRY refresh: before={0} after={1} userModified=false" -f $refreshHashBefore,
+            (Get-FileHash -LiteralPath (Join-Path $refreshProject 'CLAUDE.md') -Algorithm SHA256).Hash.ToLowerInvariant())
+    }
+    finally { [IO.File]::WriteAllBytes($entryAdapterPath, $originalAdapter) }
+    Pass 'Changed adapter entry template refreshes a clean installed entry without marking it user-owned'
 
     Write-Host "OK: $script:Passed installer path cases; real 8.3 paths checked: $script:ShortPathChecked; no network or infobase accessed."
 }

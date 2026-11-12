@@ -2194,8 +2194,10 @@ function Invoke-PlaceArtifactFile {
         [System.Collections.IDictionary]$Manifest,
         [string]$ContentSource,
         [string]$OwnerTool,
-        [System.Collections.IDictionary]$Layouts
+        [System.Collections.IDictionary]$Layouts,
+        [System.Collections.IDictionary]$RelativeLayouts
     )
+    if ($null -eq $RelativeLayouts) { $RelativeLayouts = $Layouts }
     # Respect user modifications: if manifest marks this path as userModified,
     # keep the user's edits and leave the manifest entry unchanged — unless the
     # user asked to force this path (-Force / -ForcePaths), in which case fall
@@ -2214,6 +2216,7 @@ function Invoke-PlaceArtifactFile {
         $absTarget = Join-Path $Root $TargetRel
     }
     if ($Mode -eq 'rebuild-toml') {
+        $SourceBody = Convert-ContentRelativeLinks -Text $SourceBody -SourcePath $SourcePath -TargetPath $absTarget -Root $Root -Layouts $RelativeLayouts
         $SourceBody = Convert-AgentsMdPaths -Text $SourceBody -Layouts $Layouts
         $rendered = Invoke-CodexAgentTemplate -Template $Template -Fm $SourceFm -Body $SourceBody
         Write-TextFile -Path $absTarget -Content $rendered
@@ -2224,7 +2227,8 @@ function Invoke-PlaceArtifactFile {
             New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
         }
         if ([IO.Path]::GetExtension($SourcePath) -ieq '.md') {
-            $rendered = Convert-AgentsMdPaths -Text (Read-TextFile $SourcePath) -Layouts $Layouts
+            $rendered = Convert-ContentRelativeLinks -Text (Read-TextFile $SourcePath) -SourcePath $SourcePath -TargetPath $absTarget -Root $Root -Layouts $RelativeLayouts
+            $rendered = Convert-AgentsMdPaths -Text $rendered -Layouts $Layouts
             Write-TextFile -Path $absTarget -Content $rendered
         }
         else { Copy-Item -LiteralPath $SourcePath -Destination $absTarget -Force }
@@ -2238,6 +2242,7 @@ function Invoke-PlaceArtifactFile {
         else {
             $full = $SourceBody
         }
+        $full = Convert-ContentRelativeLinks -Text $full -SourcePath $SourcePath -TargetPath $absTarget -Root $Root -Layouts $RelativeLayouts
         $full = Convert-AgentsMdPaths -Text $full -Layouts $Layouts
         Write-TextFile -Path $absTarget -Content $full
     }
@@ -2268,8 +2273,10 @@ function Invoke-PlaceSkill {
         [System.Collections.IDictionary]$Manifest,
         [string]$ContentSource,
         [string]$OwnerTool,
-        [System.Collections.IDictionary]$Layouts
+        [System.Collections.IDictionary]$Layouts,
+        [System.Collections.IDictionary]$RelativeLayouts
     )
+    if ($null -eq $RelativeLayouts) { $RelativeLayouts = $Layouts }
     $absTarget = Join-Path $Root $TargetDir
     $srcFull = Resolve-InstallerExistingPath $SourceDir
     $targetRelBase = ($TargetDir -replace '[\\/]+$', '').Replace('\', '/')
@@ -2300,7 +2307,8 @@ function Invoke-PlaceSkill {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
         }
         if ($sf.Extension -ieq '.md') {
-            $rendered = Convert-AgentsMdPaths -Text (Read-TextFile $sf.FullName) -Layouts $Layouts
+            $rendered = Convert-ContentRelativeLinks -Text (Read-TextFile $sf.FullName) -SourcePath $sf.FullName -TargetPath $destFull -Root $Root -Layouts $RelativeLayouts
+            $rendered = Convert-AgentsMdPaths -Text $rendered -Layouts $Layouts
             Write-TextFile -Path $destFull -Content $rendered
         }
         else { Copy-Item -LiteralPath $sf.FullName -Destination $destFull -Force }
@@ -2597,6 +2605,7 @@ function Invoke-PlacePhase {
     $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $canonicalTools -Adapters $canonicalAdapters
     foreach ($tool in $ActiveTools) {
         $adapter = $Adapters[$tool]
+        $relativeLayouts = Resolve-CanonicalArtifactLayouts -ActiveTools @($tool) -Adapters $canonicalAdapters
         Write-Info "  [$tool] placing files"
 
         # rules
@@ -2611,7 +2620,7 @@ function Invoke-PlacePhase {
                 Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                     -TargetRel $target -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
                     -FrontmatterOps $fmOps -Mode $mode `
-                    -Manifest $Manifest -ContentSource ("content/rules/" + $f.Name) -OwnerTool $tool -Layouts $layouts
+                    -Manifest $Manifest -ContentSource ("content/rules/" + $f.Name) -OwnerTool $tool -Layouts $layouts -RelativeLayouts $relativeLayouts
             }
         }
 
@@ -2629,7 +2638,7 @@ function Invoke-PlacePhase {
                 Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                     -TargetRel $target -SourceFm $agentFm -SourceBody $parts.Body `
                     -FrontmatterOps $fmOps -Mode $mode -Template $template `
-                    -Manifest $Manifest -ContentSource ("content/agents/" + $f.Name) -OwnerTool $tool -Layouts $layouts
+                    -Manifest $Manifest -ContentSource ("content/agents/" + $f.Name) -OwnerTool $tool -Layouts $layouts -RelativeLayouts $relativeLayouts
             }
         }
 
@@ -2647,14 +2656,14 @@ function Invoke-PlacePhase {
                     Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                         -TargetRel $targetRaw -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
                         -FrontmatterOps $fmOps -Mode $mode `
-                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool -Layouts $layouts
+                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool -Layouts $layouts -RelativeLayouts $relativeLayouts
                     Write-Warn "  command written to user scope: $targetRaw (shared across projects)"
                 }
                 else {
                     Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
                         -TargetRel $targetRaw -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
                         -FrontmatterOps $fmOps -Mode $mode `
-                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool -Layouts $layouts
+                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool -Layouts $layouts -RelativeLayouts $relativeLayouts
                 }
             }
         }
@@ -2667,8 +2676,10 @@ function Invoke-PlacePhase {
                 if (-not (Test-Path $skillMd)) { continue }
                 $name = $sd.Name
                 $targetDir = Resolve-CopyToPath $dirTpl $name
+                $skillRelativeLayouts = Resolve-DocumentRelativeLayouts -Section 'skills' -TargetRel $targetDir `
+                    -WriterTool $tool -ActiveTools $canonicalTools -Adapters $canonicalAdapters
                 Invoke-PlaceSkill -Root $Root -SourceDir $sd.FullName -TargetDir $targetDir `
-                    -Manifest $Manifest -ContentSource ("content/skills/" + $name) -OwnerTool $tool -Layouts $layouts
+                    -Manifest $Manifest -ContentSource ("content/skills/" + $name) -OwnerTool $tool -Layouts $layouts -RelativeLayouts $skillRelativeLayouts
             }
         }
 
@@ -2757,6 +2768,34 @@ function Resolve-CanonicalRulesLayout {
 #
 # Used by the place phase and Update-AgentsMd so every installed Markdown
 # document and agent body can resolve source references from the project root.
+function Resolve-DocumentRelativeLayouts {
+    # A shared directory follows its active physical owner, not the last writer.
+    # OpenCode-alone .claude/skills falls back to OpenCode's declared sections.
+    param(
+        [string]$Section,
+        [string]$TargetRel,
+        [string]$WriterTool,
+        [string[]]$ActiveTools,
+        [hashtable]$Adapters
+    )
+    $target = $TargetRel.Replace('\', '/').TrimEnd('/')
+    $owner = $WriterTool
+    foreach ($candidate in $script:RulesDirPriority) {
+        if ($ActiveTools -notcontains $candidate) { continue }
+        $adapter = $Adapters[$candidate]
+        if (-not $adapter -or -not $adapter.Contains($Section) -or -not $adapter[$Section].copyTo -or
+            -not $adapter.Contains('rules') -or -not $adapter.rules.copyTo) { continue }
+        $namespace = ([string]$adapter.rules.copyTo).Replace('\', '/').Split('/')[0]
+        $directory = (([string]$adapter[$Section].copyTo).Replace('\', '/') -replace '\{name\}.*$', '').TrimEnd('/')
+        if ($namespace -and $directory -and $target.StartsWith($namespace + '/', [StringComparison]::Ordinal) -and
+            ($target -eq $directory -or $target.StartsWith($directory + '/', [StringComparison]::Ordinal))) {
+            $owner = $candidate
+            break
+        }
+    }
+    return (Resolve-CanonicalArtifactLayouts -ActiveTools @($owner) -Adapters $Adapters)
+}
+
 function Resolve-CanonicalArtifactLayouts {
     param(
         [string[]]$ActiveTools,
@@ -2796,6 +2835,87 @@ function Resolve-CanonicalArtifactLayouts {
 # The name regex accepts `<` and `>` so placeholder paths like
 # `content/agents/<name>.md` in prose are also rewritten to the installed
 # directory but keep the literal `<name>` token.
+function Get-LegacyRelativeLinkPath {
+    # .NET Framework (Windows PowerShell 5.1) has no Path.GetRelativePath.
+    # Inputs are absolute filesystem paths; compare segments without URI parsing.
+    param([string]$BaseDirectory, [string]$TargetPath)
+    $base = [IO.Path]::GetFullPath($BaseDirectory)
+    $target = [IO.Path]::GetFullPath($TargetPath)
+    $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $baseRoot = [IO.Path]::GetPathRoot($base)
+    $targetRoot = [IO.Path]::GetPathRoot($target)
+    if (-not [string]::Equals($baseRoot, $targetRoot, $comparison)) { return $target }
+    $baseParts = @($base.Substring($baseRoot.Length).Split([IO.Path]::DirectorySeparatorChar) | Where-Object { $_ -ne '' })
+    $targetParts = @($target.Substring($targetRoot.Length).Split([IO.Path]::DirectorySeparatorChar) | Where-Object { $_ -ne '' })
+    $common = 0
+    while ($common -lt $baseParts.Count -and $common -lt $targetParts.Count -and
+        [string]::Equals($baseParts[$common], $targetParts[$common], $comparison)) { $common++ }
+    $parts = @()
+    for ($i = $common; $i -lt $baseParts.Count; $i++) { $parts += '..' }
+    for ($i = $common; $i -lt $targetParts.Count; $i++) { $parts += $targetParts[$i] }
+    if ($parts.Count -eq 0) { return '.' }
+    return ($parts -join '/')
+}
+
+function Get-RelativeLinkPath {
+    param([string]$BaseDirectory, [string]$TargetPath)
+    $base = [IO.Path]::GetFullPath($BaseDirectory)
+    $target = [IO.Path]::GetFullPath($TargetPath)
+    if ([IO.Path].GetMethods().Name -contains 'GetRelativePath') {
+        return [IO.Path]::GetRelativePath($base, $target).Replace('\', '/')
+    }
+    return (Get-LegacyRelativeLinkPath -BaseDirectory $base -TargetPath $target)
+}
+
+function Convert-ContentRelativeLinks {
+    # Resolve a Markdown destination in the source tree first, then map its
+    # section through the existing canonical layouts. Never guess from ../ depth.
+    # Compute relative filesystem paths without constructing or comparing URIs.
+    param(
+        [string]$Text,
+        [string]$SourcePath,
+        [string]$TargetPath,
+        [string]$Root,
+        [System.Collections.IDictionary]$Layouts
+    )
+    if (-not $Text -or -not $Layouts -or $Layouts.Count -eq 0) { return $Text }
+    $sourceFull = [IO.Path]::GetFullPath($SourcePath)
+    $sourceMatch = [regex]::Match($sourceFull.Replace('\', '/'), '^(?<content>.+/content)/(?<section>skills|agents|commands|docs)/')
+    if (-not $sourceMatch.Success) { return $Text }
+    $contentRoot = [IO.Path]::GetFullPath($sourceMatch.Groups['content'].Value)
+    $contentPrefix = $contentRoot.TrimEnd('/', '\') + [IO.Path]::DirectorySeparatorChar
+    $sourceDir = Split-Path -Parent $sourceFull
+    $targetDir = [IO.Path]::GetFullPath((Split-Path -Parent $TargetPath)).TrimEnd('/', '\') + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $pattern = '(?m)(?<prefix>!?\[[^\]\r\n]*\]\([ \t]*|^[ \t]{0,3}\[[^\]\r\n]+\]:[ \t]*)(?<dest><[^>\r\n]+>|[^\s)\r\n]+)'
+    return [regex]::Replace($Text, $pattern, {
+        param($m)
+        $token = $m.Groups['dest'].Value
+        $angled = $token.StartsWith('<') -and $token.EndsWith('>')
+        $destination = if ($angled) { $token.Substring(1, $token.Length - 2) } else { $token }
+        if ($destination -match '^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|[/\\#?])' -or
+            $destination -match 'YYYY-MM|[{}<>*]') { return $m.Value }
+        $parts = [regex]::Match($destination, '^(?<path>[^#?]+)(?<suffix>[#?].*)?$')
+        if (-not $parts.Success) { return $m.Value }
+        $linkPath = [Uri]::UnescapeDataString($parts.Groups['path'].Value).Replace('/', [IO.Path]::DirectorySeparatorChar)
+        try { $resolved = [IO.Path]::GetFullPath((Join-Path $sourceDir $linkPath)) } catch { return $m.Value }
+        if (-not $resolved.StartsWith($contentPrefix, $comparison) -or -not (Test-Path -LiteralPath $resolved)) { return $m.Value }
+        $sourceRel = $resolved.Substring($contentPrefix.Length).Replace('\', '/')
+        $section = ($sourceRel -split '/', 2)[0]
+        if ($section -eq $sourceMatch.Groups['section'].Value -or -not $Layouts.Contains($section)) { return $m.Value }
+        $installed = Convert-AgentsMdPaths -Text ("content/$sourceRel") -Layouts $Layouts
+        if ($installed -eq "content/$sourceRel") { return $m.Value }
+        if ($installed.StartsWith('~/')) { $installed = Join-Path $HOME $installed.Substring(2) }
+        $installedFull = [IO.Path]::GetFullPath((Resolve-ManifestPath -Root $Root -Rel $installed))
+        $relative = Get-RelativeLinkPath -BaseDirectory $targetDir -TargetPath $installedFull
+        if ([IO.Path]::IsPathRooted($relative)) { return $m.Value }
+        $escaped = (($relative.Replace('\', '/') -split '/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+        $newDestination = $escaped + $parts.Groups['suffix'].Value
+        if ($angled) { $newDestination = '<' + $newDestination + '>' }
+        return $m.Groups['prefix'].Value + $newDestination
+    })
+}
+
 function Convert-AgentsMdPaths {
     param(
         [string]$Text,
@@ -5392,13 +5512,18 @@ function Invoke-Update {
     # userModified on every update. The OpenSpec bundle has the same rule:
     # Invoke-OpenSpecArtifacts leaves a file it finds on disk without an entry
     # to the user, so a dropped entry froze the bundle after the first update.
+    # Adapter entry files (CLAUDE.md/QWEN.md/KODA.md) follow the same contract:
+    # Invoke-PlacePhase can refresh a pristine adapter entry only while its
+    # manifest record survives pruning; without it the existing file looks
+    # user-owned and is flagged userModified on every update.
     $newFiles = [ordered]@{}
     foreach ($k in $manifest.files.Keys) {
         # Per-server MCP ownership must survive pruning so update can replace
         # our servers while preserving pre-existing user servers with any id.
         if ($manifest.files[$k].userModified -or $k -eq $script:AgentsMdFileName -or
             $manifest.files[$k].Contains('managedServers') -or
-            ([string]$manifest.files[$k].source).StartsWith('content/openspec-bundle/')) { $newFiles[$k] = $manifest.files[$k] }
+            ([string]$manifest.files[$k].source).StartsWith('content/openspec-bundle/') -or
+            ([string]$manifest.files[$k].source).EndsWith('#entry')) { $newFiles[$k] = $manifest.files[$k] }
     }
     $manifest.files = $newFiles
 
