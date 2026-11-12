@@ -8,7 +8,7 @@ argumentHint: "[opus5|sonnet5|fable5|gpt56|gpt6|<any model name>|auto|status|off
 
 Bind the ruleset to the model that executes it by writing the `AGENT_MODEL` key in `.dev.env`. Canonical behaviour of the layer — `content/rules/model-adaptation.md` and the profile files `content/rules/model-<slug>.md` (installed copies; match by file name per the path convention in `AGENTS.md`). **Load `model-adaptation.md` before acting.**
 
-Supported profiles: `opus5` (Claude Opus 5), `sonnet5` (Claude Sonnet 5), `fable5` (Claude Fable 5 / Mythos 5), `gpt56` (GPT-5.6), `gpt6` (GPT-6 Astra). Any other model runs the base ruleset, which is model-neutral by design — that is a valid state, not a degraded one.
+Supported profiles: `opus5` (Claude Opus 5), `sonnet5` (Claude Sonnet 5), `fable5` (Claude Fable / Mythos 5, 5.1, 5.2), `gpt56` (GPT-5.6), `gpt6` (GPT-6 Astra). Any other model runs the base ruleset, which is model-neutral by design — that is a valid state, not a degraded one.
 
 An agent that knows which model it runs applies that model's profile without this command. The key matters in three cases: the agent cannot tell its model (the slug then decides), the project wants the layer off (`off`), or the choice should be visible to the team.
 
@@ -38,7 +38,7 @@ The user may write the model name any way they like. Resolve free-form input to 
 |---|---|
 | `opus5` | `opus5`, `opus 5`, `opus-5`, `claude-opus-5`, `claude opus 5`, `Claude Opus 5.0`, `клод опус 5`, `опус 5` |
 | `sonnet5` | `sonnet5`, `sonnet 5`, `claude-sonnet-5`, `Claude Sonnet 5`, `сонет 5`, `соннет 5` |
-| `fable5` | `fable5`, `fable 5`, `claude-fable-5`, `Claude Fable 5`, `mythos5`, `claude-mythos-5`, `фейбл 5`, `фабл 5`, `мифос 5` |
+| `fable5` | `fable5`, `fable 5`, `claude-fable-5`, `Claude Fable 5`, `fable 5.1`, `claude-fable-5-1`, `fable 5.2`, `claude-fable-5-2`, `mythos5`, `claude-mythos-5`, `claude-mythos-5-1`, `claude-mythos-5-2`, `фейбл 5`, `фейбл 5.2`, `фабл 5`, `мифос 5` |
 | `gpt56` | `gpt56`, `gpt5.6`, `gpt-5.6`, `GPT 5.6`, `openai gpt-5.6`, `гпт 5.6`, `гпт-5.6` |
 | `gpt6` | `gpt6`, `gpt-6`, `GPT 6`, `gpt-6-astra`, `gpt6astra`, `astra`, `astra6`, `astra 6`, `openai gpt-6`, `гпт 6`, `гпт-6`, `астра`, `астра6`, `астра 6` |
 
