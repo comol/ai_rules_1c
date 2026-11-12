@@ -101,6 +101,8 @@ class MarkdownDocxRegression(unittest.TestCase):
 Wrapped paragraph
 continues here with **bold**, *italic*, `inline`, [internal](#overview) and [external](https://example.com).
 
+Nested **bold `Catalog.Items` and [bold link](https://example.com)** with *italic `inner`* end.
+
 4. Parent one
    continued line
    7. Child one
@@ -277,6 +279,21 @@ code block
         self.assertEqual(core.find("dc:title", NS).text, "Regression document")
         self.assertIn("word/header1.xml", doc.parts)
         self.assertIn("word/footer1.xml", doc.parts)
+
+    def test_markup_nested_in_bold_and_italic(self):
+        # Without the nested parse the paragraph text keeps `...` and [..](..) literally.
+        paragraph = self.default.paragraphs["Nested bold Catalog.Items and bold link with italic inner end."]
+        runs = {"".join(t.text or "" for t in run.findall("w:t", NS)): run for run in paragraph.iter(W + "r")}
+        code = runs["Catalog.Items"].find("w:rPr", NS)
+        self.assertIsNotNone(code.find("w:b", NS), "code inside bold stays bold")
+        self.assertEqual(code.find("w:rFonts", NS).get(W + "ascii"), "Consolas")
+        self.assertIsNotNone(code.find("w:shd", NS))
+        link = paragraph.find("w:hyperlink", NS)
+        self.assertIsNotNone(link, "link inside bold is a hyperlink")
+        self.assertIsNotNone(link.find("w:r/w:rPr/w:b", NS), "link inside bold stays bold")
+        inner = runs["inner"].find("w:rPr", NS)
+        self.assertIsNotNone(inner.find("w:i", NS), "code inside italic stays italic")
+        self.assertEqual(inner.find("w:rFonts", NS).get(W + "ascii"), "Consolas")
 
     def test_no_shading_remains_independent_of_justify(self):
         doc = self.generate("no-shading", "--no-shading", "--justify")
