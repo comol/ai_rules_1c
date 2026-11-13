@@ -166,6 +166,10 @@ An extension is the **default answer** when a typical object on vendor support n
 
 ## db-manage.md
 
+### Local fix `2026-11-02` — `db-update -SessionTerminate`
+
+`db-update` v1.28 → **v1.29**: the script could not end open sessions. `-AdditionalV8Arguments '-SessionTerminate','force'` lands at the end of the command line, after `/Out` and `/DumpResult`, where the platform ignores it, so the update failed with the exclusive-lock error whenever any session was open. New `-SessionTerminate disable|prompt|force`: for `1cv8` it is emitted right after `/UpdateDBCfg` and its `-Dynamic…` option (`/UpdateDBCfg -Dynamic+ -SessionTerminate force`, the form `/update1cbase` uses), for `ibcmd` as `--session-terminate=<mode>` (the `config apply` key `/deploy-and-test` uses). Both spellings are also in the owned-key lists, so passing them through the additional-argument parameters is refused with a hint to the new parameter. `/update1cbase` Step 3b still runs Designer directly and is unchanged. Pinned by `tools/tests/db-tools-regression.ps1` (the fake platform records the command line).
+
 ### Upstream sync 2026-11-01 (2e75b0f)
 
 Scripts under `tools/1c-db-ops/scripts/` refreshed from upstream `2e75b0f`: `db-create` v1.10 → **v1.21**, `db-dump-cf` v1.12 → **v1.23**, `db-dump-dt` v1.11 → **v1.22**, `db-dump-xml` v1.14 → **v1.29**, `db-load-cf` v1.13 → **v1.25**, `db-load-dt` v1.12 → **v1.23**, `db-load-git` v1.18 → **v1.36**, `db-load-xml` v1.19 → **v1.38**, `db-run` v1.7 → **v1.16**, `db-update` v1.14 → **v1.28**; new **`db-cfe-admin` v1.8** (section 11). `install-files-update.ps1` is our own tool and was not touched.
