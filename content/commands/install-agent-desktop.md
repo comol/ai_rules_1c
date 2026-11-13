@@ -10,6 +10,7 @@ Install on the machine whose desktop the agent will operate. QA MCP drives 1C th
 ## Install the CLI
 
 1. Inspect the active client's configuration and look for an existing executable. Run `agent-desktop --version` if present. Reuse a working installation.
+   Bundles ship a pinned copy: DSH Desktop for Windows has `runtime/agent-desktop/agent-desktop.exe` and DSH Linux Web has `runtime/agent-desktop/agent-desktop` (1.2.0, replaces the former Windows-MCP). Use that executable and its settings switch (Settings → Agent capabilities → Computer and browser, `ONEC_MCP_AGENT_DESKTOP=on`) instead of installing another copy.
 2. For a selected installation with Node.js and npm, run `npm install --global agent-desktop`. A matching native archive from [official releases](https://github.com/vercel-labs/agent-desktop/releases) also works. Keep any platform helpers beside the executable.
 3. Windows uses UI Automation in the signed-in user's interactive desktop. On Linux use the signed-in user's graphical session and its AT-SPI accessibility bus. An SSH-only host or headless container can expose the MCP tool catalog without having access to a desktop. Review the [Windows](https://agent-browser.dev/desktop/platforms/windows) or [Linux](https://agent-browser.dev/desktop/platforms/linux) platform guide for prerequisites and capture limits.
 
