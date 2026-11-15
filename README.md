@@ -68,7 +68,7 @@
 
 ## Подключить marketplace
 
-Каталог — этот репозиторий. Плагин вызывает `install.ps1` и не копирует `content/rules` в always-on правила хоста.
+Каталог — этот репозиторий. Плагин не копирует `content/rules` в always-on правила хоста: PowerShell-обёртка вызывает `install.ps1`, а при отсутствии PowerShell агент применяет тот же протокол из `AGENT-INSTALL.md`.
 
 **Cursor** — Dashboard → Plugins → import `https://github.com/comol/ai_rules_1c`, затем плагин `1c-rules`.
 
@@ -88,6 +88,8 @@ codex plugin add 1c-rules@1c-rules
 
 В приложении Codex: Plugins → Add More → `https://github.com/comol/ai_rules_1c.git`.
 
+После подключения попросите Codex установить `1c-rules` в открытый 1С-проект (навык `install`). Общий `SessionStart` hook предназначен для Claude Code и в Codex отключён; поэтому добавление плагина само по себе не меняет файлы проекта. Для обновления используйте навык `update` или попросите Codex обновить правила.
+
 **OpenCode**
 
 ```sh
@@ -99,7 +101,7 @@ opencode plugin marketplace install 1c-rules
 
 **Kilo CLI** — тот же каталог, что у Claude Code / OpenCode. В **Kilo Code (VS Code)** своего `marketplace add` нет: Kilo CLI или `install.ps1 init -Tools kilocode` из корня проекта.
 
-После подключения на 1С-проекте плагин сам ставит правила под хост (`ensure`). Обновление — `/1c-rules:update` или `install.ps1 update`.
+В Cursor, Claude Code и OpenCode после подключения на 1С-проекте плагин запускает `ensure`, если доступен PowerShell. В Codex установка выполняется по запросу через навык `install`. Обновление — через навык `update` или `install.ps1 update`.
 
 `1c-rules` — это переносимый набор правил, ролей субагентов, on-demand инструкций и интеграций для разработки в `1С:Предприятие 8` (BSL) с помощью ИИ-агентов. Содержимое раскладывается в проект единым установщиком и адаптируется под формат каждого инструмента.
 
@@ -109,7 +111,7 @@ opencode plugin marketplace install 1c-rules
 
 - **Cursor** (`.cursor/rules/`, `.cursor/agents/`, `.cursor/commands/`, `.cursor/skills/`)
 - **Claude Code** (`.claude/rules-1c/`, `.claude/agents/`, `.claude/commands/`)
-- **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/skills/`, `.codex/config.toml`; slash-команды ставятся в пользовательский `~/.codex/prompts/`)
+- **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/skills/`, `.codex/config.toml`; существующие slash-команды ставятся в пользовательский `~/.codex/prompts/` как [устаревшие пользовательские prompts](https://learn.chatgpt.com/docs/custom-prompts); для новых повторяемых сценариев предпочтительны навыки)
 - **OpenCode** (`.opencode/command/`)
 - **Kilo Code** (`.kilo/rules-1c/` for on-demand rules referenced by `AGENTS.md`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`)
 - **Kimi Code CLI** (`.kimi-code/rules-1c/`, `.kimi-code/agents/`, `.kimi-code/skills/`, `.kimi-code/mcp.json`; slash-команды доступны через Skills/Plugins Kimi)
