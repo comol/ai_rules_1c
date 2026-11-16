@@ -477,6 +477,12 @@ The PowerShell scripts under `tools/1c-meta-{compile,edit,info,remove,validate}/
 
 ## mxl-manage.md
 
+### Local fix `2026-11-16` — `mxl-decompile` stdout is the JSON alone
+
+Support ticket 6451045a: without `-OutputPath` the script wrote the JSON with `Write-Output` and then two statistics lines (`Areas: …`, `Fonts: …`) with `Write-Host`. Under `powershell.exe -File` host output goes to the same stdout, so a caller parsing stdout failed (`json.loads`: «Extra data: line 2 column 6»). The statistics lines are now printed only together with `-OutputPath`, after `[OK] Decompiled: …`, as before; without it stdout is the JSON and nothing else. The JSON, the `-OutputPath` file and the `-OutputPath` console output are unchanged. The pinned upstream (`2e75b0f`, v1.32) prints the statistics in both modes.
+
+Verified under Windows PowerShell 5.1 (`powershell.exe -NoProfile -File`) on a compiled two-column layout: stdout without `-OutputPath` parses as one JSON document, the `-OutputPath` file is byte-identical to the one written before the fix; no case in `tools/tests` yet.
+
 ### Upstream sync 2026-11-01 (2e75b0f)
 
 Scripts refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) `2e75b0f`, compiler and decompiler together (they share the DSL): `mxl-compile` v1.4 → **v1.61**, `mxl-decompile` v1.0 → **v1.32**, `mxl-info` v1.2 → **v1.7**, `mxl-validate` v1.1 → **v1.11**. The DSL is now described in our own reference [`mxl-dsl-spec.md`](../tools/1c-mxl-compile/mxl-dsl-spec.md) (English, written from upstream's `docs/mxl-dsl-spec.md` and `mxl-compile/reference/*.md`; upstream's test snapshots are not vendored); [mxl-manage.md](mxl-manage.md) was rewritten around it.

@@ -118,6 +118,11 @@ Other tool commands remain PowerShell-only. The upstream pin above is not to be 
   copies, `AutoEditMode` added to their `InputField` child order). The Python
   runtimes `meta-edit.py`, `form-add.py` and `form-compile.py` do not have these
   deltas yet.
+- local delta of 2026-11-16, also described in the file's header:
+  `tools/1c-mxl-decompile/scripts/mxl-decompile.ps1` — without `-OutputPath`
+  stdout carries only the JSON; the two statistics lines are printed only
+  together with `-OutputPath` (upstream prints them with `Write-Host` after the
+  JSON in both modes, and under `powershell.exe -File` they reach stdout).
 
 Not part of this skill, listed for completeness: the ruleset source also
 carries a port of upstream `hooks/support-guard.mjs` for Claude Code
