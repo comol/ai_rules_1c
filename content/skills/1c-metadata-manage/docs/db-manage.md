@@ -253,11 +253,12 @@ Applies main configuration changes to the database configuration (`/UpdateDBCfg`
 | `-Extension <name>` | Update extension |
 | `-AllExtensions` | Update all extensions |
 | `-Dynamic <on/off>` | `on` dynamic update, `off` turn it off. `auto` / `disable` (the `ibcmd` spellings) and `yes` / `no` are accepted too; `+` / `-` still work in-process, but a lone `-` never reaches the script through `powershell.exe -File` — PowerShell 5.1 exits silently |
+| `-SessionTerminate <disable/prompt/force>` | What to do with open sessions; `force` ends them (`/UpdateDBCfg -Dynamic+ -SessionTerminate force`, `ibcmd --session-terminate=force`). Dev/test bases only. Without it the update stops on the exclusive-lock error while any session is open. Not accepted through `-AdditionalV8Arguments` / `-AdditionalIbcmdArguments` — the platform reads the key only right after `/UpdateDBCfg` |
 | `-Server` | Server-side update |
 | `-WarningsAsErrors` | Treat warnings as errors |
 | `-ApplyCheck` | After an extension update, run `/CheckCanApplyConfigurationExtensions`; a refusal exits 1. Off by default — see below |
 
-**Warning**: Non-dynamic update requires exclusive database access (all users must exit).
+**Warning**: Non-dynamic update requires exclusive database access (all users must exit, or pass `-SessionTerminate force` on a dev/test base).
 
 The update log is scanned after an exit-0 run: metadata rejections (`Неверное свойство объекта метаданных`, `Неизвестное имя типа`, …), a compatibility mode above the platform (`Для работы с конфигурацией необходима версия платформы не меньше …`) and the update's own `Ошибка [при] обновлени… конфигурации базы данных` exit **1** — the database configuration is not the one that was asked for.
 

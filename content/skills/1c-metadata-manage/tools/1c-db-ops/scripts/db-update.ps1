@@ -1,4 +1,4 @@
-﻿# db-update v1.28 — Update 1C database configuration
+﻿# db-update v1.29 — Update 1C database configuration
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
 #   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
@@ -9,6 +9,8 @@
 #   Extension applicability check is opt-in (-ApplyCheck): /update1cbase Step 2c is the gate.
 #   -Dynamic also takes auto / disable (Local fix 2026-10-20); log failure lines (Find-SilentRejections
 #   plus "Ошибка [при] обновлени… конфигурации базы данных") raise the exit code, not only with -StrictLog.
+#   -SessionTerminate disable|prompt|force (Local fix 2026-11-02): 1cv8 key right after /UpdateDBCfg [-Dynamic],
+#   ibcmd --session-terminate=; refused through the additional-argument parameters (the platform ignores it at the end).
 # NB: *nix-раскладку платформы (/opt/1cv8/<ver>/1cv8, без .exe) знает только .py-порт — PS на *nix не исполняется.
 <#
 .SYNOPSIS
@@ -45,6 +47,11 @@
 .PARAMETER Dynamic
     Динамическое обновление: on включить, off отключить (также auto / disable — написание ibcmd)
 
+.PARAMETER SessionTerminate
+    Что делать с открытыми сеансами: disable не завершать, prompt спросить, force завершить принудительно
+    (только для баз разработки и тестирования). Без ключа обновление упирается в ошибку монопольной блокировки,
+    пока открыт любой сеанс. 1cv8: -SessionTerminate сразу после /UpdateDBCfg; ibcmd: --session-terminate=
+
 .PARAMETER Server
     Обновление на стороне сервера
 
@@ -62,6 +69,9 @@
 
 .EXAMPLE
     .\db-update.ps1 -InfoBasePath "C:\Bases\MyDB" -Dynamic "+" -Extension "МоёРасширение"
+
+.EXAMPLE
+    .\db-update.ps1 -InfoBasePath "C:\Bases\MyDB" -Dynamic on -SessionTerminate force
 #>
 
 [CmdletBinding(PositionalBinding=$false)]
@@ -96,6 +106,11 @@ param(
     # 1c-rules: auto / disable — написание ibcmd (--dynamic=auto|disable), локальная правка 2026-10-20.
     [ValidateSet("on", "off", "yes", "no", "+", "-", "auto", "disable")]
     [string]$Dynamic,
+
+    # 1c-rules: сеансы: 1cv8 /UpdateDBCfg ... -SessionTerminate, ibcmd config apply --session-terminate=, локальная правка 2026-11-02.
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("disable", "prompt", "force")]
+    [string]$SessionTerminate,
 
     [Parameter(Mandatory=$false)]
     [switch]$Server,
@@ -279,7 +294,7 @@ $script:V8OwnedKeys = @(
     '/F', '/S', '/N', '/P', '/Out', '/DisableStartupDialogs',
     '/UseTemplate', '/AddToList', '/Execute', '/C', '/URL', '/UC',
     '/DumpIB', '/RestoreIB', '/DumpCfg', '/LoadCfg',
-    '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg',
+    '/DumpConfigToFiles', '/LoadConfigFromFiles', '/UpdateDBCfg', '-SessionTerminate',
     '/DumpExternalDataProcessorOrReportToFiles', '/LoadExternalDataProcessorOrReportFromFiles'
 )
 # Пакетные команды платформы. В одной командной строке DESIGNER выполняет ТОЛЬКО ПОСЛЕДНЮЮ,
@@ -296,7 +311,7 @@ $script:V8BatchKeys = @(
 $script:IbcmdOwnedKeys = @(
     '--db-path', '--data', '--out', '--file', '--load', '--restore',
     '--import', '--export', '--apply', '--force', '--create-database',
-    '--user', '--password'
+    '--user', '--password', '--session-terminate'
 )
 $script:V8SecretKeys = @('/P', '/UC', '/WSP', '/AWSP', '/ConfigurationRepositoryP')
 $script:IbcmdSecretKeys = @('--password', '--token', '--db-pwd')
@@ -923,7 +938,7 @@ function Get-ApplyCheckEnabled {
 $engine = if ((Split-Path $V8Path -Leaf) -match '^ibcmd') { "ibcmd" } else { "1cv8" }
 
 # --- Resolve additional arguments for the selected engine ---
-$argHints = @{ '/F' = '-InfoBasePath'; '/S' = '-InfoBaseServer + -InfoBaseRef'; '/N' = '-UserName'; '/P' = '-Password'; '--db-path' = '-InfoBasePath'; '--user' = '-UserName'; '--password' = '-Password' }
+$argHints = @{ '/F' = '-InfoBasePath'; '/S' = '-InfoBaseServer + -InfoBaseRef'; '/N' = '-UserName'; '/P' = '-Password'; '--db-path' = '-InfoBasePath'; '--user' = '-UserName'; '--password' = '-Password'; '-SessionTerminate' = '-SessionTerminate'; '--session-terminate' = '-SessionTerminate' }
 $extraArgs = @(Resolve-ExtraArgs $engine $AdditionalV8Arguments $AdditionalIbcmdArguments $argHints)
 
 # --- Validate connection ---
@@ -951,6 +966,7 @@ try {
         $arguments = @("infobase", "config", "apply", "--db-path=$InfoBasePath", "--force")
         if ($Dynamic -eq "+") { $arguments += "--dynamic=auto" }
         elseif ($Dynamic -eq "-") { $arguments += "--dynamic=disable" }
+        if ($SessionTerminate) { $arguments += "--session-terminate=$SessionTerminate" }
         if ($Extension) { $arguments += "--extension=$Extension" }
         if ($UserName) { $arguments += "--user=$UserName" }
         if ($Password) { $arguments += "--password=$Password" }
@@ -1002,6 +1018,10 @@ try {
     # --- Options ---
     if ($Dynamic) {
         $arguments += "-Dynamic$Dynamic"
+    }
+    # 1c-rules: the platform reads -SessionTerminate only as an option of /UpdateDBCfg, i.e. before /Out.
+    if ($SessionTerminate) {
+        $arguments += "-SessionTerminate", $SessionTerminate
     }
     if ($Server) {
         $arguments += "-Server"
