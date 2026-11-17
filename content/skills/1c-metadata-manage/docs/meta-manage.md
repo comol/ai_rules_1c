@@ -250,6 +250,16 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-edit/scr
 - **External data sources**: on a source file `meta-edit` adds fields, tables (`add.tables` creates `<Source>/Tables/<Table>.xml` and registers it) and functions with the `meta-compile` syntax; removing a table is `meta-remove ExternalDataSource.<Source>.Table.<Table>`. Re-running `meta-compile` over an existing source is refused without `-Force` (it would give the source a new uuid).
 - **Carrying an attribute onto a new dump** (local, PowerShell only): `-Operation import-attribute -SourceFile <previous XML of the same object> -Value <Name>` copies the native `<Attribute>` element with its **original uuid** and every property — `add-attribute` would give it a new uuid. A different owner (kind or name), the same file, a missing attribute or invalid uuid, a target attribute of that name with other content, a uuid already used in the target file — exit 1, nothing written. An identical attribute already in the target is a no-op (the file is not rewritten). If `meta-validate` fails, the original bytes of the target are restored. The uuid is checked inside the target file only; check the whole dump with `uuid-check` ([uuid-check.md](uuid-check.md)). Details: [child-operations.md](../tools/1c-meta-edit/child-operations.md#import-attribute).
 
+## Stored data — removing and narrowing
+
+Removing or narrowing what the infobase stores changes the database structure, and the next infobase update restructures it (ITS «Практическое пособие разработчика → Основная конфигурация и конфигурация базы данных»). These are a `remove-*` of a stored element (`remove-attribute`, `remove-ts`, `remove-ts-attribute`, `remove-enumValue`, a register dimension or resource), a `modify-*` with a narrower `type=` (a shorter string or number, a type replaced, a type dropped from a composite set) and `meta-remove` of an object that holds records. Standard std534 (`fetch_its` id `its-v8std-534-hdoc`) settles the data before the edit:
+
+- **Delete or transfer is the task's decision.** When the task does not state it and the element may already hold data — it is in a released version or in an infobase — that is a `CONFUSION` fork (`AGENTS.md → Think Before Coding`): the two answers produce different releases.
+- **A transfer keeps the old element** under the `Удалить` prefix with «(не используется)» in its synonym (`modify-attribute "Договор: name=УдалитьДоговор, synonym=(не используется) Договор"`), moves its data in an infobase update handler, replaces every reference to it in code, roles, event subscriptions and forms, and removes it irreversibly only in a later release.
+- **An information-register dimension** that is removed or narrowed can fail the restructuring with «Записи регистра стали неуникальными»: create a new register and transfer the records, or set the dimension's «Режим сокращения типа» to «Удалять данные» when the data may go.
+
+Name the decision in the plan (`SKILL.md → Plan unit`) and in the delivery report.
+
 ## Operations — Summary Table
 
 Batch via `;;` in all operations. Detailed syntax in linked reference files.
@@ -397,7 +407,7 @@ The type labels it prints (`ДокументОбъект.Заказ`, `ПВХС�
 ---
 ## 4. Remove — Delete Object
 
-Safely removes an object from a 1C configuration XML export. Before deletion, checks for references to the object in attributes, code, and other metadata. If references are found, deletion is blocked.
+Safely removes an object from a 1C configuration XML export. Before deletion, checks for references to the object in attributes, code, and other metadata. If references are found, deletion is blocked. An object that holds records follows *Stored data — removing and narrowing* above before this tool runs.
 
 ## Usage
 

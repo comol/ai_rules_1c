@@ -14,7 +14,7 @@ The trade this makes: the wrapper cannot know what a tool *intends* to write, on
 
 | Value | Meaning |
 |---|---|
-| `auto` (default / empty) | Preview only when the shape of the write cannot be predicted from the call: **generation from a DSL** — `form-compile`, `meta-compile`, `role-compile`, an `skd-edit` batch — and **a tool or `-Operation` this project has not run before** (one preview, then proceed normally). Every other write applies immediately: a single attribute, a synonym, a flag, one form field — the post-apply diff already answers "what changed". |
+| `auto` (default / empty) | Preview only a write that **replaces an existing artifact whole** — a `-Force` re-compile: `meta-compile -Force` over an existing object, `role-compile -Force` over an existing role. Its diff is the old file against a new one, the one case where the call does not show what will be lost. Every other write applies immediately: a single attribute, a synonym, a flag, one form field — the post-apply diff already answers "what changed". **Generation from a DSL** — `form-compile`, `meta-compile`, `role-compile`, an `skd-edit` batch — is reviewed through its definition JSON, which is the plan (`SKILL.md → Plan unit`); a preview of it would show only the whole generated file. |
 | `on` | Preview before every wrapper-driven write. |
 | `off` | Only on an explicit request (`/previewmode once`, «покажи, что изменится»). |
 
@@ -81,4 +81,4 @@ Name a preview on the existing `Metadata tooling:` line only when one actually r
 Metadata tooling: Invoke-1CEdit -Tool meta-edit -Object Справочник.Контрагенты (preview shown, then applied)
 ```
 
-An immediate apply cites the tool without a preview clause.
+An immediate apply cites the tool without a preview clause; a generation also names its definition file, the plan the run executed.
