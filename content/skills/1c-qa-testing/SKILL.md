@@ -1,6 +1,6 @@
 ---
 name: 1c-qa-testing
-description: "Check the 1C thin client through QA MCP (`1c-qa`): drive forms interactively, assert observed results, and save or rerun repeatable UI scenarios as pytest files on native QA MCP 0.8.0+."
+description: "1C thin-client checks through QA MCP (`1c-qa`) — driving forms, asserting results, saved pytest UI scenarios (QA MCP 0.8.0+). Use for a UI check or a UI scenario run on the thin client."
 argument-hint: "<feature or scenario to check>"
 ---
 

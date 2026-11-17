@@ -1,5 +1,5 @@
 ---
-description: 1C anti-patterns, performance guidelines, and code review scoring
+description: "1C anti-pattern catalog with severity, performance guidelines, review scoring. Load when writing, reviewing or optimizing BSL or queries."
 alwaysApply: false
 category: quality
 ---

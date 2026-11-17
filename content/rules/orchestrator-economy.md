@@ -1,5 +1,5 @@
 ---
-description: Orchestrator economy mode — while ORCHESTRATION=economy in .dev.env (toggled by /economymode), the parent agent delegates execution to cheaper-tier subagents and keeps decisions, specs, and verification
+description: "Orchestrator economy mode — dividing work between the parent and cheaper-tier subagents. Load while .dev.env has ORCHESTRATION=economy, on /economymode, or when the user asks about the mode."
 alwaysApply: false
 category: workflow
 ---

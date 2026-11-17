@@ -1,5 +1,5 @@
 ---
-description: Verification execution gates for BSL and metadata — evidence reuse, syntax, logic, style, impact analysis, XML validation, and the platform batch check before an infobase apply
+description: "Closing gates for BSL and metadata — evidence reuse, syntax, logic, style, impact, XML, platform batch check. Load before declaring a full-cycle change done, or for a gate a quick-fix does not carry."
 alwaysApply: false
 category: quality
 ---

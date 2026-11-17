@@ -1,5 +1,5 @@
 ---
-description: Case book of common 1C platform pitfalls and proven fix templates
+description: "Case book of 1C platform pitfalls and proven fix templates. Load when writing, reviewing or debugging BSL."
 alwaysApply: false
 category: quality
 ---

@@ -1,5 +1,5 @@
 ---
-description: Systematic 4-phase debugging methodology adapted for 1C (reproduce → hypothesize → experiment → fix), with a fast path for directly evidenced root causes (DEBUG_FAST_PATH in .dev.env)
+description: "Debugging 1C defects — runtime errors, regressions, wrong results, slowdowns, DEBUG_FAST_PATH. Load before diagnosing a bug, directly or through 1c-error-fixer / 1c-performance-optimizer."
 alwaysApply: false
 category: quality
 ---

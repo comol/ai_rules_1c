@@ -1,5 +1,5 @@
 ---
-description: Development standards — architecture patterns, extensions, platform standards, code smells
+description: "Architecture standards — patterns, extensions, client-server interaction, query hard rules, reference attributes, code smells. Load when writing or reviewing BSL or designing a modification."
 alwaysApply: false
 category: development
 ---

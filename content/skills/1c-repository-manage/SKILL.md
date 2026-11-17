@@ -1,6 +1,6 @@
 ---
 name: 1c-repository-manage
-description: "1C configuration repository (хранилище) — status, history, diff, lock, update, commit, unlock, dump; lock before edit, commit after verify. Use when .dev.env REPOSITORY_PATH is set or the task mentions the configuration repository / хранилище."
+description: "1C configuration repository (хранилище) — status, history, diff, lock, update, commit, unlock, dump. Use when .dev.env REPOSITORY_PATH is set or the task mentions the configuration repository / хранилище."
 ---
 
 # 1C Repository Manage — Configuration Repository Skill

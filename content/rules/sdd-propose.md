@@ -1,5 +1,5 @@
 ---
-description: "OpenSpec propose phase — DoD in the artifacts, MCP evidence for 1C facts, spec size triage, clarification before apply. Load for /opsx:propose, /opsx:update or when authoring proposal.md, design.md, tasks.md or delta specs."
+description: "OpenSpec propose phase — authoring or revising a change. Load for /opsx:propose, /opsx:update or when writing proposal.md, design.md, tasks.md or delta specs."
 alwaysApply: false
 category: integrations
 ---
@@ -7,6 +7,10 @@ category: integrations
 # OpenSpec — propose phase
 
 Router, artifact ownership and the Definition of Done contract — `content/rules/sdd-integrations.md`. Formats: read `openspec/specs/README.md` and `openspec/changes/README.md` before writing or editing an artifact. Apply-phase rules live in `content/rules/sdd-apply.md` and are not needed while proposing.
+
+## Intent before design
+
+When the request does not yet fix the problem being solved, the outcome the user expects and the scope edge, settle those first: one question at a time, each with your recommendation, because every answer changes what is worth asking next. Do this before the spec size triage, the pre-author MCP checks and any drafting. A request that already fixes all three skips this step. The batched `CONFUSION` rounds of *Propose-phase clarification discipline* are for architectural decisions once intent is fixed. A user who wants to think the change through before proposing goes to `/opsx:explore`.
 
 ## Specify completion before apply
 

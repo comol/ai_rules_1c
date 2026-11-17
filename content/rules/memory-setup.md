@@ -1,5 +1,5 @@
 ---
-description: Session-start reminder when no external memory MCP is configured; recommend Cognee while respecting tool policy
+description: "No external memory MCP configured — the memory-setup reminder. Load once per session when no eligible memory tools are exposed."
 alwaysApply: false
 category: workflow
 ---
