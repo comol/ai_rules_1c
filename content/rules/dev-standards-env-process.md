@@ -1,12 +1,12 @@
 ---
-description: Process and model parameters from .dev.env — subagent model tiers, AGENT_MODEL, ORCHESTRATION, quick-fix budget, debugging fast path, VERIFICATION_DEPTH, CAVEMAN, METADATA_PREVIEW, support channel
+description: Process and model parameters from .dev.env — subagent model tiers, AGENT_MODEL, ORCHESTRATION, CODE_OWNER, quick-fix budget, debugging fast path, VERIFICATION_DEPTH, CAVEMAN, METADATA_PREVIEW, support channel
 alwaysApply: false
 category: development
 ---
 
 # Development Standards — Process and Model Parameters
 
-**When to load this file:** a task or command depends on subagent / model routing, orchestration, triage or debugging defaults, verification depth, metadata preview, communication style or the support channel. Parameter classes and the ask-policy — `content/rules/dev-standards-env.md → Global principle`; every key below is **Defaulted** unless its row says otherwise, and the agent **must not** ask for a Defaulted value. Infobase, EDT and UI-testing keys stay in `dev-standards-env.md`; `TOOL_*` keys — `content/rules/tool-policy.md`.
+**When to load this file:** a task or command depends on subagent / model routing, orchestration, code ownership, triage or debugging defaults, verification depth, metadata preview, communication style or the support channel. Parameter classes and the ask-policy — `content/rules/dev-standards-env.md → Global principle`; every key below is **Defaulted** unless its row says otherwise, and the agent **must not** ask for a Defaulted value. Infobase, EDT and UI-testing keys stay in `dev-standards-env.md`; `TOOL_*` keys — `content/rules/tool-policy.md`.
 
 ## Subagent model parameters
 
@@ -39,7 +39,7 @@ Consumed by the triage and debugging rules at task time. All are **Defaulted** �
 | `{DEBUG_FAST_PATH}` | Debugging fast-path mode (`standards(name="systematic-debugging") → Fast path`): `standard` \| `extended` \| `off`. Controls when a directly evidenced bug may skip the full 4-phase loop. | Defaulted | Empty / invalid = `standard` |
 | `{VERIFICATION_DEPTH}` | SDLC QA profile: `lite` \| `standard` \| `full`. Selects the Gates 1–3 set for every task path; the semantics live only in `verification-policy.md → "Verification depth levels"`. Set by `/sdlc`; `/litemode` remains a compatibility alias. Every depth preserves `UI_TESTING`. | Defaulted | Empty / invalid = `standard` |
 | `{CAVEMAN}` | caveman communication-style auto-activation (`content/skills/caveman/SKILL.md`): `on` \| `auto` \| `off`. Controls whether the terse style turns on automatically and for which tasks. Does not affect the mandatory report structure or verification. | Defaulted | Empty / invalid = `auto` |
-| `{METADATA_PREVIEW}` | When wrapper `-Preview` on `Invoke-1CEdit.ps1` runs before a metadata write: `auto` \| `on` \| `off`. Toggled by `/previewmode`. Does not relax native `-DryRun` / `-Force` on deletions. | Defaulted | Empty / invalid = `auto` — preview only for DSL generation and an operation new to the project |
+| `{METADATA_PREVIEW}` | When wrapper `-Preview` on `Invoke-1CEdit.ps1` runs before a metadata write: `auto` \| `on` \| `off`. Toggled by `/previewmode`. Does not relax native `-DryRun` / `-Force` on deletions. | Defaulted | Empty / invalid = `auto` — preview only a `-Force` re-compile that replaces an existing artifact whole |
 | `{AGENT_MODEL}` | Fallback and off switch of the active-model profile layer (`AGENTS.md → Active model adaptation`, router `model-adaptation.md → Selecting the profile`). The profile follows the model the agent knows it runs; a slug (`opus5` \| `sonnet5` \| `fable5` \| `gpt56` \| `gpt6`) decides only for an agent that cannot tell; `off` disables profiles. Read at task time — no re-render, no client restart. Edited by `/rulesmodel`. A profile tunes initiative and communication and never weakens a hard gate. | Defaulted | Empty / unrecognised = profile by self-knowledge, or the base ruleset when the model has no profile |
 
 ### `CAVEMAN` — caveman auto-activation
@@ -57,6 +57,17 @@ Controls **whether** the terse `caveman` communication style (`content/skills/ca
 ### `METADATA_PREVIEW` — wrapper dry-run before a metadata write
 
 Controls **when** `Invoke-1CEdit.ps1 -Preview` (run the tool, show a unified diff, restore the tree) precedes the same call without `-Preview`. The canonical editor is the `/previewmode` slash command (`on` / `auto` / `off`, plus `once` for a single session-scoped preview). Value semantics, what the wrapper previews and what it never does — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`.
+
+## `CODE_OWNER` — who owns the code
+
+Names the owner of the project's code and so whose rules govern its design. Current models weigh ownership heavily: code presented as theirs gets restructured, code presented as someone else's gets extended as it stands, and a scope rule elsewhere does not cancel an ownership statement. **Install-time selection** with one exception to that class: the installer asks while creating `.dev.env` **and** when an update, add or init finds an existing `.dev.env` without the key. A run where nobody can answer (`-NonInteractive`, redirected console input) writes `user` and reports it. Never asked at task time; a present key is never re-asked or rewritten. Empty / invalid = `user`.
+
+| Value | Meaning |
+|---|---|
+| `user` (default / empty) | The user owns the code and sets its design. Follow the design and conventions already in the code (`AGENTS.md → Core Principles`); `Surgical Changes` applies as written, and unrelated defects are reported, not fixed. A prompt or subagent brief never presents the code as the agent's. |
+| `agent` | The agent owns and maintains the project's own code and sets its design. Within the area the task touches it merges duplicated code, fixes related structure and may replace a local convention it judges wrong; `Surgical Changes` and the cleanup clause of `Simplicity First` yield to this there. Subagent briefs state `CODE_OWNER=agent`; the delivery report lists every change beyond the request. |
+
+**Unchanged under both values:** vendor (typical) code stays the vendor's (`content/rules/dev-standards-change-markers.md`, `AGENTS.md → Skills and Subagents → Vendor support`); whatever `AGENTS.md → Core Principles` says never yields; the hard gates, triage and the validator chain; `CONFUSION` on material forks — a change to existing behaviour or a public contract beyond the request is one; no speculative features, tests, logging or abstractions; confirmation of destructive actions.
 
 ## Support-channel parameters
 

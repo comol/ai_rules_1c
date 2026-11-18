@@ -1,5 +1,5 @@
 ---
-description: UI testing routes — QA MCP (`1c-qa`) first, web client (agent-browser → built-in browser) as fallback, agent-desktop only for windows outside the client; bans home-grown screenshot/OCR
+description: "UI testing routes and tools — QA MCP (`1c-qa`), web client, agent-desktop, screenshots. Load before any UI check of a 1C infobase or when choosing or installing a UI-automation tool."
 alwaysApply: false
 category: tooling
 ---

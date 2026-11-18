@@ -20,6 +20,10 @@ The gate itself — every metadata-XML mutation and every infobase operation goe
 
 Every mutating tool refuses to edit a locked ("на замке") object of a typical configuration on vendor support and refuses to delete one still on support — the run exits `1`, the refusal is the correct outcome (extension first, `support-edit` only as a stated decision): [support-manage.md](docs/support-manage.md).
 
+## Plan unit — objects and operations
+
+Plan a metadata change as the objects it touches and the tool operations on each, wiring included: subsystem content, role rights, forms, command interface, register records. The XML is the tools' output — a plan written as XML to produce invites the hand edit the hard rule forbids. For a generation or a batch edit the definition JSON (`meta-compile`, `form-compile`, `role-compile`, an `skd-edit` batch, `meta-edit -DefinitionFile`) is that plan: read it before the run and cite it. After the run Gate 5 checks the changed files against the plan (`content/rules/verification-gates.md → Gate 5`).
+
 ## Path conventions
 
 PowerShell examples in this skill (`SKILL.md` and every `docs/*.md`) use the prefix `skills/1c-metadata-manage/tools/...`. That prefix is **relative to the active tool's skills directory**, not to the repository root:
@@ -39,26 +43,11 @@ On Windows use the shipped `.ps1` entry points. Before selecting a Linux/macOS r
 
 `tools/_common/Invoke-1CEdit.ps1` accepts logical addresses, emits a unified diff and can preview its own script writes. Before using the wrapper, read [edit-preview.md](docs/edit-preview.md) for arguments, rollback boundaries and `METADATA_PREVIEW` modes.
 
-Default `auto`: preview DSL generation or a tool/operation new to this project; ordinary edits apply immediately. Native deletion gates (`-DryRun`, then `-Force`) and validation always remain. Direct tool invocation is valid; name a preview on `Metadata tooling:` only when it ran. Do not stash or commit another person's changes to force a preview.
+Default `auto`: preview only a `-Force` re-compile that replaces an existing artifact whole; every other write applies immediately, and a DSL generation is reviewed through its definition JSON (*Plan unit* above). Native deletion gates (`-DryRun`, then `-Force`) and validation always remain. Direct tool invocation is valid; name a preview on `Metadata tooling:` only when it ran. Do not stash or commit another person's changes to force a preview.
 
 ## Dispatch Strategy
 
-Determine task complexity, then choose the execution mode:
-
-### Direct execution — simple / read-only tasks
-
-Use when the task is a **single lightweight query**: checking metadata info, a quick lookup, one validation call. In this case identify the task domain from the table below, read the corresponding file, and follow its instructions directly.
-
-### Subagent delegation — complex / mutation tasks
-
-Delegate to the **`1c-metadata-manager`** subagent (defined in `content/agents/metadata-manager.md`, or in the installed agents directory for the active tool) when **any** of the following is true:
-
-- The task **creates, scaffolds, or compiles** metadata (objects, forms, SKD, MXL, roles, EPF, CF, CFE, databases)
-- The task **edits multiple files** or **spans multiple domains**
-- The task involves a **multi-step workflow** (create → edit → validate → fix → re-validate)
-- The task requires **reading large domain docs** (forms, meta-manage, SKD, MXL, roles, EPF, DB — each 200–800 lines)
-
-The subagent already knows how to read the skill docs, execute PowerShell scripts, and validate results. Provide it with the full task description including object names, attributes, types, and any business context from the conversation.
+Delegate to the **`1c-metadata-manager`** subagent (`content/agents/metadata-manager.md`, or the installed agents directory of the active tool) by the countable criteria of `content/rules/subagents.md → Delegation principle` alone; the active model profile tunes only how eagerly. Work on one object — a lookup, a validation, or a create → validate → fix run, however many steps — does not meet them by itself: identify its domain in the table below, read that doc and follow it. The brief carries the plan (*Plan unit* above), object names, types and the business context; the subagent reads the domain docs itself.
 
 ## Task Domain Table
 

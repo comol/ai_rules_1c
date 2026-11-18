@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Compact the conversation into a self-contained handoff document so a fresh agent or client continues without re-discovery; references durable artifacts instead of copying them. Use on 'handoff', 'compact session', 'сделай handoff', 'передай контекст' or `/handoff`."
+description: "Compact the conversation into a self-contained handoff document so a fresh agent or client continues without re-discovery. Use on 'handoff', 'compact session', 'сделай handoff', 'передай контекст' or `/handoff`."
 argument-hint: "Optional: focus of the next session, or a target path/folder for the handoff file."
 ---
 

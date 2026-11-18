@@ -1,5 +1,5 @@
 ---
-description: Delegated full-cycle flow — plan → implementation → review and testing → Definition of Done
+description: "Delegated full-cycle change — planning, implementation and review subagents, plan approval, Handoff between them. Load once subagents.md chose delegation for a full-cycle task, or under ORCHESTRATION=economy."
 alwaysApply: false
 category: workflow
 ---
@@ -108,7 +108,7 @@ The reviewer (eligible subagent or parent) checks requirements, correctness and 
 - style / ITS findings from the Stage 3 `review_1c_code` evidence when the active depth selected Gate 3 (`verification-policy.md`) — this stage adds no validator call of its own;
 - query patterns, transactional safety, lock granularity, posting boundaries.
 
-Report `critical` / `major` / `minor` findings (`subagent-core.md → Report vocabulary`). Resolve critical / major issues and confirm affected checks before completion; minor issues are informational.
+Report `critical` / `major` / `minor` findings (`subagent-core.md → Report vocabulary`). Resolve critical / major issues, each checked first (`verification-delivery.md → Soft gate C`, *Acting on findings*), and confirm affected checks before completion; minor issues are informational.
 
 ### Stage 5 — Verification gate (parent agent)
 

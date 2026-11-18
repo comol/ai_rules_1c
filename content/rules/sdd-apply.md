@@ -1,5 +1,5 @@
 ---
-description: "OpenSpec apply phase — apply until the Definition of Done is satisfied, locked artifact decisions, one preflight question round, archive readiness. Load for /opsx:apply, /opsx:archive, /opsx:sync or when implementing an openspec change."
+description: "OpenSpec apply phase — implementing, syncing and archiving a change. Load for /opsx:apply, /opsx:archive, /opsx:sync or when implementing an openspec/changes/<id>/ change."
 alwaysApply: false
 category: integrations
 ---

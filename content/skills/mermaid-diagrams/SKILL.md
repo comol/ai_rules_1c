@@ -1,6 +1,6 @@
 ---
 name: mermaid-diagrams
-description: "Practical guide for creating human-readable and agent-parseable diagrams using Mermaid. Includes conservative, renderer-compatible templates and when-to-use guidance."
+description: "Mermaid diagrams that render across viewers and stay agent-parseable. Use when drawing a flowchart, sequence, state or other diagram in Markdown or docs."
 ---
 
 # Mermaid Diagrams Skill

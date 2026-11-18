@@ -1,5 +1,5 @@
 ---
-description: Verification policy — depth levels, quick-fix eligibility, promotion triggers, and the quick-fix gate
+description: "Verification depth and triage — VERIFICATION_DEPTH, quick-fix eligibility, promotion triggers, the quick-fix gate. Load at task triage, when choosing quick-fix or full-cycle, or to close a quick-fix."
 alwaysApply: false
 category: quality
 ---

@@ -14,7 +14,7 @@ The base ruleset (`AGENTS.md` + every on-demand rule) is written **model-neutral
 
 A **model profile** is a thin delta that tunes those documented behaviours to the running model. It exists so the same ruleset produces the same outcome on Claude Opus 5, Claude Sonnet 5, Claude Fable 5, GPT-5.6 and GPT-6 Astra without the base rules being rewritten for a particular vendor's quirks.
 
-Sources of the deltas: the Anthropic prompting best-practices set (`platform.claude.com/docs/en/build-with-claude/prompt-engineering/…`, including the per-model pages for Opus 5 / Sonnet 5 / Fable 5), the Anthropic context-engineering guide for the Claude 5 generation (`claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models`, July 2026 — lean context, judgement over hard style constraints, described interfaces over worked examples, progressive disclosure, code-form references), the OpenAI latest-model guide (`developers.openai.com/api/docs/guides/latest-model` → *Prompting best practices*) and [Rethinking skills and prompts for GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra). Only the **model-specific** parts of those guides are allowed into profiles; everything a guide states for all models belongs to §5 below and is always in force.
+Sources of the deltas: the Anthropic prompting best-practices set (`platform.claude.com/docs/en/build-with-claude/prompt-engineering/…`, including the per-model pages for Opus 5 / Sonnet 5 / Fable 5 / Fable 5.2), the Anthropic context-engineering guide for the Claude 5 generation (`claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models`, July 2026 — lean context, judgement over hard style constraints, described interfaces over worked examples, progressive disclosure, code-form references), the OpenAI latest-model guide (`developers.openai.com/api/docs/guides/latest-model` → *Prompting best practices*) and [Rethinking skills and prompts for GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra). Only the **model-specific** parts of those guides are allowed into profiles; everything a guide states for all models belongs to §5 below and is always in force.
 
 ## 2. Selecting the profile
 
@@ -24,7 +24,7 @@ The profile follows **the model you know you are running**. `AGENT_MODEL` in `.d
 |---|---|---|
 | Claude Opus 5 | `opus5` | `content/rules/model-opus5.md` |
 | Claude Sonnet 5 | `sonnet5` | `content/rules/model-sonnet5.md` |
-| Claude Fable 5 (and Claude Mythos 5) | `fable5` | `content/rules/model-fable5.md` |
+| Claude Fable 5, 5.1, 5.2 (and Claude Mythos of the same versions) | `fable5` | `content/rules/model-fable5.md` |
 | GPT-5.6 | `gpt56` | `content/rules/model-gpt56.md` |
 | GPT-6 Astra | `gpt6` | `content/rules/model-gpt6.md` |
 | any other model | — | *no profile — the base ruleset applies as written* |

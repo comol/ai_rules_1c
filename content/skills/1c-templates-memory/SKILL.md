@@ -1,6 +1,6 @@
 ---
 name: 1c-templates-memory
-description: "Search reusable 1C code templates with the task text and adapt a fitting result. Use when the selected 1C workflow needs a template; memory-only work enters through project-memory.md."
+description: "Reusable 1C code templates from the templates MCP. Use when the selected 1C workflow needs a template; memory-only work enters through project-memory.md."
 argument-hint: "<task description | memory query>"
 allowed-tools: mcp__1c-templates-mcp__templatesearch, mcp__1c-templates-mcp__get_template, mcp__1c-templates-mcp__list_templates, mcp__1c-templates-mcp__recall, mcp__1c-templates-mcp__remember
 ---

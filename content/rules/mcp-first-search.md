@@ -1,5 +1,5 @@
 ---
-description: MCP-first search — project-index MCP tools get a bounded attempt before Grep, Glob, directory listing or Read-scanning, with a one-line "what was tried" note on fallback. Load before any code, metadata, usage or file search in a 1C project.
+description: "Searching 1C project source — code, metadata, usages, files; project-index MCP versus Grep, Glob and Read. Load before any code, metadata, usage or file search in a 1C project."
 alwaysApply: false
 category: tooling
 ---

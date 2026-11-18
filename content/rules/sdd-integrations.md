@@ -1,5 +1,5 @@
 ---
-description: "OpenSpec integration — router: phase files, canonical sources, Definition of Done mapping, artifact ownership. Load before OpenSpec work (/opsx:* or an openspec/changes/<id>/ change), then the file of the phase."
+description: "OpenSpec router — phase files, artifact ownership by subagent, Definition of Done mapping. Load before any /opsx:* command or work on an openspec/changes/<id>/ change."
 alwaysApply: false
 category: integrations
 ---

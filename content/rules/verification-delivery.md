@@ -1,5 +1,5 @@
 ---
-description: Verification delivery gates — reproduction, plan adherence, full-cycle review, UI confirmation, and final report
+description: "Full-cycle delivery — reproduction case, plan adherence, code review and acting on its findings, UI confirmation, Definition of Done, final report. Load after the hard gates of a full-cycle change."
 alwaysApply: false
 category: quality
 ---
@@ -41,6 +41,8 @@ Checklist (same shape regardless of plan source):
 ### Soft gate C — Code review
 
 Full-cycle: review is required unless the user explicitly prohibits it; otherwise only when requested. The parent reviews requirements, correctness, regressions and security. Invoke `1c-code-reviewer` only on explicit request with the reviewer model gate satisfied (`subagents.md`). Fix critical / major findings; report minor ones. Reuse fresh evidence. Disabling the subagent does not waive review or MCP gates.
+
+**Acting on findings.** Check every review finding — from `1c-code-reviewer`, the style / ITS findings of `review_1c_code`, or the user — against the current source, and against MCP evidence when it rests on a 1C fact, before changing anything. Fix a confirmed finding. Do not apply one the evidence refutes: report it as rejected with that evidence. Report a finding the evidence cannot settle as open, and ask when it would change behaviour. When unclear items bear on related ones, clarify them before fixing any of the group. Agreeing without checking, or changing correct code to satisfy a reviewer, is a defect; so is rejecting a finding without evidence. Validator pass criteria are unchanged (`verification-policy.md`).
 
 ### Soft gate D — UI confirmation policy
 

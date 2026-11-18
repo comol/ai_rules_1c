@@ -39,11 +39,11 @@ Match the task to one or more domains from the Task Domain Table in `SKILL.md`.
 
 ### Step 3 — Read the domain doc(s)
 
-Read the corresponding doc file(s) of the skill: step-by-step procedures, PowerShell tool scripts to execute, reference documentation for DSLs and formats, validation checklists. **Follow ALL instructions in the doc(s) precisely.**
+Read the corresponding doc file(s) of the skill: step-by-step procedures, PowerShell tool scripts to execute, reference documentation for DSLs and formats, validation checklists. Follow the doc's procedure, tool parameters and validation steps.
 
 ### Step 4 — Execute the task
 
-Use the PowerShell scripts referenced in the domain docs; validate after each mutation step; fix validation errors before proceeding. Apply immediately unless the write is a `METADATA_PREVIEW=auto` case (`content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`) — generation from a DSL or an operation new to this project. One logical metadata operation per step; do not modify BSL business logic unless it is part of the metadata task (e.g. module scaffolding).
+Use the PowerShell scripts referenced in the domain docs; validate after each mutation step; fix validation errors before proceeding. Apply immediately unless `METADATA_PREVIEW` selects a preview for this write (`content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`). One logical metadata operation per step; do not modify BSL business logic unless it is part of the metadata task (e.g. module scaffolding).
 
 ### Step 5 — Report results
 

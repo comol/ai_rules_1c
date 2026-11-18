@@ -1,6 +1,6 @@
 ---
 name: prompt-enhancer
-description: "Turn a short, unstructured prompt or task statement into a detailed imperative spec — numbered analysis steps, edge cases, expected output format — keeping every source term and adding no requirements. Use to improve, refine or structure a prompt or spec; takes text or a .md path."
+description: "Turn a short, unstructured prompt or task statement into a detailed imperative spec. Use when asked to improve, refine, expand or structure a prompt or spec; takes text or a .md path."
 ---
 
 # prompt-enhancer — improving prompts and task statements

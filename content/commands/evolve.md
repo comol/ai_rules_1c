@@ -64,8 +64,11 @@ Entry format (English, imperative, original 1C identifiers as-is, no secrets / P
 - **Rule:** <imperative behavior rule>
 - **Scope:** <when / where it applies>
 - **Evidence:** <episodes in one line>
+- **Check:** <the situation that reproduced the friction> → <the behavior the rule now requires>
 - **Refines:** <`AGENTS.md → <section>` / `<rule-file>.md` / none>
 ```
+
+- **`Check` is the failing case the rule answers.** Write it from the episodes (what the agent was asked, what it did), not from the rule text, so the next session or the user can replay it and see the change. A proposal whose episodes cannot be stated as such a situation stays pending.
 
 - Ids are sequential `R-NNN` across the whole file, including superseded entries.
 - **Dedupe on write:** a proposal targeting the same behavior as an existing active entry merges into it (update the text, extend `Evidence`); a proposal contradicting an existing entry **replaces** it — move the old entry under `## Superseded` with a `Superseded by R-NNN (YYYY-MM-DD)` line. Two conflicting active entries must never coexist.
@@ -76,7 +79,7 @@ Entry format (English, imperative, original 1C identifiers as-is, no secrets / P
 
 - Delete the `memory.md` fallback entries now represented by written entries (migration, per `AGENTS.md → Project memory`).
 - Closing summary in Russian: entries written, merged, superseded; proposals rejected; pending signals below the threshold.
-- **Upstream hint:** if an approved rule is not project-specific (it would improve the base ruleset for every project), say so — the fix belongs in the `1c-rules` source repo (`AGENTS.md` / `content/rules/**`) through its normal change process; `LLM-RULES.md` stays the project-local layer either way.
+- **Upstream hint:** if an approved rule is not project-specific (it would improve the base ruleset for every project), say so — the fix belongs in the `1c-rules` source repo (`AGENTS.md` / `content/rules/**`) through its normal change process, with the entry's `Check` as the scenario that must fail on the current ruleset before the fix; `LLM-RULES.md` stays the project-local layer either way.
 
 ## note <text>
 
