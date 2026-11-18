@@ -5,7 +5,7 @@ The toolchain of that skill is PowerShell-only, so a Linux / macOS install
 receives tools it cannot execute. The fix is to ship each tool twice - a
 PowerShell script for Windows and a Python port next to it - vendored from
 Nikolay-Shirokov/cc-1c-skills (MIT) at the commit the PowerShell family was
-synced from: 2e75b0f483eb020e9f09562d1a7be1982bc5ac6e.
+synced from: 4fc37e1f992057847228a69837337bd3c141c059.
 
 This file is the regression net for that runtime. It currently covers the first
 ported tool, ``remove-form`` - a tool that deletes files, so its contract is
@@ -1207,7 +1207,7 @@ def _(work):
 # ---------------------------------------------------------------- licensing
 
 UPSTREAM_NOTICE_REL = "content/skills/1c-metadata-manage/NOTICE.md"
-UPSTREAM_PIN = "2e75b0f483eb020e9f09562d1a7be1982bc5ac6e"
+UPSTREAM_PIN = "4fc37e1f992057847228a69837337bd3c141c059"
 
 
 @case("remove-form safety parity: PowerShell refuses the same names and paths", needs_powershell=True)
@@ -1430,12 +1430,11 @@ def _(work):
 
 # ---------------------------------------------------------------- form-compile: events
 #
-# Upstream accepts three spellings of the same thing and silently drops one of
-# them: a standalone ``handlers`` map compiles happily and produces no event at
-# all, and ``OnEditEnd`` is misspelled in the suffix map, so its auto-named
-# handler falls through to the literal fallback. Neither defect shows up in an
-# exit code or in "the form loads" - only the emitted XML shows them, so every
-# case below asserts on parsed ``Table/Events/Event`` pairs.
+# A conventional handler name is the list form ``"events": ["OnEditEnd"]``.
+# ``null`` inside an events object is refused: unbind belongs to form-edit.
+# A standalone ``handlers`` map is compiled. The auto-name must be the catalog
+# spelling, not the literal English event name. The cases assert on parsed
+# ``Table/Events/Event`` pairs, not on the exit code alone.
 
 FORM_DSL_AUTO_ACTIVATE = "ТПриАктивизацииСтроки"
 FORM_DSL_AUTO_EDITEND = "ТПриОкончанииРедактирования"
@@ -1453,13 +1452,13 @@ EVENT_ACCEPTED = OrderedDict((
                              [("OnActivateRow", "TActivate")])),
     ("on only, auto-named", ({"on": ["OnActivateRow"]},
                              [("OnActivateRow", FORM_DSL_AUTO_ACTIVATE)])),
-    ("events with a null handler", ({"events": {"OnActivateRow": None}},
-                                    [("OnActivateRow", FORM_DSL_AUTO_ACTIVATE)])),
-    ("OnEditEnd auto-name", ({"events": {"OnEditEnd": None}},
+    ("events list, auto-named", ({"events": ["OnActivateRow"]},
+                                 [("OnActivateRow", FORM_DSL_AUTO_ACTIVATE)])),
+    ("OnEditEnd auto-name", ({"events": ["OnEditEnd"]},
                              [("OnEditEnd", FORM_DSL_AUTO_EDITEND)])),
-    ("Selection auto-name", ({"events": {"Selection": None}},
+    ("Selection auto-name", ({"events": ["Selection"]},
                              [("Selection", FORM_DSL_AUTO_SELECTION)])),
-    ("DragEnd auto-name", ({"events": {"DragEnd": None}},
+    ("DragEnd auto-name", ({"events": ["DragEnd"]},
                            [("DragEnd", FORM_DSL_AUTO_DRAGEND)])),
 ))
 
@@ -1468,6 +1467,7 @@ EVENT_REFUSED = OrderedDict((
     ("events and on together", {"events": {"OnActivateRow": "A"}, "on": ["OnActivateRow"]}),
     ("events and handlers together", {"events": {"OnActivateRow": "A"},
                                       "handlers": {"OnActivateRow": "A"}}),
+    ("null inside an events object", {"events": {"OnActivateRow": None}}),
     ("an unknown event name", {"events": {"OnEndEdit": None}}),
     ("the obsolete Drop key", {"events": {"Drop": None}}),
     ("a handlers key absent from on", {"on": ["OnActivateRow"], "handlers": {"OnEditEnd": "X"}}),

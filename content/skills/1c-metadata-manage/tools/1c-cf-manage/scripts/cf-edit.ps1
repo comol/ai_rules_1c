@@ -1,4 +1,4 @@
-﻿# cf-edit v1.33 — Edit 1C configuration root (Configuration.xml)
+﻿# cf-edit v1.37 — Edit 1C configuration root (Configuration.xml)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: .dev.env first: SUPPORT_GUARD (support guard, fail-closed on an unreadable bin) and
 #   NEW_OBJECT_POSITION (add-childObject: end by default, byName on request) win over .v8-project.json.
@@ -15,6 +15,41 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+function ConvertTo-DslBool {
+	param($Value, [string]$Key, [bool]$Default)
+	if ($null -eq $Value) { return $Default }
+	if ($Value -is [bool]) { return $Value }
+	if ($Value -is [string]) {
+		$t = $Value.Trim().ToLowerInvariant()
+		if (@('true', 'да', 'истина', '1') -ccontains $t) { return $true }
+		if (@('false', 'нет', 'ложь', '0') -ccontains $t) { return $false }
+	} elseif ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+		if ($Value -eq 1) { return $true }
+		if ($Value -eq 0) { return $false }
+	}
+	$shown = if ($Value -is [string]) { '"' + $Value + '"' } else { "$Value" }
+	[Console]::Error.WriteLine("[ERROR] $Key = ${shown}: expected true or false")
+	exit 1
+}
+
+# Первый найденный ключ из $Keys (синонимы, без регистра) → ConvertTo-DslBool; не объект / нет ключа → $Default.
+function Get-DslBool {
+	param($Obj, [string[]]$Keys, [bool]$Default)
+	if ($null -eq $Obj -or $Obj -is [string] -or $Obj -is [ValueType]) { return $Default }
+	foreach ($k in $Keys) {
+		if ($Obj -is [System.Collections.IDictionary]) {
+			if ($Obj.Contains($k)) { return (ConvertTo-DslBool $Obj[$k] $k $Default) }
+		} elseif ($Obj.PSObject.Properties[$k]) {
+			return (ConvertTo-DslBool $Obj.PSObject.Properties[$k].Value $k $Default)
+		}
+	}
+	return $Default
+}
+
 # --- Разбор пользовательского JSON ---
 # Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
 # идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
@@ -23,6 +58,7 @@ $ErrorActionPreference = "Stop"
 # Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
 # вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
 # и одиночный объект (issue #136).
+
 function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
 	try {
 		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
@@ -1182,7 +1218,7 @@ function Build-HomePageItemXml($entry, [string]$indent) {
 		$h = Get-FieldValue $entry @("height","Height")
 		$height = if ($null -ne $h) { [int]$h } else { 10 }
 		$vis = Get-FieldValue $entry @("visibility","Visibility")
-		$common = if ($null -ne $vis) { [bool]$vis } else { $true }
+		$common = ConvertTo-DslBool $vis 'visibility' $true
 		$roles = Get-FieldValue $entry @("roles")
 	}
 
@@ -1193,7 +1229,7 @@ function Build-HomePageItemXml($entry, [string]$indent) {
 		foreach ($prop in $roles.PSObject.Properties) {
 			$rname = $prop.Name
 			if (-not $rname.StartsWith("Role.") -and -not ($rname -match '^[0-9a-fA-F]{8}-')) { $rname = "Role.$rname" }
-			$rval = ([bool]$prop.Value).ToString().ToLower()
+			$rval = if (ConvertTo-DslBool $prop.Value $rname $false) { 'true' } else { 'false' }
 			$escName = [System.Security.SecurityElement]::Escape($rname)
 			$visParts += "$indent`t`t<xr:Value name=`"$escName`">$rval</xr:Value>"
 		}
@@ -1225,17 +1261,24 @@ function Do-SetHomePage($valArg) {
 		Write-Error "Unknown template '$tmpl'. Allowed: $($allowedTemplates -join ', ')"; exit 1
 	}
 
-	$leftItems = Get-FieldValue $layout @("left","LeftColumn")
+	$leftItems = Get-FieldValue $layout @("left","LeftColumn","Column")
 	$rightItems = Get-FieldValue $layout @("right","RightColumn")
 
 	# Reject unknown keys
-	$known = @("template","WorkingAreaTemplate","left","LeftColumn","right","RightColumn")
+	$known = @("template","WorkingAreaTemplate","left","LeftColumn","Column","right","RightColumn")
 	foreach ($prop in $layout.PSObject.Properties) {
 		if ($known -notcontains $prop.Name) {
 			Write-Error "Unknown key '$($prop.Name)'. Allowed: template, left, right"; exit 1
 		}
 	}
 
+	$leftKeys = @($layout.PSObject.Properties.Name | Where-Object { @("left","LeftColumn","Column") -contains $_ })
+	if ($leftKeys.Count -gt 1) {
+		Write-Error "Keys $($leftKeys -join ', ') all mean the first column - give one of them"; exit 1
+	}
+	if ($leftKeys -contains "Column" -and $tmpl -ne "OneColumn") {
+		Write-Error "Key 'Column' is the single column of template 'OneColumn'; template '$tmpl' takes 'left' and 'right'"; exit 1
+	}
 	if ($tmpl -eq "OneColumn" -and $rightItems) {
 		Write-Error "Template 'OneColumn' cannot have items in 'right' column"; exit 1
 	}
@@ -1254,15 +1297,19 @@ function Do-SetHomePage($valArg) {
 		return "`t<$tag>`r`n$body`r`n`t</$tag>"
 	}
 
-	$leftXml = Build-Column "LeftColumn" $leftItems
-	$rightXml = Build-Column "RightColumn" $rightItems
+	# Одна колонка у платформы — <Column> без RightColumn; LeftColumn/RightColumn она отвергает
+	# («Текущее LeftColumn, ожидаемое Column», замер 8.3.24).
+	$columnsXml = if ($tmpl -eq "OneColumn") {
+		Build-Column "Column" $leftItems
+	} else {
+		(Build-Column "LeftColumn" $leftItems) + "`r`n" + (Build-Column "RightColumn" $rightItems)
+	}
 
 	$hpXml = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <HomePageWorkArea xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="$($script:formatVersion)">
 	<WorkingAreaTemplate>$tmpl</WorkingAreaTemplate>
-$leftXml
-$rightXml
+$columnsXml
 </HomePageWorkArea>
 "@
 

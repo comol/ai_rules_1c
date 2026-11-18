@@ -204,9 +204,23 @@ function Get-DevEnvValue {
 
 # --- Shared helpers (same contracts as 1c-db-ops) ---
 function Protect-Secrets {
+    # Redact literal secret values from a display string (String.Replace is literal, not regex).
     param([string]$Text, [string[]]$Secrets)
-    foreach ($s in $Secrets) { if ($s) { $Text = $Text.Replace($s, '***') } }
+    # A secret with a quote reaches the command line doubled (ConvertTo-QuotedText), so both
+    # forms are redacted. Longest first: a shorter form replaced earlier could break a longer
+    # one that contains it and leave part of that secret visible. (No -Unique: it ignores case.)
+    $forms = @(foreach ($s in $Secrets) { if ($s) { $s; $s.Replace('"', '""') } }) | Sort-Object -Property Length -Descending
+    foreach ($f in $forms) { $Text = $Text.Replace($f, '***') }
     return $Text
+}
+
+function ConvertTo-QuotedText {
+    # Free text (user, password, comment) framed in quotes for the 1cv8 command line.
+    # 1C reads a doubled quote inside the value as one; a lone quote ends the value, and the
+    # rest is dropped silently (upstream measurement 2026-11-14 on the repository -comment).
+    # A backslash before a quote is not an escape.
+    param([string]$Value)
+    return '"' + $Value.Replace('"', '""') + '"'
 }
 
 function ConvertTo-CleanPath {
@@ -873,11 +887,11 @@ try {
     # --- Build the argument line (pre-quoted, 1C style) ---
     $arguments = @("DESIGNER")
     $arguments += $connectionToken
-    if ($UserName) { $arguments += "/N`"$UserName`"" }
-    if ($Password) { $arguments += "/P`"$Password`"" }
+    if ($UserName) { $arguments += "/N" + (ConvertTo-QuotedText $UserName) }
+    if ($Password) { $arguments += "/P" + (ConvertTo-QuotedText $Password) }
     $arguments += "/ConfigurationRepositoryF `"$RepositoryPath`""
-    if ($RepositoryUser) { $arguments += "/ConfigurationRepositoryN`"$RepositoryUser`"" }
-    if ($RepositoryPassword) { $arguments += "/ConfigurationRepositoryP`"$RepositoryPassword`"" }
+    if ($RepositoryUser) { $arguments += "/ConfigurationRepositoryN" + (ConvertTo-QuotedText $RepositoryUser) }
+    if ($RepositoryPassword) { $arguments += "/ConfigurationRepositoryP" + (ConvertTo-QuotedText $RepositoryPassword) }
 
     $objectsXml = $null
     if ($objectList.Count -gt 0) {
@@ -919,11 +933,10 @@ try {
         }
         'commit' {
             $arguments += "/ConfigurationRepositoryCommit -Objects `"$objectsXml`""
-            # multi-line comments go as repeated -comment keys; internal quotes
-            # escaped the argv way (\") so the platform receives them literally
+            # multi-line comments go as repeated -comment keys. A quote inside a line is
+            # doubled: 1C reads "" as one quote and does not treat \" as an escape.
             foreach ($line in ($Comment.Trim() -replace "`r`n", "`n") -split "`n") {
-                $escLine = $line -replace '"', '\"'
-                $arguments += "-comment `"$escLine`""
+                $arguments += "-comment " + (ConvertTo-QuotedText $line)
             }
             if ($KeepLocked) { $arguments += "-keepLocked" }
             if ($Force) { $arguments += "-force" }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# meta-edit v1.73 — Edit existing 1C metadata object XML
+# meta-edit v1.77 — Edit existing 1C metadata object XML
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, synced at
-#         2e75b0f483eb020e9f09562d1a7be1982bc5ac6e — the same upstream state the
+#         4fc37e1f992057847228a69837337bd3c141c059 — the same upstream state the
 #         vendored meta-edit.ps1 was synced from.
 # Licence: MIT, Copyright (c) 2025-2026 Nick Shirokov. Full notice and permission
 #          text: ../../../NOTICE.md (installed as
@@ -26,6 +26,42 @@ import subprocess
 import sys
 import uuid
 from lxml import etree
+
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+def to_dsl_bool(value, key, default):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        t = value.strip().lower()
+        if t in ('true', 'да', 'истина', '1'):
+            return True
+        if t in ('false', 'нет', 'ложь', '0'):
+            return False
+    elif isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    shown = f'"{value}"' if isinstance(value, str) else f"{value}"
+    print(f"[ERROR] {key} = {shown}: expected true or false", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_dsl_bool(obj, keys, default):
+    """Первый найденный ключ из keys (синонимы, без регистра) → to_dsl_bool; не dict / нет ключа → default."""
+    if not isinstance(obj, dict):
+        return default
+    for k in keys:
+        for actual in obj:
+            if isinstance(actual, str) and actual.lower() == k.lower():
+                return to_dsl_bool(obj[actual], k, default)
+    return default
+
 
 # Регистронезависимый ввод — паритет с PS1: в PowerShell имена параметров и [ValidateSet]
 # регистр не различают, в argparse совпадение точное.
@@ -761,7 +797,7 @@ type_synonyms = {
     # который является авторитетом. Расхождение держит tests/skills/check-type-synonyms.mjs.
     "время": "Time",
     "time": "Time",
-    "base64binary": "ValueStorage",
+    "base64binary": "BinaryData",
     "binarydata": "BinaryData",
     "двоичныеданные": "BinaryData",
     "хранилищезначений": "ValueStorage",
@@ -849,6 +885,69 @@ def resolve_type_str(type_str):
     if resolved:
         return resolved
     return type_str
+# Разбор примитивного типа DSL: Number / String / Date / DateTime / Time — с синонимами
+# (decimal, numeric, Число, Строка, Дата …), в любом регистре, с пробелами в скобках.
+# Тело общее у всех навыков-компиляторов (семья в check-inline-drift); умолчание для голого типа
+# зависит от места (хранимый реквизит — 10,0 и 10, СКД — без ограничения) и приходит аргументами.
+# Возврат: None — не примитив (ссылки, Boolean, …); {'error'} — база примитива узнана, а
+# параметры нет (вызывающий сообщает ошибку своим способом); иначе описание квалификаторов.
+def parse_primitive_type(type_str, def_digits, def_fraction, def_length):
+    m = re.match(r'^\s*([^\s(]+)\s*(\(.*)?$', type_str or '')
+    if not m:
+        return None
+    rest = m.group(2) or ''
+    kind = {
+        'number': 'Number', 'decimal': 'Number', 'numeric': 'Number', 'число': 'Number',
+        'string': 'String', 'строка': 'String',
+        'date': 'Date', 'дата': 'Date', 'datetime': 'DateTime', 'датавремя': 'DateTime',
+        'time': 'Time', 'время': 'Time',
+    }.get(m.group(1).lower())
+    if not kind:
+        return None
+    bad = {'error': (f"Invalid type '{type_str}'. Expected Number, Number(D), Number(D,F), Number(D,F,nonneg), "
+                     "String, String(N), String(N,fixed), Date, DateTime, Time")}
+    parts = []
+    if rest:
+        m2 = re.match(r'^\((.*)\)\s*$', rest)
+        if not m2:
+            return bad
+        parts = [p.strip().lower() for p in m2.group(1).split(',')]
+    if kind == 'Number':
+        sign = 'Any'
+        if parts and (parts[-1] == 'nonneg' or parts[-1] == 'any'):
+            if parts[-1] == 'nonneg':
+                sign = 'Nonnegative'
+            parts = parts[:-1]
+        if len(parts) > 2:
+            return bad
+        for p in parts:
+            if not re.match(r'^[0-9]{1,9}$', p):
+                return bad
+        d = int(parts[0]) if len(parts) >= 1 else def_digits
+        f = int(parts[1]) if len(parts) >= 2 else (0 if len(parts) == 1 else def_fraction)
+        # Дробная часть у числа без ограничения (0,F) платформа молча обнуляет — это ошибка ввода
+        if d > 38 or f > d:
+            return bad
+        return {'kind': 'Number', 'digits': d, 'fraction': f, 'sign': sign}
+    if kind == 'String':
+        allowed = 'Variable'
+        if len(parts) == 2:
+            if parts[1] == 'fixed' or parts[1] == 'fix':
+                allowed = 'Fixed'
+            elif parts[1] != 'variable':
+                return bad
+        if len(parts) > 2 or (len(parts) >= 1 and not re.match(r'^[0-9]{1,9}$', parts[0])):
+            return bad
+        length = int(parts[0]) if len(parts) >= 1 else def_length
+        # Фиксированную длину у неограниченной строки платформа молча снимает — это ошибка ввода
+        if allowed == 'Fixed' and length == 0:
+            return bad
+        return {'kind': 'String', 'length': length, 'allowed': allowed}
+    if parts:
+        return bad
+    return {'kind': 'Date', 'fractions': kind}
+
+
 def build_type_content_xml(indent, type_str):
     if not type_str:
         return ""
@@ -871,67 +970,36 @@ def build_type_content_xml(indent, type_str):
         lines.append(f"{indent}<v8:Type>xs:boolean</v8:Type>")
         return "\r\n".join(lines)
 
-    # ValueStorage
+    # ValueStorage (ХранилищеЗначения) — v8:ValueStorage. xs:base64Binary платформа читает как ДвоичныеДанные.
     if type_str == "ValueStorage":
-        lines.append(f"{indent}<v8:Type>xs:base64Binary</v8:Type>")
+        lines.append(f"{indent}<v8:Type>v8:ValueStorage</v8:Type>")
         return "\r\n".join(lines)
 
-    # String or String(N)
-    m = re.match(r"^String(\((\d+)\))?$", type_str)
-    if m:
-        length = m.group(2) if m.group(2) else "10"
-        lines.append(f"{indent}<v8:Type>xs:string</v8:Type>")
-        lines.append(f"{indent}<v8:StringQualifiers>")
-        lines.append(f"{indent}\t<v8:Length>{length}</v8:Length>")
-        lines.append(f"{indent}\t<v8:AllowedLength>Variable</v8:AllowedLength>")
-        lines.append(f"{indent}</v8:StringQualifiers>")
-        return "\r\n".join(lines)
-
-    # Number(D,F) or Number(D,F,nonneg)
-    m = re.match(r"^Number\((\d+),(\d+)(,nonneg)?\)$", type_str)
-    if m:
-        digits = m.group(1)
-        fraction = m.group(2)
-        sign = "Nonnegative" if m.group(3) else "Any"
-        lines.append(f"{indent}<v8:Type>xs:decimal</v8:Type>")
-        lines.append(f"{indent}<v8:NumberQualifiers>")
-        lines.append(f"{indent}\t<v8:Digits>{digits}</v8:Digits>")
-        lines.append(f"{indent}\t<v8:FractionDigits>{fraction}</v8:FractionDigits>")
-        lines.append(f"{indent}\t<v8:AllowedSign>{sign}</v8:AllowedSign>")
-        lines.append(f"{indent}</v8:NumberQualifiers>")
-        return "\r\n".join(lines)
-
-    # Number without params -> Number(10,0)
-    if type_str == "Number":
-        lines.append(f"{indent}<v8:Type>xs:decimal</v8:Type>")
-        lines.append(f"{indent}<v8:NumberQualifiers>")
-        lines.append(f"{indent}\t<v8:Digits>10</v8:Digits>")
-        lines.append(f"{indent}\t<v8:FractionDigits>0</v8:FractionDigits>")
-        lines.append(f"{indent}\t<v8:AllowedSign>Any</v8:AllowedSign>")
-        lines.append(f"{indent}</v8:NumberQualifiers>")
-        return "\r\n".join(lines)
-
-    # Date / DateTime
-    if type_str == "Date":
-        lines.append(f"{indent}<v8:Type>xs:dateTime</v8:Type>")
-        lines.append(f"{indent}<v8:DateQualifiers>")
-        lines.append(f"{indent}\t<v8:DateFractions>Date</v8:DateFractions>")
-        lines.append(f"{indent}</v8:DateQualifiers>")
-        return "\r\n".join(lines)
-
-    if type_str == "DateTime":
-        lines.append(f"{indent}<v8:Type>xs:dateTime</v8:Type>")
-        lines.append(f"{indent}<v8:DateQualifiers>")
-        lines.append(f"{indent}\t<v8:DateFractions>DateTime</v8:DateFractions>")
-        lines.append(f"{indent}</v8:DateQualifiers>")
-        return "\r\n".join(lines)
-
-    # Time — третья доля даты, наравне с Date/DateTime.
-    if type_str == "Time":
-        lines.append(f"{indent}<v8:Type>xs:dateTime</v8:Type>")
-        lines.append(f"{indent}<v8:DateQualifiers>")
-        lines.append(f"{indent}\t<v8:DateFractions>Time</v8:DateFractions>")
-        lines.append(f"{indent}</v8:DateQualifiers>")
+    # Примитивы: String / Number / Date / DateTime / Time. Голый тип хранимого реквизита — String(10)
+    # и Number(10,0), как в meta-compile.
+    prim = parse_primitive_type(type_str, 10, 0, 10)
+    if prim:
+        if prim.get('error'):
+            print(prim['error'], file=sys.stderr)
+            sys.exit(1)
+        if prim['kind'] == 'String':
+            lines.append(f"{indent}<v8:Type>xs:string</v8:Type>")
+            lines.append(f"{indent}<v8:StringQualifiers>")
+            lines.append(f"{indent}\t<v8:Length>{prim['length']}</v8:Length>")
+            lines.append(f"{indent}\t<v8:AllowedLength>{prim['allowed']}</v8:AllowedLength>")
+            lines.append(f"{indent}</v8:StringQualifiers>")
+        elif prim['kind'] == 'Number':
+            lines.append(f"{indent}<v8:Type>xs:decimal</v8:Type>")
+            lines.append(f"{indent}<v8:NumberQualifiers>")
+            lines.append(f"{indent}\t<v8:Digits>{prim['digits']}</v8:Digits>")
+            lines.append(f"{indent}\t<v8:FractionDigits>{prim['fraction']}</v8:FractionDigits>")
+            lines.append(f"{indent}\t<v8:AllowedSign>{prim['sign']}</v8:AllowedSign>")
+            lines.append(f"{indent}</v8:NumberQualifiers>")
+        else:
+            lines.append(f"{indent}<v8:Type>xs:dateTime</v8:Type>")
+            lines.append(f"{indent}<v8:DateQualifiers>")
+            lines.append(f"{indent}\t<v8:DateFractions>{prim['fractions']}</v8:DateFractions>")
+            lines.append(f"{indent}</v8:DateQualifiers>")
         return "\r\n".join(lines)
 
     # UUID
@@ -1232,6 +1300,16 @@ def collapse_child_objects_if_empty():
 # ============================================================
 
 
+# Флаг nonneg — то же, что хвост ,nonneg у числового типа; к нечисловому типу не применяется.
+def add_nonneg_flag(type_str, flags):
+    if not type_str or 'nonneg' not in [str(f).lower() for f in (flags or [])]:
+        return type_str
+    prim = parse_primitive_type(resolve_type_str(type_str), 10, 0, 10)
+    if prim and prim.get('kind') == 'Number':
+        return f"Number({prim['digits']},{prim['fraction']},nonneg)"
+    return type_str
+
+
 def parse_attribute_shorthand(val):
     """Parse attribute definition from string shorthand or dict object."""
     if isinstance(val, str):
@@ -1264,6 +1342,7 @@ def parse_attribute_shorthand(val):
         parsed["name"] = colon_parts[0].strip()
         if len(colon_parts) > 1:
             parsed["type"] = colon_parts[1].strip()
+        parsed["type"] = add_nonneg_flag(parsed["type"], parsed["flags"])
 
         parsed["synonym"] = split_camel_case(parsed["name"])
         return parsed
@@ -1282,10 +1361,11 @@ def parse_attribute_shorthand(val):
         "before": str(val.get("before", "")),
         # Поле таблицы внешнего источника (контекст eds-field).
         "nameInDataSource": str(val.get("nameInDataSource", "")),
-        "readOnly": val.get("readOnly") is True,
-        "allowNull": val.get("allowNull") is True,
+        "readOnly": get_dsl_bool(val, ['readOnly'], False),
+        "allowNull": get_dsl_bool(val, ['allowNull'], False),
     }
     # Map flags to properties
+    result["type"] = add_nonneg_flag(result["type"], result["flags"])
     if "req" in result["flags"] and not result["fillChecking"]:
         result["fillChecking"] = "ShowError"
     if "index" in result["flags"] and not result["indexing"]:
@@ -1477,9 +1557,9 @@ def build_attribute_fragment(parsed, context, indent, elem_tag="Attribute"):
         lines.append(f"{indent}\t\t<ChoiceForm/>")
         nids = parsed.get("nameInDataSource") or parsed["name"]
         lines.append(f"{indent}\t\t<NameInDataSource>{esc_xml_text(str(nids))}</NameInDataSource>")
-        ro = "true" if (parsed.get("readOnly") is True or "readonly" in parsed["flags"]) else "false"
+        ro = "true" if (get_dsl_bool(parsed, ['readOnly'], False) or "readonly" in parsed["flags"]) else "false"
         lines.append(f"{indent}\t\t<ReadOnly>{ro}</ReadOnly>")
-        an = "true" if (parsed.get("allowNull") is True or "nullable" in parsed["flags"]) else "false"
+        an = "true" if (get_dsl_bool(parsed, ['allowNull'], False) or "nullable" in parsed["flags"]) else "false"
         lines.append(f"{indent}\t\t<AllowNull>{an}</AllowNull>")
 
     # Use -- catalog only
@@ -2080,7 +2160,7 @@ def emit_eds_function(indent, fn_name, val, type_xml):
         expr = str(val.get('expression') or val.get('expressionInDataSource') or '')
         returns = str(val.get('returns') or val.get('returnType') or '')
         if val.get('returnValue') is not None:
-            return_value = val.get('returnValue') is True
+            return_value = get_dsl_bool(val, ['returnValue'], False)
         fn_synonym = val.get('synonym')
         fn_comment = str(val['comment']) if val.get('comment') else ''
     if not expr:
@@ -2103,6 +2183,7 @@ def emit_eds_function(indent, fn_name, val, type_xml):
     X(f'{indent}\t\t<ExpressionInDataSource>{esc_xml_text(expr)}</ExpressionInDataSource>')
     X(f'{indent}\t</Properties>')
     X(f'{indent}</Function>')
+
 
 def emit_eds_table_properties(indent, src_name, table_name, t, char_xml, default_forms_xml):
     """Свойства таблицы: 38 узлов в порядке выгрузки платформы.
@@ -2151,8 +2232,8 @@ def emit_eds_table_properties(indent, src_name, table_name, t, char_xml, default
     else:
         X(f'{i}<Characteristics/>')
 
-    X(f'{i}<UseStandardCommands>{"false" if t.get("useStandardCommands") is False else "true"}</UseStandardCommands>')
-    X(f'{i}<QuickChoice>{"true" if t.get("quickChoice") is True else "false"}</QuickChoice>')
+    X(f'{i}<UseStandardCommands>{"false" if (not get_dsl_bool(t, ["useStandardCommands"], True)) else "true"}</UseStandardCommands>')
+    X(f'{i}<QuickChoice>{"true" if get_dsl_bool(t, ["quickChoice"], False) else "false"}</QuickChoice>')
     # Ввод по строке: ключа нет → выводим из поля представления (так делает платформа при загрузке).
     # Явный список, в том числе пустой, уважаем как есть — отсюда presence-aware проверка.
     if 'inputByString' in t:
@@ -2177,14 +2258,15 @@ def emit_eds_table_properties(indent, src_name, table_name, t, char_xml, default
                      'ExtendedRecordPresentation', 'ListPresentation', 'ExtendedListPresentation', 'Explanation'):
         key = pres_tag[0].lower() + pres_tag[1:]
         emit_mltext(i, pres_tag, t.get(key))
-    X(f'{i}<IncludeHelpInContents>{"true" if t.get("includeHelpInContents") is True else "false"}</IncludeHelpInContents>')
-    X(f'{i}<ReadOnly>{"true" if t.get("readOnly") is True else "false"}</ReadOnly>')
+    X(f'{i}<IncludeHelpInContents>{"true" if get_dsl_bool(t, ["includeHelpInContents"], False) else "false"}</IncludeHelpInContents>')
+    X(f'{i}<ReadOnly>{"true" if get_dsl_bool(t, ["readOnly"], False) else "false"}</ReadOnly>')
     X(f'{i}<TransactionsIsolationLevel>{normalize_enum_value("TransactionsIsolationLevel", str(t["transactionsIsolationLevel"])) if t.get("transactionsIsolationLevel") else "Auto"}</TransactionsIsolationLevel>')
     emit_eds_field_ref_scalar(i, 'DataVersionField', t.get('dataVersionField'), src_name, table_name)
     X(f'{i}<EditType>{get_enum_field(t, "editType", "EditType") or "InDialog"}</EditType>')
     emit_md_ref_list(i, 'BasedOn', t.get('basedOn'))
     emit_eds_field_ref_list(i, 'DataLockFields', t.get('dataLockFields'), src_name, table_name)
     X(f'{i}<DataLockControlMode>{t.get("dataLockControlMode") or "Automatic"}</DataLockControlMode>')
+
 
 EDS_TABLE_GENERATED_TYPES = (
     ('ExternalDataSourceTableManager', 'Manager'),
@@ -3647,19 +3729,19 @@ def esc_xml_text(s):
 
 def get_fill_type_category(type_str):
     if not type_str:
-        return 'String'
+        return 'String'          # реквизит без типа → неквалифиц. строка
     if '+' in type_str:
-        return 'Other'
+        return 'Other'           # составной тип → nil-дефолт
     t = resolve_type_str(type_str)
     if re.match(r'^Boolean$', t):
         return 'Boolean'
-    if re.match(r'^String(\(|$)', t):
-        return 'String'
-    if re.match(r'^Number(\(|$)', t):
-        return 'Number'
-    if re.match(r'^(Date|DateTime)$', t):
-        return 'Date'
-    return 'Other'
+    prim = parse_primitive_type(t, 10, 0, 10)
+    if prim and not prim.get('error'):
+        if prim['kind'] != 'Date':
+            return prim['kind']
+        if prim['fractions'] != 'Time':
+            return 'Date'
+    return 'Other'               # ссылки, TypeSet, ValueStorage, … → nil-дефолт
 
 
 def expand_fill_short_ref(s, type_str):
@@ -3747,9 +3829,9 @@ def build_fill_value_explicit_xml(type_str, spec):
         return f'<FillValue xsi:type="xs:boolean">{"true" if spec else "false"}</FillValue>'
     if isinstance(spec, (int, float)):
         return f'<FillValue xsi:type="xs:decimal">{format_fill_num(spec)}</FillValue>'
-    if get_ch_el_prop(spec, ['nil']) is True:
+    if to_dsl_bool(get_ch_el_prop(spec, ['nil']), 'nil', False):
         return '<FillValue xsi:nil="true"/>'
-    if get_ch_el_prop(spec, ['emptyRef', 'пустаяссылка']) is True:
+    if to_dsl_bool(get_ch_el_prop(spec, ['emptyRef', 'пустаяссылка']), 'emptyRef', False):
         return '<FillValue xsi:type="xr:DesignTimeRef"/>'
     r = resolve_fill_value_spec(str(spec), type_str)
     if r['Text'] == '' and r['XsiType'] == 'xs:string':
@@ -4039,7 +4121,7 @@ def resolve_predef_item(val):
     has_desc = isinstance(val, dict) and ('description' in val or 'наименование' in val)
     desc_v = gv(val, ['description', 'наименование'])
     desc = str(desc_v) if has_desc else split_camel_case(name)
-    is_folder = gv(val, ['isFolder', 'группа']) is True
+    is_folder = to_dsl_bool(gv(val, ['isFolder', 'группа']), 'isFolder', False)
     subs = gv(val, ['childItems', 'подчиненные'])
     return {'name': name, 'code': code, 'desc': desc if desc is not None else '',
             'isFolder': is_folder, 'children': list(subs) if subs else []}

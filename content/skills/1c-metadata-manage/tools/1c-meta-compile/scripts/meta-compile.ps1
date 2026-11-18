@@ -1,4 +1,4 @@
-﻿# meta-compile v1.126 — Compile 1C metadata object from JSON
+﻿# meta-compile v1.130 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: an existing object is refused unless -Force (upstream only warns; a recompile
 # gives the object a new uuid). NEW_OBJECT_POSITION and SUPPORT_GUARD come from .dev.env
@@ -539,13 +539,45 @@ function Get-EnumProp {
 	return (Normalize-EnumValue $propName "$val")
 }
 
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+function ConvertTo-DslBool {
+	param($Value, [string]$Key, [bool]$Default)
+	if ($null -eq $Value) { return $Default }
+	if ($Value -is [bool]) { return $Value }
+	if ($Value -is [string]) {
+		$t = $Value.Trim().ToLowerInvariant()
+		if (@('true', 'да', 'истина', '1') -ccontains $t) { return $true }
+		if (@('false', 'нет', 'ложь', '0') -ccontains $t) { return $false }
+	} elseif ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+		if ($Value -eq 1) { return $true }
+		if ($Value -eq 0) { return $false }
+	}
+	$shown = if ($Value -is [string]) { '"' + $Value + '"' } else { "$Value" }
+	[Console]::Error.WriteLine("[ERROR] $Key = ${shown}: expected true or false")
+	exit 1
+}
+
+# Первый найденный ключ из $Keys (синонимы, без регистра) → ConvertTo-DslBool; не объект / нет ключа → $Default.
+function Get-DslBool {
+	param($Obj, [string[]]$Keys, [bool]$Default)
+	if ($null -eq $Obj -or $Obj -is [string] -or $Obj -is [ValueType]) { return $Default }
+	foreach ($k in $Keys) {
+		if ($Obj -is [System.Collections.IDictionary]) {
+			if ($Obj.Contains($k)) { return (ConvertTo-DslBool $Obj[$k] $k $Default) }
+		} elseif ($Obj.PSObject.Properties[$k]) {
+			return (ConvertTo-DslBool $Obj.PSObject.Properties[$k].Value $k $Default)
+		}
+	}
+	return $Default
+}
+
 # Bool object-свойство: presence-aware (иначе false-значение спутать с отсутствием). Прощаем строки.
 function Get-BoolProp {
 	param([string]$fieldName, [bool]$default)
-	$val = $def.$fieldName
-	if ($null -eq $val) { return $default }
-	if ($val -is [bool]) { return $val }
-	return ("$val" -match '^(true|1|да|истина)$')
+	return (Get-DslBool $def @($fieldName) $default)
 }
 
 # Прощающая нормализация ссылки на форму: рус корень (Справочник→Catalog), сегмент Форма→Form,
@@ -720,9 +752,10 @@ $script:typeSynonyms["boolean"]  = "Boolean"
 $script:typeSynonyms["date"]     = "Date"
 $script:typeSynonyms["datetime"] = "DateTime"
 $script:typeSynonyms["bool"]     = "Boolean"
-# ValueStorage / UUID — прощающий ввод (модель может написать base64Binary / рус. форму → канон).
+# ValueStorage / UUID — прощающий ввод (рус. форма → канон).
 $script:typeSynonyms["valuestorage"]         = "ValueStorage"
-$script:typeSynonyms["base64binary"]         = "ValueStorage"
+# base64Binary — имя XML-типа ДвоичныхДанных: платформа читает xs:base64Binary как ДвоичныеДанные (замер 8.3.24).
+$script:typeSynonyms["base64binary"]         = "BinaryData"
 # ДвоичныеДанные — ОТДЕЛЬНЫЙ тип, не ХранилищеЗначения: платформа пишет его как
 # xs:base64Binary с квалификаторами. Встречается у полей внешних источников данных.
 $script:typeSynonyms["binarydata"]           = "BinaryData"
@@ -884,6 +917,61 @@ function Resolve-TypeStr {
 	return $typeStr
 }
 
+# Разбор примитивного типа DSL: Number / String / Date / DateTime / Time — с синонимами
+# (decimal, numeric, Число, Строка, Дата …), в любом регистре, с пробелами в скобках.
+# Тело общее у всех навыков-компиляторов (семья в check-inline-drift); умолчание для голого типа
+# зависит от места (хранимый реквизит — 10,0 и 10, СКД — без ограничения) и приходит аргументами.
+# Возврат: $null — не примитив (ссылки, Boolean, …); @{ Error } — база примитива узнана, а
+# параметры нет (вызывающий сообщает ошибку своим способом); иначе описание квалификаторов.
+function Parse-PrimitiveType {
+	param([string]$typeStr, [int]$defDigits, [int]$defFraction, [int]$defLength)
+	if ($typeStr -notmatch '^\s*([^\s(]+)\s*(\(.*)?$') { return $null }
+	$rest = if ($Matches.ContainsKey(2)) { $Matches[2] } else { '' }
+	$kind = switch -exact ($Matches[1].ToLowerInvariant()) {
+		'number' { 'Number' } 'decimal' { 'Number' } 'numeric' { 'Number' } 'число' { 'Number' }
+		'string' { 'String' } 'строка' { 'String' }
+		'date' { 'Date' } 'дата' { 'Date' } 'datetime' { 'DateTime' } 'датавремя' { 'DateTime' }
+		'time' { 'Time' } 'время' { 'Time' }
+		default { $null }
+	}
+	if (-not $kind) { return $null }
+	$bad = @{ Error = ("Invalid type '$typeStr'. Expected Number, Number(D), Number(D,F), Number(D,F,nonneg), " +
+		"String, String(N), String(N,fixed), Date, DateTime, Time") }
+	$parts = @()
+	if ($rest) {
+		if ($rest -notmatch '^\((.*)\)\s*$') { return $bad }
+		$parts = @($Matches[1] -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() })
+	}
+	if ($kind -eq 'Number') {
+		$sign = 'Any'
+		if ($parts.Count -gt 0 -and ($parts[-1] -eq 'nonneg' -or $parts[-1] -eq 'any')) {
+			if ($parts[-1] -eq 'nonneg') { $sign = 'Nonnegative' }
+			$parts = @(if ($parts.Count -gt 1) { $parts[0..($parts.Count - 2)] })
+		}
+		if ($parts.Count -gt 2) { return $bad }
+		foreach ($p in $parts) { if ($p -notmatch '^[0-9]{1,9}$') { return $bad } }
+		$d = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defDigits }
+		$f = if ($parts.Count -ge 2) { [int]$parts[1] } elseif ($parts.Count -eq 1) { 0 } else { $defFraction }
+		# Дробная часть у числа без ограничения (0,F) платформа молча обнуляет — это ошибка ввода
+		if ($d -gt 38 -or $f -gt $d) { return $bad }
+		return @{ Kind = 'Number'; Digits = $d; Fraction = $f; Sign = $sign }
+	}
+	if ($kind -eq 'String') {
+		$allowed = 'Variable'
+		if ($parts.Count -eq 2) {
+			if ($parts[1] -eq 'fixed' -or $parts[1] -eq 'fix') { $allowed = 'Fixed' }
+			elseif ($parts[1] -ne 'variable') { return $bad }
+		}
+		if ($parts.Count -gt 2 -or ($parts.Count -ge 1 -and $parts[0] -notmatch '^[0-9]{1,9}$')) { return $bad }
+		$len = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defLength }
+		# Фиксированную длину у неограниченной строки платформа молча снимает — это ошибка ввода
+		if ($allowed -eq 'Fixed' -and $len -eq 0) { return $bad }
+		return @{ Kind = 'String'; Length = $len; Allowed = $allowed }
+	}
+	if ($parts.Count -gt 0) { return $bad }
+	return @{ Kind = 'Date'; Fractions = $kind }
+}
+
 function Emit-TypeContent {
 	param([string]$indent, [string]$typeStr)
 	if (-not $typeStr) { return }
@@ -939,49 +1027,31 @@ function Emit-TypeContent {
 		return
 	}
 
-	# String or String(N) or String(N,fixed|variable) — AllowedLength: Variable дефолт / Fixed (фикс. длина).
-	if ($typeStr -match '^String(\((\d+)(\s*,\s*(fixed|variable))?\))?$') {
-		$len = if ($Matches[2]) { $Matches[2] } else { "10" }
-		$al = if ($Matches[4] -and $Matches[4].ToLower() -eq 'fixed') { 'Fixed' } else { 'Variable' }
-		X "$indent<v8:Type>xs:string</v8:Type>"
-		X "$indent<v8:StringQualifiers>"
-		X "$indent`t<v8:Length>$len</v8:Length>"
-		X "$indent`t<v8:AllowedLength>$al</v8:AllowedLength>"
-		X "$indent</v8:StringQualifiers>"
-		return
-	}
-
-	# Number without params → Number(10,0)
-	if ($typeStr -eq "Number") {
-		X "$indent<v8:Type>xs:decimal</v8:Type>"
-		X "$indent<v8:NumberQualifiers>"
-		X "$indent`t<v8:Digits>10</v8:Digits>"
-		X "$indent`t<v8:FractionDigits>0</v8:FractionDigits>"
-		X "$indent`t<v8:AllowedSign>Any</v8:AllowedSign>"
-		X "$indent</v8:NumberQualifiers>"
-		return
-	}
-
-	# Number(D,F) or Number(D,F,nonneg)
-	if ($typeStr -match '^Number\((\d+),(\d+)(,nonneg)?\)$') {
-		$digits = $Matches[1]
-		$fraction = $Matches[2]
-		$sign = if ($Matches[3]) { "Nonnegative" } else { "Any" }
-		X "$indent<v8:Type>xs:decimal</v8:Type>"
-		X "$indent<v8:NumberQualifiers>"
-		X "$indent`t<v8:Digits>$digits</v8:Digits>"
-		X "$indent`t<v8:FractionDigits>$fraction</v8:FractionDigits>"
-		X "$indent`t<v8:AllowedSign>$sign</v8:AllowedSign>"
-		X "$indent</v8:NumberQualifiers>"
-		return
-	}
-
-	# Date / DateTime / Time — общая структура xs:dateTime + DateFractions (различаются лишь составом).
-	if ($typeStr -match '^(Date|DateTime|Time)$') {
-		X "$indent<v8:Type>xs:dateTime</v8:Type>"
-		X "$indent<v8:DateQualifiers>"
-		X "$indent`t<v8:DateFractions>$typeStr</v8:DateFractions>"
-		X "$indent</v8:DateQualifiers>"
+	# Примитивы: String / Number / Date / DateTime / Time. Голый тип хранимого реквизита — String(10)
+	# и Number(10,0): без ограничения платформа допускает, но по умолчанию его не даём.
+	$prim = Parse-PrimitiveType $typeStr 10 0 10
+	if ($prim) {
+		if ($prim.Error) { Write-Error $prim.Error; exit 1 }
+		if ($prim.Kind -eq 'String') {
+			X "$indent<v8:Type>xs:string</v8:Type>"
+			X "$indent<v8:StringQualifiers>"
+			X "$indent`t<v8:Length>$($prim.Length)</v8:Length>"
+			X "$indent`t<v8:AllowedLength>$($prim.Allowed)</v8:AllowedLength>"
+			X "$indent</v8:StringQualifiers>"
+		} elseif ($prim.Kind -eq 'Number') {
+			X "$indent<v8:Type>xs:decimal</v8:Type>"
+			X "$indent<v8:NumberQualifiers>"
+			X "$indent`t<v8:Digits>$($prim.Digits)</v8:Digits>"
+			X "$indent`t<v8:FractionDigits>$($prim.Fraction)</v8:FractionDigits>"
+			X "$indent`t<v8:AllowedSign>$($prim.Sign)</v8:AllowedSign>"
+			X "$indent</v8:NumberQualifiers>"
+		} else {
+			# Date / DateTime / Time — общая структура xs:dateTime + DateFractions.
+			X "$indent<v8:Type>xs:dateTime</v8:Type>"
+			X "$indent<v8:DateQualifiers>"
+			X "$indent`t<v8:DateFractions>$($prim.Fractions)</v8:DateFractions>"
+			X "$indent</v8:DateQualifiers>"
+		}
 		return
 	}
 
@@ -997,7 +1067,7 @@ function Emit-TypeContent {
 		return
 	}
 
-	# ValueStorage (ХранилищеЗначения) — канон v8:ValueStorage (не xs:base64Binary, хоть 1С и принимает оба).
+	# ValueStorage (ХранилищеЗначения) — v8:ValueStorage. xs:base64Binary платформа читает как ДвоичныеДанные.
 	# ДвоичныеДанные — xs:base64Binary с квалификаторами (у полей внешних источников).
 	if ($typeStr -match '^BinaryData(\(|$)') {
 		# BinaryData — безлимит (так платформа пишет поле внешнего источника: 4294967292/Fixed).
@@ -1154,9 +1224,11 @@ function Get-FillTypeCategory {
 	if ($typeStr -match '\+') { return 'Other' }  # составной тип → nil-дефолт
 	$t = Resolve-TypeStr $typeStr
 	if ($t -match '^Boolean$')          { return 'Boolean' }
-	if ($t -match '^String(\(|$)')      { return 'String' }
-	if ($t -match '^Number(\(|$)')      { return 'Number' }
-	if ($t -match '^(Date|DateTime)$')  { return 'Date' }
+	$prim = Parse-PrimitiveType $t 10 0 10
+	if ($prim -and -not $prim.Error) {
+		if ($prim.Kind -ne 'Date') { return $prim.Kind }
+		if ($prim.Fractions -ne 'Time') { return 'Date' }
+	}
 	return 'Other'                                 # ссылки, TypeSet, ValueStorage, … → nil-дефолт
 }
 
@@ -1329,8 +1401,8 @@ function Emit-FillValue {
 	}
 
 	if ($null -eq $spec) { X "$indent<FillValue xsi:nil=`"true`"/>"; return }   # явный nil-override
-	if ($spec.nil -eq $true) { X "$indent<FillValue xsi:nil=`"true`"/>"; return }   # явный nil на типизированном (маркер декомпилятора)
-	if ($spec.emptyRef -eq $true) { X "$indent<FillValue xsi:type=`"xr:DesignTimeRef`"/>"; return }   # пустая ссылка (маркер декомпилятора)
+	if ((Get-DslBool $spec @('nil') $false)) { X "$indent<FillValue xsi:nil=`"true`"/>"; return }   # явный nil на типизированном (маркер декомпилятора)
+	if ((Get-DslBool $spec @('emptyRef') $false)) { X "$indent<FillValue xsi:type=`"xr:DesignTimeRef`"/>"; return }   # пустая ссылка (маркер декомпилятора)
 	if ($spec -is [bool]) {
 		X "$indent<FillValue xsi:type=`"xs:boolean`">$(if ($spec) { 'true' } else { 'false' })</FillValue>"; return
 	}
@@ -1344,18 +1416,30 @@ function Emit-FillValue {
 
 # --- 5. Attribute shorthand parser ---
 
+# Флаг nonneg — то же, что хвост ,nonneg у числового типа; к нечисловому типу не применяется.
+function Add-NonnegFlag {
+	param([string]$typeStr, $flags)
+	if (-not $typeStr -or -not (@($flags) -contains 'nonneg')) { return $typeStr }
+	$prim = Parse-PrimitiveType (Resolve-TypeStr $typeStr) 10 0 10
+	if ($prim -and $prim.Kind -eq 'Number') { return "Number($($prim.Digits),$($prim.Fraction),nonneg)" }
+	return $typeStr
+}
+
 function Build-TypeStr {
 	# ValueTypeOnly — для корневого определения объекта: там ключ type означает ВИД объекта
 	# (Constant, Catalog, …), а не тип значения, и подхватывать его нельзя.
 	param($obj, [switch]$ValueTypeOnly)
 	$t = if ($obj.valueType) { "$($obj.valueType)" } elseif (-not $ValueTypeOnly -and $obj.type) { "$($obj.type)" } else { "" }
 	if ($t -and -not $t.Contains('(')) {
-		if ($t -eq "String" -and $obj.length) {
+		# Вид — по общему разбору: синонимы (Число, decimal, Строка …) те же, что в строковой записи
+		$prim = Parse-PrimitiveType (Resolve-TypeStr $t) 10 0 10
+		if ($prim -and $prim.Kind -eq 'String' -and $obj.length) {
 			$t = "String($($obj.length))"
-		} elseif ($t -eq "Number" -and $obj.length) {
+		} elseif ($prim -and $prim.Kind -eq 'Number' -and ($obj.length -or $obj.precision -or $obj.nonneg -or $obj.nonnegative)) {
+			$len = if ($obj.length) { $obj.length } else { $prim.Digits }
 			$p = if ($obj.precision) { $obj.precision } else { 0 }
 			$nn = if ($obj.nonneg -or $obj.nonnegative) { ",nonneg" } else { "" }
-			$t = "Number($($obj.length),$p$nn)"
+			$t = "Number($len,$p$nn)"
 		}
 	}
 	return $t
@@ -1391,6 +1475,7 @@ function Parse-AttributeShorthand {
 		if ($colonParts.Count -gt 1) {
 			$parsed.type = $colonParts[1].Trim()
 		}
+		$parsed.type = Add-NonnegFlag $parsed.type $parsed.flags
 
 		$parsed.synonym = Split-CamelCase $parsed.name
 		return $parsed
@@ -1406,7 +1491,7 @@ function Parse-AttributeShorthand {
 	$qc = if ($null -ne $val.quickChoice) { $qcb = ConvertFrom-QuickChoiceBool $val.quickChoice; if ($qcb) { $qcb } else { Normalize-EnumValue "Attribute.QuickChoice" "$($val.quickChoice)" } } else { "" }
 	return @{
 		name    = $name
-		type    = Build-TypeStr $val
+		type    = Add-NonnegFlag (Build-TypeStr $val) $val.flags
 		# Явный `type: ""` (ключ присутствует, значение пустое) ≠ отсутствие типа: означает пустой <Type/>
 		# (реквизит без типа / произвольный). Отличаем present-"" от absent через $null-проверку (PSCustomObject).
 		typeEmpty = ($null -ne $val.type -and "$($val.type)".Trim() -eq '' -and -not $val.valueType)
@@ -1418,20 +1503,20 @@ function Parse-AttributeShorthand {
 		# (ShowWarning, «Ошибка») уходило в XML как есть, и конфигурация не загружалась.
 		fillChecking = if ($fc) { Normalize-EnumValue "FillChecking" $fc } else { "" }
 		indexing = if ($val.indexing) { Normalize-EnumValue "Indexing" "$($val.indexing)" } else { "" }
-		multiLine = if ($val.multiLine -eq $true) { $true } else { $false }
+		multiLine = if ((Get-DslBool $val @('multiLine') $false)) { $true } else { $false }
 		choiceHistoryOnInput = Get-EnumField $val 'choiceHistoryOnInput' 'ChoiceHistoryOnInput'
 		fullTextSearch = Get-EnumField $val 'fullTextSearch' 'FullTextSearch'
-		fillFromFillingValue = if ($val.fillFromFillingValue -eq $true) { $true } else { $false }
+		fillFromFillingValue = if ((Get-DslBool $val @('fillFromFillingValue') $false)) { $true } else { $false }
 		createOnInput = Get-EnumField $val 'createOnInput' 'CreateOnInput'
 		quickChoice = $qc
 		dataHistory = Get-EnumField $val 'dataHistory' 'DataHistory'
 		use = if ($val.use) { Normalize-EnumValue "Attribute.Use" "$($val.use)" } else { "" }
-		passwordMode = if ($val.passwordMode -eq $true) { $true } else { $false }
+		passwordMode = if ((Get-DslBool $val @('passwordMode') $false)) { $true } else { $false }
 		format = $val.format
 		editFormat = $val.editFormat
 		mask = if ($val.mask) { "$($val.mask)" } else { "" }
-		extendedEdit = if ($val.extendedEdit -eq $true) { $true } else { $false }
-		markNegatives = if ($val.markNegatives -eq $true) { $true } else { $false }
+		extendedEdit = if ((Get-DslBool $val @('extendedEdit') $false)) { $true } else { $false }
+		markNegatives = if ((Get-DslBool $val @('markNegatives') $false)) { $true } else { $false }
 		choiceForm = if ($val.choiceForm) { "$($val.choiceForm)" } else { "" }
 		choiceFoldersAndItems = if ($val.choiceFoldersAndItems) { Normalize-EnumValue "ChoiceFoldersAndItems" "$($val.choiceFoldersAndItems)" } else { "" }
 		minValue = $val.minValue
@@ -1441,13 +1526,13 @@ function Parse-AttributeShorthand {
 		linkByType = $val.linkByType
 		choiceParameterLinks = $val.choiceParameterLinks
 		choiceParameters = $val.choiceParameters
-		master = if ($val.master -eq $true) { $true } else { $false }
-		mainFilter = if ($val.mainFilter -eq $true) { $true } else { $false }
-		denyIncompleteValues = if ($val.denyIncompleteValues -eq $true) { $true } else { $false }
-		useInTotals = if ($null -ne $val.useInTotals) { ($val.useInTotals -eq $true) } else { $true }
-		baseDimension = if ($val.baseDimension -eq $true) { $true } else { $false }
+		master = if ((Get-DslBool $val @('master') $false)) { $true } else { $false }
+		mainFilter = if ((Get-DslBool $val @('mainFilter') $false)) { $true } else { $false }
+		denyIncompleteValues = if ((Get-DslBool $val @('denyIncompleteValues') $false)) { $true } else { $false }
+		useInTotals = if ($null -ne $val.useInTotals) { ((Get-DslBool $val @('useInTotals') $false)) } else { $true }
+		baseDimension = if ((Get-DslBool $val @('baseDimension') $false)) { $true } else { $false }
 		scheduleLink = $val.scheduleLink
-		balance = if ($val.balance -eq $true) { $true } else { $false }
+		balance = if ((Get-DslBool $val @('balance') $false)) { $true } else { $false }
 		accountingFlag = $val.accountingFlag
 		extDimensionAccountingFlag = $val.extDimensionAccountingFlag
 		addressingDimension = $val.addressingDimension
@@ -1456,8 +1541,8 @@ function Parse-AttributeShorthand {
 		typeReductionMode = if ($val.typeReductionMode) { Normalize-EnumValue "TypeReductionMode" "$($val.typeReductionMode)" } else { $null }
 		# Поле внешнего источника данных (контекст eds-field).
 		nameInDataSource = if ($val.nameInDataSource) { "$($val.nameInDataSource)" } else { "" }
-		readOnly = if ($val.readOnly -eq $true) { $true } else { $false }
-		allowNull = if ($val.allowNull -eq $true) { $true } else { $false }
+		readOnly = if ((Get-DslBool $val @('readOnly') $false)) { $true } else { $false }
+		allowNull = if ((Get-DslBool $val @('allowNull') $false)) { $true } else { $false }
 	}
 }
 
@@ -1774,8 +1859,8 @@ function Emit-StandardAttribute {
 	# FillValue: дефолт nil; override-значение → типизированное (Normalize-ChoiceValue: DTR-путь/строка/bool).
 	$fvRaw = OvOr 'FillValue' $null
 	if ($null -eq $fvRaw) { X "$indent`t<xr:FillValue xsi:nil=`"true`"/>" }
-	elseif ($fvRaw.emptyRef -eq $true) { X "$indent`t<xr:FillValue xsi:type=`"xr:DesignTimeRef`"/>" }
-	elseif ($fvRaw.typeDescription -eq $true) { X "$indent`t<xr:FillValue xsi:type=`"v8:TypeDescription`"/>" }   # пустое типизированное (ValueType ПВХ)
+	elseif ((Get-DslBool $fvRaw @('emptyRef') $false)) { X "$indent`t<xr:FillValue xsi:type=`"xr:DesignTimeRef`"/>" }
+	elseif ((Get-DslBool $fvRaw @('typeDescription') $false)) { X "$indent`t<xr:FillValue xsi:type=`"v8:TypeDescription`"/>" }   # пустое типизированное (ValueType ПВХ)
 	else {
 		$fvN = Normalize-ChoiceValue $fvRaw
 		if ([string]::IsNullOrEmpty($fvN.Text)) { X "$indent`t<xr:FillValue xsi:type=`"$($fvN.XsiType)`"/>" }
@@ -1800,7 +1885,7 @@ $script:stdAttrConditionalTypes = @('Catalog', 'ExchangePlan', 'ChartOfCharacter
 $script:stdAttrConditions = @{
 	"AccountingRegister" = @{
 		"PeriodAdjustment" = { param($d) $v = 0; if ($null -ne $d.periodAdjustmentLength) { $v = [int]"$($d.periodAdjustmentLength)" }; $v -gt 0 }
-		"RecordType"       = { param($d) -not ($d.correspondence -eq $true) }
+		"RecordType"       = { param($d) -not ((Get-DslBool $d @('correspondence') $false)) }
 	}
 	"AccumulationRegister" = @{
 		"RecordType" = { param($d) $raw = if ($d.registerType) { "$($d.registerType)" } else { "Balance" }; (Normalize-EnumValue "RegisterType" $raw) -eq "Balance" }
@@ -2154,7 +2239,7 @@ function ConvertFrom-ChLinkShorthand {
 function Is-EmptyRef($v) {
 	if ($null -eq $v -or $v -is [string]) { return $false }
 	if (($v -is [System.Array]) -or ($v -is [System.Collections.IList])) { return $false }
-	return ($v.emptyRef -eq $true)
+	return ((Get-DslBool $v @('emptyRef') $false))
 }
 
 function Emit-ChoiceParameters {
@@ -2386,16 +2471,16 @@ function Emit-Attribute {
 		X "$indent`t`t</Type>"
 	}
 
-	$pwMode = if ($parsed.passwordMode -eq $true) { "true" } else { "false" }
+	$pwMode = if ((Get-DslBool $parsed @('passwordMode') $false)) { "true" } else { "false" }
 	X "$indent`t`t<PasswordMode>$pwMode</PasswordMode>"
 	Emit-MLText "$indent`t`t" "Format" $parsed.format
 	Emit-MLText "$indent`t`t" "EditFormat" $parsed.editFormat
 	Emit-MLText "$indent`t`t" "ToolTip" $parsed.tooltip
-	X "$indent`t`t<MarkNegatives>$(if ($parsed.markNegatives -eq $true) { 'true' } else { 'false' })</MarkNegatives>"
+	X "$indent`t`t<MarkNegatives>$(if ((Get-DslBool $parsed @('markNegatives') $false)) { 'true' } else { 'false' })</MarkNegatives>"
 	if ($parsed.mask) { X "$indent`t`t<Mask>$(Esc-XmlText $parsed.mask)</Mask>" } else { X "$indent`t`t<Mask/>" }
-	$multiLine = if ($parsed.multiLine -eq $true -or $parsed.flags -contains "multiline") { "true" } else { "false" }
+	$multiLine = if ((Get-DslBool $parsed @('multiLine') $false) -or $parsed.flags -contains "multiline") { "true" } else { "false" }
 	X "$indent`t`t<MultiLine>$multiLine</MultiLine>"
-	$extEdit = if ($parsed.extendedEdit -eq $true) { "true" } else { "false" }
+	$extEdit = if ((Get-DslBool $parsed @('extendedEdit') $false)) { "true" } else { "false" }
 	X "$indent`t`t<ExtendedEdit>$extEdit</ExtendedEdit>"
 	Emit-MinMaxValue "$indent`t`t" "MinValue" $parsed.minValue
 	Emit-MinMaxValue "$indent`t`t" "MaxValue" $parsed.maxValue
@@ -2405,7 +2490,7 @@ function Emit-Attribute {
 	if ($context -notin @("tabular", "processor", "chart", "register-other", "register-accum", "register-calc", "register-account")) {
 		# Флаг-shorthand `master` у ведущего измерения регистра конвенционально ставит и FillFromFillingValue=true
 		# (эргономика авторинга; декомпилятор пишет key-форму master:true + явный fillFromFillingValue → роундтрип цел).
-		$ffv = if ($parsed.fillFromFillingValue -eq $true -or ($elemTag -eq "Dimension" -and $parsed.flags -contains "master")) { "true" } else { "false" }
+		$ffv = if ((Get-DslBool $parsed @('fillFromFillingValue') $false) -or ($elemTag -eq "Dimension" -and $parsed.flags -contains "master")) { "true" } else { "false" }
 		X "$indent`t`t<FillFromFillingValue>$ffv</FillFromFillingValue>"
 	}
 
@@ -2442,17 +2527,17 @@ function Emit-Attribute {
 		if ($parsed.choiceForm) { X "$indent`t`t<ChoiceForm>$(Esc-XmlText "$($parsed.choiceForm)")</ChoiceForm>" } else { X "$indent`t`t<ChoiceForm/>" }
 		$nids = if ($parsed.nameInDataSource) { "$($parsed.nameInDataSource)" } else { $parsed.name }
 		X "$indent`t`t<NameInDataSource>$(Esc-XmlText $nids)</NameInDataSource>"
-		$ro = if ($parsed.readOnly -eq $true -or $parsed.flags -contains "readonly") { "true" } else { "false" }
+		$ro = if ((Get-DslBool $parsed @('readOnly') $false) -or $parsed.flags -contains "readonly") { "true" } else { "false" }
 		X "$indent`t`t<ReadOnly>$ro</ReadOnly>"
-		$an = if ($parsed.allowNull -eq $true -or $parsed.flags -contains "nullable") { "true" } else { "false" }
+		$an = if ((Get-DslBool $parsed @('allowNull') $false) -or $parsed.flags -contains "nullable") { "true" } else { "false" }
 		X "$indent`t`t<AllowNull>$an</AllowNull>"
 	}
 
 	# Измерение регистра сведений: Master/MainFilter/DenyIncompleteValues (между ChoiceHistoryOnInput и Indexing).
 	if ($elemTag -eq "Dimension" -and $context -eq "register-info") {
-		$master = if ($parsed.master -eq $true -or $parsed.flags -contains "master") { "true" } else { "false" }
-		$mainFilter = if ($parsed.mainFilter -eq $true -or $parsed.flags -contains "mainfilter") { "true" } else { "false" }
-		$denyIncomplete = if ($parsed.denyIncompleteValues -eq $true -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
+		$master = if ((Get-DslBool $parsed @('master') $false) -or $parsed.flags -contains "master") { "true" } else { "false" }
+		$mainFilter = if ((Get-DslBool $parsed @('mainFilter') $false) -or $parsed.flags -contains "mainfilter") { "true" } else { "false" }
+		$denyIncomplete = if ((Get-DslBool $parsed @('denyIncompleteValues') $false) -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
 		X "$indent`t`t<Master>$master</Master>"
 		X "$indent`t`t<MainFilter>$mainFilter</MainFilter>"
 		X "$indent`t`t<DenyIncompleteValues>$denyIncomplete</DenyIncompleteValues>"
@@ -2460,14 +2545,14 @@ function Emit-Attribute {
 
 	# Измерение регистра накопления: DenyIncompleteValues (между ChoiceHistoryOnInput и Indexing).
 	if ($elemTag -eq "Dimension" -and $context -eq "register-accum") {
-		$denyIncomplete = if ($parsed.denyIncompleteValues -eq $true -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
+		$denyIncomplete = if ((Get-DslBool $parsed @('denyIncompleteValues') $false) -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
 		X "$indent`t`t<DenyIncompleteValues>$denyIncomplete</DenyIncompleteValues>"
 	}
 
 	# Измерение регистра расчёта: DenyIncompleteValues + BaseDimension (между ChoiceHistoryOnInput и ScheduleLink/Indexing).
 	if ($elemTag -eq "Dimension" -and $context -eq "register-calc") {
-		$denyIncomplete = if ($parsed.denyIncompleteValues -eq $true -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
-		$baseDimension = if ($parsed.baseDimension -eq $true -or $parsed.flags -contains "base") { "true" } else { "false" }
+		$denyIncomplete = if ((Get-DslBool $parsed @('denyIncompleteValues') $false) -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
+		$baseDimension = if ((Get-DslBool $parsed @('baseDimension') $false) -or $parsed.flags -contains "base") { "true" } else { "false" }
 		X "$indent`t`t<DenyIncompleteValues>$denyIncomplete</DenyIncompleteValues>"
 		X "$indent`t`t<BaseDimension>$baseDimension</BaseDimension>"
 	}
@@ -2480,11 +2565,11 @@ function Emit-Attribute {
 	# Измерение/ресурс регистра бухгалтерии: Balance + AccountingFlag (ссылка на признак учёта ПС), затем
 	# DenyIncompleteValues (измерение) / ExtDimensionAccountingFlag (ресурс). Всё между ChoiceHistoryOnInput и Indexing.
 	if ($context -eq "register-account" -and $elemTag -in @("Dimension", "Resource")) {
-		$balance = if ($parsed.balance -eq $true -or $parsed.flags -contains "balance") { "true" } else { "false" }
+		$balance = if ((Get-DslBool $parsed @('balance') $false) -or $parsed.flags -contains "balance") { "true" } else { "false" }
 		X "$indent`t`t<Balance>$balance</Balance>"
 		if ($parsed.accountingFlag) { X "$indent`t`t<AccountingFlag>$(Esc-XmlText "$($parsed.accountingFlag)")</AccountingFlag>" } else { X "$indent`t`t<AccountingFlag/>" }
 		if ($elemTag -eq "Dimension") {
-			$denyIncomplete = if ($parsed.denyIncompleteValues -eq $true -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
+			$denyIncomplete = if ((Get-DslBool $parsed @('denyIncompleteValues') $false) -or $parsed.flags -contains "denyincomplete") { "true" } else { "false" }
 			X "$indent`t`t<DenyIncompleteValues>$denyIncomplete</DenyIncompleteValues>"
 		} else {
 			if ($parsed.extDimensionAccountingFlag) { X "$indent`t`t<ExtDimensionAccountingFlag>$(Esc-XmlText "$($parsed.extDimensionAccountingFlag)")</ExtDimensionAccountingFlag>" } else { X "$indent`t`t<ExtDimensionAccountingFlag/>" }
@@ -2524,7 +2609,7 @@ function Emit-Attribute {
 		}
 		# Измерение регистра накопления: UseInTotals (после FullTextSearch, дефолт true).
 		if ($elemTag -eq "Dimension" -and $context -eq "register-accum") {
-			$useInTotals = if ($parsed.useInTotals -eq $false -or $parsed.flags -contains "nouseintotals") { "false" } else { "true" }
+			$useInTotals = if ((-not (Get-DslBool $parsed @('useInTotals') $true)) -or $parsed.flags -contains "nouseintotals") { "false" } else { "true" }
 			X "$indent`t`t<UseInTotals>$useInTotals</UseInTotals>"
 		}
 		# DataHistory — not for Chart* types and non-InformationRegister register family
@@ -2552,10 +2637,10 @@ function Emit-CommandPicture {
 	$pic = $cmd.picture
 	if (-not $pic) { X "$indent<Picture/>"; return }
 	$src = $null; $lt = $true; $tpx = $null
-	if ($pic -is [string]) { $src = "$pic"; if ($cmd.loadTransparent -eq $false) { $lt = $false } }
+	if ($pic -is [string]) { $src = "$pic"; if ((-not (Get-DslBool $cmd @('loadTransparent') $true))) { $lt = $false } }
 	else {
 		$src = if ($pic.src) { "$($pic.src)" } elseif ($pic.ref) { "$($pic.ref)" } else { "" }
-		if ($pic.loadTransparent -eq $false) { $lt = $false }
+		if ((-not (Get-DslBool $pic @('loadTransparent') $true))) { $lt = $false }
 		$tpx = $pic.transparentPixel
 	}
 	if (-not $src) { X "$indent<Picture/>"; return }
@@ -2599,7 +2684,7 @@ function Emit-Command {
 	}
 	$pum = if ($cmd.parameterUseMode) { Normalize-EnumValue "ParameterUseMode" "$($cmd.parameterUseMode)" } else { "Single" }
 	X "$indent`t`t<ParameterUseMode>$pum</ParameterUseMode>"
-	$md = if ($cmd.modifiesData -eq $true) { "true" } else { "false" }
+	$md = if ((Get-DslBool $cmd @('modifiesData') $false)) { "true" } else { "false" }
 	X "$indent`t`t<ModifiesData>$md</ModifiesData>"
 	$rep = if ($cmd.representation) { Normalize-EnumValue "Representation" "$($cmd.representation)" } else { "Auto" }
 	X "$indent`t`t<Representation>$rep</Representation>"
@@ -2720,11 +2805,11 @@ function Emit-Dimension {
 	X "$indent`t`t<Format/>"
 	X "$indent`t`t<EditFormat/>"
 	X "$indent`t`t<ToolTip/>"
-	X "$indent`t`t<MarkNegatives>$(if ($parsed.markNegatives -eq $true) { 'true' } else { 'false' })</MarkNegatives>"
+	X "$indent`t`t<MarkNegatives>$(if ((Get-DslBool $parsed @('markNegatives') $false)) { 'true' } else { 'false' })</MarkNegatives>"
 	X "$indent`t`t<Mask/>"
-	$multiLine = if ($parsed.multiLine -eq $true -or $parsed.flags -contains "multiline") { "true" } else { "false" }
+	$multiLine = if ((Get-DslBool $parsed @('multiLine') $false) -or $parsed.flags -contains "multiline") { "true" } else { "false" }
 	X "$indent`t`t<MultiLine>$multiLine</MultiLine>"
-	$extEdit = if ($parsed.extendedEdit -eq $true) { "true" } else { "false" }
+	$extEdit = if ((Get-DslBool $parsed @('extendedEdit') $false)) { "true" } else { "false" }
 	X "$indent`t`t<ExtendedEdit>$extEdit</ExtendedEdit>"
 	Emit-MinMaxValue "$indent`t`t" "MinValue" $parsed.minValue
 	Emit-MinMaxValue "$indent`t`t" "MaxValue" $parsed.maxValue
@@ -2815,11 +2900,11 @@ function Emit-Resource {
 	X "$indent`t`t<Format/>"
 	X "$indent`t`t<EditFormat/>"
 	X "$indent`t`t<ToolTip/>"
-	X "$indent`t`t<MarkNegatives>$(if ($parsed.markNegatives -eq $true) { 'true' } else { 'false' })</MarkNegatives>"
+	X "$indent`t`t<MarkNegatives>$(if ((Get-DslBool $parsed @('markNegatives') $false)) { 'true' } else { 'false' })</MarkNegatives>"
 	X "$indent`t`t<Mask/>"
-	$multiLine = if ($parsed.multiLine -eq $true -or $parsed.flags -contains "multiline") { "true" } else { "false" }
+	$multiLine = if ((Get-DslBool $parsed @('multiLine') $false) -or $parsed.flags -contains "multiline") { "true" } else { "false" }
 	X "$indent`t`t<MultiLine>$multiLine</MultiLine>"
-	$extEdit = if ($parsed.extendedEdit -eq $true) { "true" } else { "false" }
+	$extEdit = if ((Get-DslBool $parsed @('extendedEdit') $false)) { "true" } else { "false" }
 	X "$indent`t`t<ExtendedEdit>$extEdit</ExtendedEdit>"
 	Emit-MinMaxValue "$indent`t`t" "MinValue" $parsed.minValue
 	Emit-MinMaxValue "$indent`t`t" "MaxValue" $parsed.maxValue
@@ -2869,13 +2954,13 @@ function Emit-CatalogProperties {
 	Emit-MLText $i "Synonym" $synonym
 	if ($def.comment) { X "$i<Comment>$(Esc-XmlText $def.comment)</Comment>" } else { X "$i<Comment/>" }
 
-	$hierarchical = if ($def.hierarchical -eq $true) { "true" } else { "false" }
+	$hierarchical = if ((Get-DslBool $def @('hierarchical') $false)) { "true" } else { "false" }
 	$hierarchyType = Get-EnumProp "HierarchyType" "hierarchyType" "HierarchyFoldersAndItems"
 	X "$i<Hierarchical>$hierarchical</Hierarchical>"
 	X "$i<HierarchyType>$hierarchyType</HierarchyType>"
-	$limitLevelCount = if ($def.limitLevelCount -eq $true) { "true" } else { "false" }
+	$limitLevelCount = if ((Get-DslBool $def @('limitLevelCount') $false)) { "true" } else { "false" }
 	$levelCount = if ($null -ne $def.levelCount) { "$($def.levelCount)" } else { "2" }
-	$foldersOnTop = if ($def.foldersOnTop -eq $false) { "false" } else { "true" }
+	$foldersOnTop = if ((-not (Get-DslBool $def @('foldersOnTop') $true))) { "false" } else { "true" }
 	X "$i<LimitLevelCount>$limitLevelCount</LimitLevelCount>"
 	X "$i<LevelCount>$levelCount</LevelCount>"
 	X "$i<FoldersOnTop>$foldersOnTop</FoldersOnTop>"
@@ -2897,8 +2982,8 @@ function Emit-CatalogProperties {
 	$descriptionLength = if ($null -ne $def.descriptionLength) { "$($def.descriptionLength)" } else { "25" }
 	$codeType = Get-EnumProp "CodeType" "codeType" "String"
 	$codeAllowedLength = Get-EnumProp "CodeAllowedLength" "codeAllowedLength" "Variable"
-	$autonumbering = if ($def.autonumbering -eq $false) { "false" } else { "true" }
-	$checkUnique = if ($def.checkUnique -eq $true) { "true" } else { "false" }
+	$autonumbering = if ((-not (Get-DslBool $def @('autonumbering') $true))) { "false" } else { "true" }
+	$checkUnique = if ((Get-DslBool $def @('checkUnique') $false)) { "true" } else { "false" }
 
 	X "$i<CodeLength>$codeLength</CodeLength>"
 	X "$i<DescriptionLength>$descriptionLength</DescriptionLength>"
@@ -2916,7 +3001,7 @@ function Emit-CatalogProperties {
 	Emit-Characteristics $i $def.characteristics
 	X "$i<PredefinedDataUpdate>$(Get-EnumProp 'PredefinedDataUpdate' 'predefinedDataUpdate' 'Auto')</PredefinedDataUpdate>"
 	X "$i<EditType>$(Get-EnumProp 'EditType' 'editType' 'InDialog')</EditType>"
-	$quickChoice = if ($def.quickChoice -eq $true) { "true" } else { "false" }
+	$quickChoice = if ((Get-DslBool $def @('quickChoice') $false)) { "true" } else { "false" }
 	$choiceMode = Get-EnumProp "ChoiceMode" "choiceMode" "BothWays"
 	X "$i<QuickChoice>$quickChoice</QuickChoice>"
 	X "$i<ChoiceMode>$choiceMode</ChoiceMode>"
@@ -2981,8 +3066,8 @@ function Emit-DocumentProperties {
 	$numberLength = if ($null -ne $def.numberLength) { "$($def.numberLength)" } else { "11" }
 	$numberAllowedLength = Get-EnumProp "NumberAllowedLength" "numberAllowedLength" "Variable"
 	$numberPeriodicity = Get-EnumProp "NumberPeriodicity" "numberPeriodicity" "Year"
-	$checkUnique = if ($def.checkUnique -eq $false) { "false" } else { "true" }
-	$autonumbering = if ($def.autonumbering -eq $false) { "false" } else { "true" }
+	$checkUnique = if ((-not (Get-DslBool $def @('checkUnique') $true))) { "false" } else { "true" }
+	$autonumbering = if ((-not (Get-DslBool $def @('autonumbering') $true))) { "false" } else { "true" }
 
 	X "$i<NumberType>$numberType</NumberType>"
 	X "$i<NumberLength>$numberLength</NumberLength>"
@@ -3043,8 +3128,8 @@ function Emit-DocumentProperties {
 		X "$i<RegisterRecords/>"
 	}
 
-	$postInPrivilegedMode = if ($def.postInPrivilegedMode -eq $false) { "false" } else { "true" }
-	$unpostInPrivilegedMode = if ($def.unpostInPrivilegedMode -eq $false) { "false" } else { "true" }
+	$postInPrivilegedMode = if ((-not (Get-DslBool $def @('postInPrivilegedMode') $true))) { "false" } else { "true" }
+	$unpostInPrivilegedMode = if ((-not (Get-DslBool $def @('unpostInPrivilegedMode') $true))) { "false" } else { "true" }
 	X "$i<PostInPrivilegedMode>$postInPrivilegedMode</PostInPrivilegedMode>"
 	X "$i<UnpostInPrivilegedMode>$unpostInPrivilegedMode</UnpostInPrivilegedMode>"
 	$inclHelp = if (Get-BoolProp "includeHelpInContents" $false) { "true" } else { "false" }
@@ -3080,7 +3165,7 @@ function Emit-EnumProperties {
 	Emit-StandardAttributes $i "Enum"
 	Emit-Characteristics $i $def.characteristics
 
-	$quickChoice = if ($def.quickChoice -eq $false) { "false" } else { "true" }
+	$quickChoice = if ((-not (Get-DslBool $def @('quickChoice') $true))) { "false" } else { "true" }
 	X "$i<QuickChoice>$quickChoice</QuickChoice>"
 	X "$i<ChoiceMode>$(Get-EnumProp 'ChoiceMode' 'choiceMode' 'BothWays')</ChoiceMode>"
 	Emit-FormRef $i "DefaultListForm"     $def.defaultListForm
@@ -3214,7 +3299,7 @@ function Emit-AccumulationRegisterProperties {
 	$fullTextSearch = Get-EnumProp "FullTextSearch" "fullTextSearch" "Use"
 	X "$i<FullTextSearch>$fullTextSearch</FullTextSearch>"
 
-	$enableTotalsSplitting = if ($def.enableTotalsSplitting -eq $false) { "false" } else { "true" }
+	$enableTotalsSplitting = if ((-not (Get-DslBool $def @('enableTotalsSplitting') $true))) { "false" } else { "true" }
 	X "$i<EnableTotalsSplitting>$enableTotalsSplitting</EnableTotalsSplitting>"
 
 	Emit-MLText $i "ListPresentation" $def.listPresentation
@@ -3569,7 +3654,7 @@ function Emit-CommonModuleProperties {
 	# Context shortcuts
 	$context = if ($def.context) { "$($def.context)" } else { "" }
 
-	$global = if ($def.global -eq $true) { "true" } else { "false" }
+	$global = if ((Get-DslBool $def @('global') $false)) { "true" } else { "false" }
 	$server = "false"; $serverCall = "false"; $clientManaged = "false"
 	$clientOrdinary = "false"; $externalConnection = "false"; $privileged = "false"
 
@@ -3579,12 +3664,12 @@ function Emit-CommonModuleProperties {
 		"client"       { $clientManaged = "true" }
 		"serverClient" { $server = "true"; $clientManaged = "true" }
 		default {
-			if ($def.server -eq $true) { $server = "true" }
-			if ($def.serverCall -eq $true) { $serverCall = "true" }
-			if ($def.clientManagedApplication -eq $true) { $clientManaged = "true" }
-			if ($def.clientOrdinaryApplication -eq $true) { $clientOrdinary = "true" }
-			if ($def.externalConnection -eq $true) { $externalConnection = "true" }
-			if ($def.privileged -eq $true) { $privileged = "true" }
+			if ((Get-DslBool $def @('server') $false)) { $server = "true" }
+			if ((Get-DslBool $def @('serverCall') $false)) { $serverCall = "true" }
+			if ((Get-DslBool $def @('clientManagedApplication') $false)) { $clientManaged = "true" }
+			if ((Get-DslBool $def @('clientOrdinaryApplication') $false)) { $clientOrdinary = "true" }
+			if ((Get-DslBool $def @('externalConnection') $false)) { $externalConnection = "true" }
+			if ((Get-DslBool $def @('privileged') $false)) { $privileged = "true" }
 		}
 	}
 
@@ -3624,10 +3709,10 @@ function Emit-ScheduledJobProperties {
 	# не пишет пустых пар.
 	if ($key) { X "$i<Key>$(Esc-XmlText $key)</Key>" } else { X "$i<Key/>" }
 
-	$use = if ($def.use -eq $true) { "true" } else { "false" }
+	$use = if ((Get-DslBool $def @('use') $false)) { "true" } else { "false" }
 	X "$i<Use>$use</Use>"
 
-	$predefined = if ($def.predefined -eq $true) { "true" } else { "false" }
+	$predefined = if ((Get-DslBool $def @('predefined') $false)) { "true" } else { "false" }
 	X "$i<Predefined>$predefined</Predefined>"
 
 	$restartCount = if ($null -ne $def.restartCountOnFailure) { "$($def.restartCountOnFailure)" } else { "3" }
@@ -3736,7 +3821,7 @@ function Emit-ExchangePlanProperties {
 	X "$i<DescriptionLength>$descriptionLength</DescriptionLength>"
 	X "$i<DefaultPresentation>$(Get-EnumProp 'DefaultPresentation' 'defaultPresentation' 'AsDescription')</DefaultPresentation>"
 	X "$i<EditType>$(Get-EnumProp 'EditType' 'editType' 'InDialog')</EditType>"
-	$quickChoice = if ($def.quickChoice -eq $true) { "true" } else { "false" }
+	$quickChoice = if ((Get-DslBool $def @('quickChoice') $false)) { "true" } else { "false" }
 	X "$i<QuickChoice>$quickChoice</QuickChoice>"
 	X "$i<ChoiceMode>$(Get-EnumProp 'ChoiceMode' 'choiceMode' 'BothWays')</ChoiceMode>"
 
@@ -3763,8 +3848,8 @@ function Emit-ExchangePlanProperties {
 	Emit-Characteristics $i $def.characteristics
 	Emit-BasedOn $i $def.basedOn
 
-	$distributed = if ($def.distributedInfoBase -eq $true) { "true" } else { "false" }
-	$includeExt = if ($def.includeConfigurationExtensions -eq $true) { "true" } else { "false" }
+	$distributed = if ((Get-DslBool $def @('distributedInfoBase') $false)) { "true" } else { "false" }
+	$includeExt = if ((Get-DslBool $def @('includeConfigurationExtensions') $false)) { "true" } else { "false" }
 	X "$i<DistributedInfoBase>$distributed</DistributedInfoBase>"
 	X "$i<IncludeConfigurationExtensions>$includeExt</IncludeConfigurationExtensions>"
 
@@ -3844,9 +3929,9 @@ function Emit-ChartOfCharacteristicTypesProperties {
 		X "$i</Type>"
 	}
 
-	$hierarchical = if ($def.hierarchical -eq $true) { "true" } else { "false" }
+	$hierarchical = if ((Get-DslBool $def @('hierarchical') $false)) { "true" } else { "false" }
 	X "$i<Hierarchical>$hierarchical</Hierarchical>"
-	$foldersOnTop = if ($def.foldersOnTop -eq $false) { "false" } else { "true" }
+	$foldersOnTop = if ((-not (Get-DslBool $def @('foldersOnTop') $true))) { "false" } else { "true" }
 	X "$i<FoldersOnTop>$foldersOnTop</FoldersOnTop>"
 
 	$codeLength = if ($null -ne $def.codeLength) { "$($def.codeLength)" } else { "9" }
@@ -3855,9 +3940,9 @@ function Emit-ChartOfCharacteristicTypesProperties {
 	X "$i<CodeAllowedLength>$(Get-EnumProp 'CodeAllowedLength' 'codeAllowedLength' 'Variable')</CodeAllowedLength>"
 	X "$i<DescriptionLength>$descriptionLength</DescriptionLength>"
 	X "$i<CodeSeries>$(Get-EnumProp 'CodeSeries' 'codeSeries' 'WholeCharacteristicKind')</CodeSeries>"
-	$checkUnique = if ($def.checkUnique -eq $false) { "false" } else { "true" }
+	$checkUnique = if ((-not (Get-DslBool $def @('checkUnique') $true))) { "false" } else { "true" }
 	X "$i<CheckUnique>$checkUnique</CheckUnique>"
-	$autonumbering = if ($def.autonumbering -eq $false) { "false" } else { "true" }
+	$autonumbering = if ((-not (Get-DslBool $def @('autonumbering') $true))) { "false" } else { "true" }
 	X "$i<Autonumbering>$autonumbering</Autonumbering>"
 	X "$i<DefaultPresentation>$(Get-EnumProp 'DefaultPresentation' 'defaultPresentation' 'AsDescription')</DefaultPresentation>"
 
@@ -3865,7 +3950,7 @@ function Emit-ChartOfCharacteristicTypesProperties {
 	Emit-Characteristics $i $def.characteristics
 	X "$i<PredefinedDataUpdate>$(Get-EnumProp 'PredefinedDataUpdate' 'predefinedDataUpdate' 'Auto')</PredefinedDataUpdate>"
 	X "$i<EditType>$(Get-EnumProp 'EditType' 'editType' 'InDialog')</EditType>"
-	$quickChoice = if ($def.quickChoice -eq $true) { "true" } else { "false" }
+	$quickChoice = if ((Get-DslBool $def @('quickChoice') $false)) { "true" } else { "false" }
 	X "$i<QuickChoice>$quickChoice</QuickChoice>"
 	X "$i<ChoiceMode>$(Get-EnumProp 'ChoiceMode' 'choiceMode' 'BothWays')</ChoiceMode>"
 
@@ -3985,7 +4070,7 @@ function Emit-ChartOfAccountsProperties {
 	X "$i<CodeLength>$codeLength</CodeLength>"
 	X "$i<DescriptionLength>$descriptionLength</DescriptionLength>"
 	X "$i<CodeSeries>$(Get-EnumProp 'CodeSeries' 'codeSeries' 'WholeChartOfAccounts')</CodeSeries>"
-	$checkUnique = if ($def.checkUnique -eq $false) { "false" } else { "true" }
+	$checkUnique = if ((-not (Get-DslBool $def @('checkUnique') $true))) { "false" } else { "true" }
 	X "$i<CheckUnique>$checkUnique</CheckUnique>"
 	X "$i<DefaultPresentation>$(Get-EnumProp 'DefaultPresentation' 'defaultPresentation' 'AsCode')</DefaultPresentation>"
 
@@ -4016,7 +4101,7 @@ function Emit-ChartOfAccountsProperties {
 
 	X "$i<PredefinedDataUpdate>$(Get-EnumProp 'PredefinedDataUpdate' 'predefinedDataUpdate' 'Auto')</PredefinedDataUpdate>"
 	X "$i<EditType>$(Get-EnumProp 'EditType' 'editType' 'InDialog')</EditType>"
-	$quickChoice = if ($def.quickChoice -eq $true) { "true" } else { "false" }
+	$quickChoice = if ((Get-DslBool $def @('quickChoice') $false)) { "true" } else { "false" }
 	X "$i<QuickChoice>$quickChoice</QuickChoice>"
 	X "$i<ChoiceMode>$(Get-EnumProp 'ChoiceMode' 'choiceMode' 'BothWays')</ChoiceMode>"
 
@@ -4041,7 +4126,7 @@ function Emit-ChartOfAccountsProperties {
 	Emit-FormRef $i "AuxiliaryListForm"   $def.auxiliaryListForm
 	Emit-FormRef $i "AuxiliaryChoiceForm" $def.auxiliaryChoiceForm
 
-	$autoOrder = if ($def.autoOrderByCode -eq $false) { "false" } else { "true" }
+	$autoOrder = if ((-not (Get-DslBool $def @('autoOrderByCode') $true))) { "false" } else { "true" }
 	X "$i<AutoOrderByCode>$autoOrder</AutoOrderByCode>"
 	$orderLength = if ($null -ne $def.orderLength) { "$($def.orderLength)" } else { "9" }
 	X "$i<OrderLength>$orderLength</OrderLength>"
@@ -4079,7 +4164,7 @@ function Emit-AccountingRegisterProperties {
 	if ($chartOfAccounts) { X "$i<ChartOfAccounts>$(Esc-XmlText $chartOfAccounts)</ChartOfAccounts>" }
 	else { X "$i<ChartOfAccounts/>" }
 
-	$correspondence = if ($def.correspondence -eq $true) { "true" } else { "false" }
+	$correspondence = if ((Get-DslBool $def @('correspondence') $false)) { "true" } else { "false" }
 	X "$i<Correspondence>$correspondence</Correspondence>"
 
 	$periodAdjLen = if ($null -ne $def.periodAdjustmentLength) { "$($def.periodAdjustmentLength)" } else { "0" }
@@ -4093,7 +4178,7 @@ function Emit-AccountingRegisterProperties {
 	$dataLockControlMode = Get-EnumProp "DataLockControlMode" "dataLockControlMode" "Managed"
 	X "$i<DataLockControlMode>$dataLockControlMode</DataLockControlMode>"
 
-	$enableTotalsSplitting = if ($def.enableTotalsSplitting -eq $false) { "false" } else { "true" }
+	$enableTotalsSplitting = if ((-not (Get-DslBool $def @('enableTotalsSplitting') $true))) { "false" } else { "true" }
 	X "$i<EnableTotalsSplitting>$enableTotalsSplitting</EnableTotalsSplitting>"
 
 	$fullTextSearch = Get-EnumProp "FullTextSearch" "fullTextSearch" "Use"
@@ -4154,7 +4239,7 @@ function Emit-ChartOfCalculationTypesProperties {
 	X "$i<CodeAllowedLength>$(Get-EnumProp 'CodeAllowedLength' 'codeAllowedLength' 'Variable')</CodeAllowedLength>"
 	X "$i<DefaultPresentation>$(Get-EnumProp 'DefaultPresentation' 'defaultPresentation' 'AsDescription')</DefaultPresentation>"
 	X "$i<EditType>$(Get-EnumProp 'EditType' 'editType' 'InDialog')</EditType>"
-	$quickChoice = if ($def.quickChoice -eq $true) { "true" } else { "false" }
+	$quickChoice = if ((Get-DslBool $def @('quickChoice') $false)) { "true" } else { "false" }
 	X "$i<QuickChoice>$quickChoice</QuickChoice>"
 	X "$i<ChoiceMode>$(Get-EnumProp 'ChoiceMode' 'choiceMode' 'BothWays')</ChoiceMode>"
 
@@ -4188,7 +4273,7 @@ function Emit-ChartOfCalculationTypesProperties {
 		foreach ($bt in $baseTypes) { X "$i`t<xr:Item xsi:type=`"xr:MDObjectRef`">$(Esc-XmlText (Normalize-MDObjectRef "$bt"))</xr:Item>" }
 		X "$i</BaseCalculationTypes>"
 	} else { X "$i<BaseCalculationTypes/>" }
-	$actionPeriodUse = if ($def.actionPeriodUse -eq $true) { "true" } else { "false" }
+	$actionPeriodUse = if ((Get-DslBool $def @('actionPeriodUse') $false)) { "true" } else { "false" }
 	X "$i<ActionPeriodUse>$actionPeriodUse</ActionPeriodUse>"
 
 	Emit-StandardAttributes $i "ChartOfCalculationTypes"
@@ -4230,10 +4315,10 @@ function Emit-CalculationRegisterProperties {
 	$periodicity = Get-EnumProp "InformationRegisterPeriodicity" "periodicity" "Month"
 	X "$i<Periodicity>$periodicity</Periodicity>"
 
-	$actionPeriod = if ($def.actionPeriod -eq $true) { "true" } else { "false" }
+	$actionPeriod = if ((Get-DslBool $def @('actionPeriod') $false)) { "true" } else { "false" }
 	X "$i<ActionPeriod>$actionPeriod</ActionPeriod>"
 
-	$basePeriod = if ($def.basePeriod -eq $true) { "true" } else { "false" }
+	$basePeriod = if ((Get-DslBool $def @('basePeriod') $false)) { "true" } else { "false" }
 	X "$i<BasePeriod>$basePeriod</BasePeriod>"
 
 	$schedule = if ($def.schedule) { "$($def.schedule)" } else { "" }
@@ -4296,7 +4381,7 @@ function Emit-BusinessProcessProperties {
 	$numberType = Get-EnumProp "NumberType" "numberType" "String"
 	$numberLength = if ($null -ne $def.numberLength) { "$($def.numberLength)" } else { "11" }
 	$numberAllowedLength = Get-EnumProp "NumberAllowedLength" "numberAllowedLength" "Variable"
-	$checkUnique = if ($def.checkUnique -eq $false) { "false" } else { "true" }
+	$checkUnique = if ((-not (Get-DslBool $def @('checkUnique') $true))) { "false" } else { "true" }
 	X "$i<NumberType>$numberType</NumberType>"
 	X "$i<NumberLength>$numberLength</NumberLength>"
 	X "$i<NumberAllowedLength>$numberAllowedLength</NumberAllowedLength>"
@@ -4305,7 +4390,7 @@ function Emit-BusinessProcessProperties {
 	Emit-StandardAttributes $i "BusinessProcess"
 	Emit-Characteristics $i $def.characteristics
 
-	$autonumbering = if ($def.autonumbering -eq $false) { "false" } else { "true" }
+	$autonumbering = if ((-not (Get-DslBool $def @('autonumbering') $true))) { "false" } else { "true" }
 	X "$i<Autonumbering>$autonumbering</Autonumbering>"
 	Emit-BasedOn $i $def.basedOn
 	X "$i<NumberPeriodicity>$(Get-EnumProp 'NumberPeriodicity' 'numberPeriodicity' 'Nonperiodical')</NumberPeriodicity>"
@@ -4344,8 +4429,8 @@ function Emit-TaskProperties {
 	$numberType = Get-EnumProp "NumberType" "numberType" "String"
 	$numberLength = if ($null -ne $def.numberLength) { "$($def.numberLength)" } else { "14" }
 	$numberAllowedLength = Get-EnumProp "NumberAllowedLength" "numberAllowedLength" "Variable"
-	$checkUnique = if ($def.checkUnique -eq $false) { "false" } else { "true" }
-	$autonumbering = if ($def.autonumbering -eq $false) { "false" } else { "true" }
+	$checkUnique = if ((-not (Get-DslBool $def @('checkUnique') $true))) { "false" } else { "true" }
+	$autonumbering = if ((-not (Get-DslBool $def @('autonumbering') $true))) { "false" } else { "true" }
 	$taskNumberAutoPrefix = if ($def.taskNumberAutoPrefix) { Normalize-EnumValue "TaskNumberAutoPrefix" "$($def.taskNumberAutoPrefix)" } else { "BusinessProcessNumber" }
 	$descriptionLength = if ($null -ne $def.descriptionLength) { "$($def.descriptionLength)" } else { "150" }
 	X "$i<NumberType>$numberType</NumberType>"
@@ -4597,8 +4682,8 @@ function Emit-Operation {
 		$returnType = "$opDef"
 	} else {
 		if ($opDef.returnType) { $returnType = "$($opDef.returnType)" }
-		if ($opDef.nillable -eq $true) { $nillable = "true" }
-		if ($opDef.transactioned -eq $true) { $transactioned = "true" }
+		if ((Get-DslBool $opDef @('nillable') $false)) { $nillable = "true" }
+		if ((Get-DslBool $opDef @('transactioned') $false)) { $transactioned = "true" }
 		if ($opDef.handler) { $handler = "$($opDef.handler)" }
 		if ($opDef.procedureName) { $handler = "$($opDef.procedureName)" }
 		if ($opDef.synonym) { $opSynonym = $opDef.synonym }
@@ -4638,7 +4723,7 @@ function Emit-Operation {
 				$paramType = "$paramDef"
 			} else {
 				if ($paramDef.type) { $paramType = "$($paramDef.type)" }
-				if ($paramDef.nillable -eq $false) { $paramNillable = "false" }
+				if ((-not (Get-DslBool $paramDef @('nillable') $true))) { $paramNillable = "false" }
 				if ($paramDef.direction) { $paramDir = Normalize-EnumValue "TransferDirection" "$($paramDef.direction)" }
 				if ($paramDef.synonym) { $paramSynonym = $paramDef.synonym }
 				if ($paramDef.comment) { $paramComment = "$($paramDef.comment)" }
@@ -4746,7 +4831,7 @@ function Emit-EdsFunction {
 	} else {
 		$expr = if ($val.expression) { "$($val.expression)" } elseif ($val.expressionInDataSource) { "$($val.expressionInDataSource)" } else { "" }
 		$returns = if ($val.returns) { "$($val.returns)" } elseif ($val.returnType) { "$($val.returnType)" } else { "" }
-		if ($null -ne $val.returnValue) { $returnValue = ($val.returnValue -eq $true) }
+		if ($null -ne $val.returnValue) { $returnValue = ((Get-DslBool $val @('returnValue') $false)) }
 		$fnSynonym = $val.synonym
 		$fnComment = if ($val.comment) { "$($val.comment)" } else { "" }
 	}
@@ -4805,8 +4890,8 @@ function Emit-EdsTableProperties {
 	else { X "$i<UnfilledParentValue xsi:nil=`"true`"/>" }
 	if ($charXml) { X $charXml.TrimEnd("`r", "`n") } else { X "$i<Characteristics/>" }
 
-	X "$i<UseStandardCommands>$(if ($t -and $t.useStandardCommands -eq $false) { 'false' } else { 'true' })</UseStandardCommands>"
-	X "$i<QuickChoice>$(if ($t -and $t.quickChoice -eq $true) { 'true' } else { 'false' })</QuickChoice>"
+	X "$i<UseStandardCommands>$(if ($t -and (-not (Get-DslBool $t @('useStandardCommands') $true))) { 'false' } else { 'true' })</UseStandardCommands>"
+	X "$i<QuickChoice>$(if ($t -and (Get-DslBool $t @('quickChoice') $false)) { 'true' } else { 'false' })</QuickChoice>"
 	# Ввод по строке: ключа нет → выводим из поля представления (так делает платформа при загрузке).
 	# Явный список, в том числе пустой, уважаем как есть — отсюда presence-aware проверка.
 	$ibsGiven = ($t -and $t.PSObject -and $t.PSObject.Properties -and ($t.PSObject.Properties.Name -contains 'inputByString'))
@@ -4825,8 +4910,8 @@ function Emit-EdsTableProperties {
 		$key = $presTag.Substring(0,1).ToLower() + $presTag.Substring(1)
 		Emit-MLText $i $presTag $(if ($t) { $t.$key } else { $null })
 	}
-	X "$i<IncludeHelpInContents>$(if ($t -and $t.includeHelpInContents -eq $true) { 'true' } else { 'false' })</IncludeHelpInContents>"
-	X "$i<ReadOnly>$(if ($t -and $t.readOnly -eq $true) { 'true' } else { 'false' })</ReadOnly>"
+	X "$i<IncludeHelpInContents>$(if ($t -and (Get-DslBool $t @('includeHelpInContents') $false)) { 'true' } else { 'false' })</IncludeHelpInContents>"
+	X "$i<ReadOnly>$(if ($t -and (Get-DslBool $t @('readOnly') $false)) { 'true' } else { 'false' })</ReadOnly>"
 	X "$i<TransactionsIsolationLevel>$(if ($t -and $t.transactionsIsolationLevel) { Normalize-EnumValue "TransactionsIsolationLevel" "$($t.transactionsIsolationLevel)" } else { 'Auto' })</TransactionsIsolationLevel>"
 	Emit-EdsFieldRefScalar $i "DataVersionField" $(if ($t) { $t.dataVersionField } else { $null }) $srcName $tableName
 	X "$i<EditType>$(if ($x = Get-EnumField $t 'editType' 'EditType') { $x } else { 'InDialog' })</EditType>"
@@ -5460,7 +5545,7 @@ function Resolve-PredefItem {
 	$descV = & $gv $val @('description','наименование')
 	$desc = if ($hasDesc) { "$descV" } else { Split-CamelCase $name }   # ключа нет → авто; '' → пусто
 	$folderV = & $gv $val @('isFolder','группа')
-	$isFolder = ($folderV -eq $true)
+	$isFolder = (ConvertTo-DslBool $folderV 'isFolder' $false)
 	$subs = & $gv $val @('childItems','подчиненные')
 	$typeV = & $gv $val @('type','тип')   # тип значения характеристики (ПВХ): строка "A + B" ИЛИ массив
 	if ($typeV -is [System.Array]) { $typeV = ($typeV -join ' + ') }
@@ -5536,7 +5621,7 @@ function Emit-PredefAccount {
 	$descV = & $gv $val @('description','наименование')
 	$desc = if ($hasDesc) { "$descV" } else { Split-CamelCase $name }
 	$acctType = "$(& $gv $val @('accountType','видСчета','вид'))"; if (-not $acctType) { $acctType = 'ActivePassive' }
-	$offV = & $gv $val @('offBalance','забалансовый'); $off = if ($offV -eq $true) { 'true' } else { 'false' }
+	$offV = & $gv $val @('offBalance','забалансовый'); $off = if (ConvertTo-DslBool $offV 'offBalance' $false) { 'true' } else { 'false' }
 	$order = "$(& $gv $val @('order','порядок'))"
 	$flags = & $gv $val @('flags','признаки')
 	$subconto = & $gv $val @('subconto','extDimensionTypes','видыСубконто')
@@ -5569,7 +5654,7 @@ function Emit-PredefAccount {
 			if (-not $scType.Contains('.')) { if ($extDimTypesRef) { $scType = "$extDimTypesRef.$scType" } }
 			else { $scType = Resolve-TypePrefixSyn $scType }
 			# «Только обороты» — токен в списке flags (или отдельный ключ turnover); вынимаем из настоящих признаков.
-			$scTurn = if ($scTurnV -eq $true) { 'true' } else { 'false' }
+			$scTurn = if (ConvertTo-DslBool $scTurnV 'turnover' $false) { 'true' } else { 'false' }
 			$scFlagsReal = @()
 			foreach ($f in @($scFlags)) { if ("$f".Trim().ToLower() -in $script:subcontoTurnoverTokens) { $scTurn = 'true' } else { $scFlagsReal += $f } }
 			$scFlags = $scFlagsReal
@@ -5609,7 +5694,7 @@ function Emit-PredefCalcType {
 	$apib = 'false'
 	if ($val -isnot [string]) {
 		$apibV = & $script:predefAccGet $val @('actionPeriodIsBase','периодДействияБазовый')
-		if ($apibV -eq $true) { $apib = 'true' }
+		if (ConvertTo-DslBool $apibV 'actionPeriodIsBase' $false) { $apib = 'true' }
 	}
 	[void]$sb.Append("$indent<Item id=`"$(New-Guid-String)`">`n")
 	[void]$sb.Append("$indent`t<Name>$(Esc-XmlText $r.name)</Name>`n")

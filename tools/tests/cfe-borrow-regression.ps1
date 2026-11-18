@@ -670,7 +670,7 @@ Register-Case 're-borrow: a borrowed object is not rewritten; -Module adds the m
     $before = [System.IO.File]::ReadAllBytes($objFile)
     $run = Invoke-Borrow $ws 'Document.Zakaz'
     Assert-True (Test-SameBytes $before $objFile) 're-borrow rewrote the borrowed object'
-    Assert-True ($run.StdOut -match 'Already borrowed: Document\.Zakaz') "no 'Already borrowed' notice:`n$($run.StdOut)"
+    Assert-True ($run.StdOut -match '\[UP-TO-DATE\] Document\.Zakaz') "no up-to-date notice:`n$($run.StdOut)"
     $entries = @(Get-ChildObjectEntries (Join-Path $ws.Ext 'Configuration.xml') | Where-Object { $_ -eq 'Document:Zakaz' })
     Assert-Equal 1 $entries.Count 'Document.Zakaz entries in the extension ChildObjects'
     # -Module on a re-borrow: the module file and its PropertyState, the own attribute stays.

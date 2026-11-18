@@ -1,4 +1,4 @@
-﻿# db-create v1.21 — Create 1C information base
+﻿# db-create v1.25 — Create 1C information base
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
 #   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
@@ -153,6 +153,26 @@ function Get-ProjectExtraArgs {
         $dir = $parent
     }
     return @()
+}
+
+function ConvertTo-QuotedIfNeeded {
+    # Extra arguments come from the caller unquoted; the 1cv8 command line is joined
+    # verbatim, so a token with a space needs quotes of its own. Без кавычек платформа молча
+    # режет значение по пробелу (замер 2026-11-10: «/Out C:\a b\x.txt» пишет лог в «C:\a»).
+    param([string]$Token)
+    if ($Token -and ($Token.Contains(' ') -or $Token.Contains("`t")) -and -not $Token.Contains('"')) {
+        return '"' + $Token + '"'
+    }
+    return $Token
+}
+
+function ConvertTo-QuotedText {
+    # Free text (user, password, comment, label, list name) framed in quotes for the 1cv8
+    # command line. 1C reads a doubled quote inside the value as one; a lone quote ends the
+    # value, and the rest is dropped silently (замер 2026-11-14: «-comment» хранилища
+    # сохраняется до кавычки, exit 0). «\"» 1C не понимает.
+    param([string]$Value)
+    return '"' + $Value.Replace('"', '""') + '"'
 }
 
 function Assert-ExtraArgs {
@@ -743,7 +763,7 @@ try {
     # --- Add to list ---
     if ($AddToList) {
         if ($ListName) {
-            $arguments += "/AddToList", "`"$ListName`""
+            $arguments += "/AddToList", (ConvertTo-QuotedText $ListName)
         } else {
             $arguments += "/AddToList"
         }
@@ -753,7 +773,7 @@ try {
     $outFile = Join-Path $tempDir "create_log.txt"
     $arguments += "/Out", "`"$outFile`""
     $arguments += "/DisableStartupDialogs"
-    $arguments += $extraArgs
+    $arguments += @($extraArgs | ForEach-Object { ConvertTo-QuotedIfNeeded $_ })
 
     # --- Execute ---
     Write-Host "Running: 1cv8.exe $((Format-ArgsForDisplay $arguments $engine) -join ' ')"

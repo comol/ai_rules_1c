@@ -1,4 +1,4 @@
-﻿# epf-build v1.26 — Build external data processor or report (EPF/ERF) from XML sources
+﻿# epf-build v1.32 — Build external data processor or report (EPF/ERF) from XML sources
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
 #   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
@@ -118,7 +118,11 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 function Protect-Secrets {
     # Redact literal secret values from a display string (String.Replace is literal, not regex).
     param([string]$Text, [string[]]$Secrets)
-    foreach ($s in $Secrets) { if ($s) { $Text = $Text.Replace($s, '***') } }
+    # A secret with a quote reaches the command line doubled (ConvertTo-QuotedText), so both
+    # forms are redacted. Longest first: a shorter form replaced earlier could break a longer
+    # one that contains it and leave part of that secret visible. (No -Unique: it ignores case.)
+    $forms = @(foreach ($s in $Secrets) { if ($s) { $s; $s.Replace('"', '""') } }) | Sort-Object -Property Length -Descending
+    foreach ($f in $forms) { $Text = $Text.Replace($f, '***') }
     return $Text
 }
 
@@ -187,6 +191,26 @@ function Get-ProjectExtraArgs {
         $dir = $parent
     }
     return @()
+}
+
+function ConvertTo-QuotedIfNeeded {
+    # Extra arguments come from the caller unquoted; the 1cv8 command line is joined
+    # verbatim, so a token with a space needs quotes of its own. Без кавычек платформа молча
+    # режет значение по пробелу (замер 2026-11-10: «/Out C:\a b\x.txt» пишет лог в «C:\a»).
+    param([string]$Token)
+    if ($Token -and ($Token.Contains(' ') -or $Token.Contains("`t")) -and -not $Token.Contains('"')) {
+        return '"' + $Token + '"'
+    }
+    return $Token
+}
+
+function ConvertTo-QuotedText {
+    # Free text (user, password, comment, label, list name) framed in quotes for the 1cv8
+    # command line. 1C reads a doubled quote inside the value as one; a lone quote ends the
+    # value, and the rest is dropped silently (замер 2026-11-14: «-comment» хранилища
+    # сохраняется до кавычки, exit 0). «\"» 1C не понимает.
+    param([string]$Value)
+    return '"' + $Value.Replace('"', '""') + '"'
 }
 
 function Assert-ExtraArgs {
@@ -805,7 +829,7 @@ function Invoke-SourceCheck {
 	try {
 		$outFile = Join-Path $dir "check_log.txt"
 		$resultFile = Join-Path $dir "check_result.txt"
-		$a = @("DESIGNER", "/F", "`"$BasePath`"", "/CheckConfig") + $Flags + @("/Out", "`"$outFile`"", "/DumpResult", "`"$resultFile`"", "/DisableStartupDialogs") + $ExtraArgs
+		$a = @("DESIGNER", "/F", "`"$BasePath`"", "/CheckConfig") + $Flags + @("/Out", "`"$outFile`"", "/DumpResult", "`"$resultFile`"", "/DisableStartupDialogs") + @($ExtraArgs | ForEach-Object { ConvertTo-QuotedIfNeeded $_ })
 		Write-Host "Running: 1cv8.exe $((Format-ArgsForDisplay $a '1cv8') -join ' ')"
 		$res = Invoke-PlatformProcess $v8 $a -PreQuoted
 		$lines = @()
@@ -887,6 +911,21 @@ elseif ($checkList.Count -gt 0 -and $checkList -notcontains 'modules') {
     exit 1
 }
 $sourceDir = Split-Path $SourceFile -Parent
+# Запросный список проверочная копия проверяет запросом-константой, а без базы запрос сверить не с чем
+$objectSrcDir = Join-Path $sourceDir ([IO.Path]::GetFileNameWithoutExtension($SourceFile))
+$manualQueryLists = @()
+if (Test-Path -LiteralPath $objectSrcDir -PathType Container) {
+    foreach ($ff in (Get-ChildItem -LiteralPath $objectSrcDir -Filter "Form.xml" -Recurse -File)) {
+        foreach ($m in [regex]::Matches([System.IO.File]::ReadAllText($ff.FullName, [System.Text.Encoding]::UTF8), '(?s)<Attribute name="([^"]+)"(?:(?!</Attribute>).)*?<ManualQuery>true</ManualQuery>')) { $manualQueryLists += $m.Groups[1].Value }
+    }
+}
+
+function Write-ManualQueryHint([string]$PlatformText) {
+    if (-not $autoCreatedBase -or $manualQueryLists.Count -eq 0 -or -not $PlatformText) { return }
+    $listError = $PlatformText -match 'Неверно указана главная таблица'
+    foreach ($n in $manualQueryLists) { if ($PlatformText.Contains("Неверный путь к данным: `"$n.")) { $listError = $true } }
+    if ($listError) { Write-Host "[note] A form with a manual-query dynamic list cannot be built without an infobase: specify the database" -ForegroundColor Yellow }
+}
 
 # Выгрузка целевой конфигурации для проверки: явный -ConfigSrc, иначе configSrc базы из реестра.
 # Без неё обращения к общим модулям конфигурации проверка считает неопределёнными переменными.
@@ -1044,6 +1083,7 @@ try {
             Write-Host "Error building external data processor/report (code: $exitCode)" -ForegroundColor Red
         }
         Write-PlatformOutput $output
+        if ($exitCode -ne 0) { Write-ManualQueryHint ($output -join "`n") }
         exit $exitCode
     }
 
@@ -1057,8 +1097,8 @@ try {
         $arguments += "/F", "`"$InfoBasePath`""
     }
 
-    if ($UserName) { $arguments += "/N`"$UserName`"" }
-    if ($Password) { $arguments += "/P`"$Password`"" }
+    if ($UserName) { $arguments += ("/N" + (ConvertTo-QuotedText $UserName)) }
+    if ($Password) { $arguments += ("/P" + (ConvertTo-QuotedText $Password)) }
 
     $arguments += "/LoadExternalDataProcessorOrReportFromFiles", "`"$SourceFile`"", "`"$OutputFile`""
 
@@ -1069,7 +1109,7 @@ try {
     $resultFile = Join-Path $tempDir "batch_result.txt"
     $arguments += "/DumpResult", "`"$resultFile`""
     $arguments += "/DisableStartupDialogs"
-    $arguments += $extraArgs
+    $arguments += @($extraArgs | ForEach-Object { ConvertTo-QuotedIfNeeded $_ })
 
     # --- Execute ---
     Write-Host "Running: 1cv8.exe $(Protect-Secrets ((Format-ArgsForDisplay $arguments $engine) -join ' ') @($Password, $UserName))"
@@ -1101,6 +1141,7 @@ try {
         }
     }
     Write-PlatformOutput $__v8.Output
+    if ($exitCode -ne 0) { Write-ManualQueryHint "$logContent`n$($__v8.Output -join "`n")" }
 
     exit $exitCode
 

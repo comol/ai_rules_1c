@@ -1,4 +1,4 @@
-﻿# meta-edit v1.73 — Edit existing 1C metadata object XML
+﻿# meta-edit v1.77 — Edit existing 1C metadata object XML
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: add-form / add-template are refused before any mutation, for every key
 # spelling and across the whole definition, and point at form-add / add-template
@@ -49,6 +49,41 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+function ConvertTo-DslBool {
+	param($Value, [string]$Key, [bool]$Default)
+	if ($null -eq $Value) { return $Default }
+	if ($Value -is [bool]) { return $Value }
+	if ($Value -is [string]) {
+		$t = $Value.Trim().ToLowerInvariant()
+		if (@('true', 'да', 'истина', '1') -ccontains $t) { return $true }
+		if (@('false', 'нет', 'ложь', '0') -ccontains $t) { return $false }
+	} elseif ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+		if ($Value -eq 1) { return $true }
+		if ($Value -eq 0) { return $false }
+	}
+	$shown = if ($Value -is [string]) { '"' + $Value + '"' } else { "$Value" }
+	[Console]::Error.WriteLine("[ERROR] $Key = ${shown}: expected true or false")
+	exit 1
+}
+
+# Первый найденный ключ из $Keys (синонимы, без регистра) → ConvertTo-DslBool; не объект / нет ключа → $Default.
+function Get-DslBool {
+	param($Obj, [string[]]$Keys, [bool]$Default)
+	if ($null -eq $Obj -or $Obj -is [string] -or $Obj -is [ValueType]) { return $Default }
+	foreach ($k in $Keys) {
+		if ($Obj -is [System.Collections.IDictionary]) {
+			if ($Obj.Contains($k)) { return (ConvertTo-DslBool $Obj[$k] $k $Default) }
+		} elseif ($Obj.PSObject.Properties[$k]) {
+			return (ConvertTo-DslBool $Obj.PSObject.Properties[$k].Value $k $Default)
+		}
+	}
+	return $Default
+}
+
 # --- Разбор пользовательского JSON ---
 # Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
 # идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
@@ -57,6 +92,7 @@ $ErrorActionPreference = "Stop"
 # Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
 # вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
 # и одиночный объект (issue #136).
+
 function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
 	try {
 		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
@@ -688,7 +724,7 @@ $script:v8PlatformTypes = @("ValueTable","ValueTree","ValueList","ValueListType"
 # который является авторитетом. Расхождение держит tests/skills/check-type-synonyms.mjs.
 $script:typeSynonyms["время"] = "Time"
 $script:typeSynonyms["time"] = "Time"
-$script:typeSynonyms["base64binary"] = "ValueStorage"
+$script:typeSynonyms["base64binary"] = "BinaryData"
 $script:typeSynonyms["binarydata"] = "BinaryData"
 $script:typeSynonyms["двоичныеданные"] = "BinaryData"
 $script:typeSynonyms["хранилищезначений"] = "ValueStorage"
@@ -787,6 +823,61 @@ function Resolve-TypeStr {
 	return $typeStr
 }
 
+# Разбор примитивного типа DSL: Number / String / Date / DateTime / Time — с синонимами
+# (decimal, numeric, Число, Строка, Дата …), в любом регистре, с пробелами в скобках.
+# Тело общее у всех навыков-компиляторов (семья в check-inline-drift); умолчание для голого типа
+# зависит от места (хранимый реквизит — 10,0 и 10, СКД — без ограничения) и приходит аргументами.
+# Возврат: $null — не примитив (ссылки, Boolean, …); @{ Error } — база примитива узнана, а
+# параметры нет (вызывающий сообщает ошибку своим способом); иначе описание квалификаторов.
+function Parse-PrimitiveType {
+	param([string]$typeStr, [int]$defDigits, [int]$defFraction, [int]$defLength)
+	if ($typeStr -notmatch '^\s*([^\s(]+)\s*(\(.*)?$') { return $null }
+	$rest = if ($Matches.ContainsKey(2)) { $Matches[2] } else { '' }
+	$kind = switch -exact ($Matches[1].ToLowerInvariant()) {
+		'number' { 'Number' } 'decimal' { 'Number' } 'numeric' { 'Number' } 'число' { 'Number' }
+		'string' { 'String' } 'строка' { 'String' }
+		'date' { 'Date' } 'дата' { 'Date' } 'datetime' { 'DateTime' } 'датавремя' { 'DateTime' }
+		'time' { 'Time' } 'время' { 'Time' }
+		default { $null }
+	}
+	if (-not $kind) { return $null }
+	$bad = @{ Error = ("Invalid type '$typeStr'. Expected Number, Number(D), Number(D,F), Number(D,F,nonneg), " +
+		"String, String(N), String(N,fixed), Date, DateTime, Time") }
+	$parts = @()
+	if ($rest) {
+		if ($rest -notmatch '^\((.*)\)\s*$') { return $bad }
+		$parts = @($Matches[1] -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() })
+	}
+	if ($kind -eq 'Number') {
+		$sign = 'Any'
+		if ($parts.Count -gt 0 -and ($parts[-1] -eq 'nonneg' -or $parts[-1] -eq 'any')) {
+			if ($parts[-1] -eq 'nonneg') { $sign = 'Nonnegative' }
+			$parts = @(if ($parts.Count -gt 1) { $parts[0..($parts.Count - 2)] })
+		}
+		if ($parts.Count -gt 2) { return $bad }
+		foreach ($p in $parts) { if ($p -notmatch '^[0-9]{1,9}$') { return $bad } }
+		$d = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defDigits }
+		$f = if ($parts.Count -ge 2) { [int]$parts[1] } elseif ($parts.Count -eq 1) { 0 } else { $defFraction }
+		# Дробная часть у числа без ограничения (0,F) платформа молча обнуляет — это ошибка ввода
+		if ($d -gt 38 -or $f -gt $d) { return $bad }
+		return @{ Kind = 'Number'; Digits = $d; Fraction = $f; Sign = $sign }
+	}
+	if ($kind -eq 'String') {
+		$allowed = 'Variable'
+		if ($parts.Count -eq 2) {
+			if ($parts[1] -eq 'fixed' -or $parts[1] -eq 'fix') { $allowed = 'Fixed' }
+			elseif ($parts[1] -ne 'variable') { return $bad }
+		}
+		if ($parts.Count -gt 2 -or ($parts.Count -ge 1 -and $parts[0] -notmatch '^[0-9]{1,9}$')) { return $bad }
+		$len = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defLength }
+		# Фиксированную длину у неограниченной строки платформа молча снимает — это ошибка ввода
+		if ($allowed -eq 'Fixed' -and $len -eq 0) { return $bad }
+		return @{ Kind = 'String'; Length = $len; Allowed = $allowed }
+	}
+	if ($parts.Count -gt 0) { return $bad }
+	return @{ Kind = 'Date'; Fractions = $kind }
+}
+
 function Build-TypeContentXml {
 	param([string]$indent, [string]$typeStr)
 	if (-not $typeStr) { return "" }
@@ -811,69 +902,36 @@ function Build-TypeContentXml {
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
-	# ValueStorage
+	# ValueStorage (ХранилищеЗначения) — v8:ValueStorage. xs:base64Binary платформа читает как ДвоичныеДанные.
 	if ($typeStr -eq "ValueStorage") {
-		$sb.AppendLine("$indent<v8:Type>xs:base64Binary</v8:Type>") | Out-Null
+		$sb.AppendLine("$indent<v8:Type>v8:ValueStorage</v8:Type>") | Out-Null
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
-	# String or String(N)
-	if ($typeStr -match '^String(\((\d+)\))?$') {
-		$len = if ($Matches[2]) { $Matches[2] } else { "10" }
-		$sb.AppendLine("$indent<v8:Type>xs:string</v8:Type>") | Out-Null
-		$sb.AppendLine("$indent<v8:StringQualifiers>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:Length>$len</v8:Length>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:AllowedLength>Variable</v8:AllowedLength>") | Out-Null
-		$sb.AppendLine("$indent</v8:StringQualifiers>") | Out-Null
-		return $sb.ToString().TrimEnd("`r","`n")
-	}
-
-	# Number(D,F) or Number(D,F,nonneg)
-	if ($typeStr -match '^Number\((\d+),(\d+)(,nonneg)?\)$') {
-		$digits = $Matches[1]; $fraction = $Matches[2]
-		$sign = if ($Matches[3]) { "Nonnegative" } else { "Any" }
-		$sb.AppendLine("$indent<v8:Type>xs:decimal</v8:Type>") | Out-Null
-		$sb.AppendLine("$indent<v8:NumberQualifiers>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:Digits>$digits</v8:Digits>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:FractionDigits>$fraction</v8:FractionDigits>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:AllowedSign>$sign</v8:AllowedSign>") | Out-Null
-		$sb.AppendLine("$indent</v8:NumberQualifiers>") | Out-Null
-		return $sb.ToString().TrimEnd("`r","`n")
-	}
-
-	# Number without params → Number(10,0)
-	if ($typeStr -eq "Number") {
-		$sb.AppendLine("$indent<v8:Type>xs:decimal</v8:Type>") | Out-Null
-		$sb.AppendLine("$indent<v8:NumberQualifiers>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:Digits>10</v8:Digits>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:FractionDigits>0</v8:FractionDigits>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:AllowedSign>Any</v8:AllowedSign>") | Out-Null
-		$sb.AppendLine("$indent</v8:NumberQualifiers>") | Out-Null
-		return $sb.ToString().TrimEnd("`r","`n")
-	}
-
-	# Date / DateTime
-	if ($typeStr -eq "Date") {
-		$sb.AppendLine("$indent<v8:Type>xs:dateTime</v8:Type>") | Out-Null
-		$sb.AppendLine("$indent<v8:DateQualifiers>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:DateFractions>Date</v8:DateFractions>") | Out-Null
-		$sb.AppendLine("$indent</v8:DateQualifiers>") | Out-Null
-		return $sb.ToString().TrimEnd("`r","`n")
-	}
-	if ($typeStr -eq "DateTime") {
-		$sb.AppendLine("$indent<v8:Type>xs:dateTime</v8:Type>") | Out-Null
-		$sb.AppendLine("$indent<v8:DateQualifiers>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:DateFractions>DateTime</v8:DateFractions>") | Out-Null
-		$sb.AppendLine("$indent</v8:DateQualifiers>") | Out-Null
-		return $sb.ToString().TrimEnd("`r","`n")
-	}
-
-	# Time — третья доля даты, наравне с Date/DateTime.
-	if ($typeStr -eq "Time") {
-		$sb.AppendLine("$indent<v8:Type>xs:dateTime</v8:Type>") | Out-Null
-		$sb.AppendLine("$indent<v8:DateQualifiers>") | Out-Null
-		$sb.AppendLine("$indent`t<v8:DateFractions>Time</v8:DateFractions>") | Out-Null
-		$sb.AppendLine("$indent</v8:DateQualifiers>") | Out-Null
+	# Примитивы: String / Number / Date / DateTime / Time. Голый тип хранимого реквизита — String(10)
+	# и Number(10,0), как в meta-compile.
+	$prim = Parse-PrimitiveType $typeStr 10 0 10
+	if ($prim) {
+		if ($prim.Error) { Write-Error $prim.Error; exit 1 }
+		if ($prim.Kind -eq 'String') {
+			$sb.AppendLine("$indent<v8:Type>xs:string</v8:Type>") | Out-Null
+			$sb.AppendLine("$indent<v8:StringQualifiers>") | Out-Null
+			$sb.AppendLine("$indent`t<v8:Length>$($prim.Length)</v8:Length>") | Out-Null
+			$sb.AppendLine("$indent`t<v8:AllowedLength>$($prim.Allowed)</v8:AllowedLength>") | Out-Null
+			$sb.AppendLine("$indent</v8:StringQualifiers>") | Out-Null
+		} elseif ($prim.Kind -eq 'Number') {
+			$sb.AppendLine("$indent<v8:Type>xs:decimal</v8:Type>") | Out-Null
+			$sb.AppendLine("$indent<v8:NumberQualifiers>") | Out-Null
+			$sb.AppendLine("$indent`t<v8:Digits>$($prim.Digits)</v8:Digits>") | Out-Null
+			$sb.AppendLine("$indent`t<v8:FractionDigits>$($prim.Fraction)</v8:FractionDigits>") | Out-Null
+			$sb.AppendLine("$indent`t<v8:AllowedSign>$($prim.Sign)</v8:AllowedSign>") | Out-Null
+			$sb.AppendLine("$indent</v8:NumberQualifiers>") | Out-Null
+		} else {
+			$sb.AppendLine("$indent<v8:Type>xs:dateTime</v8:Type>") | Out-Null
+			$sb.AppendLine("$indent<v8:DateQualifiers>") | Out-Null
+			$sb.AppendLine("$indent`t<v8:DateFractions>$($prim.Fractions)</v8:DateFractions>") | Out-Null
+			$sb.AppendLine("$indent</v8:DateQualifiers>") | Out-Null
+		}
 		return $sb.ToString().TrimEnd("`r","`n")
 	}
 
@@ -1194,6 +1252,15 @@ function Collapse-ChildObjectsIfEmpty {
 # Section 6: Fragment builders
 # ============================================================
 
+# Флаг nonneg — то же, что хвост ,nonneg у числового типа; к нечисловому типу не применяется.
+function Add-NonnegFlag {
+	param([string]$typeStr, $flags)
+	if (-not $typeStr -or -not (@($flags) -contains 'nonneg')) { return $typeStr }
+	$prim = Parse-PrimitiveType (Resolve-TypeStr $typeStr) 10 0 10
+	if ($prim -and $prim.Kind -eq 'Number') { return "Number($($prim.Digits),$($prim.Fraction),nonneg)" }
+	return $typeStr
+}
+
 function Parse-AttributeShorthand {
 	param($val)
 
@@ -1225,6 +1292,7 @@ function Parse-AttributeShorthand {
 		if ($colonParts.Count -gt 1) {
 			$parsed.type = $colonParts[1].Trim()
 		}
+		$parsed.type = Add-NonnegFlag $parsed.type $parsed.flags
 		$parsed.synonym = Split-CamelCase $parsed.name
 		return $parsed
 	}
@@ -1243,10 +1311,11 @@ function Parse-AttributeShorthand {
 		before      = if ($val.before) { "$($val.before)" } else { "" }
 		# Поле таблицы внешнего источника (контекст eds-field).
 		nameInDataSource = if ($val.nameInDataSource) { "$($val.nameInDataSource)" } else { "" }
-		readOnly    = if ($val.readOnly -eq $true) { $true } else { $false }
-		allowNull   = if ($val.allowNull -eq $true) { $true } else { $false }
+		readOnly    = if ((Get-DslBool $val @('readOnly') $false)) { $true } else { $false }
+		allowNull   = if ((Get-DslBool $val @('allowNull') $false)) { $true } else { $false }
 	}
 	# Map flags to properties
+	$result.type = Add-NonnegFlag $result.type $result.flags
 	if ($result.flags -contains "req" -and -not $result.fillChecking) {
 		$result.fillChecking = "ShowError"
 	}
@@ -1422,9 +1491,9 @@ function Build-AttributeFragment {
 		$sb.AppendLine("$indent`t`t<ChoiceForm/>") | Out-Null
 		$nids = if ($parsed.nameInDataSource) { "$($parsed.nameInDataSource)" } else { $parsed.name }
 		$sb.AppendLine("$indent`t`t<NameInDataSource>$(Esc-XmlText $nids)</NameInDataSource>") | Out-Null
-		$ro = if ($parsed.readOnly -eq $true -or $parsed.flags -contains "readonly") { "true" } else { "false" }
+		$ro = if ((Get-DslBool $parsed @('readOnly') $false) -or $parsed.flags -contains "readonly") { "true" } else { "false" }
 		$sb.AppendLine("$indent`t`t<ReadOnly>$ro</ReadOnly>") | Out-Null
-		$an = if ($parsed.allowNull -eq $true -or $parsed.flags -contains "nullable") { "true" } else { "false" }
+		$an = if ((Get-DslBool $parsed @('allowNull') $false) -or $parsed.flags -contains "nullable") { "true" } else { "false" }
 		$sb.AppendLine("$indent`t`t<AllowNull>$an</AllowNull>") | Out-Null
 	}
 
@@ -2071,7 +2140,7 @@ function Emit-EdsFunction {
 	} else {
 		$expr = if ($val.expression) { "$($val.expression)" } elseif ($val.expressionInDataSource) { "$($val.expressionInDataSource)" } else { "" }
 		$returns = if ($val.returns) { "$($val.returns)" } elseif ($val.returnType) { "$($val.returnType)" } else { "" }
-		if ($null -ne $val.returnValue) { $returnValue = ($val.returnValue -eq $true) }
+		if ($null -ne $val.returnValue) { $returnValue = ((Get-DslBool $val @('returnValue') $false)) }
 		$fnSynonym = $val.synonym
 		$fnComment = if ($val.comment) { "$($val.comment)" } else { "" }
 	}
@@ -2129,8 +2198,8 @@ function Emit-EdsTableProperties {
 	else { X "$i<UnfilledParentValue xsi:nil=`"true`"/>" }
 	if ($charXml) { X $charXml.TrimEnd("`r", "`n") } else { X "$i<Characteristics/>" }
 
-	X "$i<UseStandardCommands>$(if ($t -and $t.useStandardCommands -eq $false) { 'false' } else { 'true' })</UseStandardCommands>"
-	X "$i<QuickChoice>$(if ($t -and $t.quickChoice -eq $true) { 'true' } else { 'false' })</QuickChoice>"
+	X "$i<UseStandardCommands>$(if ($t -and (-not (Get-DslBool $t @('useStandardCommands') $true))) { 'false' } else { 'true' })</UseStandardCommands>"
+	X "$i<QuickChoice>$(if ($t -and (Get-DslBool $t @('quickChoice') $false)) { 'true' } else { 'false' })</QuickChoice>"
 	# Ввод по строке: ключа нет → выводим из поля представления (так делает платформа при загрузке).
 	# Явный список, в том числе пустой, уважаем как есть — отсюда presence-aware проверка.
 	$ibsGiven = ($t -and $t.PSObject -and $t.PSObject.Properties -and ($t.PSObject.Properties.Name -contains 'inputByString'))
@@ -2149,8 +2218,8 @@ function Emit-EdsTableProperties {
 		$key = $presTag.Substring(0,1).ToLower() + $presTag.Substring(1)
 		Emit-MLText $i $presTag $(if ($t) { $t.$key } else { $null })
 	}
-	X "$i<IncludeHelpInContents>$(if ($t -and $t.includeHelpInContents -eq $true) { 'true' } else { 'false' })</IncludeHelpInContents>"
-	X "$i<ReadOnly>$(if ($t -and $t.readOnly -eq $true) { 'true' } else { 'false' })</ReadOnly>"
+	X "$i<IncludeHelpInContents>$(if ($t -and (Get-DslBool $t @('includeHelpInContents') $false)) { 'true' } else { 'false' })</IncludeHelpInContents>"
+	X "$i<ReadOnly>$(if ($t -and (Get-DslBool $t @('readOnly') $false)) { 'true' } else { 'false' })</ReadOnly>"
 	X "$i<TransactionsIsolationLevel>$(if ($t -and $t.transactionsIsolationLevel) { Normalize-EnumValue "TransactionsIsolationLevel" "$($t.transactionsIsolationLevel)" } else { 'Auto' })</TransactionsIsolationLevel>"
 	Emit-EdsFieldRefScalar $i "DataVersionField" $(if ($t) { $t.dataVersionField } else { $null }) $srcName $tableName
 	X "$i<EditType>$(if ($x = Get-EnumField $t 'editType' 'EditType') { $x } else { 'InDialog' })</EditType>"
@@ -3750,15 +3819,18 @@ function Esc-XmlText {
 	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
 }
 
-function Get-FillTypeCategory([string]$typeStr) {
-	if (-not $typeStr) { return 'String' }
-	if ($typeStr -match '\+') { return 'Other' }
+function Get-FillTypeCategory {
+	param([string]$typeStr)
+	if (-not $typeStr) { return 'String' }        # реквизит без типа → неквалифиц. строка
+	if ($typeStr -match '\+') { return 'Other' }  # составной тип → nil-дефолт
 	$t = Resolve-TypeStr $typeStr
 	if ($t -match '^Boolean$')          { return 'Boolean' }
-	if ($t -match '^String(\(|$)')      { return 'String' }
-	if ($t -match '^Number(\(|$)')      { return 'Number' }
-	if ($t -match '^(Date|DateTime)$')  { return 'Date' }
-	return 'Other'
+	$prim = Parse-PrimitiveType $t 10 0 10
+	if ($prim -and -not $prim.Error) {
+		if ($prim.Kind -ne 'Date') { return $prim.Kind }
+		if ($prim.Fractions -ne 'Time') { return 'Date' }
+	}
+	return 'Other'                                 # ссылки, TypeSet, ValueStorage, … → nil-дефолт
 }
 
 function Expand-FillShortRef([string]$s, [string]$typeStr) {
@@ -3823,8 +3895,8 @@ function Build-FillValueExplicitXml([string]$typeStr, $spec) {
 	if ($null -eq $spec) { return "<FillValue xsi:nil=`"true`"/>" }
 	if ($spec -is [bool]) { return "<FillValue xsi:type=`"xs:boolean`">$(if ($spec) { 'true' } else { 'false' })</FillValue>" }
 	if ($spec -is [int] -or $spec -is [long] -or $spec -is [double] -or $spec -is [decimal]) { return "<FillValue xsi:type=`"xs:decimal`">$(Format-FillNum $spec)</FillValue>" }
-	if ((Get-ChElProp $spec @('nil')) -eq $true) { return "<FillValue xsi:nil=`"true`"/>" }
-	if ((Get-ChElProp $spec @('emptyRef','пустаяссылка')) -eq $true) { return "<FillValue xsi:type=`"xr:DesignTimeRef`"/>" }
+	if (ConvertTo-DslBool (Get-ChElProp $spec @('nil')) 'nil' $false) { return "<FillValue xsi:nil=`"true`"/>" }
+	if (ConvertTo-DslBool (Get-ChElProp $spec @('emptyRef','пустаяссылка')) 'emptyRef' $false) { return "<FillValue xsi:type=`"xr:DesignTimeRef`"/>" }
 	$r = Resolve-FillValueSpec "$spec" $typeStr
 	if ($r.Text -eq '' -and $r.XsiType -eq 'xs:string') { return "<FillValue xsi:type=`"xs:string`"/>" }
 	return "<FillValue xsi:type=`"$($r.XsiType)`">$(Esc-XmlText $r.Text)</FillValue>"
@@ -4061,7 +4133,7 @@ function Resolve-PredefItem($val) {
 	$hasDesc = $val.PSObject.Properties['description'] -or $val.PSObject.Properties['наименование']
 	$descV = & $gv $val @('description','наименование')
 	$desc = if ($hasDesc) { "$descV" } else { Split-CamelCase $name }
-	$isFolder = ((& $gv $val @('isFolder','группа')) -eq $true)
+	$isFolder = (ConvertTo-DslBool (& $gv $val @('isFolder','группа')) 'isFolder' $false)
 	$subs = & $gv $val @('childItems','подчиненные')
 	return @{ name = $name; code = $code; desc = $desc; isFolder = $isFolder; children = @(if ($subs) { @($subs) } else { @() }) }
 }

@@ -55,6 +55,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/sc
 | `Object` | What to borrow (required), batch via `;;` |
 | `Module` | Empty modules for a borrowed **object** item: `ObjectModule`, `ManagerModule`, `RecordSetModule`, `ValueManagerModule` (comma-separated) or `None`. `CommonModule`, `HTTPService` and `WebService` get their single `Module` without it (`None` opts out) |
 | `BorrowMainAttribute` | Only with a form in `Object`; the value is required: `Form` / `All` / `Only` — see *Main attribute* below |
+| `Check` | Report how already borrowed objects differ from the source. Not together with `Actualize`, `Module` or `BorrowMainAttribute`. `Object` may be empty — then the whole extension |
+| `Actualize` | The same comparison, and apply the edits that keep the existing uuid (additions and overrides stay). Same exclusions as `Check` |
 
 Pass `ConfigPath` explicitly; to find it, take `EXPORT_PATH` from `.dev.env` (the configuration XML export of the project). Hand the same path to `cfe-validate -ConfigPath` afterwards.
 
@@ -72,9 +74,11 @@ Batch: `"Catalog.X ;; CommonModule.Y ;; Document.Z.Attribute.W"`. Every item is 
 
 Creates XML files with `ObjectBelonging=Adopted` and `ExtendedConfigurationObject`, adds to ChildObjects.
 
-### Re-borrow never rewrites
+### Re-borrow keeps the uuid and updates declared properties
 
-An object that is already in the extension is **not rewritten** (`Already borrowed: … — XML сохранён без изменений`): its own attributes, borrowed subobjects, registered forms and property states survive. Only what is missing is added — a module asked for with `-Module`, attributes a form needs, columns of an already borrowed tabular section (merged into **that** section, never into another `ChildObjects`). Module files and existing `Module.bsl` files are never overwritten. Re-running a call is safe; it is also the way to add a module to an object borrowed earlier.
+Repeating `-Object` (or `-Actualize` with no `-Object`) compares each borrowed object with the source. The link `ExtendedConfigurationObject` and the properties the extension already declares are brought into line **in place, on the same uuid**. A property the extension does not declare is not added. Own attributes, overrides (`Extended`) and module files stay. Rebinding to a source object with a different uuid is reported and not done. `-Check` prints the same report and writes nothing. `-Check` and `-Actualize` cannot be combined with each other or with `-Module` / `-BorrowMainAttribute`.
+
+What is still only added, not rewritten: a module asked for with `-Module`, attributes a form needs, columns of an already borrowed tabular section (merged into **that** section). An existing `Module.bsl` is never overwritten. A missing style or type export still fails the call (local). Unresolved elements are listed; the rest is applied and the exit code stays 0 unless a required source file is missing.
 
 ### What the borrowed XML looks like (Configurator, formats 2.20 / 2.21)
 

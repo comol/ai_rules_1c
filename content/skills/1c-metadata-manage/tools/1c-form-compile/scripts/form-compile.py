@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# form-compile v1.224 — Compile 1C managed form from JSON or object metadata
+# form-compile v1.244 — Compile 1C managed form from JSON or object metadata
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, synced at
-#         2e75b0f483eb020e9f09562d1a7be1982bc5ac6e — the same upstream state the
+#         4fc37e1f992057847228a69837337bd3c141c059 — the same upstream state the
 #         vendored form-compile.ps1 was synced from.
 # Licence: MIT, Copyright (c) 2025-2026 Nick Shirokov. Full notice and permission
 #          text: ../../../NOTICE.md (installed as
@@ -10,10 +10,10 @@
 #        support guard reads `.dev.env` and fails closed. `events`, `on` +
 #        `handlers` and a standalone `handlers` map are one normalization with a
 #        single result (upstream drops a standalone `handlers` map silently); two
-#        spellings at once, a `handlers` key absent from `on` and an event name
-#        the platform does not have at all (in no element's event catalog — a
-#        misspelling such as `OnEndEdit`, or the obsolete `Drop`) are refused with
-#        exit 1 before any XML is written. Handler suffixes come from upstream's
+#        spellings at once and a `handlers` key absent from `on` are refused with
+#        exit 1 before any XML is written. An event the element does not have is
+#        upstream's report: an error on an 8.3 form (the form is not written) and
+#        a warning on 8.5. Handler suffixes come from upstream's
 #        event catalog (`OnEditEnd` → `ПриОкончанииРедактирования`, `Selection` →
 #        `Выбор`, `DragEnd` → `ОкончаниеПеретаскивания`), the same table as in
 #        form-compile.ps1.
@@ -33,6 +33,42 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
 from lxml import etree
+
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+def to_dsl_bool(value, key, default):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        t = value.strip().lower()
+        if t in ('true', 'да', 'истина', '1'):
+            return True
+        if t in ('false', 'нет', 'ложь', '0'):
+            return False
+    elif isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    shown = f'"{value}"' if isinstance(value, str) else f"{value}"
+    print(f"[ERROR] {key} = {shown}: expected true or false", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_dsl_bool(obj, keys, default):
+    """Первый найденный ключ из keys (синонимы, без регистра) → to_dsl_bool; не dict / нет ключа → default."""
+    if not isinstance(obj, dict):
+        return default
+    for k in keys:
+        for actual in obj:
+            if isinstance(actual, str) and actual.lower() == k.lower():
+                return to_dsl_bool(obj[actual], k, default)
+    return default
+
 
 # Регистронезависимый ввод — паритет с PS1: в PowerShell имена параметров и [ValidateSet]
 # регистр не различают, в argparse совпадение точное.
@@ -473,11 +509,17 @@ def parse_object_meta(object_path):
             f_syn = f_syn_node.text if f_syn_node is not None and f_syn_node.text else f_name
             f_type_node = _et_find(fp, 'md:Type')
             f_type = extract_type(f_type_node)
+            f_len_node = _et_find(fp, 'md:Type/v8:StringQualifiers/v8:Length')
+            f_fill_node = _et_find(fp, 'md:FillChecking')
+            f_fts_node = _et_find(fp, 'md:FullTextSearch')
             result.append({
                 'Name': f_name,
                 'Synonym': f_syn,
                 'Type': f_type,
                 'IsRef': is_ref_type(f_type),
+                'StringLength': int(f_len_node.text) if f_len_node is not None and f_len_node.text else 0,
+                'FillChecking': f_fill_node.text if f_fill_node is not None and f_fill_node.text else '',
+                'FullTextSearch': f_fts_node.text if f_fts_node is not None and f_fts_node.text else '',
             })
         return result
 
@@ -605,7 +647,7 @@ def load_preset(preset_name, script_dir, out_path_resolved):
             'additional': {'position': 'page', 'layout': '2col', 'bspGroup': True},
             'fieldDefaults': {'ref': {'choiceButton': True}, 'boolean': {'element': 'check'}},
             'commandBar': 'auto',
-            'properties': {'autoTitle': False, 'autoTime': 'CurrentOrLast', 'usePostingMode': 'Auto', 'repostOnWrite': True},
+            'properties': {'autoTime': 'CurrentOrLast', 'usePostingMode': 'Auto', 'repostOnWrite': True},
         },
         'document.list': {
             'columns': 'all', 'columnType': 'labelField', 'hiddenRef': True,
@@ -747,18 +789,341 @@ def new_field_element(attr_name, data_path, attr_type, field_defaults, extra_pro
     return el
 
 
+# --- Field rules from preset section "fields": skip, roles, props ---
+# Словари правил — объекты с ключами (пресет проекта меняет одно правило через deep merge).
+# Порядок обхода — по отсортированным ключам (ординально), как в PS-каноне.
+
+def get_fields_config(preset_data):
+    v = preset_data.get('fields')
+    return v if isinstance(v, dict) else {}
+
+
+def get_cfg_section(cfg, key):
+    if isinstance(cfg, dict):
+        v = _ci_get(cfg, key)
+        if isinstance(v, dict):
+            return v
+    return {}
+
+
+def _ci_get(d, key):
+    """\u041f\u043e\u0438\u0441\u043a \u043a\u043b\u044e\u0447\u0430 \u0431\u0435\u0437 \u0443\u0447\u0451\u0442\u0430 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430 \u2014 \u043a\u0430\u043a \u0432 \u0445\u044d\u0448\u0442\u0430\u0431\u043b\u0438\u0446\u0435 PS."""
+    if not isinstance(d, dict):
+        return None
+    if key in d:
+        return d[key]
+    kl = key.lower()
+    for k in d:
+        if isinstance(k, str) and k.lower() == kl:
+            return d[k]
+    return None
+
+
+def get_sorted_keys(d):
+    return sorted(str(k) for k in d.keys())
+
+
+def get_field_type_class(f):
+    t = str(f.get('Type', ''))
+    if '|' in t:
+        return 'composite'
+    if re.search(r'EnumRef\.', t, re.I):
+        return 'enum'
+    if re.search(r'Ref\.', t, re.I):
+        return 'ref'
+    if t.lower() == 'xs:string':
+        ln = f.get('StringLength')
+        ln = int(ln) if ln is not None else 0
+        if ln == 0:
+            return 'stringUnlimited'
+        if ln <= 25:
+            return 'string25'
+        return 'string'
+    if t.lower() == 'xs:decimal':
+        return 'number'
+    if t.lower() == 'xs:datetime':
+        return 'date'
+    if t.lower() == 'xs:boolean':
+        return 'boolean'
+    return 'other'
+
+
+def find_matching_rule(rules, text):
+    for k in get_sorted_keys(rules):
+        rx = rules[k]
+        if isinstance(rx, str) and rx != '' and re.search(rx, text, re.I):
+            return k
+    return None
+
+
+def get_skip_reason(f, cfg, kind):
+    skip = get_cfg_section(cfg, 'skip')
+    r = find_matching_rule(get_cfg_section(skip, kind), f['Name'])
+    if r:
+        return r
+    r = find_matching_rule(get_cfg_section(skip, 'types'), str(f.get('Type', '')))
+    if r:
+        return r
+    return None
+
+
+def get_conditional_skips(ts, cfg):
+    res = {}
+    cond = get_cfg_section(get_cfg_section(cfg, 'skip'), 'columnsIfPresent')
+    names = [c['Name'] for c in ts['Columns']]
+    for k in get_sorted_keys(cond):
+        c = cond[k]
+        if isinstance(c, dict) and c.get('column') and c.get('when') and _ps_contains(names, c['when']):
+            res[str(c['column']).lower()] = k
+    return res
+
+
+def _ps_contains(lst, value):
+    """\u041e\u043f\u0435\u0440\u0430\u0442\u043e\u0440 -contains PS: \u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435 \u0441\u0442\u0440\u043e\u043a \u0431\u0435\u0437 \u0443\u0447\u0451\u0442\u0430 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430."""
+    vl = str(value).lower()
+    return any(str(x).lower() == vl for x in lst)
+
+
+def resolve_field_role(f, cfg):
+    roles = get_cfg_section(cfg, 'roles')
+    keys = get_sorted_keys(roles)
+    for by in ('names', 'types'):
+        text = str(f['Name']) if by == 'names' else str(f.get('Type', ''))
+        best = None
+        best_pr = None
+        for k in keys:
+            role = roles[k]
+            if not isinstance(role, dict):
+                continue
+            rx = _ci_get(role, by)
+            if not isinstance(rx, str) or rx == '' or not re.search(rx, text, re.I):
+                continue
+            pr = _ci_get(role, 'priority')
+            pr = int(pr) if pr is not None else 0
+            if best_pr is None or pr > best_pr:
+                best = k
+                best_pr = pr
+        if best:
+            return best
+    return None
+
+
+def get_field_props(f, cfg, section, name_override=''):
+    res = OrderedDict()
+    ps = get_cfg_section(cfg, section)
+    by_type = get_cfg_section(ps, 'byType')
+    cls = get_field_type_class(f)
+    bt = _ci_get(by_type, cls)
+    if isinstance(bt, dict):
+        for k in get_sorted_keys(bt):
+            res[k] = bt[k]
+    nm = name_override if name_override else str(f['Name'])
+    bn = _ci_get(get_cfg_section(ps, 'byName'), nm)
+    if isinstance(bn, dict):
+        for k in get_sorted_keys(bn):
+            res[k] = bn[k]
+    return res
+
+
+def merge_props(el, props):
+    if props:
+        for k in props:
+            el[k] = props[k]
+    return el
+
+
+def build_tabular_columns(ts, cfg, fd, line_number, skipped):
+    cols = []
+    if line_number:
+        ln = OrderedDict([('labelField', f"{ts['Name']}\u041d\u043e\u043c\u0435\u0440\u0421\u0442\u0440\u043e\u043a\u0438"), ('path', f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}.LineNumber")])
+        cols.append(merge_props(ln, get_field_props({'Name': '\u041d\u043e\u043c\u0435\u0440\u0421\u0442\u0440\u043e\u043a\u0438', 'Type': 'xs:decimal'}, cfg, 'columnProps', '')))
+    cond = get_conditional_skips(ts, cfg)
+    for col in ts['Columns']:
+        if not is_displayable_type(col['Type']):
+            continue
+        why = get_skip_reason(col, cfg, 'columns')
+        if not why and col['Name'].lower() in cond:
+            why = cond[col['Name'].lower()]
+        if why:
+            skipped.append(f"{ts['Name']}.{col['Name']} ({why})")
+            continue
+        el = new_field_element(f"{ts['Name']}{col['Name']}", f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}.{col['Name']}", col['Type'], fd, {})
+        cols.append(merge_props(el, get_field_props(col, cfg, 'columnProps', '')))
+    return set_columns_after(ts, cols, cfg)
+
+
+# Порядок колонок (fields.columnsAfter): колонка встаёт сразу после указанной, если обе выведены
+def set_columns_after(ts, cols, cfg):
+    rules = get_cfg_section(cfg, 'columnsAfter')
+    prefix = '\u041e\u0431\u044a\u0435\u043a\u0442.' + ts['Name'] + '.'
+    for k in get_sorted_keys(rules):
+        r = rules[k]
+        if not isinstance(r, dict) or not _ci_get(r, 'column') or not _ci_get(r, 'after'):
+            continue
+        ci = ai = -1
+        for i, el in enumerate(cols):
+            pth = str(el.get('path', ''))
+            if not pth.startswith(prefix):
+                continue
+            n = pth[len(prefix):]
+            if ci < 0 and re.search(_ci_get(r, 'column'), n, re.I):
+                ci = i
+            if ai < 0 and re.search(_ci_get(r, 'after'), n, re.I):
+                ai = i
+        if ci < 0 or ai < 0 or ci == ai + 1:
+            continue
+        moved = cols[ci]
+        rest = cols[:ci] + cols[ci + 1:]
+        at = ai - 1 if ci < ai else ai
+        cols = rest[:at + 1] + [moved] + rest[at + 1:]
+    return cols
+
+
+def get_visible_tabular_sections(meta, cfg, p, skipped):
+    legacy = []
+    ts_cfg = p.get('tabularSections') if isinstance(p, dict) else None
+    if ts_cfg and ts_cfg.get('exclude'):
+        legacy = list(ts_cfg['exclude'])
+    ts_rules = get_cfg_section(get_cfg_section(cfg, 'skip'), 'tabularSections')
+    res = []
+    for ts in meta['TabularSections']:
+        why = None
+        if _ps_contains(legacy, ts['Name']):
+            why = 'exclude'
+        if not why:
+            why = find_matching_rule(ts_rules, ts['Name'])
+        if why:
+            skipped.append(f"{ts['Name']} ({why})")
+            continue
+        res.append(ts)
+    return res
+
+
+def get_unique_element_name(base, used):
+    n = base
+    i = 1
+    while n.lower() in used:
+        n = f'{base}{i}'
+        i += 1
+    used[n.lower()] = True
+    return n
+
+
+def _used_names(meta):
+    used = {}
+    for a in meta['Attributes']:
+        used[a['Name'].lower()] = True
+    for ts in meta['TabularSections']:
+        used[ts['Name'].lower()] = True
+        for c in ts['Columns']:
+            used[f"{ts['Name']}{c['Name']}".lower()] = True
+    return used
+
+
+def write_from_object_report(skipped, placed):
+    if skipped:
+        print(f"[from-object] skipped: {', '.join(skipped)}")
+    for z in ('top', 'header.left', 'header.right', 'main.bottom', 'additional.left', 'additional.right', 'footer'):
+        if placed.get(z):
+            print(f"[from-object] {z}: {', '.join(placed[z])}")
+
+
+# Колонки списка в режиме "auto": реквизиты с ролью list:true и обязательные, в порядке метаданных, до maxColumns
+def select_list_attributes(meta, p, cfg, reserved):
+    mode = p.get('columns', 'all') if isinstance(p, dict) else 'all'
+    res = []
+    roles = get_cfg_section(cfg, 'roles')
+    for attr in meta['Attributes']:
+        if not is_displayable_type(attr['Type']):
+            continue
+        if isinstance(mode, str) and mode.lower() == 'all':
+            res.append(attr)
+            continue
+        if isinstance(mode, list):
+            if _ps_contains(mode, attr['Name']):
+                res.append(attr)
+            continue
+        if get_skip_reason(attr, cfg, 'attributes'):
+            continue
+        role = resolve_field_role(attr, cfg)
+        in_list = (role and _ci_get(roles[role], 'list') is True) or (str(attr.get('FillChecking', '')).lower() == 'showerror')
+        if in_list:
+            res.append(attr)
+    if isinstance(mode, str) and mode.lower() == 'auto':
+        # Что оставить: сначала колонки с ролью, затем обязательные (порядок метаданных); предел по числу
+        order_of = {}
+        with_role, required = [], []
+        for attr in res:
+            role = resolve_field_role(attr, cfg)
+            lo = _ci_get(roles[role], 'listOrder') if role else None
+            order_of[attr['Name']] = int(lo) if lo is not None else 50
+            if role and _ci_get(roles[role], 'list') is True:
+                with_role.append(attr)
+            else:
+                required.append(attr)
+        res = with_role + required
+        mx = int(p['maxColumns']) - reserved if p.get('maxColumns') is not None else 999
+        if mx < 0:
+            mx = 0
+        res = res[:mx]
+        # В каком порядке показать: по listOrder роли (по умолчанию 50), устойчиво по метаданным
+        kept = {a['Name'] for a in res}
+        res = sorted([a for a in meta['Attributes'] if a['Name'] in kept], key=lambda a: order_of[a['Name']])
+    return res
+
+
+def set_list_column_props(columns, cfg):
+    """Свойства колонок списка по имени колонки (раздел fields.listProps)."""
+    for c in columns:
+        merge_props(c, get_field_props({'Name': str(c.get('labelField', '')), 'Type': ''}, cfg, 'listProps', ''))
+
+
+def new_list_elements(table_el, p):
+    els = []
+    if get_dsl_bool(p, ['userSettingsGroup'], False):
+        els.append(OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a'),
+                                ('title', '\u0413\u0440\u0443\u043f\u043f\u0430 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043a'), ('showTitle', False), ('representation', 'none')]))
+        table_el['userSettingsGroup'] = '\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a'
+    els.append(table_el)
+    return els
+
+
+# Подсказка о перегруженной форме: порог из fields.limits; решение — за моделью через form-edit
+def write_form_size_hint(main_count, area, tables, cfg):
+    limits = get_cfg_section(cfg, 'limits')
+    parts, norms = [], []
+    mf = _ci_get(limits, 'mainFields')
+    if mf is not None and main_count > int(mf):
+        parts.append(f'{area} has {main_count} fields')
+        norms.append(f'{int(mf)} fields on {area}')
+    tc = _ci_get(limits, 'tableColumns')
+    table_over = False
+    for t in tables:
+        if tc is not None and int(t['Count']) > int(tc):
+            parts.append(f'table "{t["Name"]}" has {t["Count"]} columns')
+            table_over = True
+    if table_over:
+        norms.append(f'{int(tc)} columns in a table')
+    if not parts:
+        return
+    print(f"[from-object] Form is large: {', '.join(parts)}; typical ERP forms keep up to {' and '.join(norms)}.")
+    print('  Keep the essentials visible; spread the rest across tabs by meaning (or onto "\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e"), or remove them from the form.')
+    print('  To edit the form, use the form-edit skill.')
+
+
 # --- Catalog DSL generators ---
 
 def generate_catalog_dsl(meta, preset_data, purpose):
     purpose_key = f"catalog.{purpose.lower()}"
     p = preset_data.get(purpose_key, {})
     fd = p.get('fieldDefaults', {})
+    cfg = get_fields_config(preset_data)
 
     dispatch = {
         'Folder': lambda: generate_catalog_folder_dsl(meta, p),
-        'List': lambda: generate_catalog_list_dsl(meta, p),
+        'List': lambda: generate_catalog_list_dsl(meta, p, cfg),
         'Choice': lambda: generate_catalog_choice_dsl(meta, p, preset_data),
-        'Item': lambda: generate_catalog_item_dsl(meta, p, fd),
+        'Item': lambda: generate_catalog_item_dsl(meta, p, fd, cfg),
     }
     return dispatch[purpose]()
 
@@ -797,21 +1162,25 @@ def generate_catalog_folder_dsl(meta, p):
     ])
 
 
-def generate_catalog_list_dsl(meta, p):
+def generate_catalog_list_dsl(meta, p, cfg):
     columns = []
     # Description first (if DescriptionLength > 0)
     if meta.get('DescriptionLength', 0) > 0:
         columns.append(OrderedDict([('labelField', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Description')]))
     # Code if present
+    reserved = 1
     if meta.get('CodeLength', 0) > 0:
         columns.append(OrderedDict([('labelField', '\u041a\u043e\u0434'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Code')]))
-    # Custom attributes
-    for attr in meta['Attributes']:
-        if not is_displayable_type(attr['Type']):
-            continue
+        reserved += 1
+    # Owner for subordinate catalogs
+    if meta.get('Owners'):
+        columns.append(OrderedDict([('labelField', '\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Owner')]))
+        reserved += 1
+    for attr in select_list_attributes(meta, p, cfg, reserved):
         columns.append(OrderedDict([('labelField', attr['Name']), ('path', f"\u0421\u043f\u0438\u0441\u043e\u043a.{attr['Name']}")]))
+    set_list_column_props(columns, cfg)
     # Hidden ref
-    if p.get('hiddenRef', True) is not False:
+    if 'hiddenRef' not in p or get_dsl_bool(p, ['hiddenRef'], False):
         columns.append(OrderedDict([('labelField', '\u0421\u0441\u044b\u043b\u043a\u0430'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Ref'), ('userVisible', False)]))
 
     table_el = OrderedDict([
@@ -829,64 +1198,69 @@ def generate_catalog_list_dsl(meta, p):
 
     form_props = OrderedDict()
     if p.get('properties'):
-        for k in p['properties']:
-            form_props[k] = p['properties'][k]
+        for k, v in p['properties'].items():
+            form_props[k] = v
 
-    return OrderedDict([
-        ('title', meta['Synonym']),
-        ('properties', form_props),
-        ('elements', [table_el]),
-        ('attributes', [
-            OrderedDict([
-                ('name', '\u0421\u043f\u0438\u0441\u043e\u043a'), ('type', 'DynamicList'), ('main', True),
-                ('settings', OrderedDict([('mainTable', f"Catalog.{meta['Name']}"), ('dynamicDataRead', True)])),
-            ])
-        ]),
-    ])
+    dsl = OrderedDict()
+    if get_dsl_bool(p, ['title'], False):
+        dsl['title'] = meta['Synonym']
+    dsl['properties'] = form_props
+    dsl['elements'] = new_list_elements(table_el, p)
+    dsl['attributes'] = [
+        OrderedDict([
+            ('name', '\u0421\u043f\u0438\u0441\u043e\u043a'), ('type', 'DynamicList'), ('main', True),
+            ('settings', OrderedDict([('mainTable', f"Catalog.{meta['Name']}"), ('dynamicDataRead', True)])),
+        ])
+    ]
+    return dsl
 
 
 def generate_catalog_choice_dsl(meta, p, preset_data):
     # Start from list
-    list_key = 'catalog.list'
-    lp = preset_data.get(list_key, {})
-    dsl = generate_catalog_list_dsl(meta, lp)
+    lp = preset_data.get('catalog.list', {})
+    dsl = generate_catalog_list_dsl(meta, lp, get_fields_config(preset_data))
 
     # Add choice-specific properties
     dsl['properties']['windowOpeningMode'] = 'LockOwnerWindow'
     if p.get('properties'):
-        for k in p['properties']:
-            dsl['properties'][k] = p['properties'][k]
+        for k, v in p['properties'].items():
+            dsl['properties'][k] = v
 
-    # Set ChoiceMode on table
-    dsl['elements'][0]['choiceMode'] = True
+    # Set ChoiceMode on the list table
+    for el in dsl['elements']:
+        if el.get('table') == '\u0421\u043f\u0438\u0441\u043e\u043a':
+            el['choiceMode'] = True
 
     return dsl
 
 
-def generate_catalog_item_dsl(meta, p, fd):
+def generate_catalog_item_dsl(meta, p, fd, cfg):
     header_children = []
+    skipped = []
+    used = _used_names(meta)
 
     # Owner (if subordinate)
-    if meta.get('Owners') and len(meta['Owners']) > 0:
-        owner_el = OrderedDict([('input', '\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Owner'), ('readOnly', True)])
-        header_children.append(owner_el)
+    if meta.get('Owners'):
+        header_children.append(OrderedDict([('input', '\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Owner'), ('readOnly', True)]))
 
     # Code + Description
-    cd_layout = (p.get('codeDescription') or {}).get('layout', 'horizontal')
-    cd_order = (p.get('codeDescription') or {}).get('order', 'descriptionFirst')
+    cd = p.get('codeDescription') or {}
+    cd_layout = str(cd.get('layout') or 'horizontal').lower()
+    cd_order = str(cd.get('order') or 'descriptionFirst').lower()
     has_code = meta.get('CodeLength', 0) > 0
     has_desc = meta.get('DescriptionLength', 0) > 0
 
     if cd_layout == 'horizontal' and has_code and has_desc:
-        cd_children = []
         desc_el = OrderedDict([('input', '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Description')])
         code_el = OrderedDict([('input', '\u041a\u043e\u0434'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Code')])
-        if cd_order == 'descriptionFirst':
+        if cd_order == 'descriptionfirst':
             cd_children = [desc_el, code_el]
+            cd_name = '\u0413\u0440\u0443\u043f\u043f\u0430\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435\u041a\u043e\u0434'
         else:
             cd_children = [code_el, desc_el]
+            cd_name = '\u0413\u0440\u0443\u043f\u043f\u0430\u041a\u043e\u0434\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'
         header_children.append(OrderedDict([
-            ('group', 'horizontal'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u041a\u043e\u0434\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'), ('showTitle', False),
+            ('group', 'horizontal'), ('name', get_unique_element_name(cd_name, used)), ('showTitle', False),
             ('representation', 'none'), ('children', cd_children),
         ]))
     else:
@@ -897,82 +1271,102 @@ def generate_catalog_item_dsl(meta, p, fd):
             header_children.append(OrderedDict([('input', '\u041a\u043e\u0434'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Code')]))
 
     # Parent (for hierarchical catalogs)
-    parent_pos = (p.get('parent') or {}).get('position', 'afterCodeDescription')
-    parent_title = (p.get('parent') or {}).get('title')
+    par = p.get('parent') or {}
+    parent_pos = str(par.get('position') or 'afterCodeDescription').lower()
+    parent_title = par.get('title') or None
     if meta.get('Hierarchical'):
         parent_el = OrderedDict([('input', '\u0420\u043e\u0434\u0438\u0442\u0435\u043b\u044c'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Parent')])
         if parent_title:
             parent_el['title'] = parent_title
-        if parent_pos == 'beforeCodeDescription':
-            insert_idx = 1 if (meta.get('Owners') and len(meta['Owners']) > 0) else 0
+        if parent_pos == 'beforecodedescription':
+            insert_idx = 1 if meta.get('Owners') else 0
             header_children.insert(insert_idx, parent_el)
         else:
-            # afterCodeDescription (default)
             header_children.append(parent_el)
 
-    # Custom attributes -> header
-    footer_field_names = (p.get('footer') or {}).get('fields', [])
+    # Реквизиты: в шапку по порядку метаданных; роль с зоной main.bottom и footer.fields — вниз формы
+    footer = p.get('footer') or {}
+    footer_field_names = list(footer.get('fields') or [])
+    roles = get_cfg_section(cfg, 'roles')
+    bottom_els = []
+    placed = {'header.left': [], 'main.bottom': []}
 
     for attr in meta['Attributes']:
-        if attr['Name'] in footer_field_names:
-            continue
         if not is_displayable_type(attr['Type']):
             continue
-        header_children.append(new_field_element(attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{attr['Name']}", attr['Type'], fd))
+        to_bottom = _ps_contains(footer_field_names, attr['Name'])
+        extra = None
+        role = resolve_field_role(attr, cfg)
+        if not to_bottom:
+            why = get_skip_reason(attr, cfg, 'attributes')
+            if why:
+                skipped.append(f"{attr['Name']} ({why})")
+                continue
+            rz = str(_ci_get(roles[role], 'zone') or '') if role else ''
+            if rz.lower() == 'hidden':
+                skipped.append(f"{attr['Name']} (hidden)")
+                continue
+            if rz.lower() == 'main.bottom':
+                to_bottom = True
+        # Свойства роли действуют и для закреплённого поля
+        if role and isinstance(_ci_get(roles[role], 'props'), dict):
+            extra = _ci_get(roles[role], 'props')
+        el = new_field_element(attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{attr['Name']}", attr['Type'], fd, {})
+        el = merge_props(el, get_field_props(attr, cfg, 'props', ''))
+        el = merge_props(el, extra)
+        if to_bottom:
+            bottom_els.append(el)
+            placed['main.bottom'].append(attr['Name'])
+        else:
+            header_children.append(el)
+            placed['header.left'].append(attr['Name'])
 
     # Build root elements
     root_elements = []
 
     # ГруппаШапка
     root_elements.append(OrderedDict([
-        ('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430'), ('showTitle', False),
+        ('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430', used)), ('showTitle', False),
         ('representation', 'none'), ('children', header_children),
     ]))
 
     # Tabular sections
-    ts_exclude = ['\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b', '\u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u044f']
-    if (p.get('tabularSections') or {}).get('exclude'):
-        ts_exclude = p['tabularSections']['exclude']
-    ts_line_number = (p.get('tabularSections') or {}).get('lineNumber', True)
-
-    visible_ts = [ts for ts in meta['TabularSections'] if ts['Name'] not in ts_exclude]
-
-    for ts in visible_ts:
-        ts_cols = []
-        if ts_line_number:
-            ts_cols.append(OrderedDict([('labelField', f"{ts['Name']}\u041d\u043e\u043c\u0435\u0440\u0421\u0442\u0440\u043e\u043a\u0438"), ('path', f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}.LineNumber")]))
-        for col in ts['Columns']:
-            ts_cols.append(new_field_element(f"{ts['Name']}{col['Name']}", f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}.{col['Name']}", col['Type'], fd))
+    ts_cfg = p.get('tabularSections') or {}
+    ts_line_number = ts_cfg.get('lineNumber') if ts_cfg.get('lineNumber') is not None else True
+    table_sizes = []
+    for ts in get_visible_tabular_sections(meta, cfg, p, skipped):
+        ts_cols = build_tabular_columns(ts, cfg, fd, ts_line_number, skipped)
+        table_sizes.append({'Name': ts['Name'], 'Count': len(ts_cols) - 1 if ts_line_number else len(ts_cols)})
         root_elements.append(OrderedDict([('table', ts['Name']), ('path', f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}"), ('columns', ts_cols)]))
 
-    # Footer fields
-    for fn in footer_field_names:
-        f_attr = next((a for a in meta['Attributes'] if a['Name'] == fn), None)
-        if f_attr:
-            root_elements.append(new_field_element(f_attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{f_attr['Name']}", f_attr['Type'], fd))
+    # Нижние поля (Комментарий)
+    root_elements.extend(bottom_els)
 
     # BSP group
-    bsp_group = (p.get('additional') or {}).get('bspGroup', True)
+    add = p.get('additional') or {}
+    bsp_group = add.get('bspGroup') if add.get('bspGroup') is not None else True
     if bsp_group:
-        root_elements.append(OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b'), ('showTitle', True)]))
+        root_elements.append(OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b', used)), ('showTitle', True)]))
+
+    write_from_object_report(skipped, placed)
+    write_form_size_hint(len(placed['header.left']) + len(placed['main.bottom']), 'the form', table_sizes, cfg)
 
     # Properties
     form_props = OrderedDict()
     if p.get('properties'):
-        for k in p['properties']:
+        for k in get_sorted_keys(p['properties']):
             form_props[k] = p['properties'][k]
     # UseForFoldersAndItems
     if meta.get('Hierarchical') and meta.get('HierarchyType') == 'HierarchyFoldersAndItems':
         form_props['useForFoldersAndItems'] = 'Items'
 
-    return OrderedDict([
-        ('title', meta['Synonym']),
-        ('properties', form_props),
-        ('elements', root_elements),
-        ('attributes', [
-            OrderedDict([('name', '\u041e\u0431\u044a\u0435\u043a\u0442'), ('type', f"CatalogObject.{meta['Name']}"), ('main', True)])
-        ]),
-    ])
+    dsl = OrderedDict()
+    if get_dsl_bool(p, ['title'], False):
+        dsl['title'] = meta['Synonym']
+    dsl['properties'] = form_props
+    dsl['elements'] = root_elements
+    dsl['attributes'] = [OrderedDict([('name', '\u041e\u0431\u044a\u0435\u043a\u0442'), ('type', f"CatalogObject.{meta['Name']}"), ('main', True)])]
+    return dsl
 
 
 # --- Document DSL generators ---
@@ -981,27 +1375,26 @@ def generate_document_dsl(meta, preset_data, purpose):
     purpose_key = f"document.{purpose.lower()}"
     p = preset_data.get(purpose_key, {})
     fd = p.get('fieldDefaults', {})
+    cfg = get_fields_config(preset_data)
 
     dispatch = {
-        'List': lambda: generate_document_list_dsl(meta, p),
+        'List': lambda: generate_document_list_dsl(meta, p, cfg),
         'Choice': lambda: generate_document_choice_dsl(meta, p, preset_data),
-        'Item': lambda: generate_document_item_dsl(meta, p, fd),
+        'Item': lambda: generate_document_item_dsl(meta, p, fd, cfg),
     }
     return dispatch[purpose]()
 
 
-def generate_document_list_dsl(meta, p):
+def generate_document_list_dsl(meta, p, cfg):
     columns = []
     # Standard columns: Number + Date
-    columns.append(OrderedDict([('labelField', 'Номер'), ('path', 'Список.Number')]))
-    columns.append(OrderedDict([('labelField', 'Дата'), ('path', 'Список.Date')]))
-    # All custom attributes as labelField
-    for attr in meta['Attributes']:
-        if not is_displayable_type(attr['Type']):
-            continue
+    columns.append(OrderedDict([('labelField', '\u041d\u043e\u043c\u0435\u0440'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Number')]))
+    columns.append(OrderedDict([('labelField', '\u0414\u0430\u0442\u0430'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Date')]))
+    for attr in select_list_attributes(meta, p, cfg, 2):
         columns.append(OrderedDict([('labelField', attr['Name']), ('path', f"\u0421\u043f\u0438\u0441\u043e\u043a.{attr['Name']}")]))
+    set_list_column_props(columns, cfg)
     # Hidden ref
-    if p.get('hiddenRef', True):
+    if 'hiddenRef' not in p or get_dsl_bool(p, ['hiddenRef'], False):
         columns.append(OrderedDict([('labelField', '\u0421\u0441\u044b\u043b\u043a\u0430'), ('path', '\u0421\u043f\u0438\u0441\u043e\u043a.Ref'), ('userVisible', False)]))
 
     table_el = OrderedDict([
@@ -1014,235 +1407,273 @@ def generate_document_list_dsl(meta, p):
 
     form_props = OrderedDict()
     if p.get('properties'):
-        for k in p['properties']:
-            form_props[k] = p['properties'][k]
+        for k, v in p['properties'].items():
+            form_props[k] = v
 
-    return OrderedDict([
-        ('title', meta['Synonym']),
-        ('properties', form_props),
-        ('elements', [table_el]),
-        ('attributes', [
-            OrderedDict([
-                ('name', '\u0421\u043f\u0438\u0441\u043e\u043a'), ('type', 'DynamicList'), ('main', True),
-                ('settings', OrderedDict([('mainTable', f"Document.{meta['Name']}"), ('dynamicDataRead', True)])),
-            ])
-        ]),
-    ])
+    dsl = OrderedDict()
+    if get_dsl_bool(p, ['title'], False):
+        dsl['title'] = meta['Synonym']
+    dsl['properties'] = form_props
+    dsl['elements'] = new_list_elements(table_el, p)
+    dsl['attributes'] = [
+        OrderedDict([
+            ('name', '\u0421\u043f\u0438\u0441\u043e\u043a'), ('type', 'DynamicList'), ('main', True),
+            ('settings', OrderedDict([('mainTable', f"Document.{meta['Name']}"), ('dynamicDataRead', True)])),
+        ])
+    ]
+    return dsl
 
 
 def generate_document_choice_dsl(meta, p, preset_data):
-    list_key = 'document.list'
-    lp = preset_data.get(list_key, {})
-    dsl = generate_document_list_dsl(meta, lp)
+    lp = preset_data.get('document.list', {})
+    dsl = generate_document_list_dsl(meta, lp, get_fields_config(preset_data))
 
     dsl['properties']['windowOpeningMode'] = 'LockOwnerWindow'
     if p.get('properties'):
-        for k in p['properties']:
-            dsl['properties'][k] = p['properties'][k]
+        for k, v in p['properties'].items():
+            dsl['properties'][k] = v
 
-    # Set ChoiceMode on table (the document list DSL has exactly one root element, the table)
-    dsl['elements'][0]['choiceMode'] = True
+    # The list may be preceded by the user-settings group, so the table is not elements[0].
+    for el in dsl['elements']:
+        if el.get('table') == '\u0421\u043f\u0438\u0441\u043e\u043a':
+            el['choiceMode'] = True
 
     return dsl
 
 
-def generate_document_item_dsl(meta, p, fd):
-    header_pos = (p.get('header') or {}).get('position', 'insidePage')
-    header_layout = (p.get('header') or {}).get('layout', '2col')
-    header_distribute = (p.get('header') or {}).get('distribute', 'even')
-    date_title = (p.get('header') or {}).get('dateTitle', '\u043e\u0442')
+def generate_document_item_dsl(meta, p, fd, cfg):
+    hdr = p.get('header') or {}
+    # Значения пресета сравниваются без учёта регистра, как -eq/-ne в PS-каноне
+    header_pos = str(hdr.get('position') or 'insidePage').lower()
+    header_layout = str(hdr.get('layout') or '2col').lower()
+    date_title = hdr.get('dateTitle') or '\u043e\u0442'
 
-    footer_fields = (p.get('footer') or {}).get('fields', [])
-    footer_pos = (p.get('footer') or {}).get('position', 'insidePage')
+    footer = p.get('footer') or {}
+    footer_fields = list(footer.get('fields') or [])
+    footer_pos = footer.get('position') or 'insidePage'
 
-    add_pos = (p.get('additional') or {}).get('position', 'page')
-    add_layout = (p.get('additional') or {}).get('layout', '2col')
-    add_bsp_group = (p.get('additional') or {}).get('bspGroup', True)
-    add_left = (p.get('additional') or {}).get('left', [])
-    add_right = (p.get('additional') or {}).get('right', [])
+    add = p.get('additional') or {}
+    add_pos = str(add.get('position') or 'page').lower()
+    add_layout = str(add.get('layout') or '2col').lower()
+    add_bsp_group = add.get('bspGroup') if add.get('bspGroup') is not None else True
+    ts_cfg = p.get('tabularSections') or {}
+    ts_line_number = ts_cfg.get('lineNumber') if ts_cfg.get('lineNumber') is not None else True
 
-    header_right = (p.get('header') or {}).get('right', [])
-
-    ts_exclude = ['\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b']
-    if (p.get('tabularSections') or {}).get('exclude'):
-        ts_exclude = p['tabularSections']['exclude']
-    ts_line_number = (p.get('tabularSections') or {}).get('lineNumber', True)
-
-    # Classify attributes
-    claimed = {}
+    # Закреплённые поля: имя → зона (имя без учёта регистра, как ключ хэштаблицы PS)
+    pinned = {}
     for fn in footer_fields:
-        claimed[fn] = 'footer'
-    for fn in header_right:
-        claimed[fn] = 'header.right'
-    for fn in add_left:
-        claimed[fn] = 'additional.left'
-    for fn in add_right:
-        claimed[fn] = 'additional.right'
+        pinned[fn.lower()] = 'footer' if str(footer_pos).lower() == 'belowpages' else 'main.bottom'
+    for src, zone in ((hdr.get('left'), 'header.left'), (hdr.get('right'), 'header.right'),
+                      (add.get('left'), 'additional.left'), (add.get('right'), 'additional.right')):
+        if src:
+            for fn in (src if isinstance(src, list) else [src]):
+                pinned[fn.lower()] = zone
 
-    unclaimed = [attr for attr in meta['Attributes'] if attr['Name'] not in claimed and is_displayable_type(attr['Type'])]
+    roles = get_cfg_section(cfg, 'roles')
+    unplaced = get_cfg_section(cfg, 'unplaced')
+    skipped = []
+    zone_names = ('top', 'header.left', 'header.right', 'header', 'main.bottom', 'additional.left', 'additional.right', 'additional', 'footer')
+    zones = {z: [] for z in zone_names}
 
-    # Distribute unclaimed
-    left_attrs = []
-    right_extra_attrs = []
-    if header_distribute == 'left':
-        left_attrs = unclaimed
-    elif header_distribute == 'right':
-        right_extra_attrs = unclaimed
-    else:  # "even"
-        import math
-        half = math.ceil(len(unclaimed) / 2) if unclaimed else 0
-        left_attrs = unclaimed[:half]
-        right_extra_attrs = unclaimed[half:]
+    # Без табличных частей форма без страниц: поля «Дополнительно» уходят в шапку
+    visible_ts = get_visible_tabular_sections(meta, cfg, p, skipped)
+    use_pages = len(visible_ts) > 0
 
-    # Build ГруппаНомерДата
-    num_date_children = [
-        OrderedDict([('input', '\u041d\u043e\u043c\u0435\u0440'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Number'), ('autoMaxWidth', False), ('width', 9)]),
-        OrderedDict([('input', '\u0414\u0430\u0442\u0430'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Date'), ('title', date_title)]),
-    ]
+    # 1. Зона каждого реквизита: закрепление → роль → правило для нераспознанных
+    for attr in meta['Attributes']:
+        if not is_displayable_type(attr['Type']):
+            continue
+        zone = None
+        extra = None
+        order = 0
+        is_pinned = attr['Name'].lower() in pinned
+        if not is_pinned:
+            why = get_skip_reason(attr, cfg, 'attributes')
+            if why:
+                skipped.append(f"{attr['Name']} ({why})")
+                continue
+        # Свойства и порядок роли действуют и для закреплённого поля; закрепление меняет только зону
+        role = resolve_field_role(attr, cfg)
+        if role:
+            if isinstance(_ci_get(roles[role], 'props'), dict):
+                extra = _ci_get(roles[role], 'props')
+            if _ci_get(roles[role], 'order') is not None:
+                order = int(_ci_get(roles[role], 'order'))
+        if is_pinned:
+            zone = pinned[attr['Name'].lower()]
+        elif role and _ci_get(roles[role], 'zone'):
+            zone = str(_ci_get(roles[role], 'zone'))
+        else:
+            fc = str(attr.get('FillChecking', '')).lower()
+            fts = str(attr.get('FullTextSearch', '')).lower()
+            kind = 'required' if fc == 'showerror' else ('notSearchable' if fts == 'dontuse' else 'optional')
+            uz = _ci_get(unplaced, kind)
+            zone = str(uz) if uz else 'header'
+        if zone.lower() == 'hidden':
+            skipped.append(f"{attr['Name']} (hidden)")
+            continue
+        # Неизвестная зона (опечатка в пресете) — в шапку, до поправок под раскладку
+        zone = next((z for z in zone_names if z.lower() == zone.lower()), 'header')
+        if (add_pos != 'page' or not use_pages) and zone.startswith('additional'):
+            zone = 'header'
+        if header_layout != '2col' and zone.startswith('header'):
+            zone = 'header.left'
+        if add_layout != '2col' and zone.startswith('additional'):
+            zone = 'additional.left'
+        zones[zone].append({'Attr': attr, 'Extra': extra, 'Order': order})
+
+    # Нераспознанные — в более короткую колонку (слева ещё группа Номер+Дата); distribute left/right — всё в одну
+    distribute = str(hdr.get('distribute') or 'even').lower()
+    left_count = 1 + len(zones['header.left'])
+    right_count = len(zones['header.right'])
+    if distribute == 'left':
+        right_count = float('inf')
+    if distribute == 'right':
+        left_count = float('inf')
+    for it in zones['header']:
+        if right_count < left_count:
+            zones['header.right'].append(it)
+            right_count += 1
+        else:
+            zones['header.left'].append(it)
+            left_count += 1
+    left_count = len(zones['additional.left'])
+    right_count = len(zones['additional.right'])
+    for it in zones['additional']:
+        if right_count < left_count:
+            zones['additional.right'].append(it)
+            right_count += 1
+        else:
+            zones['additional.left'].append(it)
+            left_count += 1
+
+    used = _used_names(meta)
+    placed = {}
+
+    def build_zone(z):
+        els = []
+        placed[z] = []
+        # Устойчиво по order роли (по умолчанию 0), внутри — порядок метаданных
+        for it in sorted(zones[z], key=lambda x: int(x.get('Order', 0))):
+            a = it['Attr']
+            el = new_field_element(a['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{a['Name']}", a['Type'], fd, {})
+            el = merge_props(el, get_field_props(a, cfg, 'props', ''))
+            el = merge_props(el, it['Extra'])
+            els.append(el)
+            placed[z].append(a['Name'])
+        return els
+
+    # Номер + Дата
+    num_el = merge_props(OrderedDict([('input', '\u041d\u043e\u043c\u0435\u0440'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Number')]),
+                         get_field_props({'Name': '\u041d\u043e\u043c\u0435\u0440', 'Type': ''}, cfg, 'props', '\u041d\u043e\u043c\u0435\u0440'))
+    date_el = merge_props(OrderedDict([('input', '\u0414\u0430\u0442\u0430'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.Date'), ('title', date_title)]),
+                          get_field_props({'Name': '\u0414\u0430\u0442\u0430', 'Type': ''}, cfg, 'props', '\u0414\u0430\u0442\u0430'))
     num_date_group = OrderedDict([
-        ('group', 'horizontal'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u041d\u043e\u043c\u0435\u0440\u0414\u0430\u0442\u0430'), ('showTitle', False), ('children', num_date_children),
+        ('group', 'horizontal'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u041d\u043e\u043c\u0435\u0440\u0414\u0430\u0442\u0430', used)), ('showTitle', False),
+        ('children', [num_el, date_el]),
     ])
 
-    # Build left column
-    left_children = [num_date_group]
-    for attr in left_attrs:
-        left_children.append(new_field_element(attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{attr['Name']}", attr['Type'], fd))
+    left_children = [num_date_group] + build_zone('header.left')
+    right_children = build_zone('header.right')
+    header_name = get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430', used)
+    left_group = OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430\u041b\u0435\u0432\u043e', used)), ('showTitle', False), ('children', left_children)])
+    header_cols = [left_group]
+    if right_children:
+        header_cols.append(OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430\u041f\u0440\u0430\u0432\u043e', used)), ('showTitle', False), ('children', right_children)]))
+    header_group = OrderedDict([
+        ('group', 'horizontal'), ('name', header_name), ('showTitle', False), ('representation', 'none'),
+        ('children', header_cols),
+    ])
 
-    # Build right column
-    right_children = []
-    for rn in header_right:
-        r_attr = next((a for a in meta['Attributes'] if a['Name'] == rn), None)
-        if r_attr:
-            right_children.append(new_field_element(r_attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{r_attr['Name']}", r_attr['Type'], fd))
-    for attr in right_extra_attrs:
-        right_children.append(new_field_element(attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{attr['Name']}", attr['Type'], fd))
+    top_els = build_zone('top')
+    bottom_els = build_zone('main.bottom')
+    # Несколько нижних полей (Комментарий + Ответственный) — в одну строку
+    # (многострочное поле в такой строке — высотой в одну строку, как в ЕРП: 106 из 116; отдельно — блок)
+    if len(bottom_els) > 1:
+        for be in bottom_els:
+            if get_dsl_bool(be, ['multiLine'], False) and 'height' not in be:
+                be['height'] = 1
+        bottom_els = [OrderedDict([('group', 'horizontal'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430' + ''.join(placed['main.bottom']), used)), ('showTitle', False), ('children', bottom_els)])]
+    footer_els = build_zone('footer')
+    add_left_els = build_zone('additional.left')
+    add_right_els = build_zone('additional.right')
+    has_additional = (len(add_left_els) + len(add_right_els)) > 0
 
-    # Header group
-    if header_layout == '2col' and len(right_children) > 0:
-        header_group = OrderedDict([
-            ('group', 'horizontal'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430'), ('showTitle', False), ('representation', 'none'),
-            ('children', [
-                OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430\u041b\u0435\u0432\u043e'), ('showTitle', False), ('children', left_children)]),
-                OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430\u041f\u0440\u0430\u0432\u043e'), ('showTitle', False), ('children', right_children)]),
-            ]),
-        ])
-    else:
-        # 1col or no right items
-        all_header_fields = left_children + right_children
-        header_group = OrderedDict([
-            ('group', 'horizontal'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430'), ('showTitle', False), ('representation', 'none'),
-            ('children', [
-                OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0428\u0430\u043f\u043a\u0430\u041b\u0435\u0432\u043e'), ('showTitle', False), ('children', all_header_fields)]),
-            ]),
-        ])
-
-    # Footer elements
-    footer_elements = []
-    for fn in footer_fields:
-        f_attr = next((a for a in meta['Attributes'] if a['Name'] == fn), None)
-        if f_attr:
-            footer_elements.append(new_field_element(f_attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{f_attr['Name']}", f_attr['Type'], fd))
-
-    # Visible tabular sections
-    visible_ts = [ts for ts in meta['TabularSections'] if ts['Name'] not in ts_exclude]
-
-    # Additional page content
+    # Страница «Дополнительно»
     additional_page = None
-    if add_pos == 'page':
-        add_left_els = []
-        add_right_els = []
-        for aln in add_left:
-            al_attr = next((a for a in meta['Attributes'] if a['Name'] == aln), None)
-            if al_attr:
-                add_left_els.append(new_field_element(al_attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{al_attr['Name']}", al_attr['Type'], fd))
-        for arn in add_right:
-            ar_attr = next((a for a in meta['Attributes'] if a['Name'] == arn), None)
-            if ar_attr:
-                add_right_els.append(new_field_element(ar_attr['Name'], f"\u041e\u0431\u044a\u0435\u043a\u0442.{ar_attr['Name']}", ar_attr['Type'], fd))
+    if add_pos == 'page' and use_pages:
         add_page_children = []
-        if add_layout == '2col':
-            add_page_children.append(OrderedDict([
-                ('group', 'horizontal'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b'), ('showTitle', False),
-                ('children', [
-                    OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041b\u0435\u0432\u043e'), ('showTitle', False), ('children', add_left_els)]),
-                    OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0440\u0430\u0432\u043e'), ('showTitle', False), ('children', add_right_els)]),
-                ]),
-            ]))
-        else:
-            add_page_children.extend(add_left_els + add_right_els)
+        if has_additional:
+            if add_left_els and add_right_els:
+                add_page_children.append(OrderedDict([
+                    ('group', 'horizontal'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b', used)), ('showTitle', False),
+                    ('children', [
+                        OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041b\u0435\u0432\u043e', used)), ('showTitle', False), ('children', add_left_els)]),
+                        OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0440\u0430\u0432\u043e', used)), ('showTitle', False), ('children', add_right_els)]),
+                    ]),
+                ]))
+            else:
+                add_page_children.extend(add_left_els + add_right_els)
         if add_bsp_group:
-            add_page_children.append(OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b'), ('showTitle', True)]))
-        additional_page = OrderedDict([('page', '\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e'), ('title', '\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e'), ('children', add_page_children)])
+            add_page_children.append(OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b', used)), ('showTitle', True)]))
+        additional_page = OrderedDict([('page', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e', used)), ('title', '\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e'), ('children', add_page_children)])
 
-    # Build TS page elements
+    # Страницы ТЧ
     ts_pages = []
+    table_sizes = []
     for ts in visible_ts:
-        ts_cols = []
-        if ts_line_number:
-            ts_cols.append(OrderedDict([('labelField', f"{ts['Name']}\u041d\u043e\u043c\u0435\u0440\u0421\u0442\u0440\u043e\u043a\u0438"), ('path', f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}.LineNumber")]))
-        for col in ts['Columns']:
-            ts_cols.append(new_field_element(f"{ts['Name']}{col['Name']}", f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}.{col['Name']}", col['Type'], fd))
+        ts_cols = build_tabular_columns(ts, cfg, fd, ts_line_number, skipped)
+        table_sizes.append({'Name': ts['Name'], 'Count': len(ts_cols) - 1 if ts_line_number else len(ts_cols)})
         ts_pages.append(OrderedDict([
-            ('page', f"\u0413\u0440\u0443\u043f\u043f\u0430{ts['Name']}"), ('title', ts['Synonym']),
-            ('children', [
-                OrderedDict([('table', ts['Name']), ('path', f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}"), ('columns', ts_cols)])
-            ]),
+            ('page', get_unique_element_name(f"\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430{ts['Name']}", used)), ('title', ts['Synonym']),
+            ('children', [OrderedDict([('table', ts['Name']), ('path', f"\u041e\u0431\u044a\u0435\u043a\u0442.{ts['Name']}"), ('columns', ts_cols)])]),
         ]))
 
-    # Assemble root elements
+    # Сборка
     root_elements = []
-
-    if len(visible_ts) == 0:
-        # Simple form - no Pages
+    root_elements.extend(top_els)
+    if not use_pages:
         root_elements.append(header_group)
-        if footer_elements:
-            root_elements.extend(footer_elements)
+        root_elements.extend(bottom_els)
+        root_elements.extend(footer_els)
         if add_bsp_group and add_pos != 'none':
-            root_elements.append(OrderedDict([('group', 'vertical'), ('name', '\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b'), ('showTitle', True)]))
+            root_elements.append(OrderedDict([('group', 'vertical'), ('name', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b', used)), ('showTitle', True)]))
     else:
-        # Pages form
-        if header_pos == 'abovePages':
+        pages_children = []
+        if header_pos == 'abovepages':
             root_elements.append(header_group)
-            pages_children = list(ts_pages)
-            if additional_page:
-                pages_children.append(additional_page)
-            root_elements.append(OrderedDict([('pages', '\u0413\u0440\u0443\u043f\u043f\u0430\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u044b'), ('children', pages_children)]))
+            root_elements.extend(bottom_els)
         else:
-            # insidePage (default)
-            osnovnoe_children = [header_group]
-            if footer_pos == 'insidePage' and footer_elements:
-                osnovnoe_children.extend(footer_elements)
-            pages_children = []
-            pages_children.append(OrderedDict([('page', '\u0413\u0440\u0443\u043f\u043f\u0430\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435'), ('title', '\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435'), ('children', osnovnoe_children)]))
-            pages_children.extend(ts_pages)
-            if additional_page:
-                pages_children.append(additional_page)
-            root_elements.append(OrderedDict([('pages', '\u0413\u0440\u0443\u043f\u043f\u0430\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u044b'), ('children', pages_children)]))
+            osnovnoe = [header_group] + bottom_els
+            pages_children.append(OrderedDict([('page', get_unique_element_name('\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435', used)), ('title', '\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435'), ('children', osnovnoe)]))
+        pages_children.extend(ts_pages)
+        if additional_page is not None:
+            pages_children.append(additional_page)
+        root_elements.append(OrderedDict([('pages', get_unique_element_name('\u0413\u0440\u0443\u043f\u043f\u0430\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u044b', used)), ('children', pages_children)]))
+        root_elements.extend(footer_els)
 
-        # Footer below pages
-        if footer_pos == 'belowPages' and footer_elements:
-            root_elements.extend(footer_elements)
+    write_from_object_report(skipped, placed)
+    main_count = sum(len(placed.get(z, [])) for z in ('top', 'header.left', 'header.right', 'main.bottom'))
+    write_form_size_hint(main_count, 'the main page' if use_pages else 'the form', table_sizes, cfg)
 
-    # Properties. The posting properties go last and in Configurator order
-    # (AutoTime, UsePostingMode, RepostOnWrite), whatever order the preset sections
-    # were merged in, so both runtimes emit the same XML.
-    form_props = OrderedDict([('autoTitle', False)])
+    # Properties. Posting properties go last, in Configurator order
+    # (AutoTime, UsePostingMode, RepostOnWrite), so both runtimes emit the same XML.
+    form_props = OrderedDict()
     preset_props = p.get('properties') or {}
-    for k in preset_props:
+    for k in get_sorted_keys(preset_props):
         if k not in DOCUMENT_POSTING_PROPERTIES:
             form_props[k] = preset_props[k]
     for k in DOCUMENT_POSTING_PROPERTIES:
         if k in preset_props:
             form_props[k] = preset_props[k]
 
-    return OrderedDict([
-        ('title', meta['Synonym']),
-        ('properties', form_props),
-        ('elements', root_elements),
-        ('attributes', [
-            OrderedDict([('name', '\u041e\u0431\u044a\u0435\u043a\u0442'), ('type', f"DocumentObject.{meta['Name']}"), ('main', True)])
-        ]),
-    ])
+    dsl = OrderedDict()
+    if get_dsl_bool(p, ['title'], False):
+        dsl['title'] = meta['Synonym']
+    dsl['properties'] = form_props
+    dsl['elements'] = root_elements
+    dsl['attributes'] = [OrderedDict([('name', '\u041e\u0431\u044a\u0435\u043a\u0442'), ('type', f"DocumentObject.{meta['Name']}"), ('main', True)])]
+    return dsl
 
 
 # --- InformationRegister DSL generators ---
@@ -1409,6 +1840,42 @@ def generate_accumulation_register_list_dsl(meta, p):
     ])
 
 
+# Вставка полей после Наименования/группы «Наименование, код» — на корневом уровне или внутри группы шапки
+def _is_code_description_marker(el):
+    if not isinstance(el, dict):
+        return False
+    if el.get('input') == '\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435':
+        return True
+    return bool(re.match(r'^\u0413\u0440\u0443\u043f\u043f\u0430(\u041a\u043e\u0434\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435|\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435\u041a\u043e\u0434)\d*$', str(el.get('name') or '')))
+
+
+def add_after_code_description(dsl, new_els):
+    # корневой уровень
+    out, done = [], False
+    for el in dsl['elements']:
+        out.append(el)
+        if not done and _is_code_description_marker(el):
+            out.extend(new_els)
+            done = True
+    if done:
+        dsl['elements'] = out
+        return
+    # внутри групп первого уровня (ГруппаШапка)
+    for g in dsl['elements']:
+        if not isinstance(g, dict) or not g.get('group') or not g.get('children'):
+            continue
+        kids, hit = [], False
+        for el in g['children']:
+            kids.append(el)
+            if not hit and _is_code_description_marker(el):
+                kids.extend(new_els)
+                hit = True
+        if hit:
+            g['children'] = kids
+            return
+    dsl['elements'] = list(dsl['elements']) + list(new_els)
+
+
 # --- ChartOfCharacteristicTypes (delegates to Catalog) ---
 
 def generate_chart_of_characteristic_types_dsl(meta, preset_data, purpose):
@@ -1430,20 +1897,7 @@ def generate_chart_of_characteristic_types_dsl(meta, preset_data, purpose):
     # For Item forms: inject ValueType field after Description/ГруппаКодНаименование
     if purpose == 'Item' and dsl.get('elements'):
         vt_el = OrderedDict([('input', '\u0422\u0438\u043f\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.ValueType')])
-        els = dsl['elements']
-        if isinstance(els, list):
-            inserted = False
-            new_els = []
-            for el in els:
-                new_els.append(el)
-                if not inserted and isinstance(el, dict):
-                    name = el.get('input') or el.get('group') or ''
-                    if name in ('\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435', '\u0413\u0440\u0443\u043f\u043f\u0430\u041a\u043e\u0434\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'):
-                        new_els.append(vt_el)
-                        inserted = True
-            if not inserted:
-                new_els.append(vt_el)
-            dsl['elements'] = new_els
+        add_after_code_description(dsl, [vt_el])
 
     return dsl
 
@@ -1470,22 +1924,7 @@ def generate_exchange_plan_dsl(meta, preset_data, purpose):
     if purpose == 'Item' and dsl.get('elements'):
         sent_el = OrderedDict([('input', '\u041d\u043e\u043c\u0435\u0440\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043d\u043e\u0433\u043e'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.SentNo'), ('readOnly', True)])
         recv_el = OrderedDict([('input', '\u041d\u043e\u043c\u0435\u0440\u041f\u0440\u0438\u043d\u044f\u0442\u043e\u0433\u043e'), ('path', '\u041e\u0431\u044a\u0435\u043a\u0442.ReceivedNo'), ('readOnly', True)])
-        els = dsl['elements']
-        if isinstance(els, list):
-            inserted = False
-            new_els = []
-            for el in els:
-                new_els.append(el)
-                if not inserted and isinstance(el, dict):
-                    name = el.get('input') or el.get('group') or ''
-                    if name in ('\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435', '\u0413\u0440\u0443\u043f\u043f\u0430\u041a\u043e\u0434\u041d\u0430\u0438\u043c\u0435\u043d\u043e\u0432\u0430\u043d\u0438\u0435'):
-                        new_els.append(sent_el)
-                        new_els.append(recv_el)
-                        inserted = True
-            if not inserted:
-                new_els.append(sent_el)
-                new_els.append(recv_el)
-            dsl['elements'] = new_els
+        add_after_code_description(dsl, [sent_el, recv_el])
 
     return dsl
 
@@ -1842,7 +2281,7 @@ def emit_filter_item(lines, item, indent):
         g = str(item['group'])
         group_type = {'And': 'AndGroup', 'Or': 'OrGroup', 'Not': 'NotGroup'}.get(g, g + 'Group')
         lines.append(f'{indent}<dcsset:item xsi:type="dcsset:FilterItemGroup">')
-        if item.get('use') is False:
+        if (not get_dsl_bool(item, ['use'], True)):
             lines.append(f'{indent}\t<dcsset:use>false</dcsset:use>')   # группа отключена (перед groupType)
         lines.append(f'{indent}\t<dcsset:groupType>{group_type}</dcsset:groupType>')
         if item.get('items'):
@@ -1850,7 +2289,7 @@ def emit_filter_item(lines, item, indent):
                 if isinstance(sub, str):
                     parsed = parse_filter_shorthand(sub)
                     obj = {'field': parsed['field'], 'op': parsed['op']}
-                    if parsed['use'] is False:
+                    if not get_dsl_bool(parsed, ['use'], True):
                         obj['use'] = False
                     if parsed['value'] is not None:
                         obj['value'] = parsed['value']
@@ -1875,7 +2314,7 @@ def emit_filter_item(lines, item, indent):
         return
 
     lines.append(f'{indent}<dcsset:item xsi:type="dcsset:FilterItemComparison">')
-    if item.get('use') is False:
+    if (not get_dsl_bool(item, ['use'], True)):
         lines.append(f'{indent}\t<dcsset:use>false</dcsset:use>')
     lines.append(f'{indent}\t<dcsset:left xsi:type="dcscor:Field">{esc_xml_text(str(item.get("field", "")))}</dcsset:left>')
     # Регистронезависимый лукап (зеркало PS): Like/LIKE/ПОДОБНО → канон; иначе — как есть
@@ -1946,7 +2385,7 @@ def emit_filter(lines, items, indent, block_view_mode=None, block_user_setting_i
         if isinstance(item, str):
             parsed = parse_filter_shorthand(item)
             obj = {'field': parsed['field'], 'op': parsed['op']}
-            if parsed['use'] is False:
+            if not get_dsl_bool(parsed, ['use'], True):
                 obj['use'] = False
             if parsed['value'] is not None:
                 obj['value'] = parsed['value']
@@ -2003,7 +2442,7 @@ def emit_order(lines, items, indent, skip_auto=False, block_view_mode=None, bloc
             elif re.match(r'(?i)^(asc|возр)', direction):
                 direction = 'Asc'
             lines.append(f'{indent}\t<dcsset:item xsi:type="dcsset:OrderItemField">')
-            if item.get('use') is False:
+            if (not get_dsl_bool(item, ['use'], True)):
                 lines.append(f'{indent}\t\t<dcsset:use>false</dcsset:use>')
             lines.append(f'{indent}\t\t<dcsset:field>{esc_xml_text(str(item.get("field", "")))}</dcsset:field>')
             lines.append(f'{indent}\t\t<dcsset:orderType>{direction}</dcsset:orderType>')
@@ -2034,13 +2473,13 @@ def emit_appearance_value(lines, key, val, indent):
     inner_val = val
     nested_items = None
     if is_top_level_line:
-        if _has_key(val, 'use') and (_get(val, 'use') is False):
+        if _has_key(val, 'use') and (not to_dsl_bool(_get(val, 'use'), 'use', True)):
             use_wrapper = True
         if _has_key(val, 'items'):
             nested_items = _get(val, 'items')
     elif _has_key(val, 'value') and isinstance(val, dict):
         inner_val = _get(val, 'value')
-        if _has_key(val, 'use') and (_get(val, 'use') is False):
+        if _has_key(val, 'use') and (not to_dsl_bool(_get(val, 'use'), 'use', True)):
             use_wrapper = True
         if _has_key(val, 'items'):
             nested_items = _get(val, 'items')
@@ -2073,7 +2512,7 @@ def emit_appearance_value(lines, key, val, indent):
         # Локализуемый текст параметра оформления: платформа объявляет xsi:type на dcscor:value
         emit_mltext(lines, f'{indent}\t', 'dcscor:value', inner_val, xsi_type='v8:LocalStringType')
     else:
-        actual_val = str(inner_val)
+        actual_val = (str(inner_val).lower() if isinstance(inner_val, bool) else str(inner_val)) if inner_val is not None else ''
         key_type_map = {
             'Размещение': 'dcscor:DataCompositionTextPlacementType',
             'ГоризонтальноеПоложение': 'v8ui:HorizontalAlign',
@@ -2211,7 +2650,7 @@ def emit_calc_fields(lines, calc_fields, indent):
             type_str = str(type_str) if type_str else None
             ur = cf.get('useRestriction') or cf.get('restrict')
             if isinstance(ur, dict):
-                restrict = [k for k in ('field', 'condition', 'group', 'order') if ur.get(k)]
+                restrict = [k for k in ('field', 'condition', 'group', 'order') if to_dsl_bool(ur.get(k), k, False)]
             elif isinstance(ur, str):
                 restrict = [_CALC_RESTRICT_MAP.get(t.strip().lstrip('#'), t.strip().lstrip('#')) for t in ur.split() if t.strip()]
             elif isinstance(ur, list):
@@ -2258,7 +2697,7 @@ def parse_restrict(ur):
     if not ur:
         return []
     if isinstance(ur, dict):
-        return [k for k in ('field', 'condition', 'group', 'order') if ur.get(k)]
+        return [k for k in ('field', 'condition', 'group', 'order') if to_dsl_bool(ur.get(k), k, False)]
     if isinstance(ur, str):
         return [_CALC_RESTRICT_MAP.get(t.strip().lstrip('#'), t.strip().lstrip('#')) for t in ur.split() if t.strip()]
     if isinstance(ur, list):
@@ -2285,7 +2724,7 @@ def emit_conditional_appearance(lines, items, indent, block_view_mode=None, bloc
     lines.append(f'{indent}<{wrap_tag}>')
     for ca in (items or []):
         lines.append(f'{indent}\t<dcsset:item>')
-        if ca.get('use') is False:
+        if (not get_dsl_bool(ca, ['use'], True)):
             lines.append(f'{indent}\t\t<dcsset:use>false</dcsset:use>')
         if ca.get('selection') and len(ca['selection']) > 0:
             lines.append(f'{indent}\t\t<dcsset:selection>')
@@ -2372,194 +2811,288 @@ def _ensure_unique(name, seen, kind):
 
 # --- Каталог событий формы (генерируется) ---
 # Tag ("Form" for the form itself) -> event -> (handler suffix, compile directive, params,
-# platform the event exists since ("" = 8.3.24), table data source the event is limited to).
-# Source: standard configurations (28.5k forms) + load test on 8.3.24/8.3.27/8.5.
+# platform the event exists since ("" = 8.3.20), restriction). Params: a string or a tuple
+# ("platform", "params", ...) — the signature from that platform on. Restriction: a table data source
+# (DynamicList) or, for the form, the owners whose forms have the event (by the main attribute). Last —
+# the event position in <Events>: the platform writes events in this order whatever the input order.
+# Sources: Syntax Assistant 8.3.20-8.5, standard configurations (28.5k forms), load test on 7 platforms.
 # Regenerate: python debug/form-handlers/gen_event_catalog.py
 def get_form_event_catalog():
     return {
         "CalendarField": {
-            "OnActivateDate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u0414\u0430\u0442\u044b", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnPeriodOutput": ("\u041f\u0440\u0438\u0412\u044b\u0432\u043e\u0434\u0435\u041f\u0435\u0440\u0438\u043e\u0434\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0444\u043e\u0440\u043c\u043b\u0435\u043d\u0438\u0435\u041f\u0435\u0440\u0438\u043e\u0434\u0430", "", ""),
-            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0414\u0430\u0442\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0414\u0430\u0442\u0430", "", "", 1),
+            "OnPeriodOutput": ("\u041f\u0440\u0438\u0412\u044b\u0432\u043e\u0434\u0435\u041f\u0435\u0440\u0438\u043e\u0434\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0444\u043e\u0440\u043c\u043b\u0435\u043d\u0438\u0435\u041f\u0435\u0440\u0438\u043e\u0434\u0430", "", "", 2),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0414\u0430\u0442\u0430", "", "", 3),
+            "OnActivateDate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u0414\u0430\u0442\u044b", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 4),
+            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", "", 5),
+            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0414\u0430\u0442\u0430", "", "", 6),
+            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 7),
         },
         "ChartField": {
-            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0414\u0438\u0430\u0433\u0440\u0430\u043c\u043c\u044b, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0414\u0438\u0430\u0433\u0440\u0430\u043c\u043c\u044b, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
+            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 2),
+            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 3),
         },
         "CheckBoxField": {
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+        },
+        "DendrogramField": {
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0414\u0435\u043d\u0434\u0440\u043e\u0433\u0440\u0430\u043c\u043c\u044b, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 2),
         },
         "ExtendedTooltip": {
-            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
         },
         "Form": {
-            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", ""),
-            "AfterWriteAtServer": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", ""),
-            "BeforeClose": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u0435\u0420\u0430\u0431\u043e\u0442\u044b, \u0422\u0435\u043a\u0441\u0442\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "BeforeLoadDataFromSettingsAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u0414\u0430\u043d\u043d\u044b\u0445\u0418\u0437\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", ""),
-            "BeforeLoadUserSettingsAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u043e\u0432\u044b\u0435\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438\u041a\u0414", "", ""),
-            "BeforeLoadVariantAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0430\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u043e\u0432\u044b\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438\u041a\u0414", "", ""),
-            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", ""),
-            "BeforeWriteAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", ""),
-            "ChoiceProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0412\u044b\u0431\u043e\u0440\u0430", "", ""),
-            "ExternalEvent": ("\u0412\u043d\u0435\u0448\u043d\u0435\u0435\u0421\u043e\u0431\u044b\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0421\u043e\u0431\u044b\u0442\u0438\u0435, \u0414\u0430\u043d\u043d\u044b\u0435", "", ""),
-            "FillCheckProcessingAtServer": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0438\u0417\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u041f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u043c\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b", "", ""),
-            "NavigationProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0431\u044a\u0435\u043a\u0442\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "NewWriteProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u043e\u0432\u043e\u0433\u043e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u043e\u0432\u044b\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "NotificationProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041e\u043f\u043e\u0432\u0435\u0449\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0418\u043c\u044f\u0421\u043e\u0431\u044b\u0442\u0438\u044f, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a", "", ""),
-            "OnChangeDisplaySettings": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u043e\u0432\u042d\u043a\u0440\u0430\u043d\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "", "", ""),
-            "OnClose": ("\u041f\u0440\u0438\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u0435\u0420\u0430\u0431\u043e\u0442\u044b", "", ""),
-            "OnCreateAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnLoadDataFromSettingsAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u0414\u0430\u043d\u043d\u044b\u0445\u0418\u0437\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", ""),
-            "OnLoadUserSettingsAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u044e\u0442\u0441\u044f\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", ""),
-            "OnLoadVariantAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0430\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", ""),
-            "OnMainServerAvailabilityChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u043e\u0441\u0442\u0438\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0433\u043e\u0421\u0435\u0440\u0432\u0435\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnOpen": ("\u041f\u0440\u0438\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437", "", ""),
-            "OnReadAtServer": ("\u041f\u0440\u0438\u0427\u0442\u0435\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442", "", ""),
-            "OnReopen": ("\u041f\u0440\u0438\u041f\u043e\u0432\u0442\u043e\u0440\u043d\u043e\u043c\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "", "", ""),
-            "OnSaveDataInSettingsAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u0414\u0430\u043d\u043d\u044b\u0445\u0412\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u0445\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", ""),
-            "OnSaveUserSettingsAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", ""),
-            "OnSaveVariantAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0430\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438\u041a\u0414", "", ""),
-            "OnUpdateUserSettingSetAtServer": ("\u041f\u0440\u0438\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0438\u0421\u043e\u0441\u0442\u0430\u0432\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnWriteAtServer": ("\u041f\u0440\u0438\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", ""),
-            "URLGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041a\u043b\u044e\u0447, \u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "URLListGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0421\u043f\u0438\u0441\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0445\u0421\u0441\u044b\u043b\u043e\u043a", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u043f\u0438\u0441\u043e\u043a\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u044b\u0445\u0421\u0441\u044b\u043b\u043e\u043a, \u041a\u043b\u044e\u0447\u041f\u043e\u0423\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e", "", ""),
-            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, InformationRegisterRecord, InformationRegisterRecordSet, Constants, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 0),
+            "BeforeReopenFromOtherServer": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0440\u0435\u043e\u0442\u043a\u0440\u044b\u0442\u0438\u0435\u043c\u0421\u0414\u0440\u0443\u0433\u043e\u0433\u043e\u0421\u0435\u0440\u0432\u0435\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b, \u041e\u0442\u043a\u0430\u0437", "", "", 1),
+            "ValueChoice": ("\u0412\u044b\u0431\u043e\u0440\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 2),
+            "OnReopenFromOtherServer": ("\u041f\u0440\u0438\u041f\u0435\u0440\u0435\u043e\u0442\u043a\u0440\u044b\u0442\u0438\u0438\u0421\u0414\u0440\u0443\u0433\u043e\u0433\u043e\u0421\u0435\u0440\u0432\u0435\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 3),
+            "OnSaveDataInSettingsAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u0414\u0430\u043d\u043d\u044b\u0445\u0412\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u0445\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "", 4),
+            "ChoiceProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0412\u044b\u0431\u043e\u0440\u0430", "", "", 5),
+            "BeforeLoadVariantAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0430\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "Report", 6),
+            "AfterWriteAtServer": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, InformationRegisterRecord, InformationRegisterRecordSet, Constants, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 7),
+            "OnPasteFromClipboard": ("\u041f\u0440\u0438\u0412\u0441\u0442\u0430\u0432\u043a\u0435\u0418\u0437\u0411\u0443\u0444\u0435\u0440\u0430\u041e\u0431\u043c\u0435\u043d\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.24", "", 8),
+            "BeforeStart": ("\u041f\u0435\u0440\u0435\u0434\u0421\u0442\u0430\u0440\u0442\u043e\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437", "", "BusinessProcess", 9),
+            "NotificationProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041e\u043f\u043e\u0432\u0435\u0449\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0418\u043c\u044f\u0421\u043e\u0431\u044b\u0442\u0438\u044f, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a", "", "", 10),
+            "OnReadAtServer": ("\u041f\u0440\u0438\u0427\u0442\u0435\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, InformationRegisterRecord, InformationRegisterRecordSet, Constants, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 11),
+            "NewWriteProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u043e\u0432\u043e\u0433\u043e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u043e\u0432\u044b\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 12),
+            "OnOpen": ("\u041f\u0440\u0438\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437", "", "", 13),
+            "BeforeLoadUserSettingsAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u044e\u0442\u0441\u044f\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "Report", 14),
+            "URLListGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0421\u043f\u0438\u0441\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0445\u0421\u0441\u044b\u043b\u043e\u043a", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u043f\u0438\u0441\u043e\u043a\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u044b\u0445\u0421\u0441\u044b\u043b\u043e\u043a, \u041a\u043b\u044e\u0447\u041f\u043e\u0423\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e", "", "", 15),
+            "OnSaveVariantAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0430\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "Report", 16),
+            "BeforeClose": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u0435\u0420\u0430\u0431\u043e\u0442\u044b, \u0422\u0435\u043a\u0441\u0442\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 17),
+            "ExternalEvent": ("\u0412\u043d\u0435\u0448\u043d\u0435\u0435\u0421\u043e\u0431\u044b\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0421\u043e\u0431\u044b\u0442\u0438\u0435, \u0414\u0430\u043d\u043d\u044b\u0435", "", "", 18),
+            "CollaborationSystemUsersAutoComplete": ("\u0410\u0432\u0442\u043e\u041f\u043e\u0434\u0431\u043e\u0440\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439\u0421\u0438\u0441\u0442\u0435\u043c\u044b\u0412\u0437\u0430\u0438\u043c\u043e\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0422\u0435\u043a\u0441\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 19),
+            "OnSettingsChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.5", "Report", 20),
+            "URLGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041a\u043b\u044e\u0447, \u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 21),
+            "OnReopen": ("\u041f\u0440\u0438\u041f\u043e\u0432\u0442\u043e\u0440\u043d\u043e\u043c\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "", "", "", 22),
+            "OnLoadDataFromSettingsAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u0414\u0430\u043d\u043d\u044b\u0445\u0418\u0437\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "", 23),
+            "OnLoadUserSettingsAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u044e\u0442\u0441\u044f\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "Report", 24),
+            "OnLoadVariantAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0430\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "Report", 25),
+            "NavigationProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0431\u044a\u0435\u043a\u0442\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 26),
+            "OnSaveUserSettingsAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "Report", 27),
+            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, InformationRegisterRecord, InformationRegisterRecordSet, Constants, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 28),
+            "OnCreateAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 29),
+            "CollaborationSystemUsersChoiceFormGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0424\u043e\u0440\u043c\u044b\u0412\u044b\u0431\u043e\u0440\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u0439\u0421\u0438\u0441\u0442\u0435\u043c\u044b\u0412\u0437\u0430\u0438\u043c\u043e\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u0430\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0424\u043e\u0440\u043c\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 30),
+            "OnComposeResult": ("\u041f\u0440\u0438\u041a\u043e\u043c\u043f\u043e\u043d\u043e\u0432\u043a\u0435\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.5", "Report", 31),
+            "ActivationProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a", "", "", 32),
+            "AfterComposeResult": ("\u041f\u043e\u0441\u043b\u0435\u041a\u043e\u043c\u043f\u043e\u043d\u043e\u0432\u043a\u0438\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.5", "Report", 33),
+            "OnChangeDisplaySettings": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u043e\u0432\u042d\u043a\u0440\u0430\u043d\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "", "", "", 34),
+            "BeforeWriteAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, InformationRegisterRecord, InformationRegisterRecordSet, Constants, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 35),
+            "OnWriteAtServer": ("\u041f\u0440\u0438\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u0422\u0435\u043a\u0443\u0449\u0438\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u0417\u0430\u043f\u0438\u0441\u0438", "", "Document, Catalog, ChartOfCharacteristicTypes, BusinessProcess, Task, InformationRegisterRecord, InformationRegisterRecordSet, Constants, ExchangePlan, ChartOfAccounts, ChartOfCalculationTypes", 36),
+            "OnClose": ("\u041f\u0440\u0438\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u0435\u0420\u0430\u0431\u043e\u0442\u044b", "", "", 37),
+            "OnMainServerAvailabilityChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u043e\u0441\u0442\u0438\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0433\u043e\u0421\u0435\u0440\u0432\u0435\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 38),
+            "OnUpdateUserSettingSetAtServer": ("\u041f\u0440\u0438\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0438\u0421\u043e\u0441\u0442\u0430\u0432\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "Report, SettingsComposer", 39),
+            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 40),
+            "FillCheckProcessingAtServer": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0438\u0417\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041e\u0442\u043a\u0430\u0437, \u041f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u043c\u044b\u0435\u0420\u0435\u043a\u0432\u0438\u0437\u0438\u0442\u044b", "", "", 41),
+            "BeforeLoadDataFromSettingsAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u0414\u0430\u043d\u043d\u044b\u0445\u0418\u0437\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "", 42),
+            "BeforeExecute": ("\u041f\u0435\u0440\u0435\u0434\u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041e\u0442\u043a\u0430\u0437", "", "Task", 43),
+            "AddInDetachmentOnError": ("\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435\u0412\u043d\u0435\u0448\u043d\u0435\u0439\u041a\u043e\u043c\u043f\u043e\u043d\u0435\u043d\u0442\u044b\u041f\u0440\u0438\u041e\u0448\u0438\u0431\u043a\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u0418\u043c\u044f, \u041c\u0435\u0441\u0442\u043e\u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435", "8.3.23", "", 44),
         },
         "FormattedDocumentField": {
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 1),
+            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 2),
+            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u041e\u0442\u043a\u0430\u0437", "", "", 3),
         },
         "GanttChartField": {
-            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430", "", ""),
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430", "", "", 1),
+            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430", "", "", 2),
+            "BeforeCollapse": ("\u041f\u0435\u0440\u0435\u0434\u0421\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f, \u041e\u0442\u043a\u0430\u0437", "8.3.23", "", 3),
+            "OnActivateInterval": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u0418\u043d\u0442\u0435\u0440\u0432\u0430\u043b\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.3.23", "", 4),
+            "OnActivateValue": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.3.23", "", 5),
+            "BeforeExpand": ("\u041f\u0435\u0440\u0435\u0434\u0420\u0430\u0437\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f, \u041e\u0442\u043a\u0430\u0437", "8.3.23", "", 6),
+            "OnIntervalEditEnd": ("\u041f\u0440\u0438\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0438\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f\u0418\u043d\u0442\u0435\u0440\u0432\u0430\u043b\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u043d\u0442\u0435\u0440\u0432\u0430\u043b, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "", "", 7),
+        },
+        "GeographicalSchemaField": {
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 2),
         },
         "GraphicalSchemaField": {
-            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 1),
+            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 2),
+            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 3),
+            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u041e\u0442\u043a\u0430\u0437", "", "", 4),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 5),
         },
         "HTMLDocumentField": {
-            "DocumentComplete": ("\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnClick": ("\u041f\u0440\u0438\u041d\u0430\u0436\u0430\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0421\u043e\u0431\u044b\u0442\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "DocumentComplete": ("\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0421\u0444\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 1),
+            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u041e\u0442\u043a\u0430\u0437", "", "", 2),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 3),
+            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 4),
+            "OnClick": ("\u041f\u0440\u0438\u041d\u0430\u0436\u0430\u0442\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0421\u043e\u0431\u044b\u0442\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 5),
         },
         "InputField": {
-            "AutoComplete": ("\u0410\u0432\u0442\u043e\u041f\u043e\u0434\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0441\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0414\u0430\u043d\u043d\u044b\u0445, \u041e\u0436\u0438\u0434\u0430\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "ChoiceProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Clearing": ("\u041e\u0447\u0438\u0441\u0442\u043a\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Creating": ("\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "EditTextChange": ("\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435\u0422\u0435\u043a\u0441\u0442\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0441\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "MultipleValueOpening": ("\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0435\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0433\u043e\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "MultipleValueURLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0433\u043e\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "MultipleValuesAdd": ("", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "MultipleValuesDelete": ("\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u044b\u0445\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0439", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440\u044b, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "Opening": ("\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "StartChoice": ("\u041d\u0430\u0447\u0430\u043b\u043e\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "StartListChoice": ("\u041d\u0430\u0447\u0430\u043b\u043e\u0412\u044b\u0431\u043e\u0440\u0430\u0418\u0437\u0421\u043f\u0438\u0441\u043a\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "TextEditEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u0412\u0432\u043e\u0434\u0430\u0422\u0435\u043a\u0441\u0442\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0441\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0414\u0430\u043d\u043d\u044b\u0445, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Tuning": ("\u0420\u0435\u0433\u0443\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "EditTextChange": ("\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435\u0422\u0435\u043a\u0441\u0442\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0441\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
+            "AutoComplete": ("\u0410\u0432\u0442\u043e\u041f\u043e\u0434\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0441\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0414\u0430\u043d\u043d\u044b\u0445, \u041e\u0436\u0438\u0434\u0430\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 2),
+            "StartChoice": ("\u041d\u0430\u0447\u0430\u043b\u043e\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", ("8.3.20", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u0412\u044b\u0431\u043e\u0440\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435\u043c, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430"), "", "", 3),
+            "MultipleValueURLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0433\u043e\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "", 4),
+            "MultipleValuesDelete": ("\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u044b\u0445\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0439", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440\u044b, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "", 5),
+            "Tuning": ("\u0420\u0435\u0433\u0443\u043b\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 6),
+            "MultipleValuesAdd": ("\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u044b\u0445\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0439", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "", 7),
+            "Opening": ("\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 8),
+            "Creating": ("\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 9),
+            "StartListChoice": ("\u041d\u0430\u0447\u0430\u043b\u043e\u0412\u044b\u0431\u043e\u0440\u0430\u0418\u0437\u0421\u043f\u0438\u0441\u043a\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 10),
+            "Clearing": ("\u041e\u0447\u0438\u0441\u0442\u043a\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 11),
+            "TextEditEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u0412\u0432\u043e\u0434\u0430\u0422\u0435\u043a\u0441\u0442\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0441\u0442, \u0414\u0430\u043d\u043d\u044b\u0435\u0412\u044b\u0431\u043e\u0440\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0414\u0430\u043d\u043d\u044b\u0445, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 12),
+            "MultipleValueOpening": ("\u041e\u0442\u043a\u0440\u044b\u0442\u0438\u0435\u041c\u043d\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0433\u043e\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0434\u0435\u043d\u0442\u0438\u0444\u0438\u043a\u0430\u0442\u043e\u0440, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "", 13),
+            "ChoiceProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", ("8.3.20", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u0414\u0430\u043d\u043d\u044b\u0435, \u0412\u044b\u0431\u043e\u0440\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435\u043c, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430"), "", "", 14),
+            "CommandGenerateProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f\u041a\u043e\u043c\u0430\u043d\u0434", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041a\u043e\u043c\u0430\u043d\u0434, \u041a\u043e\u043c\u0430\u043d\u0434\u044b", "8.3.23", "", 15),
         },
         "LabelDecoration": {
-            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
         },
         "LabelField": {
-            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
+            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 2),
+        },
+        "PDFDocumentField": {
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.3.23", "", 0),
+            "URLClick": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435\u041d\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "", 1),
         },
         "Pages": {
-            "OnCurrentPageChange": ("\u041f\u0440\u0438\u0421\u043c\u0435\u043d\u0435\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u044b", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0443\u0449\u0430\u044f\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430", "", ""),
+            "OnCurrentPageChange": ("\u041f\u0440\u0438\u0421\u043c\u0435\u043d\u0435\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u044b", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0443\u0449\u0430\u044f\u0421\u0442\u0440\u0430\u043d\u0438\u0446\u0430", "", "", 0),
+        },
+        "PeriodField": {
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0414\u0430\u0442\u0430", "", "", 1),
         },
         "PictureDecoration": {
-            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 0),
+            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", "", 1),
+            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 2),
+            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 3),
+            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 4),
         },
         "PictureField": {
-            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnChange": ("", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 1),
+            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", "", 2),
+            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 3),
+            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 4),
+            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 5),
         },
         "PlannerField": {
-            "BeforeCreate": ("\u041f\u0435\u0440\u0435\u0434\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0447\u0430\u043b\u043e, \u041a\u043e\u043d\u0435\u0446, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439, \u0422\u0435\u043a\u0441\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "BeforeDelete": ("\u041f\u0435\u0440\u0435\u0434\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "BeforeStartEdit": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u044b\u0439\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "BeforeStartQuickEdit": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0411\u044b\u0441\u0442\u0440\u043e\u0433\u043e\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "CommandGenerateProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f\u041a\u043e\u043c\u0430\u043d\u0434", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041a\u043e\u043c\u0430\u043d\u0434, \u041a\u043e\u043c\u0430\u043d\u0434\u044b, \u041a\u043e\u043c\u0430\u043d\u0434\u0430\u041f\u043e\u0423\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e", "", ""),
-            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "", ""),
-            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "", ""),
-            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnCurrentRepresentationPeriodChange": ("\u041f\u0440\u0438\u0421\u043c\u0435\u043d\u0435\u0422\u0435\u043a\u0443\u0449\u0435\u0433\u043e\u041f\u0435\u0440\u0438\u043e\u0434\u0430\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0443\u0449\u0438\u0435\u041f\u0435\u0440\u0438\u043e\u0434\u044b\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnEditEnd": ("\u041f\u0440\u0438\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0438\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u044b\u0439\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "", ""),
-            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439", "", "", 1),
+            "BeforeCollapseDimensionItem": ("\u041f\u0435\u0440\u0435\u0434\u0421\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0430\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u044f, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439, \u041e\u0442\u043a\u0430\u0437", "", "", 2),
+            "TimeScaleItemClick": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435\u041d\u0430\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0435\u0428\u043a\u0430\u043b\u044b\u0412\u0440\u0435\u043c\u0435\u043d\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0428\u043a\u0430\u043b\u044b\u0412\u0440\u0435\u043c\u0435\u043d\u0438, \u0414\u0430\u0442\u0430", "", "", 3),
+            "BeforeCreate": ("\u041f\u0435\u0440\u0435\u0434\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0447\u0430\u043b\u043e, \u041a\u043e\u043d\u0435\u0446, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439, \u0422\u0435\u043a\u0441\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 4),
+            "InsideDragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f\u0412\u043d\u0443\u0442\u0440\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u0430\u0440\u0438\u0430\u043d\u0442\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u0413\u0440\u0430\u043d\u0438\u0446, \u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u041e\u0442\u043a\u0430\u0437", "", "", 5),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 6),
+            "DimensionItemClick": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435\u041d\u0430\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0435\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u044f, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 7),
+            "OnCurrentRepresentationPeriodChange": ("\u041f\u0440\u0438\u0421\u043c\u0435\u043d\u0435\u0422\u0435\u043a\u0443\u0449\u0435\u0433\u043e\u041f\u0435\u0440\u0438\u043e\u0434\u0430\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0422\u0435\u043a\u0443\u0449\u0438\u0435\u041f\u0435\u0440\u0438\u043e\u0434\u044b\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 8),
+            "OnEditEnd": ("\u041f\u0440\u0438\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0438\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u044b\u0439\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "", "", 9),
+            "WrappedTimeScaleHeaderClick": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435\u041d\u0430\u041f\u0435\u0440\u0435\u043d\u0435\u0441\u0435\u043d\u043d\u043e\u043c\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043a\u0435\u0428\u043a\u0430\u043b\u044b\u0412\u0440\u0435\u043c\u0435\u043d\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0430\u0442\u0430", "", "", 10),
+            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", "", 11),
+            "BeforeDelete": ("\u041f\u0435\u0440\u0435\u0434\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437", "", "", 12),
+            "BeforeExpandDimensionItem": ("\u041f\u0435\u0440\u0435\u0434\u0420\u0430\u0437\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0430\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u044f, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439, \u041e\u0442\u043a\u0430\u0437", "", "", 13),
+            "BeforeStartEdit": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u044b\u0439\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 14),
+            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u0430\u0442\u0430, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f\u0418\u0437\u043c\u0435\u0440\u0435\u043d\u0438\u0439", "", "", 15),
+            "CommandGenerateProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f\u041a\u043e\u043c\u0430\u043d\u0434", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", ("8.3.20", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b, \u041a\u043e\u043c\u0430\u043d\u0434\u044b, \u041a\u043e\u043c\u0430\u043d\u0434\u0430\u041f\u043e\u0423\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e", "8.3.23", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041a\u043e\u043c\u0430\u043d\u0434, \u041a\u043e\u043c\u0430\u043d\u0434\u044b, \u041a\u043e\u043c\u0430\u043d\u0434\u0430\u041f\u043e\u0423\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e"), "", "", 16),
+            "BeforeStartQuickEdit": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0411\u044b\u0441\u0442\u0440\u043e\u0433\u043e\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 17),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 18),
+            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 19),
+            "URLClick": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435\u041d\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 20),
+            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 21),
+            "PlannerActionClick": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435\u041d\u0430\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435\u041f\u043b\u0430\u043d\u0438\u0440\u043e\u0432\u0449\u0438\u043a\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u042d\u043b\u0435\u043c\u0435\u043d\u0442\u041f\u043b\u0430\u043d\u0438\u0440\u043e\u0432\u0449\u0438\u043a\u0430, \u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0430\u041f\u043b\u0430\u043d\u0438\u0440\u043e\u0432\u0449\u0438\u043a\u0430", "", "", 22),
+        },
+        "ProgressBarField": {
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
         },
         "RadioButtonField": {
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
         },
         "SpreadSheetDocumentField": {
-            "AdditionalDetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0439\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "BeforePrint": ("", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u041e\u0431\u043b\u0430\u0441\u0442\u044c", "", ""),
-            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u041e\u0431\u043b\u0430\u0441\u0442\u044c", "", ""),
-            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnChangeAreaContent": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0433\u043e\u041e\u0431\u043b\u0430\u0441\u0442\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0431\u043b\u0430\u0441\u0442\u044c", "", ""),
-            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0431\u043b\u0430\u0441\u0442\u044c, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "URLProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430\u0424\u043e\u0440\u043c\u0430\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u0439\u0421\u0442\u0440\u043e\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.24", "", 1),
+            "AdditionalDetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u043e\u0439\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", ("8.3.20", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b", "8.5", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b, \u0412\u0441\u0435\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438\u041e\u0431\u043b\u0430\u0441\u0442\u0438, \u0414\u043b\u044f\u041f\u0430\u043d\u0435\u043b\u0438\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0439"), "", "", 2),
+            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u041e\u0431\u043b\u0430\u0441\u0442\u044c", "", "", 3),
+            "OnActivate": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 4),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0431\u043b\u0430\u0441\u0442\u044c, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 5),
+            "DetailProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b", "", "", 6),
+            "OnChangeAreaContent": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0433\u043e\u041e\u0431\u043b\u0430\u0441\u0442\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0431\u043b\u0430\u0441\u0442\u044c, \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b", "", "", 7),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 8),
+            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", "", 9),
+            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u041e\u0431\u043b\u0430\u0441\u0442\u044c", "", "", 10),
+            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 11),
+            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u041e\u0442\u043a\u0430\u0437", "", "", 12),
+            "OnGenerateToolTipText": ("\u041f\u0440\u0438\u0424\u043e\u0440\u043c\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438\u0422\u0435\u043a\u0441\u0442\u0430\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0431\u043b\u0430\u0441\u0442\u044c, \u0422\u0435\u043a\u0441\u0442\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0438, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.5", "", 13),
+            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 14),
         },
         "Table": {
-            "AfterDeleteRow": ("\u041f\u043e\u0441\u043b\u0435\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "BeforeAddRow": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u0420\u043e\u0434\u0438\u0442\u0435\u043b\u044c, \u0413\u0440\u0443\u043f\u043f\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440", "", ""),
-            "BeforeCollapse": ("\u041f\u0435\u0440\u0435\u0434\u0421\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "BeforeDeleteRow": ("\u041f\u0435\u0440\u0435\u0434\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "BeforeEditEnd": ("\u041f\u0435\u0440\u0435\u0434\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u043c\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "BeforeExpand": ("\u041f\u0435\u0440\u0435\u0434\u0420\u0430\u0437\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "BeforeLoadUserSettingsAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "DynamicList"),
-            "BeforeRowChange": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437", "", ""),
-            "ChoiceProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435", "", ""),
-            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435", "", ""),
-            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", ""),
-            "NewWriteProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u043e\u0432\u043e\u0433\u043e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u043e\u0432\u044b\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "OnActivateCell": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u042f\u0447\u0435\u0439\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnActivateField": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u041f\u043e\u043b\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnActivateRow": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u0421\u0442\u0440\u043e\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnCurrentParentChange": ("\u041f\u0440\u0438\u0421\u043c\u0435\u043d\u0435\u0422\u0435\u043a\u0443\u0449\u0435\u0433\u043e\u0420\u043e\u0434\u0438\u0442\u0435\u043b\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
-            "OnEditEnd": ("\u041f\u0440\u0438\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0438\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "", ""),
-            "OnGetDataAtServer": ("\u041f\u0440\u0438\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u0438\u0414\u0430\u043d\u043d\u044b\u0445\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435\u0411\u0435\u0437\u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u0430", "\u0418\u043c\u044f\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0430, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0421\u0442\u0440\u043e\u043a\u0438", "", "DynamicList"),
-            "OnHover": ("\u041f\u0440\u0438\u041d\u0430\u0432\u0435\u0434\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435", "8.5", ""),
-            "OnLoadUserSettingsAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "DynamicList"),
-            "OnSaveUserSettingsAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "DynamicList"),
-            "OnSelectedRowsSetChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u0421\u043e\u0441\u0442\u0430\u0432\u0430\u0412\u044b\u0434\u0435\u043b\u0435\u043d\u043d\u044b\u0445\u0421\u0442\u0440\u043e\u043a", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.5", ""),
-            "OnStartEdit": ("\u041f\u0440\u0438\u041d\u0430\u0447\u0430\u043b\u0435\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435", "", ""),
-            "OnUpdateUserSettingSetAtServer": ("\u041f\u0440\u0438\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0438\u0421\u043e\u0441\u0442\u0430\u0432\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "DynamicList"),
-            "RefreshRequestProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0417\u0430\u043f\u0440\u043e\u0441\u0430\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "", "", ""),
-            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
-            "URLGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043b\u044e\u0447, \u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "DynamicList"),
-            "ValueChoice": ("\u0412\u044b\u0431\u043e\u0440\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", ""),
+            "OnEditEnd": ("\u041f\u0440\u0438\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0438\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "", "", 0),
+            "DragCheck": ("\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435", "", "", 1),
+            "ValueChoice": ("\u0412\u044b\u0431\u043e\u0440\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 2),
+            "Selection": ("\u0412\u044b\u0431\u043e\u0440", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 3),
+            "OnSelectedRowsSetChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438\u0421\u043e\u0441\u0442\u0430\u0432\u0430\u0412\u044b\u0434\u0435\u043b\u0435\u043d\u043d\u044b\u0445\u0421\u0442\u0440\u043e\u043a", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.5", "", 4),
+            "BeforeAddRow": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u0420\u043e\u0434\u0438\u0442\u0435\u043b\u044c, \u042d\u0442\u043e\u0413\u0440\u0443\u043f\u043f\u0430, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440", "", "", 5),
+            "OnCurrentParentChange": ("\u041f\u0440\u0438\u0421\u043c\u0435\u043d\u0435\u0422\u0435\u043a\u0443\u0449\u0435\u0433\u043e\u0420\u043e\u0434\u0438\u0442\u0435\u043b\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 6),
+            "BeforeDeleteRow": ("\u041f\u0435\u0440\u0435\u0434\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437", "", "", 7),
+            "OnLoadUserSettingsAtServer": ("\u041f\u0440\u0438\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0435\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u044e\u0442\u0441\u044f\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "DynamicList", 8),
+            "URLListGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u0421\u043f\u0438\u0441\u043a\u0430\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0445\u0421\u0441\u044b\u043b\u043e\u043a", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u043f\u0438\u0441\u043e\u043a\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u044b\u0445\u0421\u0441\u044b\u043b\u043e\u043a, \u041a\u043b\u044e\u0447\u041f\u043e\u0423\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e", "8.3.23", "DynamicList", 9),
+            "BeforeEditEnd": ("\u041f\u0435\u0440\u0435\u0434\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u043c\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043c\u0435\u043d\u0430\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f, \u041e\u0442\u043a\u0430\u0437", "", "", 10),
+            "OnActivateRow": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u0421\u0442\u0440\u043e\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 11),
+            "URLGetProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u044f\u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u043e\u0439\u0421\u0441\u044b\u043b\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043b\u044e\u0447, \u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u041d\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u043e\u043d\u043d\u0430\u044f\u0421\u0441\u044b\u043b\u043a\u0430, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "8.3.23", "DynamicList", 12),
+            "DragStart": ("\u041d\u0430\u0447\u0430\u043b\u043e\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435", "", "", 13),
+            "OnActivateField": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u041f\u043e\u043b\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 14),
+            "BeforeExpand": ("\u041f\u0435\u0440\u0435\u0434\u0420\u0430\u0437\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043a\u0430\u0437", "", "", 15),
+            "Drag": ("\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430, \u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435", "", "", 16),
+            "ChoiceProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0412\u044b\u0431\u043e\u0440\u0430", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435\u0417\u043d\u0430\u0447\u0435\u043d\u0438\u0435, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 17),
+            "OnGetDataAtServer": ("\u041f\u0440\u0438\u041f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u0438\u0414\u0430\u043d\u043d\u044b\u0445\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435\u0411\u0435\u0437\u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u0430", "\u0418\u043c\u044f\u042d\u043b\u0435\u043c\u0435\u043d\u0442\u0430, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0421\u0442\u0440\u043e\u043a\u0438", "", "DynamicList", 18),
+            "OnSaveUserSettingsAtServer": ("\u041f\u0440\u0438\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0438\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "DynamicList", 19),
+            "BeforeCollapse": ("\u041f\u0435\u0440\u0435\u0434\u0421\u0432\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u043d\u0438\u0435\u043c", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0440\u043e\u043a\u0430, \u041e\u0442\u043a\u0430\u0437", "", "", 20),
+            "BeforeRowChange": ("\u041f\u0435\u0440\u0435\u0434\u041d\u0430\u0447\u0430\u043b\u043e\u043c\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041e\u0442\u043a\u0430\u0437", "", "", 21),
+            "OnStartEdit": ("\u041f\u0440\u0438\u041d\u0430\u0447\u0430\u043b\u0435\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u043e\u0432\u0430\u044f\u0421\u0442\u0440\u043e\u043a\u0430, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435", "", "", 22),
+            "BeforeLoadUserSettingsAtServer": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u043e\u0439\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438, \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u044e\u0442\u0441\u044f\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u044b\u0435\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438", "", "DynamicList", 23),
+            "OnHover": ("\u041f\u0440\u0438\u041d\u0430\u0432\u0435\u0434\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0421\u0442\u0440\u043e\u043a\u0430, \u041f\u043e\u043b\u0435", "8.5", "", 24),
+            "DragEnd": ("\u041e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b\u041f\u0435\u0440\u0435\u0442\u0430\u0441\u043a\u0438\u0432\u0430\u043d\u0438\u044f, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 25),
+            "NewWriteProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0417\u0430\u043f\u0438\u0441\u0438\u041d\u043e\u0432\u043e\u0433\u043e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u041d\u043e\u0432\u044b\u0439\u041e\u0431\u044a\u0435\u043a\u0442, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "", 26),
+            "AfterDeleteRow": ("\u041f\u043e\u0441\u043b\u0435\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 27),
+            "OnUpdateUserSettingSetAtServer": ("\u041f\u0440\u0438\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0438\u0421\u043e\u0441\u0442\u0430\u0432\u0430\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u0441\u043a\u0438\u0445\u041d\u0430\u0441\u0442\u0440\u043e\u0435\u043a\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435", "\u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", "", "DynamicList", 28),
+            "OnActivateCell": ("\u041f\u0440\u0438\u0410\u043a\u0442\u0438\u0432\u0438\u0437\u0430\u0446\u0438\u0438\u042f\u0447\u0435\u0439\u043a\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 29),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 30),
+            "RefreshRequestProcessing": ("\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430\u0417\u0430\u043f\u0440\u043e\u0441\u0430\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "", "", "", 31),
         },
         "TextDocumentField": {
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
+            "BeforePrint": ("\u041f\u0435\u0440\u0435\u0434\u041f\u0435\u0447\u0430\u0442\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u0414\u0438\u0430\u043b\u043e\u0433\u041f\u0435\u0447\u0430\u0442\u0438, \u041e\u0442\u043a\u0430\u0437", "", "", 1),
+            "BeforeWrite": ("\u041f\u0435\u0440\u0435\u0434\u0417\u0430\u043f\u0438\u0441\u044c\u044e", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442, \u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435, \u041e\u0442\u043a\u0430\u0437", "", "", 2),
+            "AfterWrite": ("\u041f\u043e\u0441\u043b\u0435\u0417\u0430\u043f\u0438\u0441\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 3),
         },
         "TrackBarField": {
-            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", ""),
+            "OnChange": ("\u041f\u0440\u0438\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0438", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "", "", 0),
         },
         "UsualGroup": {
-            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.5", ""),
+            "Click": ("\u041d\u0430\u0436\u0430\u0442\u0438\u0435", "\u041d\u0430\u041a\u043b\u0438\u0435\u043d\u0442\u0435", "\u042d\u043b\u0435\u043c\u0435\u043d\u0442", "8.5", "", 0),
         },
+    }
+
+
+# Form event order of the owners whose order differs from the catalog positions
+def get_form_event_order():
+    return {
+        "Document": ["AfterWrite", "BeforeReopenFromOtherServer", "ValueChoice", "OnReopenFromOtherServer", "OnSaveDataInSettingsAtServer", "ChoiceProcessing", "AfterWriteAtServer", "OnPasteFromClipboard", "NotificationProcessing", "OnReadAtServer", "NewWriteProcessing", "OnOpen", "URLListGetProcessing", "BeforeClose", "ExternalEvent", "CollaborationSystemUsersAutoComplete", "URLGetProcessing", "OnReopen", "OnLoadDataFromSettingsAtServer", "BeforeWrite", "BeforeWriteAtServer", "NavigationProcessing", "OnCreateAtServer", "CollaborationSystemUsersChoiceFormGetProcessing", "ActivationProcessing", "OnChangeDisplaySettings", "OnWriteAtServer", "OnClose", "OnMainServerAvailabilityChange", "URLProcessing", "FillCheckProcessingAtServer", "BeforeLoadDataFromSettingsAtServer", "AddInDetachmentOnError"],
     }
 # --- конец каталога событий формы ---
 EVENT_CATALOG = get_form_event_catalog()
+FORM_EVENT_ORDER = get_form_event_order()
 
 # Format version of the form being compiled and its DSL (set in main): the event check needs both.
 _format_version = ''
+_form_owner = ''
 # Префикс имён расширения (set in main): обработчик с видом вызова получает его в имени по null.
 _ext_name_prefix = ''
 _defn = {}
@@ -2570,6 +3103,22 @@ def get_event_entry(xml_tag, event_name):
     if not xml_tag or xml_tag not in EVENT_CATALOG:
         return None
     return EVENT_CATALOG[xml_tag].get(event_name)
+
+
+# Позиция события в <Events>: платформа пишет события в порядке каталога (у формы — в порядке владельца,
+# если он у владельца свой), внутри события — Before, затем After. Событие вне каталога — после известных.
+def get_event_rank(xml_tag, name, call_type=''):
+    ct = {'After': 1, 'Override': 2}.get(call_type or '', 0)
+    pos = 2 ** 31 - 1
+    own = FORM_EVENT_ORDER.get(_form_owner) if xml_tag == 'Form' and _form_owner else None
+    if own is not None:
+        if name in own:
+            pos = own.index(name)
+    else:
+        e = get_event_entry(xml_tag, name)
+        if e:
+            pos = e[5]
+    return pos * 4 + ct
 
 
 KNOWN_KEYS = {
@@ -3139,48 +3688,71 @@ def get_element_name(el, type_key):
     return str(el.get(type_key, ''))
 
 
-# Собрать упорядоченный список событий элемента (имя, обработчик, вид вызова) из DSL.
-#
-# Один нормализатор на все три формы записи — эмиттер и проверка по каталогу
-# (test_event_pairs) смотрят ровно на его результат, поэтому «событие подключено»
-# и «событие попало в XML» не могут разойтись:
-#
-#   * канонический    el['events']   = { Событие: ИмяОбработчика|null|{handler, callType}|[...] }
-#   * legacy-пара     el['on']       = [ Событие|{event, handler, callType}, ... ] + el['handlers'] = { Событие: Имя }
-#   * legacy-одиночный el['handlers'] = { Событие: Имя }   (без el['on'])
-#
-# null / "" в качестве имени — авто-имя по конвенции (get_handler_name).
-#
-# Local: upstream принимает только первые две формы, причём `handlers` без `on`
-# молча теряется — компиляция успешна, а события в форме нет. Ровно то же
-# молчание было при одновременном указании `events` и legacy-ключей. Здесь оба
-# случая — явный отказ до записи XML, потому что «успешно скомпилировано без
-# обработчика» обнаруживается только в Конфигураторе. Зеркало Get-EventPairs в PS.
 def _event_conflict(element_name, message, fix):
-    print(f"[ERROR] Конфликт описания событий у элемента '{element_name}': {message}",
+    """Local: a dropped handler must not look like a successful compile."""
+    print("[ERROR] Конфликт описания событий у элемента '%s': %s" % (element_name, message),
           file=sys.stderr)
-    print(f"        {fix}", file=sys.stderr)
+    print("        %s" % fix, file=sys.stderr)
     sys.exit(1)
 
 
+def resolve_event_name(xml_tag, name, ctx):
+    name = '' if name is None else str(name)
+    if not name:
+        print(f"[ERROR] {ctx}: event name is empty — a list item object needs \"event\": "
+              f"{{ \"event\": \"OnChange\", \"handler\": \"Name\" }}", file=sys.stderr)
+        sys.exit(1)
+    if xml_tag and xml_tag in EVENT_CATALOG:
+        for k in EVENT_CATALOG[xml_tag]:
+            if k.lower() == name.lower():
+                return k
+    if name[:1].isascii() and name[:1].isupper():
+        return name
+    hint = ('to unbind a handler in form-edit, set the event to null: { "OnOpen": null }' if name in ('remove', 'delete')
+            else 'keys of events are event names (OnOpen), values are handler names')
+    print(f"[ERROR] {ctx}: '{name}' is not an event name — {hint}", file=sys.stderr)
+    sys.exit(1)
+
 def get_event_pairs(el, element_name, xml_tag=''):
     pairs = []
+    ctx = 'Form events' if xml_tag == 'Form' else f"Element '{element_name}' events"
     events = el.get('events')
     on = el.get('on')
-    handlers = el.get('handlers')
-
-    if events and (on or handlers):
+    handlers_map = el.get('handlers')
+    # Local: two spellings at once, or a handlers key that is not in on, used to
+    # compile successfully and then drop the handler. Refuse before any XML is written.
+    # A standalone handlers map (no events and no on) is the third spelling and is compiled.
+    if events and (on or handlers_map):
         legacy = ' и '.join(k for k in ('on', 'handlers') if el.get(k))
         _event_conflict(
             element_name,
-            f"одновременно заданы канонический ключ 'events' и legacy-ключ(и) '{legacy}'.",
+            "одновременно заданы канонический ключ 'events' и legacy-ключ(и) '%s'." % legacy,
             "Оставьте один формат: либо 'events': {Событие: ИмяОбработчика}, "
             "либо 'on' + 'handlers'.")
-
-    if events:
-        for ev_name, val in events.items():
-            # Значение — имя обработчика; null — имя по шаблону; объект { handler, callType } или массив
-            # таких объектов (в расширении на одно событие вешают и Before, и After)
+    if on and handlers_map:
+        on_list = on if isinstance(on, list) else [on]
+        on_names = [str(e.get('event', '')) if isinstance(e, dict) else str(e) for e in on_list]
+        unknown = [str(k) for k in handlers_map if str(k) not in on_names]
+        if unknown:
+            _event_conflict(
+                element_name,
+                "'handlers' переопределяет события, которых нет в 'on': %s." % ', '.join(unknown),
+                "Добавьте их в 'on' или уберите из 'handlers' — молча отбросить их нельзя, "
+                "это и есть опечатка, из-за которой обработчик не попадает в форму.")
+    lst = None
+    if isinstance(events, list):
+        lst = events
+    elif events:
+        if not isinstance(events, dict):
+            print(f"[ERROR] {ctx}: events — an object {{ \"OnChange\": \"Handler\" }} or a list of events [\"OnChange\"]", file=sys.stderr)
+            sys.exit(1)
+        for ev_key, val in events.items():
+            ev_name = resolve_event_name(xml_tag, ev_key, ctx)
+            # Значение — имя обработчика; объект { handler, callType } или массив таких объектов
+            # (в расширении на одно событие вешают и Before, и After)
+            if val == []:
+                print(f"[ERROR] {ctx}: '{ev_name}' — empty list, specify the handler name", file=sys.stderr)
+                sys.exit(1)
             for v in (val if isinstance(val, list) else [val]):
                 if isinstance(v, dict):
                     handler = '' if v.get('handler') is None else str(v.get('handler'))
@@ -3189,44 +3761,39 @@ def get_event_pairs(el, element_name, xml_tag=''):
                     handler = '' if v is None else str(v)
                     call_type = ''
                 if not handler:
-                    handler = get_handler_name(element_name, ev_name, xml_tag, call_type)
+                    print(f"[ERROR] {ctx}: '{ev_name}' has no handler name — null unbinds a handler only when editing a form (form-edit); "
+                          f"for a handler named by convention list the event: \"events\": [\"{ev_name}\"]", file=sys.stderr)
+                    sys.exit(1)
                 pairs.append((ev_name, handler, call_type))
-    elif on:
-        handlers = handlers or {}
-        on_list = on if isinstance(on, list) else [on]
-        on_names = [str(e.get('event', '')) if isinstance(e, dict) else str(e) for e in on_list]
-        unknown = [str(k) for k in handlers if str(k) not in on_names]
-        if unknown:
-            _event_conflict(
-                element_name,
-                f"'handlers' переопределяет события, которых нет в 'on': {', '.join(unknown)}.",
-                "Добавьте их в 'on' или уберите из 'handlers' — молча отбросить их нельзя, "
-                "это и есть опечатка, из-за которой обработчик не попадает в форму.")
-        for evt in on_list:
+    elif el.get('on'):
+        lst = el['on'] if isinstance(el['on'], list) else [el['on']]
+    if lst is not None:
+        handlers = el.get('handlers') or {}
+        for evt in lst:
             if isinstance(evt, dict):
-                evt_name = str(evt.get('event', ''))
+                evt_name = resolve_event_name(xml_tag, evt.get('event', ''), ctx)
                 handler = '' if evt.get('handler') is None else str(evt.get('handler'))
                 call_type = normalize_call_type(evt.get('callType'), element_name, evt_name)
             else:
-                evt_name, handler, call_type = str(evt), '', ''
+                evt_name, handler, call_type = resolve_event_name(xml_tag, evt, ctx), '', ''
             if not handler:
-                handler = str(handlers[evt_name]) if handlers.get(evt_name) else get_handler_name(element_name, evt_name, xml_tag, call_type)
+                hk = next((k for k in handlers if str(k).lower() == evt_name.lower() and handlers[k]), None)
+                handler = str(handlers[hk]) if hk is not None else get_handler_name(element_name, evt_name, xml_tag, call_type)
             pairs.append((evt_name, handler, call_type))
-    elif handlers:
-        # Legacy-одиночный handlers: тот же смысл, что events.
-        for ev_name, val in handlers.items():
+    elif handlers_map and not events:
+        # Local: standalone handlers map — same meaning as events, not a silent drop.
+        for ev_name, val in handlers_map.items():
+            ev_name = resolve_event_name(xml_tag, ev_name, ctx)
             handler = '' if val is None else str(val)
             if not handler:
-                handler = get_handler_name(element_name, str(ev_name), xml_tag, '')
-            pairs.append((str(ev_name), handler, ''))
+                handler = get_handler_name(element_name, ev_name, xml_tag, '')
+            pairs.append((ev_name, handler, ''))
     return pairs
 
-
-# Local: every event name of the catalog, whatever the element. An event outside it is
-# not a platform event at all (OnEndEdit for OnEditEnd, the obsolete Drop) and is refused
-# before Form.xml is written; an event of another element only gets upstream's [WARN].
-ALL_CATALOG_EVENTS = {ev for _tag_events in EVENT_CATALOG.values() for ev in _tag_events}
-
+# Пары событий в порядке, в котором их пишет платформа (get_event_rank); равные — в порядке ввода.
+# Только для вывода <Events>: заготовки в модуле идут в порядке ввода.
+def sort_event_pairs(pairs, xml_tag):
+    return sorted(pairs, key=lambda p: get_event_rank(xml_tag, p[0], p[2]))
 
 # Вид вызова обработчика в расширении: Before / After / Override (регистр не важен); пусто — не указан.
 def normalize_call_type(raw, element_name, event_name):
@@ -3239,32 +3806,125 @@ def normalize_call_type(raw, element_name, event_name):
     sys.exit(1)
 
 
-# Events are checked against the catalog. An event the element lacks is dropped by the platform on load
-# (logged) — warn but still write it: the catalog comes from standard configurations and may miss a rare event.
+# Расстояние Левенштейна — для подсказки к неизвестному событию.
+def get_edit_distance(a, b):
+    prev = list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        prev = cur
+    return prev[len(b)]
+
+
+# Подсказка к неизвестному событию: ближайшие по написанию события вида элемента и виды, у которых такое событие есть.
+def get_event_hint(xml_tag, name):
+    parts = []
+    evs = EVENT_CATALOG.get(xml_tag)
+    if evs:
+        lim = max(2, len(name) // 3)
+        near = sorted('{:03d}|{}'.format(d, k) for k in evs
+                      for d in [get_edit_distance(name.lower(), k.lower())] if d <= lim)
+        if near:
+            parts.append('Did you mean: ' + ', '.join(x.split('|')[1] for x in near[:3]) + '?')
+    tags = sorted(t for t in EVENT_CATALOG if t != xml_tag and get_event_entry(t, name) is not None)
+    if tags:
+        parts.append(f"'{name}' is an event of: {', '.join(tags)}.")
+    return ' '.join(parts)
+
+
+# Events are checked against the catalog. An event the element lacks is dropped by the platform on load.
+# An 8.3 form (format at or below the closed catalog) is not written; an 8.5 form keeps the event and warns.
 # source — type of the attribute the table is bound to ('' — unknown, the source is not checked).
 def test_event_pairs(pairs, xml_tag, element_name, source=''):
     what = 'the form' if xml_tag == 'Form' else f"{xml_tag} '{element_name}'"
     evs = EVENT_CATALOG.get(xml_tag)
     for ev, _, _ in pairs:
         ev = str(ev)
-        if ev not in ALL_CATALOG_EVENTS:
-            known = ', '.join(sorted(evs)) if evs else 'none'
-            print(f"[ERROR] Неизвестное событие '{ev}' для {what} — такого события нет у элементов "
-                  f"формы платформы. Известные: {known}", file=sys.stderr)
-            sys.exit(1)
-        if not evs:
-            print(f"[WARN] {what} has no events in standard configurations — the platform may drop '{ev}' on load")
-            continue
-        entry = get_event_entry(xml_tag, ev)
+        entry = get_event_entry(xml_tag, ev) if evs else None
         if not entry:
-            print(f"[WARN] Unknown event '{ev}' for {what} — the platform may drop it on load. Known: {', '.join(sorted(evs))}")
+            # сводкой перед записью формы (report_unknown_events): модель исправит все сразу
+            _unknown_events.append({'tag': xml_tag, 'name': element_name, 'ev': ev, 'noEvents': not evs})
             continue
         since = entry[3]
-        if since and format_rank(_format_version) < PLATFORM_FORMAT_RANK[since]:
+        if since and format_rank(_format_version) < PLATFORM_FORMAT_RANK.get(since, 0):
             print(f"[WARN] Event '{ev}' of {what} exists since platform {since} — earlier platforms drop it on load")
         only = entry[4]
-        if only and source and source.lower() != only.lower():
+        if only and xml_tag == 'Form':
+            if _form_owner and _form_owner not in [x.strip() for x in only.split(',')]:
+                print(f"[WARN] Event '{ev}' of {what} exists only for forms of {only} (this form: {_form_owner}) — the platform drops it on load")
+        elif only and source and source.lower() != only.lower():
             print(f"[WARN] Event '{ev}' of {what} exists only for a table bound to {only} (bound to {source}) — the platform drops it on load")
+
+# Сводка неизвестных событий за запуск — одним блоком перед записью формы. Формы ветки 8.3 — ошибка (форма не
+# пишется), 8.5 — предупреждение. Перечень событий вида — только если подсказать нечего, один раз на вид.
+def report_unknown_events():
+    if not _unknown_events:
+        return
+    # одно событие у нескольких элементов вида — одной строкой (одна и та же опечатка — одно исправление)
+    groups = {}
+    for u in _unknown_events:
+        g = groups.setdefault((u['tag'], u['ev']), {'u': u, 'names': []})
+        if u['name'] and u['name'] not in g['names']:
+            g['names'].append(u['name'])
+    lines, known_tags = [], []
+    for g in groups.values():
+        u = g['u']
+        where = 'the form' if u['tag'] == 'Form' else f"{u['tag']} " + ', '.join(f"'{n}'" for n in g['names'])
+        hint = get_event_hint(u['tag'], u['ev'])
+        line = f"  '{u['ev']}' for {where}"
+        if u['noEvents']:
+            line += f" — {u['tag']} has no events." + (f" {hint}" if hint else '')
+        elif hint:
+            line += f" — {hint}"
+        elif u['tag'] not in known_tags:
+            known_tags.append(u['tag'])
+        lines.append(line)
+    for t in known_tags:
+        lines.append(f"  Events of {t}: {', '.join(sorted(EVENT_CATALOG[t]))}")
+    if format_rank(_format_version) <= EVENT_CATALOG_CLOSED_RANK:
+        print('[ERROR] Unknown events — the platform drops them on load; the form is not written:\n' + '\n'.join(lines), file=sys.stderr)
+        sys.exit(1)
+    print('[WARN] Unknown events — the platform drops them on load (8.5 builds may add events):\n' + '\n'.join(lines))
+
+
+# Владелец формы по типу основного реквизита — как в ограничениях каталога событий ("" — не определить
+# или вид не замерен: события формы по владельцу тогда не сверяются).
+_FORM_OWNER_KINDS = {
+    'DataProcessorObject': 'DataProcessor', 'ExternalDataProcessorObject': 'DataProcessor',
+    'ReportObject': 'Report', 'ExternalReportObject': 'Report', 'DocumentObject': 'Document',
+    'CatalogObject': 'Catalog', 'ChartOfCharacteristicTypesObject': 'ChartOfCharacteristicTypes',
+    'ExchangePlanObject': 'ExchangePlan', 'ChartOfAccountsObject': 'ChartOfAccounts',
+    'ChartOfCalculationTypesObject': 'ChartOfCalculationTypes',
+    'BusinessProcessObject': 'BusinessProcess', 'TaskObject': 'Task',
+    'InformationRegisterRecordManager': 'InformationRegisterRecord',
+    'InformationRegisterRecordSet': 'InformationRegisterRecordSet', 'ConstantsSet': 'Constants',
+    'DynamicList': 'List',
+}
+
+
+# Флаг main строкой или числом ("true", 1) — как булево: иначе порты расходятся (PS `-eq $true` принимает
+# строку и 1, Python `is True` — нет)
+def normalize_main_flag(attrs):
+    for a in (attrs if isinstance(attrs, list) else []):
+        if not isinstance(a, dict) or 'main' not in a:
+            continue
+        v = a['main']
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ('true', 'false'):
+                a['main'] = s == 'true'
+        elif isinstance(v, int) and not isinstance(v, bool) and v in (0, 1):
+            a['main'] = v == 1
+
+
+def get_form_owner_kind(type_str):
+    t = re.sub(r'^\w+:(?=\w)', '', str(type_str or ''))
+    if t.lower() == 'settingscomposer':
+        return 'SettingsComposer'
+    k = t.split('.')[0].lower()
+    return next((v for n, v in _FORM_OWNER_KINDS.items() if n.lower() == k), '')
 
 
 # Type of the attribute the table is bound to ('' — undetermined: no path or the attribute is not in the DSL).
@@ -3282,9 +3942,16 @@ def get_table_source(el):
 
 # The element kind has no events: given events/on are not written — warn instead of losing them silently.
 def warn_events_ignored(el, xml_tag, element_name):
-    names = list((el.get('events') or {}).keys())
+    events = el.get('events')
     on = el.get('on')
-    for evt in (on if isinstance(on, list) else ([] if on is None else [on])):
+    lst = list(on if isinstance(on, list) else ([] if on is None else [on]))
+    if isinstance(events, list):
+        names, lst = [], list(events) + lst
+    elif isinstance(events, dict):
+        names = list(events.keys())
+    else:
+        names = [str(events)] if events else []
+    for evt in lst:
         if evt is not None:
             names.append(str(evt.get('event', '')) if isinstance(evt, dict) else str(evt))
     if names:
@@ -3292,7 +3959,10 @@ def warn_events_ignored(el, xml_tag, element_name):
 
 
 # First XML format version of the platform where a catalog event appeared.
-PLATFORM_FORMAT_RANK = {"8.3.25": 218, "8.3.26": 219, "8.3.27": 220, "8.5": 221}
+PLATFORM_FORMAT_RANK = {"8.3.20": 213, "8.3.23": 216, "8.3.24": 217, "8.3.25": 218, "8.3.26": 219, "8.3.27": 220, "8.5": 221}
+# Каталог событий полон по формат 2.20 включительно (ветка 8.3 закрыта): неизвестное событие — ошибка; выше — предупреждение
+EVENT_CATALOG_CLOSED_RANK = 220
+_unknown_events = []
 
 # --- Заготовки обработчиков в модуле формы ---
 # Привязки, которые затронул запуск, собираются в _handler_bindings; после записи Form.xml
@@ -3439,6 +4109,24 @@ def get_module_code_outline(lines):
     return get_module_outline(get_bsl_scan('\n'.join(lines))['Code'])
 
 
+# Параметры обработчика события по версии формата формы: строка — одна сигнатура для всех платформ;
+# кортеж ("8.3.20", "А, Б", "8.3.23", "А, Б, В") — сигнатура с указанной платформы (по возрастанию).
+# Формат формы не определён — новейшая сигнатура.
+def get_event_params(entry):
+    p = entry[2]
+    if not isinstance(p, (list, tuple)):
+        return p
+    rank = format_rank(_format_version)
+    res = p[1]
+    for i in range(0, len(p), 2):
+        since = PLATFORM_FORMAT_RANK.get(p[i])
+        if since is None:
+            continue
+        if rank == 0 or rank >= since:
+            res = p[i + 1]
+    return res
+
+
 # Текст заготовки: директива и параметры — из каталога событий, у команды — (Команда) на клиенте.
 # None — событие вне каталога, сигнатура неизвестна.
 def get_handler_stub(b):
@@ -3448,7 +4136,7 @@ def get_handler_stub(b):
         entry = get_event_entry(b['xmlTag'], b['eventName'])
         if not entry:
             return None
-        directive, params = entry[1], entry[2]
+        directive, params = entry[1], get_event_params(entry)
     return [f'&{directive}', f"\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u0430 {b['handler']}({params})", '\t// \u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0441\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0447\u0438\u043a\u0430.', '\u041a\u043e\u043d\u0435\u0446\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u044b']
 
 
@@ -3602,7 +4290,7 @@ def update_form_module(form_xml_path, shown_form_path):
         st = status[key]
         p = next((x for x in outline['procs'] if x['name'].lower() == key), None)
         if st == 'added':
-            rows.append((p['start'], len(rows), f"  + {b['handler']} \u2014 added, lines {p['start']}-{p['end']}"))
+            rows.append((p['start'], len(rows), f"  + {b['handler']} \u2014 empty stub added, lines {p['start']}-{p['end']}"))
         elif st == 'exists':
             rows.append((p['start'], len(rows), f"  = {b['handler']} \u2014 exists, lines {p['start']}-{p['end']}"))
         else:
@@ -3622,7 +4310,7 @@ def emit_events(lines, el, element_name, indent, xml_tag, source=''):
         register_handler(handler, 'element', xml_tag, ev_name, table)
 
     lines.append(f"{indent}<Events>")
-    for ev_name, handler, call_type in pairs:
+    for ev_name, handler, call_type in sort_event_pairs(pairs, xml_tag):
         ct_attr = f' callType="{call_type}"' if call_type else ''
         lines.append(f'{indent}\t<Event name="{ev_name}"{ct_attr}>{handler}</Event>')
     lines.append(f"{indent}</Events>")
@@ -3643,7 +4331,7 @@ def _has_real_markup(text):
 def resolve_ml_formatted(val):
     # {text, formatted} = явный override; строка/мапа → авто-детект formatted
     if isinstance(val, dict) and 'text' in val:
-        return val['text'], bool(val.get('formatted'))
+        return val['text'], to_dsl_bool(val.get('formatted'), 'formatted', False)
     return val, _has_real_markup(val)
 
 
@@ -3676,7 +4364,7 @@ def emit_companion(lines, tag, name, indent, content=None):
     if isinstance(content, dict) and any(k in content for k in COMPANION_STRUCT_KEYS):
         # own-content ПЕРЕД Title (в корпусе layout-first 582 vs 10).
         emit_common_flags(lines, content, inner)
-        if content.get('hyperlink') is True:
+        if get_dsl_bool(content, ['hyperlink'], False):
             lines.append(f'{inner}<Hyperlink>true</Hyperlink>')
         emit_layout(lines, content, inner)
         emit_appearance(lines, content, inner, 'decoration')
@@ -3703,7 +4391,7 @@ def emit_companion_panel(lines, tag, name, indent, panel):
         children = panel
     elif panel is not None:
         if panel.get('autofill') is not None:
-            autofill = bool(panel.get('autofill'))
+            autofill = to_dsl_bool(panel.get('autofill'), 'autofill', False)
         if panel.get('horizontalAlign'):
             halign = str(panel.get('horizontalAlign'))
         children = panel.get('children')
@@ -3820,13 +4508,14 @@ def get_addition_override(additions, type_key):
 def emit_xr_flag(lines, tag, val, indent):
     if val is None:
         return
-    if isinstance(val, bool):
+    if not isinstance(val, dict):
+        flag = to_dsl_bool(val, tag, False)
         lines.append(f"{indent}<{tag}>")
-        lines.append(f"{indent}\t<xr:Common>{'true' if val else 'false'}</xr:Common>")
+        lines.append(f"{indent}\t<xr:Common>{'true' if flag else 'false'}</xr:Common>")
         lines.append(f"{indent}</{tag}>")
         return
     # объектная форма { common, roles }
-    common = bool(val.get('common')) if val.get('common') is not None else False
+    common = to_dsl_bool(val.get('common'), 'common', False)
     lines.append(f"{indent}<{tag}>")
     lines.append(f"{indent}\t<xr:Common>{'true' if common else 'false'}</xr:Common>")
     roles = val.get('roles')
@@ -3837,27 +4526,27 @@ def emit_xr_flag(lines, tag, val, indent):
             rn = re.sub(r'^(Role|Роль)\.', '', rname)
             if not re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', rn):
                 rn = "Role." + rn
-            lines.append(f"{indent}\t<xr:Value name=\"{rn}\">{'true' if rval else 'false'}</xr:Value>")
+            lines.append(f"{indent}\t<xr:Value name=\"{rn}\">{'true' if to_dsl_bool(rval, str(rname), False) else 'false'}</xr:Value>")
     lines.append(f"{indent}</{tag}>")
 
 
 def emit_common_flags(lines, el, indent):
-    if el.get('visible') is False or el.get('hidden') is True:
+    if (not get_dsl_bool(el, ['visible'], True)) or get_dsl_bool(el, ['hidden'], False):
         lines.append(f"{indent}<Visible>false</Visible>")
     if el.get('userVisible') is not None:
         emit_xr_flag(lines, 'UserVisible', el.get('userVisible'), indent)
-    if el.get('enabled') is False or el.get('disabled') is True:
+    if (not get_dsl_bool(el, ['enabled'], True)) or get_dsl_bool(el, ['disabled'], False):
         lines.append(f"{indent}<Enabled>false</Enabled>")
-    if el.get('readOnly') is True:
+    if get_dsl_bool(el, ['readOnly'], False):
         lines.append(f"{indent}<ReadOnly>true</ReadOnly>")
 
 
 # Общие свойства элемента (любой тип, включая Button/cmdBar): default/skip/drag.
 def emit_common_element_props(lines, el, indent):
-    if el.get('defaultItem') is True:
+    if get_dsl_bool(el, ['defaultItem'], False):
         lines.append(f"{indent}<DefaultItem>true</DefaultItem>")
     if 'skipOnInput' in el and el['skipOnInput'] is not None:
-        siv = 'true' if el['skipOnInput'] is True else 'false'
+        siv = 'true' if get_dsl_bool(el, ['skipOnInput'], False) else 'false'
         lines.append(f"{indent}<SkipOnInput>{siv}</SkipOnInput>")
     # EnableStartDrag — фактическое значение (платформа эмитит и явный false, напр. SpreadSheet)
     if el.get('enableStartDrag') is not None:
@@ -3892,7 +4581,7 @@ def emit_picture_ref(lines, val, pic_tag, indent):
         src, lt = val, False
     else:
         src = val.get('src')
-        lt = val.get('loadTransparent') is True
+        lt = get_dsl_bool(val, ['loadTransparent'], False)
         tpx = val.get('transparentPixel')
     if not src:
         return
@@ -3930,12 +4619,12 @@ def emit_command_picture(lines, pic, elem_lt, indent):
     else:
         src = pic.get('src')
         if pic.get('loadTransparent') is not None:
-            lt = bool(pic.get('loadTransparent'))
+            lt = to_dsl_bool(pic.get('loadTransparent'), 'loadTransparent', False)
         tpx = pic.get('transparentPixel')
     if not src:
         return
     if lt is None and elem_lt is not None:
-        lt = bool(elem_lt)
+        lt = to_dsl_bool(elem_lt, 'loadTransparent', False)
     src_str = str(src)
     lines.append(f'{indent}<Picture>')
     if src_str.startswith('abs:'):
@@ -4465,13 +5154,13 @@ def emit_layout(lines, el, indent, skip_height=False, multi_line_default=False):
         lines.append(f'{indent}</CommandSet>')
     emit_common_element_props(lines, el, indent)
     if 'autoMaxWidth' in el:
-        if el.get('autoMaxWidth') is False:
+        if (not get_dsl_bool(el, ['autoMaxWidth'], True)):
             lines.append(f"{indent}<AutoMaxWidth>false</AutoMaxWidth>")
     elif multi_line_default:
         lines.append(f"{indent}<AutoMaxWidth>false</AutoMaxWidth>")
     if el.get('maxWidth') is not None:
         lines.append(f"{indent}<MaxWidth>{el['maxWidth']}</MaxWidth>")
-    if el.get('autoMaxHeight') is False:
+    if (not get_dsl_bool(el, ['autoMaxHeight'], True)):
         lines.append(f"{indent}<AutoMaxHeight>false</AutoMaxHeight>")
     if el.get('maxHeight') is not None:
         lines.append(f"{indent}<MaxHeight>{el['maxHeight']}</MaxHeight>")
@@ -4667,6 +5356,69 @@ def resolve_type_str(type_str):
     if resolved:
         return resolved
     return type_str
+# Разбор примитивного типа DSL: Number / String / Date / DateTime / Time — с синонимами
+# (decimal, numeric, Число, Строка, Дата …), в любом регистре, с пробелами в скобках.
+# Тело общее у всех навыков-компиляторов (семья в check-inline-drift); умолчание для голого типа
+# зависит от места (хранимый реквизит — 10,0 и 10, СКД — без ограничения) и приходит аргументами.
+# Возврат: None — не примитив (ссылки, Boolean, …); {'error'} — база примитива узнана, а
+# параметры нет (вызывающий сообщает ошибку своим способом); иначе описание квалификаторов.
+def parse_primitive_type(type_str, def_digits, def_fraction, def_length):
+    m = re.match(r'^\s*([^\s(]+)\s*(\(.*)?$', type_str or '')
+    if not m:
+        return None
+    rest = m.group(2) or ''
+    kind = {
+        'number': 'Number', 'decimal': 'Number', 'numeric': 'Number', 'число': 'Number',
+        'string': 'String', 'строка': 'String',
+        'date': 'Date', 'дата': 'Date', 'datetime': 'DateTime', 'датавремя': 'DateTime',
+        'time': 'Time', 'время': 'Time',
+    }.get(m.group(1).lower())
+    if not kind:
+        return None
+    bad = {'error': (f"Invalid type '{type_str}'. Expected Number, Number(D), Number(D,F), Number(D,F,nonneg), "
+                     "String, String(N), String(N,fixed), Date, DateTime, Time")}
+    parts = []
+    if rest:
+        m2 = re.match(r'^\((.*)\)\s*$', rest)
+        if not m2:
+            return bad
+        parts = [p.strip().lower() for p in m2.group(1).split(',')]
+    if kind == 'Number':
+        sign = 'Any'
+        if parts and (parts[-1] == 'nonneg' or parts[-1] == 'any'):
+            if parts[-1] == 'nonneg':
+                sign = 'Nonnegative'
+            parts = parts[:-1]
+        if len(parts) > 2:
+            return bad
+        for p in parts:
+            if not re.match(r'^[0-9]{1,9}$', p):
+                return bad
+        d = int(parts[0]) if len(parts) >= 1 else def_digits
+        f = int(parts[1]) if len(parts) >= 2 else (0 if len(parts) == 1 else def_fraction)
+        # Дробная часть у числа без ограничения (0,F) платформа молча обнуляет — это ошибка ввода
+        if d > 38 or f > d:
+            return bad
+        return {'kind': 'Number', 'digits': d, 'fraction': f, 'sign': sign}
+    if kind == 'String':
+        allowed = 'Variable'
+        if len(parts) == 2:
+            if parts[1] == 'fixed' or parts[1] == 'fix':
+                allowed = 'Fixed'
+            elif parts[1] != 'variable':
+                return bad
+        if len(parts) > 2 or (len(parts) >= 1 and not re.match(r'^[0-9]{1,9}$', parts[0])):
+            return bad
+        length = int(parts[0]) if len(parts) >= 1 else def_length
+        # Фиксированную длину у неограниченной строки платформа молча снимает — это ошибка ввода
+        if allowed == 'Fixed' and length == 0:
+            return bad
+        return {'kind': 'String', 'length': length, 'allowed': allowed}
+    if parts:
+        return bad
+    return {'kind': 'Date', 'fractions': kind}
+
+
 def emit_single_type(lines, type_str, indent):
     type_str = resolve_type_str(type_str)
     # TypeId — тип, заданный глобальным стабильным GUID (<v8:TypeId>, не <v8:Type>). Платформа так
@@ -4677,45 +5429,34 @@ def emit_single_type(lines, type_str, indent):
         lines.append(f'{indent}<v8:TypeId>{m.group(1)}</v8:TypeId>')
         return
     # boolean
-    if type_str == 'boolean':
+    if type_str.lower() == 'boolean':
         lines.append(f'{indent}<v8:Type>xs:boolean</v8:Type>')
         return
 
-    # string or string(N) or string(N,fixed) (AllowedLength: Variable дефолт / Fixed)
-    m = re.match(r'^string(\((\d+)(\s*,\s*(fixed|variable))?\))?$', type_str, re.IGNORECASE)
-    if m:
-        length = m.group(2) if m.group(2) else '0'
-        al = 'Fixed' if (m.group(4) and m.group(4).lower() == 'fixed') else 'Variable'
-        lines.append(f'{indent}<v8:Type>xs:string</v8:Type>')
-        lines.append(f'{indent}<v8:StringQualifiers>')
-        lines.append(f'{indent}\t<v8:Length>{length}</v8:Length>')
-        lines.append(f'{indent}\t<v8:AllowedLength>{al}</v8:AllowedLength>')
-        lines.append(f'{indent}</v8:StringQualifiers>')
-        return
-
-    # decimal(D,F) or decimal(D,F,nonneg)
-    m = re.match(r'^decimal\((\d+),(\d+)(,nonneg)?\)$', type_str)
-    if m:
-        digits = m.group(1)
-        fraction = m.group(2)
-        sign = 'Nonnegative' if m.group(3) else 'Any'
-        lines.append(f'{indent}<v8:Type>xs:decimal</v8:Type>')
-        lines.append(f'{indent}<v8:NumberQualifiers>')
-        lines.append(f'{indent}\t<v8:Digits>{digits}</v8:Digits>')
-        lines.append(f'{indent}\t<v8:FractionDigits>{fraction}</v8:FractionDigits>')
-        lines.append(f'{indent}\t<v8:AllowedSign>{sign}</v8:AllowedSign>')
-        lines.append(f'{indent}</v8:NumberQualifiers>')
-        return
-
-    # date / dateTime / time
-    m = re.match(r'^(date|dateTime|time)$', type_str)
-    if m:
-        fractions_map = {'date': 'Date', 'dateTime': 'DateTime', 'time': 'Time'}
-        fractions = fractions_map[type_str]
-        lines.append(f'{indent}<v8:Type>xs:dateTime</v8:Type>')
-        lines.append(f'{indent}<v8:DateQualifiers>')
-        lines.append(f'{indent}\t<v8:DateFractions>{fractions}</v8:DateFractions>')
-        lines.append(f'{indent}</v8:DateQualifiers>')
+    # Примитивы: string / decimal / date / dateTime / time. Голое число реквизита формы — 10,0,
+    # голая строка — неограниченная.
+    prim = parse_primitive_type(type_str, 10, 0, 0)
+    if prim:
+        if prim.get('error'):
+            raise ValueError(prim['error'])
+        if prim['kind'] == 'String':
+            lines.append(f'{indent}<v8:Type>xs:string</v8:Type>')
+            lines.append(f'{indent}<v8:StringQualifiers>')
+            lines.append(f'{indent}\t<v8:Length>{prim["length"]}</v8:Length>')
+            lines.append(f'{indent}\t<v8:AllowedLength>{prim["allowed"]}</v8:AllowedLength>')
+            lines.append(f'{indent}</v8:StringQualifiers>')
+        elif prim['kind'] == 'Number':
+            lines.append(f'{indent}<v8:Type>xs:decimal</v8:Type>')
+            lines.append(f'{indent}<v8:NumberQualifiers>')
+            lines.append(f'{indent}\t<v8:Digits>{prim["digits"]}</v8:Digits>')
+            lines.append(f'{indent}\t<v8:FractionDigits>{prim["fraction"]}</v8:FractionDigits>')
+            lines.append(f'{indent}\t<v8:AllowedSign>{prim["sign"]}</v8:AllowedSign>')
+            lines.append(f'{indent}</v8:NumberQualifiers>')
+        else:
+            lines.append(f'{indent}<v8:Type>xs:dateTime</v8:Type>')
+            lines.append(f'{indent}<v8:DateQualifiers>')
+            lines.append(f'{indent}\t<v8:DateFractions>{prim["fractions"]}</v8:DateFractions>')
+            lines.append(f'{indent}</v8:DateQualifiers>')
         return
 
     # V8 types
@@ -5864,7 +6605,7 @@ def emit_group(lines, el, name, eid, indent):
     elif el.get('behavior') and behavior_val not in bmap:
         _warn_unrecognized('behavior', el.get('behavior'), ('collapsible', 'popup'), name)
     # Collapsed — у Collapsible и PopUp (не привязано к одному behavior)
-    if el.get('collapsed') is True:
+    if get_dsl_bool(el, ['collapsed'], False):
         lines.append(f'{inner}<Collapsed>true</Collapsed>')
 
     # Representation
@@ -5899,7 +6640,7 @@ def emit_group(lines, el, name, eid, indent):
         emit_mltext(lines, inner, 'CollapsedRepresentationTitle', el['collapsedTitle'])
 
     # United
-    if el.get('united') is False:
+    if (not get_dsl_bool(el, ['united'], True)):
         lines.append(f'{inner}<United>false</United>')
 
     # Формат значения пути к данным заголовка (<Format>; парный к titleDataPath группы)
@@ -6008,7 +6749,7 @@ def emit_input(lines, el, name, eid, indent):
     if el.get('editMode'):
         lines.append(f'{inner}<EditMode>{el["editMode"]}</EditMode>')
     emit_column_pics(lines, el, inner)
-    if el.get('textEdit') is False:
+    if (not get_dsl_bool(el, ['textEdit'], True)):
         lines.append(f'{inner}<TextEdit>false</TextEdit>')
     # InputField-специфичные скаляры (захват «как есть»: платформа эмитит явное не-дефолтное значение)
     for key, tag in (('wrap', 'Wrap'), ('openButton', 'OpenButton'), ('listChoiceMode', 'ListChoiceMode'),
@@ -6035,7 +6776,7 @@ def emit_input(lines, el, name, eid, indent):
     if el.get('choiceButtonRepresentation'):
         lines.append(f'{inner}<ChoiceButtonRepresentation>{el["choiceButtonRepresentation"]}</ChoiceButtonRepresentation>')
     emit_picture_ref(lines, el.get('choiceButtonPicture'), 'ChoiceButtonPicture', inner)
-    emit_layout(lines, el, inner, multi_line_default=(el.get('multiLine') is True))
+    emit_layout(lines, el, inner, multi_line_default=(get_dsl_bool(el, ['multiLine'], False)))
 
     if el.get('inputHint'):
         emit_mltext(lines, inner, 'InputHint', el['inputHint'])
@@ -6166,7 +6907,7 @@ def emit_decoration_title(lines, el, name, indent, auto=False):
     if title_val:
         text, fmt = resolve_ml_formatted(title_val)
         if 'formatted' in el:
-            fmt = bool(el['formatted'])
+            fmt = to_dsl_bool(el['formatted'], 'formatted', False)
         lines.append(f'{indent}<Title formatted="{"true" if fmt else "false"}">')
         emit_ml_items(lines, f'{indent}\t', text)
         lines.append(f'{indent}</Title>')
@@ -6183,7 +6924,7 @@ def emit_label(lines, el, name, eid, indent):
     # Порядок как у платформы: own-content (флаги/hyperlink/layout/оформление) ПЕРЕД Title
     # (корпус layout-first 16970 vs 44 — заодно убирает шум атрибуции харнесса на многострочном Title).
     emit_common_flags(lines, el, inner)
-    if el.get('hyperlink') is True:
+    if get_dsl_bool(el, ['hyperlink'], False):
         lines.append(f'{inner}<Hyperlink>true</Hyperlink>')
     emit_layout(lines, el, inner)
     emit_appearance(lines, el, inner, 'decoration')
@@ -6221,7 +6962,7 @@ def emit_label_field(lines, el, name, eid, indent):
         lines.append(f'{inner}<PasswordMode>{"true" if el["passwordMode"] else "false"}</PasswordMode>')
     emit_column_pics(lines, el, inner)
     # ВНИМАНИЕ: у LabelField платформенный тег <Hiperlink> (опечатка 1С), не <Hyperlink>.
-    if el.get('hyperlink') is True:
+    if get_dsl_bool(el, ['hyperlink'], False):
         lines.append(f'{inner}<Hiperlink>true</Hiperlink>')
     emit_layout(lines, el, inner)
 
@@ -6252,7 +6993,7 @@ def emit_label_field(lines, el, name, eid, indent):
 def emit_dynlist_table_block(lines, el, indent):
     # (useAlternationRowColor — общее свойство таблицы, эмитится в emit_table)
     # Group A (гарант. блок): дефолт + override
-    ar = 'true' if el.get('autoRefresh') is True else 'false'
+    ar = 'true' if get_dsl_bool(el, ['autoRefresh'], False) else 'false'
     lines.append(f'{indent}<AutoRefresh>{ar}</AutoRefresh>')
     arp = el['autoRefreshPeriod'] if el.get('autoRefreshPeriod') is not None else 60
     lines.append(f'{indent}<AutoRefreshPeriod>{arp}</AutoRefreshPeriod>')
@@ -6263,18 +7004,18 @@ def emit_dynlist_table_block(lines, el, indent):
     lines.append(f'{indent}</Period>')
     cfi = el.get('choiceFoldersAndItems') or 'Items'
     lines.append(f'{indent}<ChoiceFoldersAndItems>{cfi}</ChoiceFoldersAndItems>')
-    rcr = 'true' if el.get('restoreCurrentRow') is True else 'false'
+    rcr = 'true' if get_dsl_bool(el, ['restoreCurrentRow'], False) else 'false'
     lines.append(f'{indent}<RestoreCurrentRow>{rcr}</RestoreCurrentRow>')
     lines.append(f'{indent}<TopLevelParent xsi:nil="true"/>')
-    sr = 'false' if el.get('showRoot') is False else 'true'
+    sr = 'false' if (not get_dsl_bool(el, ['showRoot'], True)) else 'true'
     lines.append(f'{indent}<ShowRoot>{sr}</ShowRoot>')
-    arc = 'true' if el.get('allowRootChoice') is True else 'false'
+    arc = 'true' if get_dsl_bool(el, ['allowRootChoice'], False) else 'false'
     lines.append(f'{indent}<AllowRootChoice>{arc}</AllowRootChoice>')
     uodc = el.get('updateOnDataChange') or 'Auto'
     lines.append(f'{indent}<UpdateOnDataChange>{uodc}</UpdateOnDataChange>')
     if el.get('userSettingsGroup'):
         lines.append(f'{indent}<UserSettingsGroup>{el["userSettingsGroup"]}</UserSettingsGroup>')
-    agcru = 'false' if el.get('allowGettingCurrentRowURL') is False else 'true'
+    agcru = 'false' if (not get_dsl_bool(el, ['allowGettingCurrentRowURL'], True)) else 'true'
     lines.append(f'{indent}<AllowGettingCurrentRowURL>{agcru}</AllowGettingCurrentRowURL>')
 
 
@@ -6295,10 +7036,10 @@ def emit_table(lines, el, name, eid, indent):
         lines.append(f'{inner}<TitleLocation>{map_title_loc(el["titleLocation"])}</TitleLocation>')
     # ChangeRowSet/Order — явное значение (в т.ч. false: платформа пишет его на ValueTable)
     if 'changeRowSet' in el and el['changeRowSet'] is not None:
-        lines.append(f'{inner}<ChangeRowSet>{"true" if el["changeRowSet"] is True else "false"}</ChangeRowSet>')
+        lines.append(f'{inner}<ChangeRowSet>{"true" if get_dsl_bool(el, ["changeRowSet"], False) else "false"}</ChangeRowSet>')
     if 'changeRowOrder' in el and el['changeRowOrder'] is not None:
-        lines.append(f'{inner}<ChangeRowOrder>{"true" if el["changeRowOrder"] is True else "false"}</ChangeRowOrder>')
-    if el.get('autoInsertNewRow') is True:
+        lines.append(f'{inner}<ChangeRowOrder>{"true" if get_dsl_bool(el, ["changeRowOrder"], False) else "false"}</ChangeRowOrder>')
+    if get_dsl_bool(el, ['autoInsertNewRow'], False):
         lines.append(f'{inner}<AutoInsertNewRow>true</AutoInsertNewRow>')
     # RowFilter — nil-плейсхолдер (ключ присутствует → эмитим)
     if 'rowFilter' in el:
@@ -6307,9 +7048,9 @@ def emit_table(lines, el, name, eid, indent):
     # эмитится generic-ом emit_layout ниже). Таблица может нести оба (237 в корпусе).
     if el.get('heightInTableRows'):
         lines.append(f'{inner}<HeightInTableRows>{el["heightInTableRows"]}</HeightInTableRows>')
-    if el.get('header') is False:
+    if (not get_dsl_bool(el, ['header'], True)):
         lines.append(f'{inner}<Header>false</Header>')
-    if el.get('footer') is True:
+    if get_dsl_bool(el, ['footer'], False):
         lines.append(f'{inner}<Footer>true</Footer>')
 
     if el.get('commandBarLocation'):
@@ -6317,12 +7058,12 @@ def emit_table(lines, el, name, eid, indent):
     if el.get('searchStringLocation'):
         lines.append(f'{inner}<SearchStringLocation>{el["searchStringLocation"]}</SearchStringLocation>')
 
-    if el.get('choiceMode') is True:
+    if get_dsl_bool(el, ['choiceMode'], False):
         lines.append(f'{inner}<ChoiceMode>true</ChoiceMode>')
     # Скаляры таблицы (захват «как есть»). Autofill — СВОЁ свойство таблицы (≠ AutoCommandBar autofill = tableAutofill).
     if el.get('autofill') is not None:
         lines.append(f'{inner}<Autofill>{"true" if el["autofill"] else "false"}</Autofill>')
-    if el.get('multipleChoice') is True:
+    if get_dsl_bool(el, ['multipleChoice'], False):
         lines.append(f'{inner}<MultipleChoice>true</MultipleChoice>')
     if el.get('searchOnInput'):
         lines.append(f'{inner}<SearchOnInput>{el["searchOnInput"]}</SearchOnInput>')
@@ -6333,15 +7074,15 @@ def emit_table(lines, el, name, eid, indent):
         lines.append(f'{inner}<HeaderHeight>{el["headerHeight"]}</HeaderHeight>')
     if el.get('footerHeight') is not None:
         lines.append(f'{inner}<FooterHeight>{el["footerHeight"]}</FooterHeight>')
-    if el.get('useAlternationRowColor') is True:
+    if get_dsl_bool(el, ['useAlternationRowColor'], False):
         lines.append(f'{inner}<UseAlternationRowColor>true</UseAlternationRowColor>')
     if el.get('selectionMode'):
         lines.append(f'{inner}<SelectionMode>{el["selectionMode"]}</SelectionMode>')
     if el.get('rowSelectionMode'):
         lines.append(f'{inner}<RowSelectionMode>{el["rowSelectionMode"]}</RowSelectionMode>')
-    if el.get('verticalLines') is False:
+    if (not get_dsl_bool(el, ['verticalLines'], True)):
         lines.append(f'{inner}<VerticalLines>false</VerticalLines>')
-    if el.get('horizontalLines') is False:
+    if (not get_dsl_bool(el, ['horizontalLines'], True)):
         lines.append(f'{inner}<HorizontalLines>false</HorizontalLines>')
     if el.get('initialTreeView'):
         lines.append(f'{inner}<InitialTreeView>{el["initialTreeView"]}</InitialTreeView>')
@@ -6559,11 +7300,11 @@ def emit_button(lines, el, name, eid, indent, in_cmd_bar=False):
     emit_title(lines, el, name, inner, auto=not (el.get('command') or el.get('commandName') or el.get('stdCommand')))
     emit_common_flags(lines, el, inner)
 
-    if el.get('defaultButton') is True:
+    if get_dsl_bool(el, ['defaultButton'], False):
         lines.append(f'{inner}<DefaultButton>true</DefaultButton>')
     # Check (пометка toggle-кнопки командной панели) — платформа эмитит только true.
     # Ключ 'checked' (не 'check': 'check' — тип-ключ CheckBoxField, был бы конфликт диспетчера типов)
-    if el.get('checked') is True:
+    if get_dsl_bool(el, ['checked'], False):
         lines.append(f'{inner}<Check>true</Check>')
 
     # Picture
@@ -6601,7 +7342,7 @@ def emit_picture_decoration(lines, el, name, eid, indent):
     # Префикс "abs:" → встроенная картинка <xr:Abs>; иначе именованная/стилевая <xr:Ref>.
     if el.get('src'):
         src_str = str(el['src'])
-        lt = 'true' if el.get('loadTransparent') is True else 'false'
+        lt = 'true' if get_dsl_bool(el, ['loadTransparent'], False) else 'false'
         lines.append(f'{inner}<Picture>')
         if src_str.startswith('abs:'):
             lines.append(f'{inner}\t<xr:Abs>{esc_xml_text(src_str[4:])}</xr:Abs>')
@@ -6613,7 +7354,7 @@ def emit_picture_decoration(lines, el, name, eid, indent):
             lines.append(f'{inner}\t<xr:TransparentPixel x="{tpx.get("x")}" y="{tpx.get("y")}"/>')
         lines.append(f'{inner}</Picture>')
 
-    if el.get('hyperlink') is True:
+    if get_dsl_bool(el, ['hyperlink'], False):
         lines.append(f'{inner}<Hyperlink>true</Hyperlink>')
     emit_layout(lines, el, inner)
     # EnableDrag — фактическое значение (декорация-картинка перетаскиваема; декомпилятор ловит generic-ом)
@@ -6647,7 +7388,7 @@ def emit_picture_field(lines, el, name, eid, indent):
     emit_column_pics(lines, el, inner)
     if el.get('titleLocation'):
         lines.append(f'{inner}<TitleLocation>{map_title_loc(el["titleLocation"])}</TitleLocation>')
-    if el.get('hyperlink') is True:
+    if get_dsl_bool(el, ['hyperlink'], False):
         lines.append(f'{inner}<Hyperlink>true</Hyperlink>')
 
     emit_layout(lines, el, inner)
@@ -6790,7 +7531,7 @@ def emit_command_bar(lines, el, name, eid, indent):
     if el.get('commandSource'):
         lines.append(f'{inner}<CommandSource>{el["commandSource"]}</CommandSource>')
 
-    if el.get('autofill') is True:
+    if get_dsl_bool(el, ['autofill'], False):
         lines.append(f'{inner}<Autofill>true</Autofill>')
 
     # CommandBar хранит HorizontalLocation фактически (включая Auto); ≠ дополнениям (Auto=скип)
@@ -7004,7 +7745,28 @@ def is_dl_empty_value(v):
     return sv == '' or sv == '_' or sv.lower() == 'null'
 
 
+# Вид значения для ветвлений эмиттеров значений (параметры, пустые значения): примитив любого
+# написания (Число(15,2), numeric, String(10)) → decimal / string / date / dateTime / time, прочее —
+# через синонимы навыка. Квалификаторы значению не нужны и отбрасываются.
+def get_value_kind_type(type_str):
+    if not type_str:
+        return type_str
+    prim = parse_primitive_type(type_str, 0, 0, 0)
+    if prim and not prim.get('error'):
+        if prim['kind'] == 'Number':
+            return 'decimal'
+        if prim['kind'] == 'String':
+            return 'string'
+        if prim['fractions'] == 'Date':
+            return 'date'
+        if prim['fractions'] == 'Time':
+            return 'time'
+        return 'dateTime'
+    return resolve_type_str(type_str)
+
+
 def emit_dl_value(lines, type_str, val, indent, value_list_allowed=False):
+    type_str = get_value_kind_type(type_str)
     if is_dl_empty_value(val):
         # Дин-список: пустое значение платформа ВСЕГДА пишет как xsi:nil (даже при известном типе).
         if value_list_allowed:
@@ -7138,6 +7900,7 @@ def _test_empty_value(v):
 
 
 def emit_empty_value(lines, type_str, indent, tag_prefix='', value_list_allowed=False):
+    type_str = get_value_kind_type(type_str)
     if value_list_allowed:
         return
     t = type_str or ''
@@ -7204,17 +7967,17 @@ def emit_data_parameters(lines, items, indent, block_view_mode=None):
             dp = {'parameter': parsed['parameter']}
             if parsed['value'] is not None:
                 dp['value'] = parsed['value']
-            if parsed['use'] is False:
+            if not get_dsl_bool(parsed, ['use'], True):
                 dp['use'] = False
             if parsed['userSettingID']:
                 dp['userSettingID'] = parsed['userSettingID']
             if parsed['viewMode']:
                 dp['viewMode'] = parsed['viewMode']
         lines.append(f'{indent}\t<dcscor:item xsi:type="dcsset:SettingsParameterValue">')
-        if dp.get('use') is False:
+        if (not get_dsl_bool(dp, ['use'], True)):
             lines.append(f'{indent}\t\t<dcscor:use>false</dcscor:use>')
         lines.append(f'{indent}\t\t<dcscor:parameter>{esc_xml_text(str(dp.get("parameter", "")))}</dcscor:parameter>')
-        vtype = str(dp.get('valueType') or '')
+        vtype = get_value_kind_type(str(dp.get('valueType') or ''))
         val = dp.get('value')
         if isinstance(val, list):
             # Список значений параметра (valueListAllowed) — отдельный <dcscor:value> на каждое.
@@ -7228,7 +7991,7 @@ def emit_data_parameters(lines, items, indent, block_view_mode=None):
                     lines.append(f'{indent}\t\t<dcscor:value xsi:type="dcscor:DesignTimeValue">{esc_xml_text(normalize_design_time_value(v_str))}</dcscor:value>')
                 else:
                     lines.append(f'{indent}\t\t<dcscor:value xsi:type="xs:string">{esc_xml_text(v_str)}</dcscor:value>')
-        elif dp.get('nilValue') is True:
+        elif get_dsl_bool(dp, ['nilValue'], False):
             lines.append(f'{indent}\t\t<dcscor:value xsi:nil="true"/>')
         elif _test_empty_value(val) and vtype:
             emit_empty_value(lines, vtype, f'{indent}\t\t', tag_prefix='dcscor:', value_list_allowed=False)
@@ -7304,12 +8067,12 @@ def emit_dl_parameter(lines, p, parsed, indent):
     if parsed.get('type'):
         emit_dl_value_type(lines, parsed['type'], ci)
     # value (дефолт nil; при valueListAllowed пустое — опускаем)
-    vla = bool(parsed.get('valueListAllowed'))
+    vla = to_dsl_bool(parsed.get('valueListAllowed'), 'valueListAllowed', False)
     pv = parsed.get('value')
     if isinstance(pv, list):
         for v in pv:
             emit_dl_value(lines, parsed.get('type', ''), v, ci, False)
-    elif parsed.get('value_explicit') and pv is not None and str(pv) == '' and (str(parsed.get('type', '')) == '' or re.match(r'^string', str(parsed.get('type', '')))):
+    elif parsed.get('value_explicit') and pv is not None and str(pv) == '' and (str(parsed.get('type', '')) == '' or re.match(r'^string', get_value_kind_type(str(parsed.get('type', ''))))):
         # Явный пустой СТРОКОВЫЙ параметр (value:"" от декомпилятора) → типизированный пустой
         # <dcssch:value xsi:type="xs:string"/>, НЕ nil. Решается ФОРМОЙ value (""→typed-empty,
         # null/отсутствие→nil), независимо от valueListAllowed; декомпилятор различает ""/null.
@@ -7323,7 +8086,7 @@ def emit_dl_parameter(lines, p, parsed, indent):
     # useRestriction — ВСЕГДА; дефолт true; false только при явном useRestriction:false.
     ur = True
     if is_obj and 'useRestriction' in p:
-        ur = bool(p['useRestriction'])
+        ur = to_dsl_bool(p['useRestriction'], 'useRestriction', False)
     lines.append(f'{ci}<dcssch:useRestriction>{"true" if ur else "false"}</dcssch:useRestriction>')
     # expression
     expr = str(p['expression']) if (is_obj and p.get('expression')) else None
@@ -7338,17 +8101,17 @@ def emit_dl_parameter(lines, p, parsed, indent):
         lines.append(f'{ci}<dcssch:valueListAllowed>true</dcssch:valueListAllowed>')
     # availableAsField=false (hidden или явный)
     aaf = None
-    if parsed.get('hidden') is True:
+    if get_dsl_bool(parsed, ['hidden'], False):
         aaf = False
     if is_obj and 'availableAsField' in p:
-        aaf = bool(p['availableAsField'])
+        aaf = to_dsl_bool(p['availableAsField'], 'availableAsField', False)
     if aaf is False:
         lines.append(f'{ci}<dcssch:availableAsField>false</dcssch:availableAsField>')
     # inputParameters
     if is_obj and p.get('inputParameters'):
         emit_dl_input_parameters(lines, p['inputParameters'], ci)
     # denyIncompleteValues
-    if is_obj and p.get('denyIncompleteValues') is True:
+    if is_obj and get_dsl_bool(p, ['denyIncompleteValues'], False):
         lines.append(f'{ci}<dcssch:denyIncompleteValues>true</dcssch:denyIncompleteValues>')
     # use
     if is_obj and p.get('use'):
@@ -7374,9 +8137,9 @@ def emit_dl_parameters(lines, params, indent):
             parsed = {'name': str(p.get('name', '')), 'type': resolved_type,
                       'value': p.get('value') if 'value' in p else None,
                       'value_explicit': ('value' in p), 'title': None}
-            if p.get('valueListAllowed') is True:
+            if get_dsl_bool(p, ['valueListAllowed'], False):
                 parsed['valueListAllowed'] = True
-            if p.get('hidden') is True:
+            if get_dsl_bool(p, ['hidden'], False):
                 parsed['hidden'] = True
         emit_dl_parameter(lines, p, parsed, indent)
 
@@ -7437,7 +8200,7 @@ def emit_attributes(lines, attrs, indent, conditional_appearance=None):
             ctype = 'd4p1:GanttChart' if 'GanttChart' in str(attr.get('type', '')) else 'd4p1:Chart'
             emit_chart_settings(lines, attr['chart'], inner, ctype)
 
-        if attr.get('main') is True:
+        if get_dsl_bool(attr, ['main'], False):
             lines.append(f'{inner}<MainAttribute>true</MainAttribute>')
         # Доступ по ролям: просмотр/редактирование (порядок схемы: View → Edit, после MainAttribute)
         if attr.get('view') is not None:
@@ -7445,11 +8208,11 @@ def emit_attributes(lines, attrs, indent, conditional_appearance=None):
         if attr.get('edit') is not None:
             emit_xr_flag(lines, 'Edit', attr.get('edit'), inner)
         main_saved = False
-        if attr.get('main') is True and attr.get('type'):
+        if get_dsl_bool(attr, ['main'], False) and attr.get('type'):
             t = str(attr['type'])
             main_saved = bool(re.match(r'^(CatalogObject|DocumentObject|ChartOfAccountsObject|ChartOfCalculationTypesObject|ChartOfCharacteristicTypesObject|ExchangePlanObject|BusinessProcessObject|TaskObject)\.', t)) or ('RecordManager.' in t)
         # Явный ключ savedData побеждает (в т.ч. False → суппресс авто-вывода main_saved); нет ключа → авто.
-        emit_saved = (attr['savedData'] is True) if 'savedData' in attr else main_saved
+        emit_saved = get_dsl_bool(attr, ['savedData'], False) if 'savedData' in attr else main_saved
         if emit_saved:
             lines.append(f'{inner}<SavedData>true</SavedData>')
         # Save: сохранение значения реквизита в пользовательских настройках. true → <Field>имя</Field>;
@@ -7501,7 +8264,7 @@ def emit_attributes(lines, attrs, indent, conditional_appearance=None):
             if fld not in ua_fields:
                 ua_fields.append(fld)
         for col in (attr.get('columns') or []):
-            if col.get('useAlways') is True:
+            if get_dsl_bool(col, ['useAlways'], False):
                 fld = f'{attr_name}.{col["name"]}'
                 if fld not in ua_fields:
                     ua_fields.append(fld)
@@ -7567,7 +8330,7 @@ def emit_attributes(lines, attrs, indent, conditional_appearance=None):
                 mq = 'true' if has_query else 'false'
             lines.append(f'{si}<ManualQuery>{mq}</ManualQuery>')
             # DynamicDataRead: дефолт true; false только при явном отключении
-            ddr = 'false' if s.get('dynamicDataRead') is False else 'true'
+            ddr = 'false' if (not get_dsl_bool(s, ['dynamicDataRead'], True)) else 'true'
             lines.append(f'{si}<DynamicDataRead>{ddr}</DynamicDataRead>')
             if has_query:
                 qtext = resolve_text_from_file(str(s['query']), QUERY_BASE_DIR)
@@ -7578,7 +8341,7 @@ def emit_attributes(lines, attrs, indent, conditional_appearance=None):
                     # Тип поля набора: DataSetFieldField (дефолт) vs DataSetFieldNestedDataSet
                     # (поле-вложенный набор = реквизит табличной части; маркер nested).
                     # folder = папка-группировка полей (DataSetFieldFolder, без <field>); nested = вложенный набор.
-                    is_folder = bool(fld.get('folder'))
+                    is_folder = to_dsl_bool(fld.get('folder'), 'folder', False)
                     ftype = 'DataSetFieldNestedDataSet' if fld.get('nested') else ('DataSetFieldFolder' if is_folder else 'DataSetFieldField')
                     lines.append(f'{si}<Field xsi:type="dcssch:{ftype}">')
                     # dataPath: явный (включая "" → self-closing) побеждает; иначе fallback на field.
@@ -7711,7 +8474,7 @@ def emit_parameters(lines, params, indent):
 
         emit_type(lines, str(param.get('type', '')), inner)
 
-        if param.get('key') is True:
+        if get_dsl_bool(param, ['key'], False):
             lines.append(f'{inner}<KeyParameter>true</KeyParameter>')
 
         lines.append(f'{indent}\t</Parameter>')
@@ -7776,7 +8539,7 @@ def emit_commands(lines, cmds, indent):
         if cmd.get('representation'):
             lines.append(f'{inner}<Representation>{cmd["representation"]}</Representation>')
 
-        if cmd.get('modifiesSavedData') is True:
+        if get_dsl_bool(cmd, ['modifiesSavedData'], False):
             lines.append(f'{inner}<ModifiesSavedData>true</ModifiesSavedData>')
 
         if cmd.get('currentRowUse'):
@@ -8234,7 +8997,7 @@ def main():
     out_path_resolved = args.OutputPath if os.path.isabs(args.OutputPath) else os.path.join(os.getcwd(), args.OutputPath)
     assert_edit_allowed(out_path_resolved, "editable")
     format_version = detect_format_version(os.path.dirname(out_path_resolved))
-    global _format_version, _ext_name_prefix
+    global _format_version, _ext_name_prefix, _form_owner
     _format_version = format_version
     _ext_name_prefix = get_extension_name_prefix(os.path.dirname(out_path_resolved))
     compat_mode = detect_compatibility_mode(os.path.dirname(out_path_resolved))
@@ -8375,6 +9138,7 @@ def main():
         QUERY_BASE_DIR = os.path.dirname(os.path.abspath(json_path))
 
     global _defn
+    normalize_main_flag(defn.get('attributes'))
     _defn = defn
 
     # --- 1b. Pre-pass: synonyms, main attribute inference, heuristics, autoCmdBar extraction ---
@@ -8482,13 +9246,13 @@ def main():
 
     # 1b.3: Infer main attribute
     if isinstance(defn.get('attributes'), list):
-        has_explicit_main = any(a.get('main') is True for a in defn['attributes'] if isinstance(a, dict))
+        has_explicit_main = any(get_dsl_bool(a, ['main'], False) for a in defn['attributes'] if isinstance(a, dict))
         if not has_explicit_main:
             candidates = []
             for a in defn['attributes']:
                 if not isinstance(a, dict):
                     continue
-                if 'main' in a and a.get('main') is False:
+                if 'main' in a and (not get_dsl_bool(a, ['main'], True)):
                     continue
                 if _is_object_like_type(str(a.get('type', ''))):
                     candidates.append(a)
@@ -8517,7 +9281,7 @@ def main():
     def _compute_main_acb_autofill():
         if main_acb_def is not None:
             if 'autofill' in main_acb_def:
-                return bool(main_acb_def.get('autofill'))
+                return to_dsl_bool(main_acb_def.get('autofill'), 'autofill', False)
             return True
         if isinstance(defn.get('elements'), list):
             for el in defn['elements']:
@@ -8624,22 +9388,23 @@ def main():
         lines.append(f'\t<AutoCommandBar name="{acb_name}" id="-1"{acb_di_attr}/>')
 
     # Events
-    # Values as for elements; None — the conventional name (ПриСозданииНаСервере)
+    # As for elements; a list — the conventional name (ПриСозданииНаСервере)
+    _form_owner = get_form_owner_kind(next((a.get('type') for a in (defn.get('attributes') or []) if get_dsl_bool(a, ['main'], False)), ''))
     if defn.get('events'):
-        for evt_name, val in defn['events'].items():
-            if get_event_entry('Form', evt_name):
-                continue
-            for v in (val if isinstance(val, list) else [val]):
-                h = ('' if v.get('handler') is None else str(v.get('handler'))) if isinstance(v, dict) else ('' if v is None else str(v))
-                if not h:
-                    print(f"[ERROR] Form event '{evt_name}': specify the handler name — there is no naming convention for this event", file=sys.stderr)
+        # An event outside the catalog has no conventional name — it is given explicitly
+        if isinstance(defn['events'], list):
+            for v in defn['events']:
+                n = resolve_event_name('Form', v.get('event') if isinstance(v, dict) else v, 'Form events')
+                h = ('' if v.get('handler') is None else str(v.get('handler'))) if isinstance(v, dict) else ''
+                if not h and not get_event_entry('Form', n):
+                    print(f"[ERROR] Form event '{n}': specify the handler name — there is no naming convention for this event", file=sys.stderr)
                     sys.exit(1)
         pairs = get_event_pairs(defn, '', 'Form')
         test_event_pairs(pairs, 'Form', '')
         for evt_name, evt_handler, _ in pairs:
             register_handler(evt_handler, 'form', 'Form', evt_name)
         lines.append('\t<Events>')
-        for evt_name, evt_handler, call_type in pairs:
+        for evt_name, evt_handler, call_type in sort_event_pairs(pairs, 'Form'):
             ct_attr = f' callType="{call_type}"' if call_type else ''
             lines.append(f'\t\t<Event name="{evt_name}"{ct_attr}>{evt_handler}</Event>')
         lines.append('\t</Events>')
@@ -8683,6 +9448,7 @@ def main():
         if root_end >= 0 and content.find('dcssch:', root_end) < 0:
             content = content[:root_end].replace(
                 ' xmlns:dcssch="http://v8.1c.ru/8.1/data-composition-system/schema"', '') + content[root_end:]
+    report_unknown_events()
     write_utf8_bom(out_path, content)
 
     # Режим ниже 8.3.19: поля, вычисляемые поля и параметры динамического списка платформа хранит в

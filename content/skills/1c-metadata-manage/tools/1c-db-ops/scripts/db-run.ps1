@@ -1,4 +1,4 @@
-﻿# db-run v1.16 — Launch 1C:Enterprise
+﻿# db-run v1.18 — Launch 1C:Enterprise
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
 #   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
@@ -103,7 +103,11 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 function Protect-Secrets {
     # Redact literal secret values from a display string (String.Replace is literal, not regex).
     param([string]$Text, [string[]]$Secrets)
-    foreach ($s in $Secrets) { if ($s) { $Text = $Text.Replace($s, '***') } }
+    # A secret with a quote reaches the command line doubled (ConvertTo-QuotedText), so both
+    # forms are redacted. Longest first: a shorter form replaced earlier could break a longer
+    # one that contains it and leave part of that secret visible. (No -Unique: it ignores case.)
+    $forms = @(foreach ($s in $Secrets) { if ($s) { $s; $s.Replace('"', '""') } }) | Sort-Object -Property Length -Descending
+    foreach ($f in $forms) { $Text = $Text.Replace($f, '***') }
     return $Text
 }
 
@@ -422,11 +426,31 @@ $engine = "1cv8"
 $argHints = @{ '/F' = '-InfoBasePath'; '/S' = '-InfoBaseServer + -InfoBaseRef'; '/N' = '-UserName'; '/P' = '-Password'; '/Execute' = '-Execute'; '/C' = '-CParam'; '/URL' = '-URL' }
 $extraArgs = @(Resolve-ExtraArgs $engine $AdditionalV8Arguments $AdditionalIbcmdArguments $argHints)
 
-function Format-ArgToken {
-    # ShellExecute re-joins the argument string, so quote each extra token that needs it.
+function ConvertTo-QuotedIfNeeded {
+    # Extra arguments come from the caller unquoted; the 1cv8 command line is joined
+    # verbatim, so a token with a space needs quotes of its own. Без кавычек платформа молча
+    # режет значение по пробелу (замер 2026-11-10: «/Out C:\a b\x.txt» пишет лог в «C:\a»).
     param([string]$Token)
-    if ($Token -match '[\s"]') { return ' "' + ($Token -replace '"', '\"') + '"' }
-    return " $Token"
+    if ($Token -and ($Token.Contains(' ') -or $Token.Contains("`t")) -and -not $Token.Contains('"')) {
+        return '"' + $Token + '"'
+    }
+    return $Token
+}
+
+function ConvertTo-QuotedText {
+    # Free text (user, password, comment, label, list name) framed in quotes for the 1cv8
+    # command line. 1C reads a doubled quote inside the value as one; a lone quote ends the
+    # value, and the rest is dropped silently (замер 2026-11-14: «-comment» хранилища
+    # сохраняется до кавычки, exit 0). «\"» 1C не понимает.
+    param([string]$Value)
+    return '"' + $Value.Replace('"', '""') + '"'
+}
+
+function Format-ArgToken {
+    # ShellExecute passes the argument string verbatim, so each extra token is quoted the way
+    # 1cv8 reads it. «\"» 1C не понимает (замер 2026-11-14) — токен с кавычкой идёт как есть.
+    param([string]$Token)
+    return ' ' + (ConvertTo-QuotedIfNeeded $Token)
 }
 
 # --- Validate connection ---
@@ -447,8 +471,8 @@ if ($InfoBaseServer -and $InfoBaseRef) {
     $argString += " /F `"$InfoBasePath`""
 }
 
-if ($UserName) { $argString += " /N`"$UserName`"" }
-if ($Password) { $argString += " /P`"$Password`"" }
+if ($UserName) { $argString += " /N" + (ConvertTo-QuotedText $UserName) }
+if ($Password) { $argString += " /P" + (ConvertTo-QuotedText $Password) }
 
 # --- Optional params ---
 if ($Execute) {
@@ -464,7 +488,9 @@ if ($Execute) {
     $argString += " /Execute `"$Execute`""
 }
 if ($CParam) {
-    $argString += " /C `"$CParam`""
+    # Параметр запуска — свободный текст (часто JSON): кавычка внутри удваивается, иначе
+    # Предприятие молча обрезает его на ней (замер 2026-11-14).
+    $argString += " /C " + (ConvertTo-QuotedText $CParam)
 }
 if ($URL) {
     $argString += " /URL `"$URL`""

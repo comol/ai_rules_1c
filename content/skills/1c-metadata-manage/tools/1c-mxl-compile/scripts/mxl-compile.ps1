@@ -1,4 +1,4 @@
-﻿# mxl-compile v1.61 — Compile 1C spreadsheet from JSON
+﻿# mxl-compile v1.64 — Compile 1C spreadsheet from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: the support guard takes its reaction from .dev.env SUPPORT_GUARD first and fails
 #        closed on an unreadable Ext/ParentConfigurations.bin (see the guard block below).
@@ -17,6 +17,41 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+function ConvertTo-DslBool {
+	param($Value, [string]$Key, [bool]$Default)
+	if ($null -eq $Value) { return $Default }
+	if ($Value -is [bool]) { return $Value }
+	if ($Value -is [string]) {
+		$t = $Value.Trim().ToLowerInvariant()
+		if (@('true', 'да', 'истина', '1') -ccontains $t) { return $true }
+		if (@('false', 'нет', 'ложь', '0') -ccontains $t) { return $false }
+	} elseif ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+		if ($Value -eq 1) { return $true }
+		if ($Value -eq 0) { return $false }
+	}
+	$shown = if ($Value -is [string]) { '"' + $Value + '"' } else { "$Value" }
+	[Console]::Error.WriteLine("[ERROR] $Key = ${shown}: expected true or false")
+	exit 1
+}
+
+# Первый найденный ключ из $Keys (синонимы, без регистра) → ConvertTo-DslBool; не объект / нет ключа → $Default.
+function Get-DslBool {
+	param($Obj, [string[]]$Keys, [bool]$Default)
+	if ($null -eq $Obj -or $Obj -is [string] -or $Obj -is [ValueType]) { return $Default }
+	foreach ($k in $Keys) {
+		if ($Obj -is [System.Collections.IDictionary]) {
+			if ($Obj.Contains($k)) { return (ConvertTo-DslBool $Obj[$k] $k $Default) }
+		} elseif ($Obj.PSObject.Properties[$k]) {
+			return (ConvertTo-DslBool $Obj.PSObject.Properties[$k].Value $k $Default)
+		}
+	}
+	return $Default
+}
+
 # --- Разбор пользовательского JSON ---
 # Одна строка в stderr вместо дампа исключения ConvertFrom-Json (issue #80): агент по стектрейсу
 # идёт чинить скрипт, а не свой вызов. $source — файл или параметр. $expected заполняем только
@@ -25,6 +60,7 @@ $ErrorActionPreference = "Stop"
 # Возврат через запятую: без неё одноэлементный JSON-массив разворачивался бы в скаляр
 # вторым анруллингом. Не Write-Output -NoEnumerate: pwsh 7.6 заворачивает им в List
 # и одиночный объект (issue #136).
+
 function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected, [switch]$Inline) {
 	try {
 		# PS 5.1 на пустой строке отдаёт $null, а не ошибку — навык уходил дальше с $null,
@@ -363,10 +399,10 @@ function Add-Font {
 	}
 	$face = if ($fontDef.face) { $fontDef.face } else { "Arial" }
 	$size = if ($fontDef.size) { ConvertTo-FontSize $fontDef.size } else { 10 }
-	$bold = if ($fontDef.bold -eq $true) { "true" } else { "false" }
-	$italic = if ($fontDef.italic -eq $true) { "true" } else { "false" }
-	$underline = if ($fontDef.underline -eq $true) { "true" } else { "false" }
-	$strikeout = if ($fontDef.strikeout -eq $true) { "true" } else { "false" }
+	$bold = if ((Get-DslBool $fontDef @('bold') $false)) { "true" } else { "false" }
+	$italic = if ((Get-DslBool $fontDef @('italic') $false)) { "true" } else { "false" }
+	$underline = if ((Get-DslBool $fontDef @('underline') $false)) { "true" } else { "false" }
+	$strikeout = if ((Get-DslBool $fontDef @('strikeout') $false)) { "true" } else { "false" }
 
 	$idx = $script:fontEntries.Count
 	$script:fontMap[$name] = $idx
@@ -587,7 +623,7 @@ function ConvertTo-LineValue {
 	} else {
 		if ($null -ne $val.style) { $style = "$($val.style)" }
 		if ($null -ne $val.width) { $width = "$($val.width)" }
-		if ($null -ne $val.gap) { $gap = if ($val.gap -eq $true) { 'true' } else { 'false' } }
+		if ($null -ne $val.gap) { $gap = if ((Get-DslBool $val @('gap') $false)) { 'true' } else { 'false' } }
 	}
 	if ($style -ceq 'thin') { $style = 'Solid'; $width = 1 }
 	elseif ($style -ceq 'thick') { $style = 'Solid'; $width = 2 }
@@ -639,7 +675,7 @@ function Get-RowFormatProps {
 		$props = Resolve-Style -styleName $spec.Name -fillType ""
 	}
 	if ($row.height) { $props['height'] = [int]$row.height }
-	if ($row.hidden -eq $true) { $props['hidden'] = 'true' }
+	if ((Get-DslBool $row @('hidden') $false)) { $props['hidden'] = 'true' }
 	return $props
 }
 
@@ -699,7 +735,7 @@ function Resolve-Style {
 				}
 				# wrap — не имя, а сокращение: булево вместо перечисления textPlacement.
 				if ($tag -ceq 'wrap') {
-					if ($val -eq $true -or "$val" -eq 'true') { $props['textPlacement'] = 'Wrap' }
+					if (ConvertTo-DslBool $val 'wrap' $false) { $props['textPlacement'] = 'Wrap' }
 					continue
 				}
 				if (-not $kinds.ContainsKey($tag)) {
@@ -712,7 +748,7 @@ function Resolve-Style {
 						$lnVal['Kind'] = if ($tag -ceq 'drawingBorder') { 'Drawing' } else { 'Cell' }
 						$props[$tag] = Register-Line $lnVal
 					}
-					'bool' { $props[$tag] = if ($val -eq $true -or "$val" -eq 'true') { 'true' } else { 'false' } }
+					'bool' { $props[$tag] = if (ConvertTo-DslBool $val $raw $false) { 'true' } else { 'false' } }
 					'int'  { $props[$tag] = [int]$val }
 					'enum' {
 						$allowed = $enums[$tag]
@@ -863,6 +899,61 @@ function Resolve-TypeStr {
 # палитра распухнет на дубли и все ссылки <f> уедут.
 # Умолчания здесь ПЛАТФОРМЕННЫЕ, а не как у реквизита метаданных: голая строка — безлимитная
 # (Length 0), голое число — 0,0 (проверено на макетах, собранных Конфигуратором).
+# Разбор примитивного типа DSL: Number / String / Date / DateTime / Time — с синонимами
+# (decimal, numeric, Число, Строка, Дата …), в любом регистре, с пробелами в скобках.
+# Тело общее у всех навыков-компиляторов (семья в check-inline-drift); умолчание для голого типа
+# зависит от места (хранимый реквизит — 10,0 и 10, СКД — без ограничения) и приходит аргументами.
+# Возврат: $null — не примитив (ссылки, Boolean, …); @{ Error } — база примитива узнана, а
+# параметры нет (вызывающий сообщает ошибку своим способом); иначе описание квалификаторов.
+function Parse-PrimitiveType {
+	param([string]$typeStr, [int]$defDigits, [int]$defFraction, [int]$defLength)
+	if ($typeStr -notmatch '^\s*([^\s(]+)\s*(\(.*)?$') { return $null }
+	$rest = if ($Matches.ContainsKey(2)) { $Matches[2] } else { '' }
+	$kind = switch -exact ($Matches[1].ToLowerInvariant()) {
+		'number' { 'Number' } 'decimal' { 'Number' } 'numeric' { 'Number' } 'число' { 'Number' }
+		'string' { 'String' } 'строка' { 'String' }
+		'date' { 'Date' } 'дата' { 'Date' } 'datetime' { 'DateTime' } 'датавремя' { 'DateTime' }
+		'time' { 'Time' } 'время' { 'Time' }
+		default { $null }
+	}
+	if (-not $kind) { return $null }
+	$bad = @{ Error = ("Invalid type '$typeStr'. Expected Number, Number(D), Number(D,F), Number(D,F,nonneg), " +
+		"String, String(N), String(N,fixed), Date, DateTime, Time") }
+	$parts = @()
+	if ($rest) {
+		if ($rest -notmatch '^\((.*)\)\s*$') { return $bad }
+		$parts = @($Matches[1] -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() })
+	}
+	if ($kind -eq 'Number') {
+		$sign = 'Any'
+		if ($parts.Count -gt 0 -and ($parts[-1] -eq 'nonneg' -or $parts[-1] -eq 'any')) {
+			if ($parts[-1] -eq 'nonneg') { $sign = 'Nonnegative' }
+			$parts = @(if ($parts.Count -gt 1) { $parts[0..($parts.Count - 2)] })
+		}
+		if ($parts.Count -gt 2) { return $bad }
+		foreach ($p in $parts) { if ($p -notmatch '^[0-9]{1,9}$') { return $bad } }
+		$d = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defDigits }
+		$f = if ($parts.Count -ge 2) { [int]$parts[1] } elseif ($parts.Count -eq 1) { 0 } else { $defFraction }
+		# Дробная часть у числа без ограничения (0,F) платформа молча обнуляет — это ошибка ввода
+		if ($d -gt 38 -or $f -gt $d) { return $bad }
+		return @{ Kind = 'Number'; Digits = $d; Fraction = $f; Sign = $sign }
+	}
+	if ($kind -eq 'String') {
+		$allowed = 'Variable'
+		if ($parts.Count -eq 2) {
+			if ($parts[1] -eq 'fixed' -or $parts[1] -eq 'fix') { $allowed = 'Fixed' }
+			elseif ($parts[1] -ne 'variable') { return $bad }
+		}
+		if ($parts.Count -gt 2 -or ($parts.Count -ge 1 -and $parts[0] -notmatch '^[0-9]{1,9}$')) { return $bad }
+		$len = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defLength }
+		# Фиксированную длину у неограниченной строки платформа молча снимает — это ошибка ввода
+		if ($allowed -eq 'Fixed' -and $len -eq 0) { return $bad }
+		return @{ Kind = 'String'; Length = $len; Allowed = $allowed }
+	}
+	if ($parts.Count -gt 0) { return $bad }
+	return @{ Kind = 'Date'; Fractions = $kind }
+}
+
 function Get-CanonValueType {
 	param([string]$typeStr, [string]$where)
 	$parts = @()
@@ -872,19 +963,24 @@ function Get-CanonValueType {
 		if (-not $p) { continue }
 		$canon = $null
 		$kind = $null
+		$prim = Parse-PrimitiveType $p 0 0 0
 		if ($p -ceq 'Boolean') {
 			$canon = 'Boolean'; $kind = 'Boolean'
-		} elseif ($p -match '^String(\((\d+)(\s*,\s*(fixed|variable))?\))?$') {
-			$len = if ($Matches[2]) { $Matches[2] } else { '0' }
-			$al = if ($Matches[4] -and $Matches[4].ToLowerInvariant() -eq 'fixed') { 'fixed' } else { 'variable' }
-			$canon = "String($len,$al)"; $kind = 'String'
-		} elseif ($p -match '^Number(\((\d+)(\s*,\s*(\d+))?(\s*,\s*(nonneg|any))?\))?$') {
-			$digits = if ($Matches[2]) { $Matches[2] } else { '0' }
-			$fraction = if ($Matches[4]) { $Matches[4] } else { '0' }
-			$sign = if ($Matches[6] -and $Matches[6].ToLowerInvariant() -eq 'nonneg') { 'nonneg' } else { 'any' }
-			$canon = "Number($digits,$fraction,$sign)"; $kind = 'Number'
-		} elseif ($p -ceq 'Date' -or $p -ceq 'DateTime' -or $p -ceq 'Time') {
-			$canon = $p; $kind = 'Date'
+		} elseif ($prim) {
+			# Примитивы: голый тип ячейки — без ограничения (Number 0,0, String 0).
+			if ($prim.Error) {
+				[Console]::Error.WriteLine("$($prim.Error) ($where)")
+				exit 1
+			}
+			if ($prim.Kind -eq 'String') {
+				$al = if ($prim.Allowed -eq 'Fixed') { 'fixed' } else { 'variable' }
+				$canon = "String($($prim.Length),$al)"; $kind = 'String'
+			} elseif ($prim.Kind -eq 'Number') {
+				$sign = if ($prim.Sign -eq 'Nonnegative') { 'nonneg' } else { 'any' }
+				$canon = "Number($($prim.Digits),$($prim.Fraction),$sign)"; $kind = 'Number'
+			} else {
+				$canon = $prim.Fractions; $kind = 'Date'
+			}
 		} elseif ($p -match '^(DefinedType|Characteristic)\.(.+)$') {
 			$canon = $p; $kind = "set:$p"
 		} elseif ($p.Contains('.')) {
@@ -1120,7 +1216,7 @@ function Get-CellNote {
 		$text = $raw.text
 		if ($null -eq $text) { $text = '' }
 		if ($raw.style) { $style = "$($raw.style)" }
-		if ($null -ne $raw.autoSize) { $autoSize = ($raw.autoSize -eq $true -or "$($raw.autoSize)" -eq 'true') }
+		if ($null -ne $raw.autoSize) { $autoSize = (Get-DslBool $raw @('autoSize') $false) }
 		foreach ($side in @('Top', 'Left', 'Bottom', 'Right')) {
 			$v = $raw.box.$side
 			if ($null -ne $v) { $box[$side] = [int]$v }
@@ -1647,7 +1743,7 @@ function Get-HeaderFormatIndex {
 	$props = @{}
 	if ($hf.font -and $fontMap.Contains("$($hf.font)")) { $props['font'] = $fontMap["$($hf.font)"] }
 	# Признак вывода и стартовая страница осмысленны только вместе: платформа пишет их парой.
-	$props['height'] = if ($hf.show -eq $false -or "$($hf.show)" -eq 'false') { -1 } else { 1 }
+	$props['height'] = if (-not (Get-DslBool $hf @('show') $true)) { -1 } else { 1 }
 	$props['width'] = if ($hf.startPage) { [int]$hf.startPage } else { 1 }
 	if ($hf.verticalAlignment) { $props['verticalAlignment'] = "$($hf.verticalAlignment)" }
 	return Register-Format $props
@@ -1746,8 +1842,8 @@ if ($def.pictures) {
 		# Поэтому и ключ один, а форма значения выбирает способ.
 		$tr = $pr.Value.transparent
 		if ($null -ne $tr) {
-			if ($tr -is [bool] -or "$tr" -ceq 'true' -or "$tr" -ceq 'false') {
-				$entry.Transparent = if ($tr -eq $true -or "$tr" -ceq 'true') { 'true' } else { 'false' }
+			if ($tr -is [string] -or $tr -is [ValueType]) {
+				$entry.Transparent = if (ConvertTo-DslBool $tr 'transparent' $false) { 'true' } else { 'false' }
 			} elseif ($null -ne $tr.x -and $null -ne $tr.y) {
 				$entry.PixelX = "$([int]$tr.x)"
 				$entry.PixelY = "$([int]$tr.y)"
@@ -1800,7 +1896,7 @@ foreach ($dr in $def.drawings) {
 		$v = $dr.sides.$side
 		if ($null -ne $v) {
 			$tag = 'drawingHave' + $side.Substring(0,1).ToUpperInvariant() + $side.Substring(1) + 'Border'
-			$props[$tag] = if ($v -eq $true -or "$v" -eq 'true') { 'true' } else { 'false' }
+			$props[$tag] = if (ConvertTo-DslBool $v $side $false) { 'true' } else { 'false' }
 		}
 	}
 	$fmtIdx = 0
@@ -2520,7 +2616,7 @@ function Get-Groups {
 		$out += @{
 			B = $frm - 1; E = $to - 1
 			Name = $g.name
-			Collapsed = ($g.collapsed -eq $true -or "$($g.collapsed)" -eq 'true')
+			Collapsed = (Get-DslBool $g @('collapsed') $false)
 			Header = $header
 		}
 	}

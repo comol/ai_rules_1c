@@ -15,7 +15,7 @@ Creates minimal configuration structure: `Configuration.xml`, `Languages/Рус�
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `CompatibilityMode` | `Version8_3_24` | Set it to the target platform (`Version8_3_27` for 8.3.27) unless the task needs an older mode. `DontUse` only warns: the platform stores it as `Version8_3_8` |
-| `FormatVersion` | `2.17` | Dump format, **not above** the target platform's: 8.3.24 — `2.17`, 8.3.25 — `2.18`, 8.3.26 — `2.19`, 8.3.27 — `2.20`, 8.5 — `2.21`. Outside 2.17–2.21 the scaffold is still written, with a warning; a non-numeric value is an error. `2.21` adds the 8.5 root properties and the `xmlns:pal` namespace |
+| `FormatVersion` | `2.17` | Dump format, **not above** the target platform's: 8.3.20 — `2.13`, 8.3.23 — `2.16`, 8.3.24 — `2.17`, 8.3.25 — `2.18`, 8.3.26 — `2.19`, 8.3.27 — `2.20`, 8.5 — `2.21`. The mobile-capability list is the one measured on that platform (`2.13` is shorter than `2.17`; `2.14` / `2.15` use the `2.13` list). Outside 2.17–2.21 the scaffold is still written, with a warning; a non-numeric value is an error. `2.21` adds the 8.5 root properties and the `xmlns:pal` namespace |
 
 ---
 
@@ -43,7 +43,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scr
 | `add-defaultRole` | `Role.Name` or `Name` | Add default role |
 | `remove-defaultRole` | `Role.Name` or `Name` | Remove default role |
 | `set-defaultRoles` | Names via `;;` | Replace default roles list |
-| `set-panels` / `set-home-page` | JSON | Panel layout and home page (see the reference) |
+| `set-panels` / `set-home-page` | JSON | Panel layout and home page (see the reference). `template: OneColumn` is a single `<Column>`, not a left column; `right` is refused |
 | `sort-childObjects` | Kind (`Catalog`, `Catalogs`; batch `;;`) or empty | Sort `ChildObjects` by name inside a kind (1C tree order). Empty value: every kind except `CommonAttribute`, `Subsystem`, `CommandGroup`, `Language`, and the kind groups themselves are put into canonical order. A kind named explicitly is always sorted |
 
 `sort-childObjects` is the explicit way to reorder; `add-childObject` never sorts existing entries, it only places the new one by `NEW_OBJECT_POSITION` (`.dev.env`; `.v8-project.json` `newObjectPosition` is the fallback). The four order-sensitive kinds are never placed by name.

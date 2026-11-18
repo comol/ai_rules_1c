@@ -1,4 +1,4 @@
-﻿# db-cfe-admin v1.8 — Configuration extensions in a 1C infobase: list, check, properties, delete
+﻿# db-cfe-admin v1.11 — Configuration extensions in a 1C infobase: list, check, properties, delete
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local (1c-rules): .dev.env first — PLATFORM_PATH (an install dir resolves to bin\1cv8.exe) before
 #   the v8path of the .v8-project.json record / root, PLATFORM_ARGS / IBCMD_ARGS before v8args /
@@ -232,15 +232,19 @@ function Get-RepositoryArgs {
     $a = @()
     if (-not $Repo -or -not $Repo.Path) { return $a }
     $a += "/ConfigurationRepositoryF`"$($Repo.Path)`""
-    if ($Repo.User) { $a += "/ConfigurationRepositoryN`"$($Repo.User)`"" }
-    if ($Repo.Password) { $a += "/ConfigurationRepositoryP`"$($Repo.Password)`"" }
+    if ($Repo.User) { $a += ("/ConfigurationRepositoryN" + (ConvertTo-QuotedText $Repo.User)) }
+    if ($Repo.Password) { $a += ("/ConfigurationRepositoryP" + (ConvertTo-QuotedText $Repo.Password)) }
     return $a
 }
 
 function Protect-Secrets {
     # Redact literal secret values from a display string (String.Replace is literal, not regex).
     param([string]$Text, [string[]]$Secrets)
-    foreach ($s in $Secrets) { if ($s) { $Text = $Text.Replace($s, '***') } }
+    # A secret with a quote reaches the command line doubled (ConvertTo-QuotedText), so both
+    # forms are redacted. Longest first: a shorter form replaced earlier could break a longer
+    # one that contains it and leave part of that secret visible. (No -Unique: it ignores case.)
+    $forms = @(foreach ($s in $Secrets) { if ($s) { $s; $s.Replace('"', '""') } }) | Sort-Object -Property Length -Descending
+    foreach ($f in $forms) { $Text = $Text.Replace($f, '***') }
     return $Text
 }
 
@@ -326,6 +330,26 @@ function Get-ProjectExtraArgs {
         $dir = $parent
     }
     return @()
+}
+
+function ConvertTo-QuotedIfNeeded {
+    # Extra arguments come from the caller unquoted; the 1cv8 command line is joined
+    # verbatim, so a token with a space needs quotes of its own. Без кавычек платформа молча
+    # режет значение по пробелу (замер 2026-11-10: «/Out C:\a b\x.txt» пишет лог в «C:\a»).
+    param([string]$Token)
+    if ($Token -and ($Token.Contains(' ') -or $Token.Contains("`t")) -and -not $Token.Contains('"')) {
+        return '"' + $Token + '"'
+    }
+    return $Token
+}
+
+function ConvertTo-QuotedText {
+    # Free text (user, password, comment, label, list name) framed in quotes for the 1cv8
+    # command line. 1C reads a doubled quote inside the value as one; a lone quote ends the
+    # value, and the rest is dropped silently (замер 2026-11-14: «-comment» хранилища
+    # сохраняется до кавычки, exit 0). «\"» 1C не понимает.
+    param([string]$Value)
+    return '"' + $Value.Replace('"', '""') + '"'
 }
 
 function Assert-ExtraArgs {
@@ -963,8 +987,8 @@ function Invoke-Designer {
         } else {
             $arguments += "/F", "`"$InfoBasePath`""
         }
-        if ($UserName) { $arguments += "/N`"$UserName`"" }
-        if ($Password) { $arguments += "/P`"$Password`"" }
+        if ($UserName) { $arguments += ("/N" + (ConvertTo-QuotedText $UserName)) }
+        if ($Password) { $arguments += ("/P" + (ConvertTo-QuotedText $Password)) }
         # База под хранилищем не примет НИ ОДНОЙ операции конфигуратора без этих реквизитов.
         $arguments += Get-RepositoryArgs $script:repoSettings
         $arguments += $OpArgs
@@ -974,7 +998,7 @@ function Invoke-Designer {
         $resultFile = Join-Path $tempDir "result.txt"
         $arguments += "/DumpResult", "`"$resultFile`""
         $arguments += "/DisableStartupDialogs"
-        $arguments += $v8Extra
+        $arguments += @($v8Extra | ForEach-Object { ConvertTo-QuotedIfNeeded $_ })
         Write-Host "Running: 1cv8.exe $(Protect-Secrets ((Format-ArgsForDisplay $arguments '1cv8') -join ' ') @($Password, $UserName, $script:repoSettings.Password))"
         $res = Invoke-PlatformProcess $v8Exe $arguments -PreQuoted
         $log = ''

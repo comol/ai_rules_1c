@@ -27,7 +27,7 @@ category: tooling
 Preference order — cheapest and most robust first:
 
 1. **By metadata path (`Shift+F11`).** Opens the "Перейти по ссылке" dialog; accepts `Документ.ЗаказКлиента`, `Справочник.Контрагенты`, `РегистрНакопления.ЗаказыКлиентов`. Bypasses the section panel and the command panel entirely. This is the fastest way to reach a specific object in tests, and it is immune to interface / subsystem layout differences between configurations.
-2. **Section → command.** Click the section in the panel, then the command in the function panel. Use when the test is *about* the command interface, or when the object has no direct link.
+2. **Section → command.** Click the section in the panel, then the command in the function panel. Use when the test is *about* the command interface, or when the object has no direct link. Opening a form from a command closes that function panel. An empty command list afterwards is the closed panel, not a missing command: click the section again before the next command.
 3. **External processor / report (`*.epf` / `*.erf`)** — "Файл → Открыть". The platform raises a **security confirmation dialog** ("Открытие файла... небезопасно") before loading. Expect it. Confirm it only for a file this task built or the user named; otherwise hand it to the person, as on the QA route. A hang here reads as "the processor never opened".
 
 After any navigation, re-snapshot before acting — refs from a previous snapshot are stale.

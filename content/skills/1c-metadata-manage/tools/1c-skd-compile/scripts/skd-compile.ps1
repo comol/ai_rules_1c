@@ -1,4 +1,4 @@
-﻿# skd-compile v1.141 — Compile 1C DCS from JSON
+﻿# skd-compile v1.146 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: support guard reads .dev.env SUPPORT_GUARD first and fails closed on an unreadable
 #   Ext/ParentConfigurations.bin (see the guard block below).
@@ -48,6 +48,42 @@ function ConvertFrom-JsonInput([string]$text, [string]$source, [string]$expected
 	}
 	return ,$parsed
 }
+
+# --- Булевы флаги DSL: прощающий ввод ---
+# Флаг строкой или числом — однозначная ошибка автора JSON: true|да|истина|1 / false|нет|ложь|0 (без
+# регистра; 1/0 — и числом) приводим к bool молча. Иное — ошибка без записи: молчаливое «false» из «yes»
+# хуже отказа. Без общего читателя порты расходились: PS (-eq) принимал "false", py (is) — нет.
+function ConvertTo-DslBool {
+	param($Value, [string]$Key, [bool]$Default)
+	if ($null -eq $Value) { return $Default }
+	if ($Value -is [bool]) { return $Value }
+	if ($Value -is [string]) {
+		$t = $Value.Trim().ToLowerInvariant()
+		if (@('true', 'да', 'истина', '1') -ccontains $t) { return $true }
+		if (@('false', 'нет', 'ложь', '0') -ccontains $t) { return $false }
+	} elseif ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+		if ($Value -eq 1) { return $true }
+		if ($Value -eq 0) { return $false }
+	}
+	$shown = if ($Value -is [string]) { '"' + $Value + '"' } else { "$Value" }
+	[Console]::Error.WriteLine("[ERROR] $Key = ${shown}: expected true or false")
+	exit 1
+}
+
+# Первый найденный ключ из $Keys (синонимы, без регистра) → ConvertTo-DslBool; не объект / нет ключа → $Default.
+function Get-DslBool {
+	param($Obj, [string[]]$Keys, [bool]$Default)
+	if ($null -eq $Obj -or $Obj -is [string] -or $Obj -is [ValueType]) { return $Default }
+	foreach ($k in $Keys) {
+		if ($Obj -is [System.Collections.IDictionary]) {
+			if ($Obj.Contains($k)) { return (ConvertTo-DslBool $Obj[$k] $k $Default) }
+		} elseif ($Obj.PSObject.Properties[$k]) {
+			return (ConvertTo-DslBool $Obj.PSObject.Properties[$k].Value $k $Default)
+		}
+	}
+	return $Default
+}
+
 
 # --- Чтение входного JSON-файла ---
 # Кодировку берём из BOM — это объявление самого файла, а не догадка. Без BOM ждём строгий UTF-8:
@@ -563,6 +599,61 @@ function Emit-ValueType {
 	Emit-SingleValueType -typeStr "$typeStr" -indent $indent
 }
 
+# Разбор примитивного типа DSL: Number / String / Date / DateTime / Time — с синонимами
+# (decimal, numeric, Число, Строка, Дата …), в любом регистре, с пробелами в скобках.
+# Тело общее у всех навыков-компиляторов (семья в check-inline-drift); умолчание для голого типа
+# зависит от места (хранимый реквизит — 10,0 и 10, СКД — без ограничения) и приходит аргументами.
+# Возврат: $null — не примитив (ссылки, Boolean, …); @{ Error } — база примитива узнана, а
+# параметры нет (вызывающий сообщает ошибку своим способом); иначе описание квалификаторов.
+function Parse-PrimitiveType {
+	param([string]$typeStr, [int]$defDigits, [int]$defFraction, [int]$defLength)
+	if ($typeStr -notmatch '^\s*([^\s(]+)\s*(\(.*)?$') { return $null }
+	$rest = if ($Matches.ContainsKey(2)) { $Matches[2] } else { '' }
+	$kind = switch -exact ($Matches[1].ToLowerInvariant()) {
+		'number' { 'Number' } 'decimal' { 'Number' } 'numeric' { 'Number' } 'число' { 'Number' }
+		'string' { 'String' } 'строка' { 'String' }
+		'date' { 'Date' } 'дата' { 'Date' } 'datetime' { 'DateTime' } 'датавремя' { 'DateTime' }
+		'time' { 'Time' } 'время' { 'Time' }
+		default { $null }
+	}
+	if (-not $kind) { return $null }
+	$bad = @{ Error = ("Invalid type '$typeStr'. Expected Number, Number(D), Number(D,F), Number(D,F,nonneg), " +
+		"String, String(N), String(N,fixed), Date, DateTime, Time") }
+	$parts = @()
+	if ($rest) {
+		if ($rest -notmatch '^\((.*)\)\s*$') { return $bad }
+		$parts = @($Matches[1] -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() })
+	}
+	if ($kind -eq 'Number') {
+		$sign = 'Any'
+		if ($parts.Count -gt 0 -and ($parts[-1] -eq 'nonneg' -or $parts[-1] -eq 'any')) {
+			if ($parts[-1] -eq 'nonneg') { $sign = 'Nonnegative' }
+			$parts = @(if ($parts.Count -gt 1) { $parts[0..($parts.Count - 2)] })
+		}
+		if ($parts.Count -gt 2) { return $bad }
+		foreach ($p in $parts) { if ($p -notmatch '^[0-9]{1,9}$') { return $bad } }
+		$d = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defDigits }
+		$f = if ($parts.Count -ge 2) { [int]$parts[1] } elseif ($parts.Count -eq 1) { 0 } else { $defFraction }
+		# Дробная часть у числа без ограничения (0,F) платформа молча обнуляет — это ошибка ввода
+		if ($d -gt 38 -or $f -gt $d) { return $bad }
+		return @{ Kind = 'Number'; Digits = $d; Fraction = $f; Sign = $sign }
+	}
+	if ($kind -eq 'String') {
+		$allowed = 'Variable'
+		if ($parts.Count -eq 2) {
+			if ($parts[1] -eq 'fixed' -or $parts[1] -eq 'fix') { $allowed = 'Fixed' }
+			elseif ($parts[1] -ne 'variable') { return $bad }
+		}
+		if ($parts.Count -gt 2 -or ($parts.Count -ge 1 -and $parts[0] -notmatch '^[0-9]{1,9}$')) { return $bad }
+		$len = if ($parts.Count -ge 1) { [int]$parts[0] } else { $defLength }
+		# Фиксированную длину у неограниченной строки платформа молча снимает — это ошибка ввода
+		if ($allowed -eq 'Fixed' -and $len -eq 0) { return $bad }
+		return @{ Kind = 'String'; Length = $len; Allowed = $allowed }
+	}
+	if ($parts.Count -gt 0) { return $bad }
+	return @{ Kind = 'Date'; Fractions = $kind }
+}
+
 function Emit-SingleValueType {
 	param([string]$typeStr, [string]$indent)
 
@@ -577,52 +668,30 @@ function Emit-SingleValueType {
 		return
 	}
 
-	# string, string(N), string(N,fix) — fix → AllowedLength=Fixed
-	if ($typeStr -match '^string(\((\d+)(,(fix|fixed))?\))?$') {
-		$len = if ($Matches[2]) { $Matches[2] } else { "0" }
-		$al = if ($Matches[4]) { "Fixed" } else { "Variable" }
-		X "$indent<v8:Type>xs:string</v8:Type>"
-		X "$indent<v8:StringQualifiers>"
-		X "$indent`t<v8:Length>$len</v8:Length>"
-		X "$indent`t<v8:AllowedLength>$al</v8:AllowedLength>"
-		X "$indent</v8:StringQualifiers>"
-		return
-	}
-
-	# decimal forms (defaults — bare decimal = money 10,2; decimal(N) = integer N,0):
-	#   decimal                       → 10,2,Any
-	#   decimal(N)                    → N,0,Any
-	#   decimal(N,nonneg)             → N,0,Nonnegative
-	#   decimal(N,M)                  → N,M,Any
-	#   decimal(N,M,nonneg)           → N,M,Nonnegative
-	if ($typeStr -match '^decimal(\((\d+)(,(\d+))?(,nonneg)?\))?$') {
-		if (-not $Matches[1]) {
-			$digits = "10"; $fraction = "2"; $sign = "Any"
+	# Примитивы: string / decimal / date / dateTime / time. Голый тип поля СКД — без ограничения
+	# (decimal 0,0, string 0): так пишет платформа, СКД разрядность не навязывает.
+	$prim = Parse-PrimitiveType $typeStr 0 0 0
+	if ($prim) {
+		if ($prim.Error) { Write-Error $prim.Error; exit 1 }
+		if ($prim.Kind -eq 'String') {
+			X "$indent<v8:Type>xs:string</v8:Type>"
+			X "$indent<v8:StringQualifiers>"
+			X "$indent`t<v8:Length>$($prim.Length)</v8:Length>"
+			X "$indent`t<v8:AllowedLength>$($prim.Allowed)</v8:AllowedLength>"
+			X "$indent</v8:StringQualifiers>"
+		} elseif ($prim.Kind -eq 'Number') {
+			X "$indent<v8:Type>xs:decimal</v8:Type>"
+			X "$indent<v8:NumberQualifiers>"
+			X "$indent`t<v8:Digits>$($prim.Digits)</v8:Digits>"
+			X "$indent`t<v8:FractionDigits>$($prim.Fraction)</v8:FractionDigits>"
+			X "$indent`t<v8:AllowedSign>$($prim.Sign)</v8:AllowedSign>"
+			X "$indent</v8:NumberQualifiers>"
 		} else {
-			$digits = $Matches[2]
-			$fraction = if ($Matches[4]) { $Matches[4] } else { "0" }
-			$sign = if ($Matches[5]) { "Nonnegative" } else { "Any" }
+			X "$indent<v8:Type>xs:dateTime</v8:Type>"
+			X "$indent<v8:DateQualifiers>"
+			X "$indent`t<v8:DateFractions>$($prim.Fractions)</v8:DateFractions>"
+			X "$indent</v8:DateQualifiers>"
 		}
-		X "$indent<v8:Type>xs:decimal</v8:Type>"
-		X "$indent<v8:NumberQualifiers>"
-		X "$indent`t<v8:Digits>$digits</v8:Digits>"
-		X "$indent`t<v8:FractionDigits>$fraction</v8:FractionDigits>"
-		X "$indent`t<v8:AllowedSign>$sign</v8:AllowedSign>"
-		X "$indent</v8:NumberQualifiers>"
-		return
-	}
-
-	# date / dateTime / time — all use xs:dateTime, differ only in DateFractions
-	if ($typeStr -match '^(date|dateTime|time)$') {
-		$fractions = switch ($typeStr) {
-			"date"     { "Date" }
-			"dateTime" { "DateTime" }
-			"time"     { "Time" }
-		}
-		X "$indent<v8:Type>xs:dateTime</v8:Type>"
-		X "$indent<v8:DateQualifiers>"
-		X "$indent`t<v8:DateFractions>$fractions</v8:DateFractions>"
-		X "$indent</v8:DateQualifiers>"
 		return
 	}
 
@@ -1193,7 +1262,7 @@ function Emit-InputParameters {
 	X "$indent<inputParameters>"
 	foreach ($item in $items) {
 		X "$indent`t<dcscor:item>"
-		if ((Has-JsonProp $item 'use') -and $null -ne $item.use -and -not $item.use) {
+		if (-not (Get-DslBool $item @('use') $true)) {
 			X "$indent`t`t<dcscor:use>false</dcscor:use>"
 		}
 		X "$indent`t`t<dcscor:parameter>$(Esc-XmlText "$($item.parameter)")</dcscor:parameter>"
@@ -1336,10 +1405,10 @@ function Get-CalcRestrict($cf) {
 function Get-RestrictFlagNames($restrict) {
 	$o = $restrict.obj
 	if ($o -is [hashtable]) {
-		return ,@($o.Keys | Where-Object { $o[$_] -eq $true } | ForEach-Object { "$_" })
+		return ,@($o.Keys | Where-Object { ConvertTo-DslBool $o[$_] "$_" $false } | ForEach-Object { "$_" })
 	}
 	if ($o) {
-		return ,@($o.PSObject.Properties | Where-Object { $_.Value -eq $true } | ForEach-Object { $_.Name })
+		return ,@($o.PSObject.Properties | Where-Object { ConvertTo-DslBool $_.Value $_.Name $false } | ForEach-Object { $_.Name })
 	}
 	return (Resolve-RestrictFlags $restrict.tokens)
 }
@@ -1445,7 +1514,7 @@ function Emit-Field {
 			$f["inputParameters"] = $fieldDef.inputParameters
 		}
 		# folder: true → DataSetFieldFolder (поле-папка для UI-группировки, только dataPath+title)
-		if ($fieldDef.folder -eq $true) {
+		if ((Get-DslBool $fieldDef @('folder') $false)) {
 			$f["folder"] = $true
 		}
 	}
@@ -1524,7 +1593,7 @@ function Emit-Field {
 		foreach ($oe in $oeList) {
 			$expr = if ($oe.expression) { "$($oe.expression)" } else { '' }
 			$oType = if ($oe.orderType) { "$($oe.orderType)" } else { 'Asc' }
-			$autoOrder = if ($null -ne $oe.autoOrder) { $(if ($oe.autoOrder) { 'true' } else { 'false' }) } else { 'false' }
+			$autoOrder = if (Get-DslBool $oe @('autoOrder') $false) { 'true' } else { 'false' }
 			X "$indent`t<orderExpression>"
 			X "$indent`t`t<dcscom:expression>$(Esc-XmlText $expr)</dcscom:expression>"
 			X "$indent`t`t<dcscom:orderType>$oType</dcscom:orderType>"
@@ -1606,10 +1675,10 @@ function Emit-DataSet {
 	if ($dsType -eq "DataSetQuery") {
 		$queryText = Resolve-TextFromFile "$($ds.query)" $script:queryBaseDir
 		X "$indent`t<query>$(Esc-XmlText $queryText)</query>"
-		if ($ds.autoFillFields -eq $false) {
+		if ((-not (Get-DslBool $ds @('autoFillFields') $true))) {
 			X "$indent`t<autoFillFields>false</autoFillFields>"
 		}
-		if ($ds.useQueryGroupIfPossible -eq $false) {
+		if ((-not (Get-DslBool $ds @('useQueryGroupIfPossible') $true))) {
 			X "$indent`t<useQueryGroupIfPossible>false</useQueryGroupIfPossible>"
 		}
 	} elseif ($dsType -eq "DataSetObject") {
@@ -1797,7 +1866,7 @@ function Emit-SingleParam {
 		if (Test-EmptyValue $parsed.value) {
 			if (-not $vla) { X "`t`t<value xsi:nil=`"true`"/>" }
 		}
-	} elseif ($parsed.nilValue -eq $true) {
+	} elseif ((Get-DslBool $parsed @('nilValue') $false)) {
 		# Принудительный xsi:nil даже когда тип известен (для bit-perfect round-trip).
 		if (-not $vla) { X "`t`t<value xsi:nil=`"true`"/>" }
 	} elseif ($valIsArray) {
@@ -1814,15 +1883,15 @@ function Emit-SingleParam {
 	}
 
 	# Hidden implies useRestriction=true + availableAsField=false
-	if ($parsed.hidden -eq $true) {
+	if ((Get-DslBool $parsed @('hidden') $false)) {
 		$parsed.availableAsField = $false
 		$parsed.useRestriction = $true
 	}
 
 	# UseRestriction — платформа всегда эмитит этот тег у параметра (true/false)
 	$urEmit = $false
-	if ($parsed.useRestriction -eq $true) { $urEmit = $true }
-	elseif ($p -isnot [string] -and $p.useRestriction -eq $true) { $urEmit = $true }
+	if ((Get-DslBool $parsed @('useRestriction') $false)) { $urEmit = $true }
+	elseif ($p -isnot [string] -and (Get-DslBool $p @('useRestriction') $false)) { $urEmit = $true }
 	X ("`t`t<useRestriction>" + $(if ($urEmit) { 'true' } else { 'false' }) + "</useRestriction>")
 
 	# Expression
@@ -1831,12 +1900,12 @@ function Emit-SingleParam {
 	}
 
 	# AvailableAsField
-	if ($parsed.availableAsField -eq $false) {
+	if ((-not (Get-DslBool $parsed @('availableAsField') $true))) {
 		X "`t`t<availableAsField>false</availableAsField>"
 	}
 
 	# ValueListAllowed
-	if ($parsed.valueListAllowed -eq $true) {
+	if ((Get-DslBool $parsed @('valueListAllowed') $false)) {
 		X "`t`t<valueListAllowed>true</valueListAllowed>"
 	}
 
@@ -1848,8 +1917,8 @@ function Emit-SingleParam {
 	}
 
 	# DenyIncompleteValues
-	$deny = $parsed.denyIncompleteValues -eq $true -or (
-		$null -ne $p -and $p -isnot [string] -and $p.denyIncompleteValues -eq $true)
+	$deny = (Get-DslBool $parsed @('denyIncompleteValues') $false) -or (
+		$null -ne $p -and $p -isnot [string] -and (Get-DslBool $p @('denyIncompleteValues') $false))
 	if ($deny) {
 		X "`t`t<denyIncompleteValues>true</denyIncompleteValues>"
 	}
@@ -1895,11 +1964,11 @@ function Emit-Parameters {
 				autoDates = $false
 			}
 			if ($p.expression) { $parsed.expression = "$($p.expression)" }
-			if ($p.availableAsField -eq $false) { $parsed.availableAsField = $false }
-			if ($p.valueListAllowed -eq $true) { $parsed.valueListAllowed = $true }
-			if ($p.hidden -eq $true) { $parsed.hidden = $true }
-			if ($p.autoDates -eq $true) { $parsed.autoDates = $true }
-			if ($p.nilValue -eq $true) { $parsed.nilValue = $true }
+			if ((-not (Get-DslBool $p @('availableAsField') $true))) { $parsed.availableAsField = $false }
+			if ((Get-DslBool $p @('valueListAllowed') $false)) { $parsed.valueListAllowed = $true }
+			if ((Get-DslBool $p @('hidden') $false)) { $parsed.hidden = $true }
+			if ((Get-DslBool $p @('autoDates') $false)) { $parsed.autoDates = $true }
+			if ((Get-DslBool $p @('nilValue') $false)) { $parsed.nilValue = $true }
 		}
 
 		# @autoDates implies use=Always + denyIncompleteValues=true by default
@@ -1955,8 +2024,26 @@ function Test-DataParamList {
 	return (($v -is [array]) -or ($v -is [System.Collections.IList] -and $v -isnot [string])) -and @($v).Count -gt 1
 }
 
+# Вид значения для ветвлений эмиттеров значений (параметры, пустые значения): примитив любого
+# написания (Число(15,2), numeric, String(10)) → decimal / string / date / dateTime / time, прочее —
+# через синонимы навыка. Квалификаторы значению не нужны и отбрасываются.
+function Get-ValueKindType {
+	param([string]$typeStr)
+	if (-not $typeStr) { return $typeStr }
+	$prim = Parse-PrimitiveType $typeStr 0 0 0
+	if ($prim -and -not $prim.Error) {
+		if ($prim.Kind -eq 'Number') { return 'decimal' }
+		if ($prim.Kind -eq 'String') { return 'string' }
+		if ($prim.Fractions -eq 'Date') { return 'date' }
+		if ($prim.Fractions -eq 'Time') { return 'time' }
+		return 'dateTime'
+	}
+	return Resolve-TypeStr $typeStr
+}
+
 function Emit-EmptyValue {
 	param([string]$type, [string]$indent, [string]$tagPrefix = "", [bool]$valueListAllowed = $false)
+	$type = Get-ValueKindType $type
 
 	if ($valueListAllowed) { return }
 	$t = if ($null -eq $type) { "" } else { "$type" }
@@ -1988,6 +2075,7 @@ function Emit-EmptyValue {
 
 function Emit-ParamValue {
 	param([string]$type, $val, [string]$indent, [bool]$valueListAllowed = $false)
+	$type = Get-ValueKindType $type
 
 	if (Test-EmptyValue $val) {
 		Emit-EmptyValue -type $type -indent $indent -tagPrefix "" -valueListAllowed $valueListAllowed
@@ -2552,9 +2640,9 @@ function Emit-SelectionItem {
 		return
 	}
 	# Object form: { auto: true, use: false } — отключённый Auto в selection
-	if ($item.auto -eq $true) {
+	if ((Get-DslBool $item @('auto') $false)) {
 		X "$indent<dcsset:item xsi:type=`"dcsset:SelectedItemAuto`">"
-		if ($item.use -eq $false) { X "$indent`t<dcsset:use>false</dcsset:use>" }
+		if ((-not (Get-DslBool $item @('use') $true))) { X "$indent`t<dcsset:use>false</dcsset:use>" }
 		X "$indent</dcsset:item>"
 		return
 	}
@@ -2575,7 +2663,7 @@ function Emit-SelectionItem {
 	}
 	# field with optional title / use=false / viewMode
 	X "$indent<dcsset:item xsi:type=`"dcsset:SelectedItemField`">"
-	if ($item.use -eq $false) {
+	if ((-not (Get-DslBool $item @('use') $true))) {
 		X "$indent`t<dcsset:use>false</dcsset:use>"
 	}
 	X "$indent`t<dcsset:field>$(Esc-XmlText "$($item.field)")</dcsset:field>"
@@ -2628,7 +2716,7 @@ function Emit-FilterItem {
 				if ($sub -is [string]) {
 					$parsed = Parse-FilterShorthand $sub
 					$obj = @{ field = $parsed.field; op = $parsed.op }
-					if ($parsed.use -eq $false) { $obj.use = $false }
+					if ((-not (Get-DslBool $parsed @('use') $true))) { $obj.use = $false }
 					if ($null -ne $parsed.value) { $obj.value = $parsed.value }
 					if ($parsed["valueType"]) { $obj.valueType = $parsed["valueType"] }
 					if ($parsed.userSettingID) { $obj.userSettingID = $parsed.userSettingID }
@@ -2658,7 +2746,7 @@ function Emit-FilterItem {
 	# FilterItemComparison
 	X "$indent<dcsset:item xsi:type=`"dcsset:FilterItemComparison`">"
 
-	if ($item.use -eq $false) {
+	if ((-not (Get-DslBool $item @('use') $true))) {
 		X "$indent`t<dcsset:use>false</dcsset:use>"
 	}
 
@@ -2759,7 +2847,7 @@ function Emit-Filter {
 			$filterObj = New-Object PSObject
 			$filterObj | Add-Member -NotePropertyName "field" -NotePropertyValue $parsed.field
 			$filterObj | Add-Member -NotePropertyName "op" -NotePropertyValue $parsed.op
-			if ($parsed.use -eq $false) {
+			if ((-not (Get-DslBool $parsed @('use') $true))) {
 				$filterObj | Add-Member -NotePropertyName "use" -NotePropertyValue $false
 			}
 			if ($null -ne $parsed.value) {
@@ -2825,7 +2913,7 @@ function Emit-Order {
 			$dir = if ($item.direction) { "$($item.direction)" } else { "Asc" }
 			if ($dir -match '^(?i)desc$') { $dir = "Desc" } elseif ($dir -match '^(?i)asc$') { $dir = "Asc" }
 			X "$indent`t<dcsset:item xsi:type=`"dcsset:OrderItemField`">"
-			if ($item.use -eq $false) {
+			if ((-not (Get-DslBool $item @('use') $true))) {
 				X "$indent`t`t<dcsset:use>false</dcsset:use>"
 			}
 			X "$indent`t`t<dcsset:field>$(Esc-XmlText "$($item.field)")</dcsset:field>"
@@ -2872,12 +2960,12 @@ function Emit-AppearanceValue {
 	$nestedItems = $null
 	if ($isTopLevelLine) {
 		# items/use лежат рядом с @type
-		if ((_HasKey $val 'use') -and ((_Get $val 'use') -eq $false)) { $useWrapper = $true }
+		if ((_HasKey $val 'use') -and -not (ConvertTo-DslBool (_Get $val 'use') 'use' $true)) { $useWrapper = $true }
 		if (_HasKey $val 'items') { $nestedItems = (_Get $val 'items') }
 	} elseif ((_HasKey $val 'value') -and (($val -is [PSCustomObject]) -or ($val -is [System.Collections.IDictionary]))) {
 		# Обычный wrapper {value, use?, items?}
 		$innerVal = (_Get $val 'value')
-		if ((_HasKey $val 'use') -and ((_Get $val 'use') -eq $false)) { $useWrapper = $true }
+		if ((_HasKey $val 'use') -and -not (ConvertTo-DslBool (_Get $val 'use') 'use' $true)) { $useWrapper = $true }
 		if (_HasKey $val 'items') { $nestedItems = (_Get $val 'items') }
 	}
 
@@ -2983,7 +3071,7 @@ function Emit-ConditionalAppearance {
 		X "$indent`t<dcsset:item>"
 
 		# use=false — отключённое правило (эмитим до selection — XML-порядок)
-		if ($ca.use -eq $false) {
+		if ((-not (Get-DslBool $ca @('use') $true))) {
 			X "$indent`t`t<dcsset:use>false</dcsset:use>"
 		}
 
@@ -3092,7 +3180,7 @@ function Emit-OutputParametersSubItem {
 				$subVT = "$vt"
 			}
 		}
-		if ($subWrap.PSObject.Properties['use'] -and $subWrap.use -eq $false) { $subUseFalse = $true }
+		if ($subWrap.PSObject.Properties['use'] -and (-not (Get-DslBool $subWrap @('use') $true))) { $subUseFalse = $true }
 	} elseif ($subWrap -is [System.Collections.IDictionary]) {
 		if ($subWrap.Contains('value')) { $subVal = $subWrap['value'] }
 		if ($subWrap.Contains('valueType')) {
@@ -3105,7 +3193,7 @@ function Emit-OutputParametersSubItem {
 				$subVT = "$vt"
 			}
 		}
-		if ($subWrap.Contains('use') -and $subWrap['use'] -eq $false) { $subUseFalse = $true }
+		if ($subWrap.Contains('use') -and -not (ConvertTo-DslBool $subWrap['use'] 'use' $true)) { $subUseFalse = $true }
 	}
 	X "$indent`t`t<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
 	if ($subUseFalse) { X "$indent`t`t`t<dcscor:use>false</dcscor:use>" }
@@ -3140,7 +3228,7 @@ function Emit-OutputParameters {
 		if ($rawVal -is [PSCustomObject] -and $rawVal.PSObject.Properties['value']) {
 			$hasValueKey = $true
 			if ($rawVal.PSObject.Properties['valueType']) { $wrapVT = "$($rawVal.valueType)" }
-			if ($rawVal.PSObject.Properties['use'] -and $rawVal.use -eq $false) { $useFalse = $true }
+			if ($rawVal.PSObject.Properties['use'] -and (-not (Get-DslBool $rawVal @('use') $true))) { $useFalse = $true }
 			if ($rawVal.PSObject.Properties['items']) { $wrapItems = $rawVal.items }
 			if ($rawVal.PSObject.Properties['viewMode']) { $wrapVM = "$($rawVal.viewMode)" }
 			if ($rawVal.PSObject.Properties['userSettingID']) { $wrapUSID = "$($rawVal.userSettingID)" }
@@ -3149,7 +3237,7 @@ function Emit-OutputParameters {
 		} elseif (($rawVal -is [hashtable] -or $rawVal -is [System.Collections.IDictionary]) -and $rawVal.Contains('value')) {
 			$hasValueKey = $true
 			if ($rawVal.Contains('valueType')) { $wrapVT = "$($rawVal['valueType'])" }
-			if ($rawVal.Contains('use') -and $rawVal['use'] -eq $false) { $useFalse = $true }
+			if ($rawVal.Contains('use') -and -not (ConvertTo-DslBool $rawVal['use'] 'use' $true)) { $useFalse = $true }
 			if ($rawVal.Contains('items')) { $wrapItems = $rawVal['items'] }
 			if ($rawVal.Contains('viewMode')) { $wrapVM = "$($rawVal['viewMode'])" }
 			if ($rawVal.Contains('userSettingID')) { $wrapUSID = "$($rawVal['userSettingID'])" }
@@ -3250,7 +3338,7 @@ function Emit-DataParameters {
 			if ($null -ne $parsed.value) {
 				$dpObj | Add-Member -NotePropertyName "value" -NotePropertyValue $parsed.value
 			}
-			if ($parsed.use -eq $false) {
+			if ((-not (Get-DslBool $parsed @('use') $true))) {
 				$dpObj | Add-Member -NotePropertyName "use" -NotePropertyValue $false
 			}
 			if ($parsed.userSettingID) {
@@ -3264,14 +3352,14 @@ function Emit-DataParameters {
 
 		X "$indent`t<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
 
-		if ($dp.use -eq $false) {
+		if ((-not (Get-DslBool $dp @('use') $true))) {
 			X "$indent`t`t<dcscor:use>false</dcscor:use>"
 		}
 
 		X "$indent`t`t<dcscor:parameter>$(Esc-XmlText "$($dp.parameter)")</dcscor:parameter>"
 
 		# Value
-		if ($dp.nilValue -eq $true) {
+		if ((Get-DslBool $dp @('nilValue') $false)) {
 			X "$indent`t`t<dcscor:value xsi:nil=`"true`"/>"
 		} elseif (-not (Test-DataParamList $dp.value) -and (Test-EmptyValue $dp.value)) {
 			Emit-EmptyValue -type "$($dp.valueType)" -indent "$indent`t`t" -tagPrefix "dcscor:" -valueListAllowed $false
@@ -3284,6 +3372,7 @@ function Emit-DataParameters {
 				$decl = $script:allParams | Where-Object { $_.name -eq "$($dp.parameter)" } | Select-Object -First 1
 				if ($decl -and $decl.type -and $decl.type -notmatch '\s') { $vtype = $decl.type }
 			}
+			$vtype = Get-ValueKindType $vtype
 			if (Test-StandardPeriodValue $dp.value) {
 				Emit-StandardPeriodValue $dp.value "dcscor:value" "$indent`t`t"
 			} else {
@@ -3564,7 +3653,7 @@ function Emit-StructureItem {
 		}
 
 		# use=false — отключённая ветка структуры
-		if ($item.use -eq $false) {
+		if ((-not (Get-DslBool $item @('use') $true))) {
 			X "$indent`t<dcsset:use>false</dcsset:use>"
 		}
 
@@ -3630,7 +3719,7 @@ function Emit-StructureItem {
 		X "$indent<dcsset:item xsi:type=`"dcsset:StructureItemTable`">"
 
 		# use=false — отключённая таблица
-		if ($item.use -eq $false) {
+		if ((-not (Get-DslBool $item @('use') $true))) {
 			X "$indent`t<dcsset:use>false</dcsset:use>"
 		}
 
@@ -3694,7 +3783,7 @@ function Emit-StructureItem {
 		X "$indent<dcsset:item xsi:type=`"dcsset:StructureItemChart`">"
 
 		# use=false — отключённая диаграмма
-		if ($item.use -eq $false) {
+		if ((-not (Get-DslBool $item @('use') $true))) {
 			X "$indent`t<dcsset:use>false</dcsset:use>"
 		}
 
@@ -3815,7 +3904,7 @@ function Get-DefaultSelectionFields {
 	$folders = @{}
 	foreach ($ds in @($def.dataSets)) {
 		foreach ($fd in (Get-DatasetDeclaredFields $ds)) {
-			if ($fd -and $fd -isnot [string] -and $fd.folder -eq $true) {
+			if ($fd -and $fd -isnot [string] -and (Get-DslBool $fd @('folder') $false)) {
 				$fp = if ($fd.dataPath) { "$($fd.dataPath)" } else { "$($fd.field)" }
 				if ($fp) { $folders[$fp] = $true }
 			}
@@ -3837,7 +3926,7 @@ function Get-DefaultSelectionFields {
 			if ($fd -is [string]) {
 				& $add "$((Parse-FieldShorthand $fd).dataPath)"
 			} else {
-				if ($fd.folder -eq $true) { continue }
+				if ((Get-DslBool $fd @('folder') $false)) { continue }
 				$dp = if ($fd.dataPath) { "$($fd.dataPath)" } else { "$($fd.field)" }
 				& $add $dp
 			}
@@ -3879,7 +3968,7 @@ function Test-SelectionHasFields($items) {
 			if ($it.field -or (Test-SelectionHasFields $it.items)) { return $true }
 			continue
 		}
-		if ($it.use -eq $false -or $it.auto -eq $true) { continue }
+		if ((-not (Get-DslBool $it @('use') $true)) -or (Get-DslBool $it @('auto') $false)) { continue }
 		if ($it.field) { return $true }
 	}
 	return $false
@@ -3891,7 +3980,7 @@ function Find-GroupsWithoutFields($items, [bool]$inherited, $out) {
 	foreach ($it in @($items)) {
 		if ($null -eq $it) { continue }
 		$type = if ($it.type) { "$($it.type)" } else { "group" }
-		if ($type -ne 'group' -or $it.use -eq $false) { continue }
+		if ($type -ne 'group' -or (-not (Get-DslBool $it @('use') $true))) { continue }
 		$own = $false
 		if (Has-JsonProp $it 'selection') {
 			if (@($it.selection).Count -eq 0) { continue }

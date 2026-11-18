@@ -1,6 +1,6 @@
 # Meta DSL — спецификация JSON-формата для объектов метаданных 1С
 
-> Vendored verbatim from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (MIT), Russian original, upstream sync `2026-11-01` (`2e75b0f`). Upstream slash-command names (`/form-compile`, `/meta-compile`, `/skd-compile`, `/xdto-*`, …) map to this skill's tools under `tools/1c-meta-compile/scripts/` — invocation and paths are documented in the corresponding `docs/*-manage.md`.
+> Vendored verbatim from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) (MIT), Russian original, upstream sync `2026-11-17` (`4fc37e1`). Upstream slash-command names (`/form-compile`, `/meta-compile`, `/skd-compile`, `/xdto-*`, …) map to this skill's tools under `tools/1c-meta-compile/scripts/` — invocation and paths are documented in the corresponding `docs/*-manage.md`.
 >
 > **Local deviation:** `meta-compile` refuses to compile an object whose XML already exists (exit 1, nothing written) unless `-Force` is passed — a recompile replaces the file and gives the object a new uuid, which breaks the link to the infobase object. Upstream only warns. Change existing objects with `meta-edit`; see `docs/meta-manage.md`.
 
@@ -182,7 +182,8 @@ JSON DSL для описания объектов метаданных конф�
 | `БизнесПроцессСсылка.Xxx` | `BusinessProcessRef.Xxx` |
 | `ЗадачаСсылка.Xxx` | `TaskRef.Xxx` |
 | `ОпределяемыйТип.Xxx` | `DefinedType.Xxx` |
-| `ХранилищеЗначений` / `ХранилищеЗначения` / `base64Binary` | `ValueStorage` |
+| `ХранилищеЗначений` / `ХранилищеЗначения` | `ValueStorage` |
+| `ДвоичныеДанные` / `base64Binary` | `BinaryData` |
 | `УникальныйИдентификатор` | `UUID` |
 
 Регистронезависимые.

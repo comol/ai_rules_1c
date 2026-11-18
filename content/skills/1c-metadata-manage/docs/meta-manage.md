@@ -82,7 +82,7 @@ Russian type synonyms: `Строка`, `Число`, `Булево`, `Дата`,
 
 Type-name rules:
 - A bare name that is not a known form (a typo such as `Nubmer(15,2)`) is **refused** with the list of valid forms; nothing is written. A name with a namespace prefix (`v8:ValueTable`, `ent:AccountType`, `v8ui:Color`) passes as is and is judged by `meta-validate` check 22.
-- DBMS spellings are translated: `integer`/`int`/`int4` → `Number(10,0)`, `bigint` → `Number(19,0)`, `smallint` → `Number(5,0)`, `numeric(p,s)` → `Number(p,s)`, `varchar(n)` / `character varying(n)` → `String(n)`, `timestamp` → `DateTime`, `bytea` → `BinaryData` (`ДвоичныеДанные` / `BinaryData` is its own type, not `ValueStorage`; `base64Binary` still means `ValueStorage`).
+- DBMS spellings are translated: `integer`/`int`/`int4` → `Number(10,0)`, `bigint` → `Number(19,0)`, `smallint` → `Number(5,0)`, `numeric(p,s)` → `Number(p,s)`, `varchar(n)` / `character varying(n)` → `String(n)`, `timestamp` → `DateTime`, `bytea` → `BinaryData` (`ДвоичныеДанные` / `BinaryData` is its own type, not `ValueStorage`). `ValueStorage` / `ХранилищеЗначения` is `v8:ValueStorage`. `base64Binary` is `BinaryData` (`xs:base64Binary`), not storage.
 - A `Constant` without `valueType` is `String(10)` (the object kind no longer leaks into the value type).
 - `numberLength: 0` on a document, business process or task drops `Number` from the default `InputByString`.
 
@@ -530,6 +530,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-validate
 | 23 | Type set inside a defined type is ERROR; a bare metatype in a characteristic-types chart or a composite defined type / characteristic warns | ERROR / WARN |
 | 24 | A body (`Ext/*.xml`, Help, Predefined, Rights, Form, `<BaseForm>`) stamped with a version different from its descriptor is ERROR; an object or form whose version differs from the dump (`Configuration.xml` or the EPF/ERF root) is WARN — measured on 8.3.27: a whole object in another format version loads, a body out of step with its descriptor does not | ERROR / WARN |
 | 25 | Multilingual string holding plain text instead of `<v8:item>` | ERROR |
+| 26 | Unlimited `String` on an indexed dimension, a data separator or a property with `Indexing` other than `DontIndex` — the load can pass and `/UpdateDBCfg` then fails | ERROR |
 
 Local checks (not in upstream): 6a–6d, 6f, 6g, 6h, 12, 16a, and the stricter 2 and 8. The former local 1e / 6e ("every file carries the `Configuration.xml` version", ERROR) are retired in favour of 24. Both runtimes (`.ps1` / `.py`) print the same messages; the Python runtime takes named arguments (`-ObjectPath <path>`).
 

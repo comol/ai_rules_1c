@@ -89,8 +89,8 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-compile/
 | `visible: false` | Hide (synonym: `hidden: true`) |
 | `enabled: false` | Disable (synonym: `disabled: true`) |
 | `readOnly: true` | Read-only |
-| `events: {...}` | **Canonical.** Event → handler name: `{ "OnChange": "MyHandler" }`; `null` / `""` = auto-name. In an extension form the value may be `{ "handler": …, "callType": "Before" \| "After" \| "Override" }` or a list of them |
-| `on: [...]` | Legacy. Events with auto-named handlers — accepted, equivalent to `events` with `null` values |
+| `events` | **Canonical.** An object `{ "OnChange": "MyHandler" }` names the handler. A list `"events": ["OnChange"]` uses the convention name. `null` / `""` inside the object is an error: a new element has nothing to unbind (unbind is `form-edit`). In an extension form the value may be `{ "handler": …, "callType": "Before" \| "After" \| "Override" }` or a list of them |
+| `on: [...]` | Legacy. Events with auto-named handlers |
 | `handlers: {...}` | Legacy. Explicit handler names: `{ "OnChange": "MyHandler" }`; works **with or without** `on` |
 
 ### Event formats — one contract, no silent winner
@@ -108,11 +108,11 @@ Refusals (exit `1`, nothing written) — the compiler never picks one format and
 
 - `events` together with `on` and/or `handlers` on the same element;
 - a key in `handlers` that is not listed in `on` (that is the typo that used to make a handler disappear);
-- an event name that no element of the platform has (not in the event catalog at all — `OnEndEdit` instead of `OnEditEnd`, the obsolete `Drop`). This refusal is local; upstream only warns.
+- `null` or an empty name inside an `events` object. A convention name is the list `"events": ["OnChange"]`.
 
 ### Event names — the event catalog
 
-Events are checked against the event catalog upstream generated from the vendor configurations (BP, ERP, UNF, UT — 28.5k forms) and from load tests on 8.3.24 / 8.3.27 / 8.5. Names are case-sensitive. Beyond the refusal above, `form-compile` writes the event and prints a `[WARN]` when the event exists in the catalog but not for this element (the platform drops it on load), when it appears only in a later platform than the form's format (`OnHover`, `OnSelectedRowsSetChange` of a table and `Click` of a usual group — 8.5 only), or when it exists only for a table bound to a dynamic list (`OnGetDataAtServer`, `URLGetProcessing`, the user-settings events). Elements without events (button, page, column group, command bar, popup) get a `[WARN]` for any event given.
+Events are checked against the event catalog upstream generated from the vendor configurations and from the syntax helper, with load tests on 8.3.24 / 8.3.27 / 8.5. A name that matches this element's event ignoring case is rewritten to the catalog spelling. An event this element does not have is an **error on an 8.3 form** (format at or below the closed catalog: the form is not written) and a **warning on 8.5** (the event is kept). That covers a name in no element's catalog (`OnEndEdit` instead of `OnEditEnd`, the obsolete `Drop`), an event of another element, an 8.5-only event on an 8.3 form (`OnHover`, `OnSelectedRowsSetChange` of a table, `Click` of a usual group) and a dynamic-list-only event on another table (`OnGetDataAtServer`, `URLGetProcessing`, the user-settings events). The message names near misses. `form-edit` still only warns.
 
 **Form** (`events`): `OnCreateAtServer`, `OnOpen`, `BeforeClose`, `OnClose`, `NotificationProcessing`, `ChoiceProcessing`, `OnReadAtServer`, `BeforeWriteAtServer`, `OnWriteAtServer`, `AfterWriteAtServer`, `BeforeWrite`, `AfterWrite`, `FillCheckProcessingAtServer`, `BeforeLoadDataFromSettingsAtServer`, `OnLoadDataFromSettingsAtServer`, `OnSaveDataInSettingsAtServer`, `URLProcessing`, `ExternalEvent`, `OnReopen`, `NewWriteProcessing`, `NavigationProcessing`, and the report / settings `…AtServer` events. A form event outside the catalog needs an explicit handler name.
 

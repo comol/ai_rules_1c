@@ -22,6 +22,16 @@ No script files were brought into `tools/` — the operations are pure module-te
 
 ## cf-manage.md
 
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`cf-edit` v1.33 → **v1.37**, `cf-info` v1.10 → **v1.12**, `cf-init` v1.17 → **v1.18**. `cf-validate` did not change. `cf-edit-reference.md` is retargeted to the same pin.
+
+- **`cf-init` formats 2.13 and 2.16** (993ab972): 8.3.20 maps to 2.13 and 8.3.23 to 2.16. The mobile-capability list is the one measured for that format (2.13 is shorter than 2.17; 2.16 adds `DefaultReportAppearanceTemplate` and `DatabaseTablespacesUseMode`). 2.14 and 2.15 were not measured and use the 2.13 list. Outside 2.17–2.21 the scaffold is still emitted with a warning (`$formatVerifiedMin` / `$formatVerifiedMax` stay 2.17 and 2.21).
+- **Home page `OneColumn`** (172450ce): one `<Column>`, not a left column beside an empty right one. `right` on that template is refused. `cf-info` reports the same shape.
+- **Boolean flags** in `cf-edit` go through `ConvertTo-DslBool` / `Get-DslBool`: `true` / `да` / `истина` / `1` and `false` / `нет` / `ложь` / `0` (also numeric 1 and 0); anything else is exit 1. The same reader is copied into the compilers named under form, meta, mxl, role, skd and subsystem. `autoEditMode` is not this reader.
+
+Local deltas kept: `.dev.env` `SUPPORT_GUARD` fail-closed and `NEW_OBJECT_POSITION`.
+
 ### Upstream sync `2026-11-01` (`2e75b0f`)
 
 `cf-edit` v1.12 → **v1.33**, `cf-info` v1.4 → **v1.10**, `cf-init` v1.3 → **v1.17**, `cf-validate` v1.4 → **v1.14**; `tools/1c-cf-manage/cf-edit-reference.md` refreshed.
@@ -73,6 +83,16 @@ The PowerShell scripts under `tools/1c-cf-manage/scripts/` were refreshed from [
 - Platform 8.5 support — new compatibility-mode and interface-mode values plus the new XML header format. (Same upgrade in `cfe-validate`, `epf-validate`, `skd-validate`.)
 
 ## cfe-manage.md
+
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`cfe-borrow` v1.59 → **v1.63**, `cfe-validate` v1.34 → **v1.37**. `cfe-diff`, `cfe-init` and `cfe-patch-method` did not change. `-Actualize` here refreshes borrowed properties; it is not `cfe-patch-method -Actualize`.
+
+- **Re-borrow updates in place** (7639c65a and the review fixes through fc7637cf): repeating `-Object`, or `-Actualize` with an empty `-Object`, writes declared properties and `ExtendedConfigurationObject` on the same uuid. Properties the extension does not declare are not added. A different uuid is reported and not rebound. A zero link is a missing link, not a recreate. Enum values and subconto kinds are included. `Autofill` of a borrowed form's command bar follows the source.
+- **`-Check`** compares and writes nothing. `-Check` and `-Actualize` cannot be combined with each other or with `-Module` / `-BorrowMainAttribute`.
+- **`cfe-validate`**: declared properties of a borrowed object and their control mode; `Type` in `Extended` mode is compared as controlled; a duplicate link is reported once; numbering without a numerator.
+
+Local deltas kept: a missing style or type export still fails the call before the act report; `FieldSelectionBackColor`, `ReportGroup1BackColor` and `ReportGroup2BackColor` stay platform styles; no empty `Module.bsl` and no check-11 warning for a borrowed form; `RenderOnly` does not borrow styles. The 2026-11-06 column and `cfg:AnyIBRef` behaviour below is unchanged.
 
 ### Local fix 2026-11-06 — a borrowed form follows Configurator on columns, ref types and missing source files
 
@@ -166,6 +186,16 @@ An extension is the **default answer** when a typical object on vendor support n
 
 ## db-manage.md
 
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`db-cfe-admin` v1.8 → **v1.11**, `db-create` v1.21 → **v1.25**, `db-dump-cf` v1.23 → **v1.26**, `db-dump-dt` v1.22 → **v1.25**, `db-dump-xml` v1.29 → **v1.32**, `db-load-cf` v1.25 → **v1.28**, `db-load-dt` v1.23 → **v1.26**, `db-load-git` v1.36 → **v1.39**, `db-load-xml` v1.38 → **v1.41**, `db-run` v1.16 → **v1.18**, `db-update` v1.28 → **v1.31**. `install-files-update.ps1` was not touched. No `db-*.py` is vendored, so the POSIX half of the quoting fix is not in this tree. `db-repo` was not vendored.
+
+- **A quote inside a free value is doubled** (49401038, ea3a0c4c): `/N`, `/P`, repository user and password, and a comment line. 1C reads `""` inside a quoted value; a lone quote truncates the rest and the process still exits 0 (upstream measured on 8.3.20 / 8.3.24 / 8.3.27). A backslash is not an escape.
+- **An extra argument that contains a space is quoted** (`ConvertTo-QuotedIfNeeded`, ade8ba78) on every 1cv8 launch in the family. `v8args` / `ibcmdargs` stay one string.
+- **Secret redaction is longest-first** and covers the raw value and the doubled-quote form. `-Unique` is not used: it folds case and can drop a longer secret.
+
+Local deltas kept: `/DumpResult` on the Designer batch launches; the apply-check user and password are still passed when `$StrictLog -or $ApplyCheck`.
+
 ### Upstream sync 2026-11-01 (2e75b0f)
 
 Scripts under `tools/1c-db-ops/scripts/` refreshed from upstream `2e75b0f`: `db-create` v1.10 → **v1.21**, `db-dump-cf` v1.12 → **v1.23**, `db-dump-dt` v1.11 → **v1.22**, `db-dump-xml` v1.14 → **v1.29**, `db-load-cf` v1.13 → **v1.25**, `db-load-dt` v1.12 → **v1.23**, `db-load-git` v1.18 → **v1.36**, `db-load-xml` v1.19 → **v1.38**, `db-run` v1.7 → **v1.16**, `db-update` v1.14 → **v1.28**; new **`db-cfe-admin` v1.8** (section 11). `install-files-update.ps1` is our own tool and was not touched.
@@ -214,6 +244,14 @@ The PowerShell scripts under `tools/1c-db-ops/scripts/` were refreshed from [Nik
 
 ## epf-manage.md
 
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`epf-build` v1.26 → **v1.32**, `stub-db-create` v1.17 → **v1.23**, `epf-dump` v1.22 → **v1.25**. `epf-validate`, `epf-init` and `erf-init` did not change. Quoting and longest-first redaction are the same as in `db-manage.md` above. `/DumpResult` stays.
+
+- **Manual-query dynamic lists** (55322a2b, 224a2171, f7ab4d12): the check copy rewrites `<ManualQuery>` to a constant query over that list's own fields (`Convert-ManualQueryLists` in `stub-db-create`). The note that such a form cannot be built without an infobase is printed after the platform log, and only when that log reports a bad main table or a bad data path of that list.
+- **Stub attributes follow form paths** (96ad3867): a form `DataPath` and a dynamic-list `MainTable` add the named catalog, document, chart of accounts, chart of characteristic types, chart of calculation types, exchange plan, business process, task or register to the stub, with the attributes the path names. Common-module doubles are still only the modules the processor code names (name and context flags, empty body). Those modules' own dependencies are not pulled.
+- `stub-db-create` cleans `-EmbedSourceFile` the same way as its other path parameters (f2385e9a).
+
 ### Upstream sync 2026-11-01 (2e75b0f)
 
 `epf-build` v1.12 → **v1.26**, `stub-db-create` v1.7 → **v1.17**, `epf-dump` v1.11 → **v1.22**, `epf-validate` v1.2 → **v1.12**, `epf-init` v1.1 → **v1.9**, `erf-init` v1.1 → **v1.9**.
@@ -253,6 +291,19 @@ The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refre
 - The same script handles `erf-validate` — upstream `erf-validate` is a thin pass-through to `epf-validate.ps1`, the script auto-detects `ExternalReport` vs `ExternalDataProcessor` from the root XML element. No separate `erf-validate.ps1` is shipped.
 
 ## form-manage.md
+
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`form-compile` v1.224 → **v1.244** (PowerShell and Python), `form-edit` v1.46 → **v1.60**, `form-validate` v1.39 → **v1.41**, `form-add` v1.34 → **v1.35** (both runtimes), `form-info` v1.14 → **v1.15**. `remove-form` v1.11 did not change upstream, so both copies still match this pin. `form-decompile` and the layout notes `references/events.md` / `layout-patterns.md` were not vendored; the compilers do not read them. `form-dsl-spec.md` and `presets/erp-standard.json` were re-merged.
+
+- **Events** (b7b3df3d, b3827c3b, 86424c91, 2994ac5b, f846b991): an `events` object names the handler; a list is the conventional name. `null` or `""` inside the object is an error (unbind stays `form-edit`). An event this element does not have is an error on 8.3 (format rank at or below the closed catalog, the form is not written) and a warning on 8.5, with an edit-distance hint, one summary before the write. `<Events>` follow platform order. Form owners include an exchange plan, a chart of accounts and a chart of calculation types. This supersedes the 2026-11-01 note that an unknown event was only a warning upstream and always exit 1 here.
+- **Still exit 1, local:** `events` together with `on` or `handlers`; a `handlers` key that `on` does not name. A standalone `handlers` map (no `events`, no `on`) is compiled.
+- **Document item properties** are `autoTime=CurrentOrLast`, `usePostingMode=Auto`, `repostOnWrite=true`, written last in Configurator order, including the hardcoded fallback when the preset file is absent. `autoTitle` is written only when a form title is set. `presets/erp-standard.json` matches that and does not set `autoTitle: false`.
+- **`-FromObject`**: layout by field role; rates, manual adjustment, the document total and the account-setting attribute are left out; a comment that stands alone is a block; a catalog item form opens as a window; list columns keep order and width; a crowded form gets a size hint. A boolean parameter of conditional appearance is `xs:boolean`.
+- **`form-add`** tells the caller to fill the empty form with `form-compile`. **`form-info`** prints string length and `fixed`, and a number as `decimal(digits,fraction)` or `decimal(digits,fraction,nonneg)`; a number with no qualifiers is `decimal(0,0)`, which is what the platform reads, not a bare `decimal` (that would mean 10,0).
+- **`form-validate`**: check 12 matches case and quotes and stops; the findings header is printed without `-Detailed`. The local export-folder type check stays.
+- **`form-edit`**: remove or replace a handler; the conventional name is a list of events. Type synonyms match `form-compile`.
+- **Booleans** go through `Get-DslBool` (the `cf-manage.md` contract). `autoEditMode` stays a strict JSON boolean and PowerShell only (the 2026-11-08 fix below).
 
 ### Local fix `2026-11-08` — registering a ready form, `autoEditMode`
 
@@ -401,6 +452,17 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 
 ## meta-manage.md
 
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`meta-compile` v1.126 → **v1.130**, `meta-edit` v1.73 → **v1.77** (both runtimes), `meta-validate` v1.45 → **v1.47** (both runtimes), `meta-info` v1.16 → **v1.17**. `meta-remove` did not change. `meta-decompile` is not vendored.
+
+- **`meta-edit` types** (292fbfbf): `ValueStorage` / `ХранилищеЗначения` is `v8:ValueStorage`. `xs:base64Binary` is `BinaryData` (`ДвоичныеДанные`), not storage.
+- **`meta-validate` check 26** (a123b039, 65b3114b): an unlimited `String` on a dimension, a data separator, or a property whose `Indexing` is not `DontIndex`. Load can pass and `/UpdateDBCfg` then fails. ERROR. Objects without those deep rules are skipped.
+- **Primitive types** share `Parse-PrimitiveType` (9721c8b0). Stored-attribute defaults stay the compiler's own arguments; the SKD unlimited default is under `skd-manage.md`. Boolean flags use `Get-DslBool`.
+- **`meta-info`**: a string is `Строка(length)` or `Строка(length,fixed)`; a number is `Число(digits,fraction)` or `Число(digits,fraction,nonneg)`. Missing qualifiers are printed as what the platform reads (string length 0, number 0,0), not as a bare `Строка` / `Число`.
+
+Local deltas kept: `meta-compile` refuses an existing object unless `-Force`; `import-attribute` (2026-11-08, below) is still PowerShell only; `add-form` / `add-template` are still refused.
+
 ### Local fix `2026-11-08` — `meta-edit import-attribute`
 
 Support request: an attribute of the previous version has to move onto a new vendor dump (format 2.21, 8.5.1) with its uuid; `add-attribute` gives a new uuid, which stays correct for a new attribute. `meta-edit.ps1 -Operation import-attribute -SourceFile <previous object XML> -Value <Name>` (batch with `;;`) copies the source's native `<Attribute>` element as it is, uuid and every property included, after the last attribute of the target. Refused with exit 1 and nothing written: source and target are not the same object (kind and name; the object uuid is not compared), the same file, a source attribute that is missing or has an invalid uuid, a target attribute of that name with other content, the name taken by another child, the uuid already used anywhere in the target file (attribute `uuid`, `xr:TypeId` / `xr:ValueId`), a namespace prefix the attribute uses that the target root declares differently. A target attribute identical to the source (up to line endings) is skipped; when nothing is left to import the file is not written and the run exits 0. The save path is the usual one (BOM, target EOL, compact tags), the support guard and the `meta-validate` gate apply; if `meta-validate` fails after the write, the target's original bytes are written back and its exit code is returned. There is no configuration-wide uuid check in `meta-edit` — run `uuid-check` on the dump. `meta-edit.py` does not have the operation yet.
@@ -477,6 +539,15 @@ The PowerShell scripts under `tools/1c-meta-{compile,edit,info,remove,validate}/
 
 ## mxl-manage.md
 
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`mxl-compile` v1.61 → **v1.64**, `mxl-validate` v1.11 → **v1.12**. `mxl-decompile` and `mxl-info` did not change.
+
+- Boolean flags in `mxl-compile` use `Get-DslBool` (the `cf-manage.md` contract).
+- `mxl-validate` prints the findings header without `-Detailed` (d51ceb85), the same way `form-validate` does.
+
+Local delta kept: `.dev.env` `SUPPORT_GUARD` fail-closed in `mxl-compile`.
+
 ### Local fix `2026-11-16` — `mxl-decompile` stdout is the JSON alone
 
 Support ticket 6451045a: without `-OutputPath` the script wrote the JSON with `Write-Output` and then two statistics lines (`Areas: …`, `Fonts: …`) with `Write-Host`. Under `powershell.exe -File` host output goes to the same stdout, so a caller parsing stdout failed (`json.loads`: «Extra data: line 2 column 6»). The statistics lines are now printed only together with `-OutputPath`, after `[OK] Decompiled: …`, as before; without it stdout is the JSON and nothing else. The JSON, the `-OutputPath` file and the `-OutputPath` console output are unchanged. The pinned upstream (`2e75b0f`, v1.32) prints the statistics in both modes.
@@ -509,6 +580,13 @@ The PowerShell script `tools/1c-mxl-validate/scripts/mxl-validate.ps1` was refre
 The compile/decompile/info scripts (`mxl-compile`, `mxl-decompile`, `mxl-info`) were not refreshed — no significant upstream changes for them in this period.
 
 ## role-manage.md
+
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`role-compile` v1.49 → **v1.51**, `role-edit` v1.11 → **v1.12**. `role-info` and `role-validate` did not change. No Python port of these two is vendored.
+
+- `role-compile` boolean flags use `Get-DslBool` (the `cf-manage.md` contract).
+- `role-edit.ps1` moved only its version line. The upstream fix in this range was an undeclared name in the Python port, which this tree does not carry.
 
 ### Upstream sync 2026-11-01 (2e75b0f)
 
@@ -545,6 +623,15 @@ The PowerShell scripts under `tools/1c-role-{compile,info,validate}/scripts/` we
 - **All 10 validators** (`role-validate`, `meta-validate`, `epf-validate`, `skd-validate`, `cf-validate`, `cfe-validate`, `form-validate`, `mxl-validate`, `subsystem-validate`, `interface-validate`) now emit a single one-liner by default; the full per-check trace is available via `-Detailed`. Each accepts a folder path as the primary file argument and resolves to the canonical XML file (e.g. `Roles/MyRole` → `Roles/MyRole/Ext/Rights.xml`). The universal `-Path` parameter is supported in addition to the legacy named parameters (`-RolePath`, `-FormPath`, `-TemplatePath`, `-ObjectPath`, …).
 
 ## skd-manage.md
+
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`skd-compile` v1.141 → **v1.146**, `skd-edit` v1.50 → **v1.51**, `skd-decompile` v0.108 → **v0.109**, `skd-info` v1.14 → **v1.15**. `skd-validate` did not change. No SKD Python port is vendored; the Python emitter fix in this range is not in this tree.
+
+- **Booleans** in `skd-compile` use `Get-DslBool` (the `cf-manage.md` contract) instead of a tree walk.
+- **`skd-edit` primitive types** go through the shared `Parse-PrimitiveType`. A bare SKD field type is unlimited: `decimal` is 0,0 and `string` is length 0, matching `skd-compile`. It used to treat a bare `decimal` as 10,2. `decimal(0,F)` and `string(0,fixed)` are refused (the platform would silently drop the fraction or the fixed length). Synonyms (`Число`, `Строка`, `Дата`, …) and spaces inside the parentheses are accepted.
+- **`skd-decompile`**: a number 0,0 with no sign comes back as bare `decimal`, so it round-trips to that unlimited default.
+- **`skd-info`**: a date type follows `DateFractions` — `Date`, `Time`, or `DateTime` when the qualifier is absent.
 
 ### Upstream sync 2026-11-01 (2e75b0f)
 
@@ -621,6 +708,15 @@ The PowerShell scripts under `tools/1c-skd-{compile,edit,info,validate}/scripts/
 - Section `query` of `-Mode full` prints external dataset names when no queries exist (no more anonymous "(no query datasets)").
 
 ## subsystem-manage.md
+
+### Upstream sync 2026-11-17 (4fc37e1)
+
+`subsystem-compile` v1.37 → **v1.39**, `subsystem-edit` v1.29 → **v1.30**. `subsystem-info` and `subsystem-validate` did not change. The Python port of `subsystem-edit` is not vendored.
+
+- `subsystem-compile` boolean flags use `Get-DslBool` (the `cf-manage.md` contract).
+- `subsystem-edit` `set-property`: clearing `Comment`, `Picture` or another property sets `IsEmpty` instead of `InnerXml = ""`. A picture ref is XML-escaped.
+
+Local deltas kept: `.dev.env` `SUPPORT_GUARD` fail-closed; the sibling `subsystem-validate` exit is the exit code.
 
 ### Upstream sync `2026-11-01` (`2e75b0f`)
 

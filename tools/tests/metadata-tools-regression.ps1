@@ -697,19 +697,18 @@ Register-Case 'form-add: the managed scaffold it writes is accepted by meta-vali
 
 Register-Case 'form-compile: a standalone handlers map produces the event, conflicts are refused' {
     param($Work)
-    # Defect B: `handlers` without `on` compiled successfully and emitted no event
-    # at all, and OnEditEnd auto-names fell through to a literal fallback because
-    # the suffix map spells the key OnEndEdit. This file is pure ASCII, so the
-    # Cyrillic auto-name is asserted negatively - it must not be the literal
-    # English event name, which is exactly what the fallback produced. The full
-    # Cyrillic comparison lives in tools/tests/python-ports-regression.py.
+    # A standalone handlers map must emit the event. A conventional name is the
+    # list form "events": ["OnEditEnd"]; null inside an events object is refused
+    # (unbind is form-edit). This file is pure ASCII, so the Cyrillic auto-name
+    # is asserted negatively: it must not be the literal English event name.
+    # The full Cyrillic comparison lives in tools/tests/python-ports-regression.py.
     $standalone = Invoke-FormCompileCase $Work 'standalone' '{"handlers":{"OnActivateRow":"TActivate"}}'
     Assert-Equal 0 $standalone.Run.ExitCode "standalone handlers exit code (stderr: $($standalone.Run.StdErr))"
     Assert-Equal 1 $standalone.Events.Count "standalone handlers emitted no event: $($standalone.Events.Count)"
     Assert-Equal 'OnActivateRow' $standalone.Events[0].Name 'wrong event name'
     Assert-Equal 'TActivate' $standalone.Events[0].Handler 'wrong handler name'
 
-    $editEnd = Invoke-FormCompileCase $Work 'editend' '{"events":{"OnEditEnd":null}}'
+    $editEnd = Invoke-FormCompileCase $Work 'editend' '{"events":["OnEditEnd"]}'
     Assert-Equal 0 $editEnd.Run.ExitCode "OnEditEnd exit code (stderr: $($editEnd.Run.StdErr))"
     Assert-Equal 1 $editEnd.Events.Count 'OnEditEnd emitted no event'
     Assert-Equal 'OnEditEnd' $editEnd.Events[0].Name 'wrong event name'
@@ -721,7 +720,7 @@ Register-Case 'form-compile: a standalone handlers map produces the event, confl
     foreach ($auto in @(
         @{ Tag = 'selection'; Event = 'Selection' },
         @{ Tag = 'dragend';   Event = 'DragEnd' })) {
-        $case = Invoke-FormCompileCase $Work $auto.Tag ('{"events":{"' + $auto.Event + '":null}}')
+        $case = Invoke-FormCompileCase $Work $auto.Tag ('{"events":["' + $auto.Event + '"]}')
         Assert-Equal 0 $case.Run.ExitCode "$($auto.Event) exit code (stderr: $($case.Run.StdErr))"
         Assert-Equal 1 $case.Events.Count "$($auto.Event) emitted no event"
         Assert-Equal $auto.Event $case.Events[0].Name "$($auto.Event) wrong event name"
@@ -731,6 +730,7 @@ Register-Case 'form-compile: a standalone handlers map produces the event, confl
 
     foreach ($pair in @(
         @{ Tag = 'conflict'; Keys = '{"events":{"OnActivateRow":"A"},"on":["OnActivateRow"]}' },
+        @{ Tag = 'nullname'; Keys = '{"events":{"OnActivateRow":null}}' },
         @{ Tag = 'unknown';  Keys = '{"events":{"OnEndEdit":null}}' },
         @{ Tag = 'drop';     Keys = '{"events":{"Drop":null}}' },
         @{ Tag = 'orphan';   Keys = '{"on":["OnActivateRow"],"handlers":{"OnEditEnd":"X"}}' })) {

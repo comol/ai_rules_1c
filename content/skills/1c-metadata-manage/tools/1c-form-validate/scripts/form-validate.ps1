@@ -1,4 +1,4 @@
-﻿# form-validate v1.39 — Validate 1C managed form
+﻿# form-validate v1.41 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: DynamicList attributes without MainTable and QueryText are an error —
 # the form loads but fails to open. A type spelled with an export folder name
@@ -141,6 +141,15 @@ $warnings = 0
 $stopped = $false
 $script:okCount = 0
 
+# Шапка — перед первой строкой вывода: сразу с -Detailed, иначе при первом ERROR/WARN
+$script:headerShown = $false
+function Write-Header {
+	if ($script:headerShown) { return }
+	$script:headerShown = $true
+	Write-Host "=== Validation: Form.$formName ==="
+	Write-Host ""
+}
+
 function Report-OK {
 	param([string]$msg)
 	$script:okCount++
@@ -150,6 +159,7 @@ function Report-OK {
 function Report-Error {
 	param([string]$msg)
 	$script:errors++
+	Write-Header
 	Write-Host "[ERROR] $msg"
 	if ($script:errors -ge $MaxErrors) {
 		$script:stopped = $true
@@ -159,6 +169,7 @@ function Report-Error {
 function Report-Warn {
 	param([string]$msg)
 	$script:warnings++
+	Write-Header
 	Write-Host "[WARN]  $msg"
 }
 
@@ -187,10 +198,7 @@ if ($parentDir) {
 	}
 }
 
-if ($Detailed) {
-	Write-Host "=== Validation: $formName ==="
-	Write-Host ""
-}
+if ($Detailed) { Write-Header }
 
 # Early BaseForm detection (used in Check 5 to skip base element DataPath validation)
 $hasBaseForm = ($root.SelectSingleNode("f:BaseForm", $nsMgr) -ne $null)
@@ -963,18 +971,19 @@ if (-not $stopped) {
 	$typeNodes = $root.SelectNodes("//v8:Type", $nsMgr)
 	$typeOk = $true
 	$typeChecked = 0
-	$typeInvalid = 0
+	# Имена типов XDTO регистрозависимы: сравнение везде с учётом регистра (-cin/-ceq/-cmatch)
 	foreach ($tn in $typeNodes) {
+		if ($stopped) { break }
 		$tv = $tn.InnerText.Trim()
 		if (-not $tv) { continue }
 		$typeChecked++
-		if ($tv -in $knownInvalidTypes) {
+		if ($tv -cin $knownInvalidTypes) {
 			Report-Error "12. Type '$tv': invalid runtime/UI type (not valid in XDTO schema)"
-			$typeOk = $false; $typeInvalid++
+			$typeOk = $false
 			continue
 		}
-		if ($tv -in $validClosedTypes) { continue }
-		if ($tv -match '^cfg:(.+)$') {
+		if ($tv -cin $validClosedTypes) { continue }
+		if ($tv -cmatch '^cfg:(.+)$') {
 			$cfgVal = $Matches[1]
 			# Тип без имени объекта: динамический список, набор констант, любой отчёт — ровно те три,
 			# что встречаются в формах корпуса (УТ, ERP, БП, УНФ); иное без имени — вероятная опечатка
@@ -988,13 +997,13 @@ if (-not $stopped) {
 				$typeOk = $false; $typeInvalid++
 				continue
 			}
-			if ($cfgVal -match '^([^.]+)\.') {
+			if ($cfgVal -cmatch '^([^.]+)\.') {
 				$pfx = $Matches[1]
-				if ($pfx -in $validCfgPrefixes) {
+				if ($pfx -cin $validCfgPrefixes) {
 					# ExternalDataProcessorObject/ExternalReportObject valid only for EPF/ERF, not config
-					if ($script:isConfigContext -and ($pfx -eq "ExternalDataProcessorObject" -or $pfx -eq "ExternalReportObject")) {
+					if ($script:isConfigContext -and ($pfx -ceq "ExternalDataProcessorObject" -or $pfx -ceq "ExternalReportObject")) {
 						Report-Error "12. Type '$tv': External* type in configuration context (use DataProcessorObject/ReportObject instead)"
-						$typeOk = $false; $typeInvalid++
+						$typeOk = $false
 					}
 					continue
 				}
