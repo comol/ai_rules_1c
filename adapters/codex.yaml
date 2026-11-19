@@ -26,6 +26,10 @@
 #     (`caveman`) is installed as `<name>-command`: one directory holds one
 #     skill. `update` removes the prompts and `.codex/skills/` copies an
 #     earlier version installed, and keeps the ones the user edited.
+#   - Kimi Code, Pi and Command Code read `.agents/skills/` as well. Installed
+#     beside Codex they use these `skills` and `commands` sections instead of
+#     their own, so each skill and command exists once and is owned by every
+#     tool that reads it (install.ps1 → Get-SharedSkillsAdapters).
 #   - MCP config uses TOML [mcp_servers.<id>] sections, requiring a manual
 #     TOML renderer (~50 lines in PowerShell).
 #   - Template placeholders:

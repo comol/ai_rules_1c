@@ -1592,6 +1592,98 @@ function Get-OpenSpecBundleDestRel {
     return $Rel
 }
 
+# Kimi Code, Pi and Command Code also read `.agents/skills/`, the one project
+# skills folder Codex scans (moonshotai.github.io/kimi-code/en/customization/
+# skills, earendil-works/pi packages/coding-agent/docs/skills.md,
+# commandcode.ai/docs/skills; checked 2026-11-20). Installed beside Codex, their
+# own skills folder would show every skill twice, and Codex's command skills
+# would repeat their commands. So the rule above holds here too — every tool
+# keeps a single skills / commands folder: with Codex active these tools take
+# Codex's `skills` and `commands` sections, each file is placed once in
+# `.agents/skills/` and owned by every tool that reads it.
+$script:AgentsSkillsReaders = @('kimi', 'pi', 'command-code')
+
+function Get-SharedSkillsAdapters {
+    param(
+        [string[]]$Tools,
+        [hashtable]$Adapters
+    )
+    $result = @{}
+    foreach ($key in $Adapters.Keys) { $result[$key] = $Adapters[$key] }
+    $codex = $Adapters['codex']
+    if ($Tools -notcontains 'codex' -or -not $codex) { return $result }
+    foreach ($tool in $script:AgentsSkillsReaders) {
+        if ($Tools -notcontains $tool -or -not $Adapters[$tool]) { continue }
+        $copy = [ordered]@{}
+        foreach ($k in $Adapters[$tool].Keys) { $copy[$k] = $Adapters[$tool][$k] }
+        $copy['skills'] = $codex['skills']
+        $copy['commands'] = $codex['commands']
+        $result[$tool] = $copy
+    }
+    return $result
+}
+
+# Our copies a change of that layout leaves behind: in a reader's own skills
+# and commands folders once it shares `.agents/skills/`, or in `.agents/skills/`
+# once Codex is gone. Unchanged copies are deleted; an edited one stays on disk,
+# untracked, with a warning. Nothing untracked is touched.
+function Remove-UnsharedSkillCopies {
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest,
+        [string[]]$Tools,
+        [hashtable]$NativeAdapters
+    )
+    $prefixes = @()
+    if ($Tools -contains 'codex') {
+        foreach ($tool in $script:AgentsSkillsReaders) {
+            $adapter = $NativeAdapters[$tool]
+            if ($Tools -notcontains $tool -or -not $adapter) { continue }
+            $own = [ordered]@{}
+            foreach ($section in @('skills', 'commands')) { if ($adapter.Contains($section)) { $own[$section] = $adapter[$section] } }
+            $prefixes += @(Get-AdapterTargetDirs $own)
+        }
+    }
+    else { $prefixes = @('.agents/skills') }
+    if ($prefixes.Count -eq 0) { return }
+    $removed = 0
+    $kept = @()
+    foreach ($k in @(@($Manifest.files.Keys) + @($script:PreviousFiles.Keys) | Select-Object -Unique)) {
+        $rel = ([string]$k).Replace('\', '/')
+        if (@($prefixes | Where-Object { $rel.StartsWith($_ + '/') }).Count -eq 0) { continue }
+        $abs = Join-Path $Root $rel
+        $exists = Test-Path -LiteralPath $abs
+        if ($Manifest.files.Contains($k)) {
+            $entry = $Manifest.files[$k]
+            $clean = -not $entry.userModified -and $exists -and ((Get-FileSha256 $abs) -eq $entry.installedHash)
+            if ($exists -and -not $clean) { $kept += $rel }
+            [void]$Manifest.files.Remove($k)
+        }
+        else { $clean = $exists }  # update dropped it as unchanged and nothing placed it again
+        if ($clean) {
+            Remove-Item -LiteralPath $abs -Force -ErrorAction SilentlyContinue
+            $removed++
+        }
+    }
+    foreach ($p in $prefixes) {
+        $dir = Join-Path $Root $p
+        if ($removed -eq 0 -or -not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($d in @(Get-ChildItem -LiteralPath $dir -Recurse -Directory -ErrorAction SilentlyContinue |
+                Sort-Object { $_.FullName.Length } -Descending) + @(Get-Item -LiteralPath $dir)) {
+            if (-not (Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    if ($removed -gt 0) {
+        Write-Info "  skills folder layout changed: removed $removed copy(ies) from $($prefixes -join ', ')"
+    }
+    if ($kept.Count -gt 0) {
+        Write-Warn "  Kept $($kept.Count) edited copy(ies) the shared skills folder replaces; they are no longer tracked:"
+        $kept | ForEach-Object { Write-Warn "    $_" }
+    }
+}
+
 # Remove OpenSpec artefacts left in the legacy `.kilocode/` tree by an earlier
 # installer version (which copied the bundle verbatim into `.kilocode/`). Only
 # files 1c-rules previously managed there are deleted — identified via the
@@ -2205,7 +2297,7 @@ function Format-CommandSkill {
     )
     $fm = [ordered]@{ name = $Name }
     if ($SourceFm -and $SourceFm.Contains('description')) { $fm['description'] = [string]$SourceFm['description'] }
-    $notes = @("The ``/$CommandName`` command as a skill: invoke it as ``$" + $Name + "``. Another ``/<command>`` named below is the skill of that name.")
+    $notes = @("The ``/$CommandName`` command as the skill ``$Name`` (in Codex: ``$" + $Name + "``). Another ``/<command>`` named below is the skill of that name.")
     $hint = if ($SourceFm -and $SourceFm.Contains('argumentHint')) { [string]$SourceFm['argumentHint'] } else { '' }
     if ($hint) { $notes += "Arguments: ``$hint`` — the text the user writes after invoking this skill." }
     if ($Body -match '\$ARGUMENTS') { $notes += '`$ARGUMENTS` below means those arguments (empty when none were given).' }
@@ -2723,13 +2815,23 @@ function Invoke-PlacePhase {
         $loadedAdapters = Load-Adapters -SourceRoot $SourceRoot -Tools $missingAdapters
         foreach ($key in $loadedAdapters.Keys) { $canonicalAdapters[$key] = $loadedAdapters[$key] }
     }
+    $nativeAdapters = $canonicalAdapters
+    $canonicalAdapters = Get-SharedSkillsAdapters -Tools $canonicalTools -Adapters $nativeAdapters
     $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $canonicalTools -Adapters $canonicalAdapters -SourceRoot $SourceRoot
-    foreach ($tool in $ActiveTools) {
-        $adapter = $Adapters[$tool]
+    # `add -Tool codex` beside an installed reader of `.agents/skills/`: the
+    # reader is placed again for its now shared skills and commands only, so it
+    # becomes an owner of the copies it reads.
+    $sharedOnly = @()
+    if ($ActiveTools -contains 'codex') {
+        $sharedOnly = @($script:AgentsSkillsReaders | Where-Object { $canonicalTools -contains $_ -and $ActiveTools -notcontains $_ })
+    }
+    foreach ($tool in @(@($ActiveTools) + $sharedOnly)) {
+        $adapter = $canonicalAdapters[$tool]
+        $ownSections = $sharedOnly -notcontains $tool
         Write-Info "  [$tool] placing files"
 
         # rules
-        if ($adapter.rules -and $adapter.rules.copyTo) {
+        if ($ownSections -and $adapter.rules -and $adapter.rules.copyTo) {
             $copyTpl = $adapter.rules.copyTo
             $fmOps = $adapter.rules.frontmatter
             $mode = if ($adapter.rules.mode) { $adapter.rules.mode } else { 'transform' }
@@ -2745,7 +2847,7 @@ function Invoke-PlacePhase {
         }
 
         # agents
-        if ($adapter.agents -and $adapter.agents.copyTo) {
+        if ($ownSections -and $adapter.agents -and $adapter.agents.copyTo) {
             $copyTpl = $adapter.agents.copyTo
             $fmOps = $adapter.agents.frontmatter
             $mode = if ($adapter.agents.mode) { $adapter.agents.mode } else { 'transform' }
@@ -2825,7 +2927,7 @@ function Invoke-PlacePhase {
         # installed by us and is byte-identical to what we recorded (lets a
         # changed stub template refresh cleanly); otherwise keep the user's
         # file. -Force / -ForcePaths overrides and rewrites the shipped stub.
-        if ($adapter.entry) {
+        if ($ownSections -and $adapter.entry) {
             $etarget = $adapter.entry.target
             $etpl = $adapter.entry.template
             if ($etarget) {
@@ -2871,6 +2973,8 @@ function Invoke-PlacePhase {
     # On-demand rules go to each active tool's rules directory only. The shared
     # `.ai-rules/rules/` mirror is no longer created — `AGENTS.md` references
     # the canonical tool's directory, resolved by `Resolve-CanonicalRulesDir`.
+
+    Remove-UnsharedSkillCopies -Root $Root -Manifest $Manifest -Tools $canonicalTools -NativeAdapters $nativeAdapters
 }
 
 # Priority order for choosing the "canonical" rules directory referenced by
@@ -4004,7 +4108,8 @@ function Update-AgentsMd {
     # Resolve the canonical installed location for every artefact section
     # (rules / agents / commands / skills) so the readable source AGENTS.md
     # can be rewritten into a project-local file with no broken links.
-    $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $ActiveTools -Adapters $Adapters -SourceRoot $SourceRoot
+    $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $ActiveTools `
+        -Adapters (Get-SharedSkillsAdapters -Tools $ActiveTools -Adapters $Adapters) -SourceRoot $SourceRoot
 
     if (-not $layouts -or -not $layouts.Contains('rules')) {
         Write-Warn 'No active tool defines a rules directory; AGENTS.md content/<section>/ paths will not be rewritten.'

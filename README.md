@@ -109,7 +109,7 @@ opencode plugin marketplace install 1c-rules
 
 - **Cursor** (`.cursor/rules/`, `.cursor/agents/`, `.cursor/commands/`, `.cursor/skills/`)
 - **Claude Code** (`.claude/rules-1c/`, `.claude/agents/`, `.claude/commands/`)
-- **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/config.toml`; навыки и команды — навыками в `.agents/skills/`, команда вызывается как `$checkmcp`; `update` убирает прежние `~/.codex/prompts/` и `.codex/skills/`, кроме изменённых вами)
+- **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/config.toml`; навыки и команды — навыками в `.agents/skills/`, команда вызывается как `$checkmcp`; `update` убирает прежние `~/.codex/prompts/` и `.codex/skills/`, кроме изменённых вами; рядом с Kimi Code, Pi и Command Code, которые тоже читают `.agents/skills/`, навыки и команды ставятся туда один раз для всех)
 - **OpenCode** (`.opencode/command/`)
 - **Kilo Code** (`.kilo/rules-1c/` for on-demand rules referenced by `AGENTS.md`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`)
 - **Kimi Code CLI** (`.kimi-code/rules-1c/`, `.kimi-code/agents/`, `.kimi-code/skills/`, `.kimi-code/mcp.json`; slash-команды доступны через Skills/Plugins Kimi)

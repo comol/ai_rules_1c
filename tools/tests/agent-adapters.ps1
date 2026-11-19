@@ -261,6 +261,41 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $skills 'probe-command/SKILL.md')) -and -not (Test-Path -LiteralPath (Join-Path $skills 'service/agents/openai.yaml'))) 'Codex: remove left managed skills'
     Assert-True ((Get-Content -LiteralPath $userSkill -Raw).Contains('# Mine')) 'Codex: remove deleted the user skill'
     Pass 'codex: update migrates prompts and .codex/skills, remove keeps user skills'
+
+    # Kimi, Pi and Command Code read .agents/skills/ too. Beside Codex they
+    # share it: one copy per skill and per command, no own skills or commands
+    # folder. Added to an installed reader, Codex takes over its old copies;
+    # removed again, the reader gets its own folder back on update.
+    $readers = @{ kimi = @('.kimi-code/skills'); pi = @('.pi/skills', '.pi/prompts'); 'command-code' = @('.commandcode/skills', '.commandcode/commands') }
+    $project = Join-Path $Work 'codex-shared'
+    [void][IO.Directory]::CreateDirectory($project)
+    $null = Invoke-Installer $project @('init', '-Tools', 'codex,kimi,pi,command-code')
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    $skills = Join-Path $project '.agents/skills'
+    foreach ($rel in @('probe/SKILL.md', 'probe-command/SKILL.md', 'service/SKILL.md')) {
+        $owners = @($manifest.files.('.agents/skills/' + $rel).owners)
+        Assert-True ((Test-Path -LiteralPath (Join-Path $skills $rel)) -and $owners.Count -eq 4) "Shared: $rel not owned by all four"
+    }
+    foreach ($dir in @($readers.Values | ForEach-Object { $_ })) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $project $dir))) "Shared: $dir created beside .agents/skills"
+    }
+    $entry = Get-Content -LiteralPath (Join-Path $project 'AGENTS.md') -Raw
+    Assert-True ($entry.Contains('.agents/skills/probe/SKILL.md') -and $entry.Contains('.agents/skills/probe-command/SKILL.md')) 'Shared: canonical links'
+    $null = Invoke-Installer $project @('remove', '-Tool', 'codex')
+    Assert-True (Test-Path -LiteralPath (Join-Path $skills 'probe/SKILL.md')) 'Shared: removing Codex removed a skill the others read'
+    $null = Invoke-Installer $project @('update')
+    Assert-True (-not (Test-Path -LiteralPath $skills)) 'Shared: .agents/skills left after Codex was removed'
+    foreach ($tool in $readers.Keys) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $project ($readers[$tool][0] + '/probe/SKILL.md'))) "Shared: $tool did not get its own skills back"
+    }
+    Write-Fixture (Join-Path $project '.kimi-code/skills/probe/SKILL.md') '# edited by the user'
+    $null = Invoke-Installer $project @('add', '-Tool', 'codex')
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    Assert-True (@($manifest.files.'.agents/skills/probe/SKILL.md'.owners).Count -eq 4) 'Shared: add -Tool codex did not share the folder'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $project '.pi/prompts/probe.md')) -and -not (Test-Path -LiteralPath (Join-Path $project '.commandcode/commands/probe.md'))) 'Shared: old command copies left'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $project '.kimi-code/skills/probe/SKILL.md') -Raw).Contains('edited by the user')) 'Shared: edited copy deleted'
+    Assert-True (-not ($manifest.files.PSObject.Properties.Name -like '.kimi-code/skills/*')) 'Shared: edited copy still tracked'
+    Pass 'codex beside kimi, pi and command-code: one shared skills folder'
     Write-Host "Passed: $script:Passed"
 }
 finally {
