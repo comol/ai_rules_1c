@@ -1565,21 +1565,16 @@ function Invoke-OpenSpecScaffold {
 # Code with two project folders (`.kilo` + `.kilocode`). Remap the Kilo Code
 # artefacts onto the same `.kilo/` root — commands into `.kilo/commands/`
 # (Kilo's current location for what upstream calls "workflows") and skills into
-# `.kilo/skills/`. Since OpenSpec 1.13 two more tools diverge from their
-# adapter: Codex skills come as the vendor-neutral `.agents/skills/` (the Codex
-# adapter installs skills into `.codex/skills/`), and OpenCode commands come as
-# `.opencode/commands/` (the OpenCode adapter uses `.opencode/command/`). Both
-# are remapped so every tool keeps a single skills / commands folder and the
-# install destinations of earlier bundles stay unchanged. All other paths pass
-# through unchanged.
+# `.kilo/skills/`. Since OpenSpec 1.13 OpenCode commands come as
+# `.opencode/commands/` (the OpenCode adapter uses `.opencode/command/`) and
+# are remapped the same way, so the tool keeps a single commands folder. Codex
+# skills come as `.agents/skills/`, which is the Codex adapter's own skills
+# folder, and pass through like all other paths.
 function Get-OpenSpecBundleDestRel {
     param(
         [string]$Tool,
         [string]$Rel
     )
-    if ($Tool -eq 'codex' -and $Rel -like '.agents/skills/*') {
-        return '.codex/skills/' + $Rel.Substring('.agents/skills/'.Length)
-    }
     if ($Tool -eq 'opencode' -and $Rel -like '.opencode/commands/*') {
         return '.opencode/command/' + $Rel.Substring('.opencode/commands/'.Length)
     }
@@ -1641,6 +1636,58 @@ function Remove-LegacyKilocodeOpenSpec {
         }
     }
     return $removed
+}
+
+# Earlier Codex installs wrote commands as custom prompts into the user-level
+# `~/.codex/prompts/` and skills into a project `.codex/skills/`. Codex
+# deprecated custom prompts and never scanned a project `.codex/skills/`; both
+# now live in `.agents/skills/`. Our copies are deleted and untracked; a copy
+# the user edited is untracked and kept on disk, with a warning, so the edit is
+# not lost. The user's prompts directory itself is never removed.
+function Remove-LegacyCodexArtifacts {
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest
+    )
+    if (-not $Manifest -or -not $Manifest.files) { return }
+    $legacy = @($Manifest.files.Keys | Where-Object {
+        $k = [string]$_
+        $k -like '.codex/skills/*' -or (
+            [System.IO.Path]::IsPathRooted($k) -and
+            $k.Replace('\', '/') -match '/\.codex/prompts/[^/]+\.md$' -and
+            ([string]$Manifest.files[$k].source) -like 'content/commands/*')
+    })
+    if ($legacy.Count -eq 0) { return }
+    $removed = 0
+    $kept = @()
+    foreach ($k in $legacy) {
+        $entry = $Manifest.files[$k]
+        $abs = Resolve-ManifestPath -Root $Root -Rel $k
+        if (Test-Path -LiteralPath $abs) {
+            $clean = $entry -and -not $entry.userModified -and $entry.installedHash -and
+                ((Get-FileSha256 $abs) -eq $entry.installedHash)
+            if ($clean) {
+                Remove-Item -LiteralPath $abs -Force -ErrorAction SilentlyContinue
+                $removed++
+            }
+            else { $kept += $k }
+        }
+        [void]$Manifest.files.Remove($k)
+    }
+    $skillsDir = Join-Path $Root '.codex/skills'
+    if (Test-Path -LiteralPath $skillsDir) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $skillsDir -Recurse -Directory -ErrorAction SilentlyContinue |
+                Sort-Object { $_.FullName.Length } -Descending) + @(Get-Item -LiteralPath $skillsDir)) {
+            if (-not (Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    Write-Info "Migrated: removed $removed Codex prompt / .codex/skills file(s) of an earlier install (commands and skills now live in .agents/skills/)"
+    if ($kept.Count -gt 0) {
+        Write-Warn "  Kept $($kept.Count) of them because they were edited; Codex no longer reads them, and they are no longer tracked:"
+        $kept | ForEach-Object { Write-Warn "    $_" }
+    }
 }
 
 # Place OpenSpec artefacts (slash commands / workflows + SKILLs) bundled under
@@ -2131,9 +2178,73 @@ function Resolve-CopyToPath {
     return $p
 }
 
+# The skill name a command gets under `commands.mode: skill` (Codex). A command
+# named like a source skill (`caveman`) cannot share that skill's directory,
+# so it is installed as `<name>-command`; every other command keeps its name.
+function Get-CommandSkillName {
+    param(
+        [string]$SourceRoot,
+        [string]$Name
+    )
+    if ($SourceRoot -and (Test-Path -LiteralPath (Join-Path $SourceRoot "content/skills/$Name/SKILL.md"))) {
+        return "$Name-command"
+    }
+    return $Name
+}
+
+# `SKILL.md` text for a command placed as an agent skill. A skill carries only
+# `name` and `description`; the argument hint and the explicit-only marker of
+# a `userOnly` command go into the text, so a host without `agents/openai.yaml`
+# still sees them, and `$ARGUMENTS` is explained instead of expanded.
+function Format-CommandSkill {
+    param(
+        [string]$Name,
+        [string]$CommandName,
+        [System.Collections.IDictionary]$SourceFm,
+        [string]$Body
+    )
+    $fm = [ordered]@{ name = $Name }
+    if ($SourceFm -and $SourceFm.Contains('description')) { $fm['description'] = [string]$SourceFm['description'] }
+    $notes = @("The ``/$CommandName`` command as a skill: invoke it as ``$" + $Name + "``. Another ``/<command>`` named below is the skill of that name.")
+    $hint = if ($SourceFm -and $SourceFm.Contains('argumentHint')) { [string]$SourceFm['argumentHint'] } else { '' }
+    if ($hint) { $notes += "Arguments: ``$hint`` — the text the user writes after invoking this skill." }
+    if ($Body -match '\$ARGUMENTS') { $notes += '`$ARGUMENTS` below means those arguments (empty when none were given).' }
+    if ($SourceFm -and $SourceFm.Contains('userOnly') -and [string]$SourceFm['userOnly'] -eq 'True') {
+        $notes += 'Run only when the user invokes this skill explicitly; never start it on your own.'
+    }
+    $text = (Format-Frontmatter $fm) + "`n`n" + (($notes | ForEach-Object { "> $_" }) -join "`n>`n") + "`n"
+    return $text + $Body
+}
+
+# A skill directory under a shared, cross-tool root (`.agents/skills/`) that
+# holds files none of which this installer placed belongs to the user or to
+# another tool: it is kept, not overwritten (AGENT-INSTALL.md → Confirm before
+# destructive actions). -Force / -ForcePaths on the directory takes it over.
+function Test-ForeignSkillDir {
+    param(
+        [string]$Root,
+        [string]$TargetDir,
+        [System.Collections.IDictionary]$Manifest
+    )
+    $rel = ($TargetDir -replace '[\\/]+$', '').Replace('\', '/')
+    if (-not $rel.StartsWith('.agents/skills/')) { return $false }
+    $abs = Join-Path $Root $rel
+    if (-not (Test-Path -LiteralPath $abs)) { return $false }
+    if (Test-ForcePath "$rel/SKILL.md") { return $false }
+    $files = @(Get-ChildItem -LiteralPath $abs -Recurse -File -ErrorAction SilentlyContinue)
+    if ($files.Count -eq 0) { return $false }
+    foreach ($f in $files) {
+        $key = "$rel/" + (Get-InstallerRelativePath -BasePath (Resolve-InstallerExistingPath $abs) -ChildPath $f.FullName)
+        if ($Manifest.files.Contains($key) -or $script:PreviousFiles.Contains($key)) { return $false }
+    }
+    Write-Warn "  $rel exists and was not installed by 1c-rules — kept as is (-ForcePaths '$rel/*' replaces it)"
+    return $true
+}
+
 # Resolve a manifest key (relative or already-absolute) to an absolute filesystem
-# path. Manifest keys for adapters whose `copyTo` starts with `~/` (currently
-# codex `commands`) are stored as absolute paths by `Invoke-PlaceArtifactFile`;
+# path. Manifest keys for adapters whose `copyTo` starts with `~/` (no current
+# adapter; Codex `commands` before they became skills, see
+# Remove-LegacyCodexArtifacts) are stored as absolute paths by `Invoke-PlaceArtifactFile`;
 # every other key is project-relative. Iteration over `$manifest.files.Keys`
 # must go through this helper instead of `Join-Path $Root $rel`, otherwise
 # absolute keys turn into garbage like `C:\Project\C:\Users\...` and Test-Path
@@ -2234,6 +2345,18 @@ function Invoke-PlaceArtifactFile {
         }
         else { Copy-Item -LiteralPath $SourcePath -Destination $absTarget -Force }
     }
+    elseif ($Mode -eq 'skill') {
+        # A command placed as an agent skill: `<skills>/<skill>/SKILL.md`, the
+        # skill named after its directory.
+        $skillName = Split-Path -Leaf (Split-Path -Parent $absTarget)
+        $full = Format-CommandSkill -Name $skillName -CommandName ([IO.Path]::GetFileNameWithoutExtension($SourcePath)) `
+            -SourceFm $SourceFm -Body $SourceBody
+        Write-TextFile -Path $absTarget -Content (Convert-AgentsMdPaths -Text $full -Layouts $Layouts)
+    }
+    elseif ($Mode -eq 'generated') {
+        # Text the installer composed itself (a skill's `agents/openai.yaml`).
+        Write-TextFile -Path $absTarget -Content $SourceBody
+    }
     else {
         $newFm = Invoke-FrontmatterOps -Source $SourceFm -Ops $FrontmatterOps
         $fmText = Format-Frontmatter $newFm
@@ -2278,6 +2401,7 @@ function Invoke-PlaceSkill {
     $absTarget = Join-Path $Root $TargetDir
     $srcFull = Resolve-InstallerExistingPath $SourceDir
     $targetRelBase = ($TargetDir -replace '[\\/]+$', '').Replace('\', '/')
+    if (Test-ForeignSkillDir -Root $Root -TargetDir $TargetDir -Manifest $Manifest) { return }
     if (-not (Test-Path $absTarget)) {
         New-Item -ItemType Directory -Force -Path $absTarget | Out-Null
     }
@@ -2599,7 +2723,7 @@ function Invoke-PlacePhase {
         $loadedAdapters = Load-Adapters -SourceRoot $SourceRoot -Tools $missingAdapters
         foreach ($key in $loadedAdapters.Keys) { $canonicalAdapters[$key] = $loadedAdapters[$key] }
     }
-    $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $canonicalTools -Adapters $canonicalAdapters
+    $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $canonicalTools -Adapters $canonicalAdapters -SourceRoot $SourceRoot
     foreach ($tool in $ActiveTools) {
         $adapter = $Adapters[$tool]
         Write-Info "  [$tool] placing files"
@@ -2646,6 +2770,24 @@ function Invoke-PlacePhase {
             foreach ($f in Get-ChildItem -File (Join-Path $SourceRoot 'content/commands') -Filter *.md) {
                 $parts = Split-FrontmatterAndBody (Read-TextFile $f.FullName)
                 $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+                if ($mode -eq 'skill') {
+                    $skillName = Get-CommandSkillName -SourceRoot $SourceRoot -Name $name
+                    $targetRaw = Resolve-CopyToPath $copyTpl $skillName
+                    $skillDir = Split-Path -Parent $targetRaw
+                    if (Test-ForeignSkillDir -Root $Root -TargetDir $skillDir -Manifest $Manifest) { continue }
+                    Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
+                        -TargetRel $targetRaw -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
+                        -FrontmatterOps $fmOps -Mode $mode `
+                        -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool -Layouts $layouts
+                    if ($parts.Frontmatter -and [string]$parts.Frontmatter['userOnly'] -eq 'True') {
+                        # Codex: no implicit invocation of a service command.
+                        Invoke-PlaceArtifactFile -Root $Root -SourcePath $f.FullName `
+                            -TargetRel ($skillDir.Replace('\', '/') + '/agents/openai.yaml') `
+                            -SourceBody "policy:`n  allow_implicit_invocation: false`n" -Mode 'generated' `
+                            -Manifest $Manifest -ContentSource ("content/commands/" + $f.Name) -OwnerTool $tool -Layouts $layouts
+                    }
+                    continue
+                }
                 $targetRaw = Resolve-CopyToPath $copyTpl $name
                 # If target starts with ~/ (absolute home path), we need to write outside root
                 if ($copyTpl.StartsWith('~/')) {
@@ -2765,7 +2907,10 @@ function Resolve-CanonicalRulesLayout {
 function Resolve-CanonicalArtifactLayouts {
     param(
         [string[]]$ActiveTools,
-        [hashtable]$Adapters
+        [hashtable]$Adapters,
+        # Lets a `commands.mode: skill` layout know which commands are
+        # installed under another name (Get-CommandSkillName).
+        [string]$SourceRoot
     )
     $layouts = [ordered]@{}
     foreach ($section in @('rules', 'agents', 'commands', 'skills')) {
@@ -2781,6 +2926,15 @@ function Resolve-CanonicalArtifactLayouts {
             $ext = ''
             if ($copyTo -match '\{name\}\.([A-Za-z0-9]+)$') { $ext = $Matches[1] }
             $layouts[$section] = [ordered]@{ Dir = $dir; Ext = $ext; Tool = $tool; Template = $copyTo.Replace('\', '/') }
+            if ($section -eq 'commands' -and [string]$adapter[$section].mode -eq 'skill' -and $SourceRoot) {
+                $rename = @{}
+                foreach ($f in Get-ChildItem -File (Join-Path $SourceRoot 'content/commands') -Filter *.md -ErrorAction SilentlyContinue) {
+                    $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+                    $skillName = Get-CommandSkillName -SourceRoot $SourceRoot -Name $name
+                    if ($skillName -ne $name) { $rename[$name] = $skillName }
+                }
+                $layouts[$section]['Rename'] = $rename
+            }
             break
         }
     }
@@ -2826,12 +2980,14 @@ function Convert-AgentsMdPaths {
         $captureDir = $dir
         $captureExt = $ext
         $captureTemplate = [string]$Layouts[$section].Template
+        $captureRename = $Layouts[$section].Rename
         # Pass 1: file references — both directory and extension are rewritten
         # (the extension swap matters for Cursor's `.mdc` rules and Codex's
         # `.toml` agents).
         $result = [regex]::Replace($result, $entry.Pattern, {
             param($m)
             $name = $m.Groups[1].Value
+            if ($captureRename -and $captureRename.Contains($name)) { $name = $captureRename[$name] }
             if ($captureTemplate) { return $captureTemplate.Replace('{name}', $name) }
             return "$captureDir/$name.$captureExt"
         })
@@ -3848,7 +4004,7 @@ function Update-AgentsMd {
     # Resolve the canonical installed location for every artefact section
     # (rules / agents / commands / skills) so the readable source AGENTS.md
     # can be rewritten into a project-local file with no broken links.
-    $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $ActiveTools -Adapters $Adapters
+    $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $ActiveTools -Adapters $Adapters -SourceRoot $SourceRoot
 
     if (-not $layouts -or -not $layouts.Contains('rules')) {
         Write-Warn 'No active tool defines a rules directory; AGENTS.md content/<section>/ paths will not be rewritten.'
@@ -4887,6 +5043,7 @@ function Invoke-Init {
         $manifest.lastChannel = $script:LastChannel
         if (-not $manifest.files) { $manifest.files = [ordered]@{} }
         if (-not $manifest.mcpServers) { $manifest.mcpServers = @() }
+        Remove-LegacyCodexArtifacts -Root $Root -Manifest $manifest
     }
     else {
         $manifest = New-Manifest -Source $sourceRoot -Version $version
@@ -5410,6 +5567,9 @@ function Invoke-Update {
         Write-Info "Migrated: removed $($claudeLegacyKeys.Count) managed entries from legacy .claude/rules/ (on-demand rules now live in .claude/rules-1c/)"
     }
 
+    Write-Section 'Migration: Codex prompts and .codex/skills/ (now .agents/skills/)'
+    Remove-LegacyCodexArtifacts -Root $Root -Manifest $manifest
+
     # Snapshot every path we currently track, before the per-update prune below
     # drops the non-userModified entries. Skill pruning consults this to avoid
     # deleting files the user added to a skill directory themselves.
@@ -5747,7 +5907,7 @@ function Invoke-Remove {
         switch ($ScopeTool) {
             'claude-code'   { $toolPrefixes = @('.claude/', 'CLAUDE.md', '.mcp.json') }
             'command-code'  { $toolPrefixes = @('.commandcode/', '.mcp.json') }
-            'codex'         { $toolPrefixes = @('.codex/') }
+            'codex'         { $toolPrefixes = @('.codex/', '.agents/skills/') }
             'opencode'      { $toolPrefixes = @('.opencode/', 'opencode.json') }
             'kilocode'      { $toolPrefixes = @('.kilo/', '.kilocode/') }
             'kimi'          { $toolPrefixes = @('.kimi-code/', '.kimi/') }
@@ -5861,6 +6021,7 @@ function Invoke-Remove {
                 'qwen'         { $cleanupDirs += '.qwen' }
                 'cline'        { $cleanupDirs += '.cline'; $cleanupDirs += '.clinerules' }
                 'pi'           { $cleanupDirs += '.pi' }
+                'codex'        { $cleanupDirs += '.codex'; $cleanupDirs += '.agents/skills'; $cleanupDirs += '.agents' }
                 default        { $cleanupDirs += ".$t" }
             }
         }

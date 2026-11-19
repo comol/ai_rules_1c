@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Offline installer regressions for ZCode, MiMo Code, Kimi, Cline and Command Code.
+    Offline installer regressions for ZCode, MiMo Code, Kimi, Cline, Command Code and Codex.
 .DESCRIPTION
     Runs the real installer and adapters against a small source fixture. Checks
     discovery, permissions, MCP shape, update ownership and scoped removal.
@@ -199,6 +199,68 @@ try {
     Assert-True ($manifest.tools[0] -eq 'mimocode') 'MiMo JSONC detection'
     Assert-True ((Get-Content -LiteralPath (Join-Path $project 'mimocode.jsonc') -Raw) -eq $jsonc) 'MiMo JSONC overwritten'
     Pass 'MiMo JSONC discovery and preservation'
+
+    # Codex: commands become skills in .agents/skills/, the project folder Codex
+    # scans; nothing goes to the user's ~/.codex. A command named like a skill
+    # gets `-command`; a skill directory the user already has is kept.
+    Write-Fixture (Join-Path $SourceRoot 'AGENTS.md') '# Read content/rules/probe.md, content/commands/probe.md and content/skills/probe/SKILL.md on demand.'
+    Write-Fixture (Join-Path $SourceRoot 'content/commands/service.md') "---`ndescription: Fixture service command`nuserOnly: true`n---`n# Service`nUse `$ARGUMENTS."
+    Write-Fixture (Join-Path $SourceRoot 'content/commands/taken.md') "---`ndescription: Fixture taken command`n---`n# Taken"
+    $project = Join-Path $Work 'codex'
+    [void][IO.Directory]::CreateDirectory((Join-Path $project '.codex'))
+    $userSkill = Join-Path $project '.agents/skills/taken/SKILL.md'
+    Write-Fixture $userSkill "---`nname: taken`ndescription: the user's own skill`n---`n# Mine"
+    $null = Invoke-Installer $project @('init')
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    Assert-True ($manifest.tools[0] -eq 'codex') 'Codex: detection'
+    $keys = @($manifest.files.PSObject.Properties.Name)
+    Assert-True (@($keys | Where-Object { [IO.Path]::IsPathRooted($_) }).Count -eq 0) 'Codex: a file was placed outside the project'
+    $skills = Join-Path $project '.agents/skills'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $skills 'probe/SKILL.md') -Raw).Contains('Fixture skill')) 'Codex: source skill missing'
+    $command = Get-Content -LiteralPath (Join-Path $skills 'probe-command/SKILL.md') -Raw
+    Assert-True ($command -match '(?m)^name: probe-command' -and $command -match '(?m)^description: "?Fixture command' -and $command.Contains('Arguments: `input`')) 'Codex: command skill shape'
+    $service = Get-Content -LiteralPath (Join-Path $skills 'service/SKILL.md') -Raw
+    Assert-True ($service.Contains('never start it on your own') -and $service.Contains('`$ARGUMENTS` below means')) 'Codex: userOnly / arguments notes'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $skills 'service/agents/openai.yaml') -Raw) -match 'allow_implicit_invocation: false') 'Codex: implicit invocation not disabled'
+    Assert-True ((Get-Content -LiteralPath $userSkill -Raw).Contains('# Mine') -and -not ($keys -like '.agents/skills/taken/*')) 'Codex: user skill overwritten'
+    $entry = Get-Content -LiteralPath (Join-Path $project 'AGENTS.md') -Raw
+    Assert-True ($entry.Contains('.codex/rules/probe.md') -and $entry.Contains('.agents/skills/probe-command/SKILL.md') -and $entry.Contains('.agents/skills/probe/SKILL.md')) 'Codex: canonical links'
+    Pass 'codex: commands as skills, name collision, user skill kept'
+
+    # An update over an earlier install: managed prompts (user scope, here a
+    # stand-in home) and `.codex/skills/` copies are removed, edited ones kept.
+    $prompts = Join-Path $Work 'home/.codex/prompts'
+    $legacy = [ordered]@{
+        (Join-Path $prompts 'probe.md') = 'clean'
+        (Join-Path $prompts 'service.md') = 'edited'
+        '.codex/skills/probe/SKILL.md' = 'clean'
+        '.codex/skills/edited/SKILL.md' = 'edited'
+    }
+    $raw = Get-Content -LiteralPath (Join-Path $project '.ai-rules.json') -Raw | ConvertFrom-Json
+    foreach ($key in $legacy.Keys) {
+        $path = if ([IO.Path]::IsPathRooted($key)) { $key } else { Join-Path $project $key }
+        Write-Fixture $path '# shipped'
+        $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLower()
+        if ($legacy[$key] -eq 'edited') { Write-Fixture $path '# shipped, then edited' }
+        $source = if ($key -like '*prompts*') { 'content/commands/' + (Split-Path $key -Leaf) } else { 'content/skills/probe' }
+        $raw.files | Add-Member -NotePropertyName $key -NotePropertyValue ([pscustomobject]@{ source = $source; installedHash = $hash; owners = @('codex') })
+    }
+    Write-Fixture (Join-Path $project '.codex/skills/mine/SKILL.md') '# untracked'
+    [IO.File]::WriteAllText((Join-Path $project '.ai-rules.json'), ($raw | ConvertTo-Json -Depth 20), $Utf8)
+    $log = Invoke-Installer $project @('update')
+    $keys = @((Read-Json (Join-Path $project '.ai-rules.json')).files.PSObject.Properties.Name)
+    Assert-True (@($keys | Where-Object { [IO.Path]::IsPathRooted($_) -or $_ -like '.codex/skills/*' }).Count -eq 0) 'Codex update: legacy entries still tracked'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $prompts 'probe.md')) -and (Test-Path -LiteralPath (Join-Path $prompts 'service.md'))) 'Codex update: prompts migration'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $project '.codex/skills/probe'))) 'Codex update: managed .codex/skills copy left'
+    Assert-True ((Test-Path -LiteralPath (Join-Path $project '.codex/skills/edited/SKILL.md')) -and (Test-Path -LiteralPath (Join-Path $project '.codex/skills/mine/SKILL.md'))) 'Codex update: user files removed'
+    Assert-True ($log -match 'Kept 2 of them') 'Codex update: edited copies not reported'
+    Assert-True (Test-Path -LiteralPath (Join-Path $skills 'probe-command/SKILL.md')) 'Codex update: command skill lost'
+    $log = Invoke-Installer $project @('doctor')
+    Assert-True ($log -match 'All \d+ files match manifest') 'Codex: doctor integrity'
+    $null = Invoke-Installer $project @('remove', '-Tool', 'codex')
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $skills 'probe-command/SKILL.md')) -and -not (Test-Path -LiteralPath (Join-Path $skills 'service/agents/openai.yaml'))) 'Codex: remove left managed skills'
+    Assert-True ((Get-Content -LiteralPath $userSkill -Raw).Contains('# Mine')) 'Codex: remove deleted the user skill'
+    Pass 'codex: update migrates prompts and .codex/skills, remove keeps user skills'
     Write-Host "Passed: $script:Passed"
 }
 finally {

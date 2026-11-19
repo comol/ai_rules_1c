@@ -13,8 +13,19 @@
 #     AGENTS.md by file path. Codex itself does not auto-discover them — the
 #     directory is just a stable, predictable location that the agent reads
 #     when AGENTS.md tells it to. Rules are loaded on demand (alwaysApply: false).
-#   - Slash-commands map to ~/.codex/prompts/ (user-level scope). The installer
-#     should warn the user about the global scope when writing there.
+#   - Skills go to `.agents/skills/` — the only project location Codex scans
+#     (every directory from the working directory up to the repository root;
+#     https://learn.chatgpt.com/docs/build-skills, checked 2026-11-20). It does
+#     not read a project `.codex/skills/`.
+#   - Commands are installed as skills (`mode: skill`): Codex custom prompts
+#     (`~/.codex/prompts/`) are deprecated and Codex Desktop does not list them.
+#     Each command becomes `.agents/skills/<name>/SKILL.md` with `name` and
+#     `description`, the argument hint written into its text, and
+#     `agents/openai.yaml` with `allow_implicit_invocation: false` when the
+#     source is `userOnly`. A command named like a skill in `content/skills/`
+#     (`caveman`) is installed as `<name>-command`: one directory holds one
+#     skill. `update` removes the prompts and `.codex/skills/` copies an
+#     earlier version installed, and keeps the ones the user edited.
 #   - MCP config uses TOML [mcp_servers.<id>] sections, requiring a manual
 #     TOML renderer (~50 lines in PowerShell).
 #   - Template placeholders:
@@ -48,15 +59,11 @@ agents:
     """
 
 commands:
-  copyTo: "~/.codex/prompts/{name}.md"
-  # Note: path starts with "~/" → installer treats this as user-level scope
-  # and warns the user that commands are shared across projects.
-  frontmatter:
-    keep: [description]
-    drop: [argumentHint, allowedTools]
+  copyTo: ".agents/skills/{name}/SKILL.md"
+  mode: skill
 
 skills:
-  copyTo: ".codex/skills/{name}/"
+  copyTo: ".agents/skills/{name}/"
   mode: verbatim
 
 mcp:

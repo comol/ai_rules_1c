@@ -76,7 +76,7 @@ After installation you should already see, depending on which tools are active:
 
 - Cursor — `.cursor/commands/opsx-{apply,archive,explore,propose,sync,update}.md`
 - Claude Code — `.claude/commands/opsx/{apply,archive,explore,propose,sync,update}.md`
-- Codex — only SKILLs under `.codex/skills/openspec-*/SKILL.md` (Codex has no project slash commands; the upstream `.agents/skills/` output is remapped there)
+- Codex — only SKILLs under `.agents/skills/openspec-*/SKILL.md` (Codex has no project slash commands; the upstream output is the Codex adapter's own skills folder)
 - OpenCode — `.opencode/command/opsx-{apply,archive,explore,propose,sync,update}.md` (upstream `.opencode/commands/`, remapped to the adapter's folder)
 - Kilo Code — `.kilo/commands/opsx-{apply,archive,explore,propose,sync,update}.md` (the upstream `.kilocode/workflows/` layout is remapped by the installer — see `adapters/kilocode.yaml`)
 

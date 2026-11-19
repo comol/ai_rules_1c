@@ -44,8 +44,8 @@ $script:OpenSpecToolsArg = 'cursor,claude,codex,opencode,kilocode'
 $script:DotMap = @{
     'cursor'      = '.cursor'
     'claude-code' = '.claude'
-    # OpenSpec >= 1.13 writes Codex skills to the vendor-neutral .agents/skills/;
-    # the installer maps them onto the Codex adapter's .codex/skills/.
+    # OpenSpec >= 1.13 writes Codex skills to .agents/skills/, which is also
+    # the Codex adapter's skills folder.
     'codex'       = '.agents'
     'opencode'    = '.opencode'
     'kilocode'    = '.kilocode'

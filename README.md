@@ -109,7 +109,7 @@ opencode plugin marketplace install 1c-rules
 
 - **Cursor** (`.cursor/rules/`, `.cursor/agents/`, `.cursor/commands/`, `.cursor/skills/`)
 - **Claude Code** (`.claude/rules-1c/`, `.claude/agents/`, `.claude/commands/`)
-- **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/skills/`, `.codex/config.toml`; slash-команды ставятся в пользовательский `~/.codex/prompts/`)
+- **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/config.toml`; навыки и команды — навыками в `.agents/skills/`, команда вызывается как `$checkmcp`; `update` убирает прежние `~/.codex/prompts/` и `.codex/skills/`, кроме изменённых вами)
 - **OpenCode** (`.opencode/command/`)
 - **Kilo Code** (`.kilo/rules-1c/` for on-demand rules referenced by `AGENTS.md`, `.kilo/commands/`, `.kilo/agents/`, `.kilo/skills/`)
 - **Kimi Code CLI** (`.kimi-code/rules-1c/`, `.kimi-code/agents/`, `.kimi-code/skills/`, `.kimi-code/mcp.json`; slash-команды доступны через Skills/Plugins Kimi)
@@ -470,7 +470,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 ## OpenSpec
 
-Установщик безусловно разворачивает OpenSpec-воркспейс (`openspec/`) с режимом «не перезаписывать существующее». Слэш-команды `/opsx:propose`, `/opsx:apply`, `/opsx:archive`, `/opsx:explore`, `/opsx:sync`, `/opsx:update` разворачиваются автоматически для каждого активного инструмента из набора `cursor`, `claude-code`, `codex`, `opencode`, `kilocode` (бандлы — в `content/openspec-bundle/<tool>/`). Особенность Codex: его бандл содержит только SKILL-пакеты OpenSpec (`.codex/skills/openspec-*`), без слэш-команд — workflow вызывается через скиллы напрямую. Для `kimi`, `qwen`, `command-code`, `cline`, `zcode`, `mimocode`, `pi` и `other` тулз-специфичного OpenSpec-бандла нет — работайте напрямую с `openspec/specs/` и `openspec/changes/` (или через установленные OpenSpec skills, где они есть). Подробности — в [`openspec/README.md`](openspec/README.md).
+Установщик безусловно разворачивает OpenSpec-воркспейс (`openspec/`) с режимом «не перезаписывать существующее». Слэш-команды `/opsx:propose`, `/opsx:apply`, `/opsx:archive`, `/opsx:explore`, `/opsx:sync`, `/opsx:update` разворачиваются автоматически для каждого активного инструмента из набора `cursor`, `claude-code`, `codex`, `opencode`, `kilocode` (бандлы — в `content/openspec-bundle/<tool>/`). Особенность Codex: его бандл содержит только SKILL-пакеты OpenSpec (`.agents/skills/openspec-*`), без слэш-команд — workflow вызывается через скиллы напрямую. Для `kimi`, `qwen`, `command-code`, `cline`, `zcode`, `mimocode`, `pi` и `other` тулз-специфичного OpenSpec-бандла нет — работайте напрямую с `openspec/specs/` и `openspec/changes/` (или через установленные OpenSpec skills, где они есть). Подробности — в [`openspec/README.md`](openspec/README.md).
 
 ## Ссылки
 
