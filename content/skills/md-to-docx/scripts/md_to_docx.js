@@ -291,6 +291,13 @@ flushTable();
 
 // --- Inline markdown parser ---
 // Handles: **bold**, *italic*, `code`, [text](url) with balanced parens in URLs
+// The content of **bold** and *italic* is parsed again: otherwise nested `code`,
+// a link or italic inside bold reach the document as raw text with their markup
+// (**`Catalog.Items`** came out with the backticks).
+function parseNested(text, style) {
+  return parseInline(text).map(r => ({ ...r, ...style }));
+}
+
 function parseInline(text) {
   const runs = [];
   const re = /(\*\*(.+?)\*\*)|(\[([^\]]+)\]\(((?:[^()]*|\([^)]*\))*)\))|(`([^`]+)`)|(\*(.+?)\*)/g;
@@ -301,13 +308,13 @@ function parseInline(text) {
       runs.push({ text: text.slice(lastIndex, m.index) });
     }
     if (m[1]) {
-      runs.push({ text: m[2], bold: true });
+      runs.push(...parseNested(m[2], { bold: true }));
     } else if (m[3]) {
       runs.push({ text: m[4], link: m[5] });
     } else if (m[6]) {
       runs.push({ text: m[7], code: true });
     } else if (m[8]) {
-      runs.push({ text: m[9], italic: true });
+      runs.push(...parseNested(m[9], { italic: true }));
     }
     lastIndex = re.lastIndex;
   }
@@ -323,11 +330,15 @@ function makeRuns(text, fontSize) {
   const parsed = parseInline(text);
   return parsed.map(r => {
     if (r.link) {
+      // A link may sit inside bold or italic: keep the emphasis on the link text.
+      const linkOpts = { text: r.text, style: "Hyperlink", font: "Arial", size: sz };
+      if (r.bold) linkOpts.bold = true;
+      if (r.italic) linkOpts.italics = true;
       if (r.link.startsWith("#")) {
         // Internal anchor link -> InternalHyperlink to Bookmark
         return new InternalHyperlink({
           anchor: r.link.slice(1),
-          children: [new TextRun({ text: r.text, style: "Hyperlink", font: "Arial", size: sz })],
+          children: [new TextRun(linkOpts)],
         });
       }
       let link = r.link;
@@ -335,7 +346,7 @@ function makeRuns(text, fontSize) {
         link = decodeURIComponent(link);
       }
       return new ExternalHyperlink({
-        children: [new TextRun({ text: r.text, style: "Hyperlink", font: "Arial", size: sz })],
+        children: [new TextRun(linkOpts)],
         link,
       });
     }
