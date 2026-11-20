@@ -1,0 +1,203 @@
+{
+ "kind": "ProgressBar",
+ "node": {
+  "type": "ProgressBar",
+  "index": 4,
+  "content": {
+   "content_kind": 0,
+   "u1": {
+    "u0": {
+     "u0": 16,
+     "enabled": true,
+     "back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "transparent": false,
+     "border_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "field_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "field_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "button_back_color": {
+      "mark": 3,
+      "color_kind": 3,
+      "value": {
+       "code": -7
+      }
+     },
+     "button_text_color": {
+      "mark": 3,
+      "color_kind": 3,
+      "value": {
+       "code": -21
+      }
+     },
+     "border": {
+      "mark": 3,
+      "color_kind": 1,
+      "value": {
+       "code": -18
+      },
+      "border_type": "WithoutBorder",
+      "explicit": false,
+      "u5": 0
+     },
+     "tool_tip": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "u13": 0,
+     "u14": 0,
+     "u15": 100,
+     "u16": 0,
+     "u17": 0
+    },
+    "u1": 3,
+    "min_value": 0,
+    "max_value": 100,
+    "step": 1,
+    "show_style": "Smooth",
+    "show_percent": false,
+    "orientation": "Auto"
+   }
+  },
+  "coords": {
+   "mark": 8,
+   "x": 0,
+   "y": 0,
+   "right": 0,
+   "bottom": 0,
+   "visible": true,
+   "top_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "bottom_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "left_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "right_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "u10": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "u11": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "dependents_top": [],
+   "dependents_bottom": [],
+   "dependents_left": [],
+   "dependents_right": [],
+   "list5": [],
+   "list6": [],
+   "page": 0,
+   "page_sequence": 0,
+   "tab_order": 0,
+   "manual_anchor_h": false,
+   "manual_anchor_v": false
+  },
+  "name_block": {
+   "mark": 14,
+   "name": "",
+   "action_source": 4294967295,
+   "modifies_data": false,
+   "skip_on_input": false,
+   "first_in_group": false
+  },
+  "elements": {
+   "count": 0,
+   "items": []
+  }
+ }
+}

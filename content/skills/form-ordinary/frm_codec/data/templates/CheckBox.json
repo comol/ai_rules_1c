@@ -1,0 +1,228 @@
+{
+ "kind": "CheckBox",
+ "node": {
+  "type": "CheckBox",
+  "index": 4,
+  "content": {
+   "content_kind": 1,
+   "u1": {
+    "u0": {
+     "u0": {
+      "u0": 16,
+      "enabled": true,
+      "back_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "text_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "font": {
+       "version": 7,
+       "source": "Auto",
+       "overrides": {
+        "scale_set": false
+       },
+       "L1+0": 1,
+       "scale": 100
+      },
+      "transparent": false,
+      "border_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "field_back_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "field_text_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "button_back_color": {
+       "mark": 3,
+       "color_kind": 3,
+       "value": {
+        "code": -7
+       }
+      },
+      "button_text_color": {
+       "mark": 3,
+       "color_kind": 3,
+       "value": {
+        "code": -21
+       }
+      },
+      "border": {
+       "mark": 3,
+       "color_kind": 0,
+       "value": {
+        "code": 0
+       },
+       "border_type": "WithoutBorder",
+       "explicit": false,
+       "u5": 0,
+       "style_item": {
+        "guid": "48312c09-257f-4b29-b280-284dd89efc1e"
+       }
+      },
+      "tool_tip": {
+       "mark": 1,
+       "count": 0,
+       "items": []
+      },
+      "u13": 0,
+      "u14": 0,
+      "u15": 100,
+      "u16": 0,
+      "u17": 0
+     },
+     "record_version": 6,
+     "caption": {
+      "mark": 1,
+      "count": 1,
+      "items": [
+       {
+        "lang": "ru",
+        "text": "Флажок1"
+       }
+      ]
+     },
+     "title_location": "TitleRight",
+     "horizontal_align": "Left",
+     "vertical_align": "Center",
+     "u6": 0,
+     "u7": 100,
+     "u8": 1
+    },
+    "record_version": 4,
+    "three_state": false,
+    "u3": 0,
+    "u4": 0,
+    "u5": 0,
+    "u6": 0
+   },
+   "events": {
+    "count": 0,
+    "items": []
+   }
+  },
+  "coords": {
+   "mark": 8,
+   "x": 0,
+   "y": 0,
+   "right": 0,
+   "bottom": 0,
+   "visible": true,
+   "top_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "bottom_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "left_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "right_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "u10": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "u11": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "dependents_top": [],
+   "dependents_bottom": [],
+   "dependents_left": [],
+   "dependents_right": [],
+   "list5": [],
+   "list6": [],
+   "page": 0,
+   "page_sequence": 0,
+   "tab_order": 0,
+   "manual_anchor_h": false,
+   "manual_anchor_v": false
+  },
+  "name_block": {
+   "mark": 14,
+   "name": "",
+   "action_source": 4294967295,
+   "modifies_data": false,
+   "skip_on_input": false,
+   "first_in_group": false
+  },
+  "elements": {
+   "count": 0,
+   "items": []
+  }
+ }
+}

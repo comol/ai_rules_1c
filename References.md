@@ -19,6 +19,7 @@ Curated list of projects with rules / skills for AI assistants targeting 1C deve
 - [claude-code-skills-1c](https://github.com/Desko77/claude-code-skills-1c) — Desko77
 - [claude_rules_1c](https://github.com/Dach-Coin/claude_rules_1c) — Dach-Coin
 - [cursor-1c-skills](https://github.com/Desko77/cursor-1c-skills) — Desko77
+- [form-ordinary](https://github.com/dreamadv81/form-ordinary) — dreamadv81 (MIT): vendored as `content/skills/form-ordinary/` at `a0f5294` (2026-11-16; notice: `content/skills/form-ordinary/NOTICE.md`), the primary route for ordinary forms (`Form.bin`, `form.frm`). Its platform pictures belong to 1C and are not under MIT.
 - [opencode_1c_rules](https://github.com/colVEEEN/opencode_1c_rules) — colVEEEN
 - [partial-load-config](https://github.com/Nikolay-Shirokov/partial-load-config) — Nikolay-Shirokov
 - [Pauk_1C](https://github.com/Mempemp/Pauk_1C) — Mempemp

@@ -1,0 +1,349 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Описание формы объекта (frm_json.py generate)",
+  "description": "Описание формы элемента справочника или документа из блоков-паттернов: без координат. Движок frm_codec/generate.py переводит его в операции редактора по нормам patterns.json и метаданным выгрузки XML. Схема — структура; смысл (реквизит есть в метаданных, тип поддержан, форма-оболочка того же объекта, повтор реквизита, табличная часть) проверяет движок и отказывает словами. kind: форма списка (catalog.list, document.list: поддерживаются блоки command_bar top и table «Список», остальное движок отказывает с причиной) и обработка (processing).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "object", "blocks"],
+  "properties": {
+    "kind": {
+      "description": "Вид формы: ключ норм patterns.json. processing — форма обработки или отчёта (объект «Отчет.Имя» / «ВнешнийОтчет.Имя»; нормы раскладки у отчёта — вида report): данные — реквизиты формы (source: form, новые — attributes) и реквизиты обработки или отчёта по выгрузке либо корневому XML.",
+      "enum": ["catalog.item", "document.item", "catalog.list", "document.list", "processing"]
+    },
+    "object": {
+      "description": "Полное имя объекта выгрузки: «Справочник.Номенклатура», «Документ.Заказ»; у вида processing — «Обработка.Имя», у внешней обработки (ключ --root-xml) — «ВнешняяОбработка.Имя»; у отчёта — «Отчет.Имя», у внешнего отчёта (ключ --root-xml) — «ВнешнийОтчет.Имя». Основной реквизит формы-оболочки обязан быть типом Object этого объекта; у обработки нет выгрузки или основного реквизита — данные только реквизиты формы.",
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "description": "Заголовок формы.",
+      "type": "string",
+      "minLength": 1
+    },
+    "size": {
+      "description": "\"content\" (по умолчанию) — размер по содержимому, не меньше 400 по ширине; либо [ширина, высота] целыми: остаток высоты забирает растянутый блок — таблица или панель закладок, за которыми в списке блоков только поля (поля под ним сдвигаются вниз). Образец (describe) несёт размер платформы, когда он не равен «по содержимому»; не меньше содержимого: меньший движок отвергает — добавили поля, снимите size или поднимите сторону до числа из отказа. У формы списка размера в образце нет.",
+      "oneOf": [
+        {"enum": ["content"]},
+        {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}}
+      ]
+    },
+    "form_use": {
+      "description": "У справочника с группами — чья это форма: элемента (item) или группы (folder); реквизиты и табличные части несут Use.",
+      "enum": ["item", "folder"]
+    },
+    "blocks": {
+      "description": "Блоки сверху вниз. Верхняя панель команд — первый блок, нижняя — последний.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/definitions/blockTop"}
+    },
+    "skipped": {
+      "description": "Что `frm_json.py describe` не смог показать блоками: элементы вне словаря (кнопка, картинка, надпись без поля, таблица на реквизит формы…), колонки без данных, поля типа, которого движок не пишет. Движок это не читает — это отчёт образца, чтобы пропущенное не терялось молча.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "why"],
+        "properties": {
+          "type": {"description": "Вид элемента формы (Button, Label, TableBoxColumn, PanelPage…).", "type": "string", "minLength": 1},
+          "name": {"description": "Имя элемента.", "type": "string", "minLength": 1},
+          "why": {"description": "Почему не показан блоком.", "type": "string", "minLength": 1},
+          "in": {"description": "Где стоит: страница панели «Панель/Страница» либо таблица колонки.", "type": "string", "minLength": 1}
+        }
+      }
+    },
+    "attributes": {
+      "description": "Новые реквизиты ФОРМЫ обработки (вид processing; операция add_attribute): имя, тип и его квалификаторы. Поле на такой реквизит — {\"data\": имя, \"source\": \"form\"}; тип в поле копируется целиком.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/definitions/attribute"}
+    },
+    "tune": {
+      "description": "Операции редактора по ИМЕНАМ элементов — после расстановки (точный box, set_anchors, set_property, set_event, add_button…). Имена новых элементов — по правилу конструктора: поле и флажок — имя реквизита, Надпись<Реквизит>, таблица — имя табличной части, КоманднаяПанель<N> (панель таблицы), Рамка<N>, Панель<N>, ДействияФормы, ОсновныеДействияФормы; занято — суффикс числом; у оставленного элемента оболочки — его имя.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["op"],
+        "properties": {"op": {"type": "string", "minLength": 1}}
+      }
+    }
+  },
+  "definitions": {
+    "blockTop": {
+      "description": "Блок верхнего уровня.",
+      "oneOf": [
+        {"$ref": "#/definitions/commandBar"},
+        {"$ref": "#/definitions/fieldsBlock"},
+        {"$ref": "#/definitions/groupBlock"},
+        {"$ref": "#/definitions/tabsBlock"},
+        {"$ref": "#/definitions/tableBlock"},
+        {"$ref": "#/definitions/spreadsheetBlock"},
+        {"$ref": "#/definitions/radioBlock"},
+        {"$ref": "#/definitions/pictureBlock"},
+        {"$ref": "#/definitions/rowBlock"},
+        {"$ref": "#/definitions/besideBlock"},
+        {"$ref": "#/definitions/splitBlock"}
+      ]
+    },
+    "blockInPage": {
+      "description": "Блок на странице панели закладок.",
+      "oneOf": [
+        {"$ref": "#/definitions/fieldsBlock"},
+        {"$ref": "#/definitions/groupBlock"},
+        {"$ref": "#/definitions/tableBlock"},
+        {"$ref": "#/definitions/spreadsheetBlock"},
+        {"$ref": "#/definitions/radioBlock"},
+        {"$ref": "#/definitions/pictureBlock"},
+        {"$ref": "#/definitions/rowBlock"},
+        {"$ref": "#/definitions/besideBlock"}
+      ]
+    },
+    "blockInGroup": {
+      "description": "Блок внутри рамки группы.",
+      "oneOf": [
+        {"$ref": "#/definitions/fieldsBlock"},
+        {"$ref": "#/definitions/rowBlock"}
+      ]
+    },
+    "blockInBesideLeft": {
+      "description": "Блок шапки слева от блока справа (beside).",
+      "oneOf": [
+        {"$ref": "#/definitions/fieldsBlock"},
+        {"$ref": "#/definitions/rowBlock"},
+        {"$ref": "#/definitions/groupBlock"},
+        {"$ref": "#/definitions/radioBlock"},
+        {"$ref": "#/definitions/pictureBlock"}
+      ]
+    },
+    "blockInBesideRight": {
+      "description": "Блок справа от шапки (beside).",
+      "oneOf": [
+        {"$ref": "#/definitions/groupBlock"},
+        {"$ref": "#/definitions/radioBlock"},
+        {"$ref": "#/definitions/pictureBlock"}
+      ]
+    },
+    "blockInSplit": {
+      "description": "Блок части разделителя (split).",
+      "oneOf": [
+        {"$ref": "#/definitions/fieldsBlock"},
+        {"$ref": "#/definitions/rowBlock"},
+        {"$ref": "#/definitions/groupBlock"},
+        {"$ref": "#/definitions/tabsBlock"},
+        {"$ref": "#/definitions/tableBlock"},
+        {"$ref": "#/definitions/spreadsheetBlock"},
+        {"$ref": "#/definitions/radioBlock"},
+        {"$ref": "#/definitions/pictureBlock"},
+        {"$ref": "#/definitions/besideBlock"}
+      ]
+    },
+    "commandBar": {
+      "description": "Командная панель формы: верх (место и высота — нормы вида) или низ; пустая, кнопки доводятся tune.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_bar"],
+      "properties": {"command_bar": {"enum": ["top", "bottom"]}}
+    },
+    "fieldsBlock": {
+      "description": "Сетка пар «надпись + поле ввода»; флажок — без надписи, заголовок — сам флажок. Строки идут по порядку чтения, колонки (columns) — слева направо.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields"],
+      "properties": {
+        "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/field"}},
+        "columns": {"type": "integer", "minimum": 1, "maximum": 3},
+        "align": {"type": "boolean", "description": "true — поля колонки начинаются в одном x (колонка надписей по самой длинной подписи); по умолчанию поле стоит после СВОЕЙ надписи (как у большинства форм в конфигурациях)."}
+      }
+    },
+    "groupBlock": {
+      "description": "Рамка с заголовком и своими блоками (только fields).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "blocks"],
+      "properties": {
+        "group": {"type": "string", "minLength": 1},
+        "blocks": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/blockInGroup"}}
+      }
+    },
+    "tabsBlock": {
+      "description": "Панель закладок: страницы со своими блоками (fields, group, table).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tabs"],
+      "properties": {
+        "tabs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["page", "blocks"],
+            "properties": {
+              "page": {"type": "string", "minLength": 1},
+              "blocks": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/blockInPage"}}
+            }
+          }
+        }
+      }
+    },
+    "spreadsheetBlock": {
+      "description": "Поле табличного документа без привязки к данным (вид processing): имя — идентификатор 1С, в форме уникальное. Тянется вниз, если за ним в списке блоков родителя только блоки подвала (поля, рамка, переключатели, поле картинки).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spreadsheet"],
+      "properties": {"spreadsheet": {"type": "string", "minLength": 1}}
+    },
+    "radioBlock": {
+      "description": "Группа переключателей на реквизит ФОРМЫ (вид processing): рамка с заголовком и переключатели столбиком либо в ряд. Реквизит — число без дробной части; нет такого — блок заводит сам (разрядность по наибольшему значению). Первый переключатель — со значением 0.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["radio", "options"],
+      "properties": {
+        "radio": {"description": "Имя реквизита формы (идентификатор 1С).", "type": "string", "minLength": 1},
+        "caption": {"description": "Заголовок рамки; умолчание — синоним реквизита либо его имя.", "type": "string", "minLength": 1},
+        "direction": {"description": "Переключатели столбиком (умолчание) или в ряд.", "enum": ["column", "row"]},
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "oneOf": [
+              {"type": "string", "minLength": 1},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["caption"],
+                "properties": {
+                  "caption": {"type": "string", "minLength": 1},
+                  "value": {"description": "Выбираемое значение: целое неотрицательное; умолчание — номер переключателя с нуля; у первого — 0.", "type": "integer", "minimum": 0}
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "pictureBlock": {
+      "description": "Поле картинки заданного размера с рамкой самого поля (без рамки пустое поле в предприятии не видно); с caption — ещё рамка с заголовком вокруг.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["picture", "size"],
+      "properties": {
+        "picture": {"description": "Имя поля картинки (идентификатор 1С).", "type": "string", "minLength": 1},
+        "caption": {"description": "Заголовок рамки вокруг поля; нет ключа — рамки с заголовком нет.", "type": "string", "minLength": 1},
+        "size": {"description": "[ширина, высота] поля, не меньше 16.", "type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 16}},
+        "align": {"description": "Край колонки, к которому прижато поле (и привязка): left — умолчание.", "enum": ["left", "right"]}
+      }
+    },
+    "rowBlock": {
+      "description": "Ряд: несколько пар «надпись + поле», флажков и кнопок своих команд В ОДНУ СТРОКУ, слева направо. Поле без width: дата 80, «дата и время» 120, прочие 100; остаток ширины берёт одно поле — названное в stretch либо последнее без width (не дата, не ссылка), звенья за ним привязаны вправо. Внутри beside ряд не растягивается.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row"],
+      "properties": {
+        "row": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {"$ref": "#/definitions/field"},
+              {
+                "description": "Кнопка своей команды: подпись, ширина (по подписи) и имя (по подписи). Обработчик ставит tune (set_event, append_procedure).",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["button"],
+                "properties": {
+                  "button": {"type": "string", "minLength": 1},
+                  "width": {"type": "integer", "minimum": 30},
+                  "name": {"type": "string", "minLength": 1}
+                }
+              }
+            ]
+          }
+        },
+        "stretch": {"description": "Реквизит поля ввода этого ряда, которое берёт остаток ширины (поле без width).", "type": "string", "minLength": 1}
+      }
+    },
+    "besideBlock": {
+      "description": "Блок справа от шапки: beside — рамка (group), переключатели (radio) или поле картинки (picture) у правого края; blocks — шапка слева (ширина фиксирована, привязки влево). Следующие блоки идут под обоими на всю ширину.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["beside", "blocks"],
+      "properties": {
+        "beside": {"$ref": "#/definitions/blockInBesideRight"},
+        "blocks": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/blockInBesideLeft"}},
+        "width": {"description": "Ширина блока справа не меньше названной (по умолчанию — по содержимому).", "type": "integer", "minimum": 16}
+      }
+    },
+    "splitBlock": {
+      "description": "Две области с разделителем: left_right — части слева и справа, top_bottom — сверху и снизу. Каждая часть содержит растягиваемый блок (таблица, панель закладок, поле табличного документа); у верхней части он последний, у нижней — первый. Разделитель встаёт между ними.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["split", "first", "second"],
+      "properties": {
+        "split": {"enum": ["left_right", "top_bottom"]},
+        "first": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/blockInSplit"}},
+        "second": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/blockInSplit"}},
+        "first_size": {"description": "Ширина (left_right, не меньше 106) или высота (top_bottom, не меньше 63) первой части: уже таблицы рядом с разделителем в корпусе нет; по умолчанию — по содержимому.", "type": "integer", "minimum": 63},
+        "grows": {"description": "Какая часть берёт прирост окна по оси разделителя: first, second или both (делится долей, умолчание).", "enum": ["first", "second", "both"]}
+      }
+    },
+    "attribute": {
+      "description": "Новый реквизит формы: name — идентификатор 1С; type — string, number, date, boolean либо «Справочник.Имя»/«Документ.Имя» (ссылка на объект выгрузки).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "length": {"description": "Длина строки (string); без неё строка неограниченная.", "type": "integer", "minimum": 1},
+        "fixed": {"description": "Строка фиксированной длины (string с length); по умолчанию переменной.", "type": "boolean"},
+        "digits": {"description": "Разрядность числа (number, обязательна).", "type": "integer", "minimum": 1},
+        "fraction": {"description": "Знаков после запятой (number, обязательно; не больше digits).", "type": "integer", "minimum": 0},
+        "nonnegative": {"description": "Только неотрицательные (number).", "type": "boolean"},
+        "date": {"description": "Состав даты (date, обязателен).", "enum": ["Date", "Time", "DateTime"]}
+      }
+    },
+    "tableBlock": {
+      "description": "Табличное поле на табличную часть («Объект.Цены» или «Цены»); у формы списка — «Список» (динамический список формы), колонки — стандартные и реквизиты объекта; колонки — по описанию либо ВСЕ реквизиты части в порядке метаданных (НомерСтроки — только по просьбе; булев реквизит — колонка-флажок). Над таблицей — командная панель (bar, по умолчанию true).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table"],
+      "properties": {
+        "table": {"type": "string", "minLength": 1},
+        "columns": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "tree": {"description": "Только у формы списка иерархического справочника: true — дерево групп (второй реквизит-список того же объекта и табличное поле на него) стоит как в оболочке, false — дерево убирается, список встаёт на норму; нет ключа — как в оболочке. describe пишет true, когда дерево на форме есть.", "type": "boolean"},
+        "bar": {"description": "Командная панель таблицы над ней (источник действий — таблица, автозаполнение): true по умолчанию — она есть у большинства таблиц на табличную часть и у форм, которые создаёт конструктор форм 1С; false — таблица без панели.", "type": "boolean"}
+      }
+    },
+    "field": {
+      "description": "Поле: имя реквизита (стандартного или пользовательского) строкой либо объект.",
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["data"],
+          "properties": {
+            "data": {"type": "string", "minLength": 1},
+            "control": {"description": "Подтверждение вида элемента: он следует за типом реквизита (флажок у Булево, поле ввода у прочих).", "enum": ["TextBox", "CheckBox"]},
+            "width": {"description": "Ширина поля в пикселях: тогда поле не растягивается (привязка влево). Образец (describe) несёт её у поля, которое у платформы не растягивается при растяжении окна (рост ширины меньше 0,9: поле остаётся на месте или сдвигается вместе с краем окна), последнее в ряду блока fields верхнего уровня и расположено не у края колонки; не меньше минимума поля платформы (11).", "type": "integer", "minimum": 1},
+            "height": {"description": "Высота поля в пикселях; следующая строка сдвигается.", "type": "integer", "minimum": 1},
+            "props": {"description": "Свойства поля по именам карты: set_property.", "type": "object"},
+            "anchors": {
+              "description": "Привязки поля: {\"h\": роль, \"v\": роль} как у set_anchors.",
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {"h": {"type": "string"}, "v": {"type": "string"}}
+            },
+            "font": {"description": "Шрифт поля: параметры set_font.", "type": "object"},
+            "caption": {"description": "Подпись вместо синонима реквизита (у флажка — его заголовок). describe ставит её, когда текст надписи образца не равен синониму (без регистра, пробелов и двоеточия).", "type": "string"},
+            "source": {"description": "Откуда реквизит: object — реквизит объекта (умолчание), form — реквизит ФОРМЫ (данные обработки; ключ даёт describe: голое имя не различает реквизит объекта и реквизит формы). Форма объекта принимает только object; form — вид processing.", "enum": ["object", "form"]},
+            "choice_list": {"description": "Список выбора: поле ставится ПОЛЕМ ВЫБОРА (ComboBox) со строками списка — строка, целое либо {value, presentation}. Только у реквизита-строки (значения — строки) или числа (целые).", "type": "array", "minItems": 1},
+            "multi_line": {"description": "Многострочное поле ввода (только у реквизита-строки); высота без height — самая частая у многострочных полей корпуса (норма multiline_field_height).", "type": "boolean"}
+          }
+        }
+      ]
+    }
+  }
+}

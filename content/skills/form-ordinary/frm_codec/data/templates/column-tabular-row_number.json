@@ -1,0 +1,205 @@
+{
+ "kind": "row_number",
+ "node": {
+  "column_type": {
+   "guid": "c2cf1953-2796-4fe2-b78c-ff84140b124e"
+  },
+  "u1": {
+   "u0": 1,
+   "u1": {
+    "u0": 8,
+    "u1": {
+     "u0": 19,
+     "header_text": {
+      "mark": 1,
+      "count": 1,
+      "items": [
+       {
+        "lang": "ru",
+        "text": ""
+       }
+      ]
+     },
+     "footer_text": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "header_tool_tip": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "width": 28,
+     "u5": 0,
+     "u6": -2,
+     "u7": -1,
+     "u8": -1,
+     "flags": {
+      "show_hierarchy": false,
+      "read_only": false,
+      "enabled": true,
+      "visible": true,
+      "default_control": false,
+      "mark_negatives": false,
+      "skip_on_input": false,
+      "change_visible": false,
+      "auto_mark_incomplete": false,
+      "auto_cell_height": false,
+      "hyperlink": false,
+      "change_setting": true,
+      "change_position": true,
+      "rest": 6144
+     },
+     "header_picture": {
+      "mark": 4,
+      "source": 0,
+      "ref": {
+       "code": 0
+      },
+      "u3": "",
+      "u4": -1,
+      "u5": -1,
+      "u6": 1,
+      "u7": 0,
+      "u8": ""
+     },
+     "rows_pictures": {
+      "mark": 4,
+      "source": 0,
+      "ref": {
+       "code": 0
+      },
+      "u3": "",
+      "u4": -1,
+      "u5": -1,
+      "u6": 1,
+      "u7": 0,
+      "u8": ""
+     },
+     "footer_picture": {
+      "mark": 4,
+      "source": 0,
+      "ref": {
+       "code": 0
+      },
+      "u3": "",
+      "u4": -1,
+      "u5": -1,
+      "u6": 1,
+      "u7": 0,
+      "u8": ""
+     },
+     "u13": 16,
+     "u14": 16,
+     "u15": {
+      "guid": "d2314b5d-8da4-4e0f-822b-45e7500eae09"
+     },
+     "field_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "field_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "header_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "header_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "footer_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "footer_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "text_font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "header_font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "footer_font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "edit_mode": "Enter",
+     "location": "NewColumn",
+     "header_horizontal_align": "Left",
+     "horizontal_align_in_column": "Auto",
+     "footer_horizontal_align": "Left",
+     "name": "",
+     "u31": [],
+     "width_computed": 4,
+     "size_change": "Change",
+     "format": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "value_type": {
+      "mark": "Pattern",
+      "types": []
+     },
+     "u36": 0,
+     "cell_height": 1,
+     "control_type": {
+      "guid": "00000000-0000-0000-0000-000000000000"
+     },
+     "u39": 0,
+     "u40": 0,
+     "u41": 0,
+     "u42": 0,
+     "u43": 0,
+     "width_mirror": 28
+    },
+    "u2": [-2],
+    "u3": [-1],
+    "u4": [-1]
+   },
+   "u2": 0,
+   "u3": 0
+  }
+ }
+}

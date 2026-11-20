@@ -1,0 +1,423 @@
+{
+ "kind": "decimal",
+ "node": {
+  "column_type": {
+   "guid": "c2cf1953-2796-4fe2-b78c-ff84140b124e"
+  },
+  "u1": {
+   "u0": 1,
+   "u1": {
+    "u0": 8,
+    "u1": {
+     "u0": 19,
+     "header_text": {
+      "mark": 1,
+      "count": 1,
+      "items": [
+       {
+        "lang": "ru",
+        "text": ""
+       }
+      ]
+     },
+     "footer_text": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "header_tool_tip": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "width": 1e2,
+     "u5": 0,
+     "u6": -1,
+     "u7": -1,
+     "u8": -1,
+     "flags": {
+      "show_hierarchy": false,
+      "read_only": false,
+      "enabled": true,
+      "visible": true,
+      "default_control": false,
+      "mark_negatives": false,
+      "skip_on_input": false,
+      "change_visible": false,
+      "auto_mark_incomplete": false,
+      "auto_cell_height": false,
+      "hyperlink": false,
+      "change_setting": true,
+      "change_position": true,
+      "rest": 6144
+     },
+     "header_picture": {
+      "mark": 4,
+      "source": 0,
+      "ref": {
+       "code": 0
+      },
+      "u3": "",
+      "u4": -1,
+      "u5": -1,
+      "u6": 1,
+      "u7": 0,
+      "u8": ""
+     },
+     "rows_pictures": {
+      "mark": 4,
+      "source": 0,
+      "ref": {
+       "code": 0
+      },
+      "u3": "",
+      "u4": -1,
+      "u5": -1,
+      "u6": 1,
+      "u7": 0,
+      "u8": ""
+     },
+     "footer_picture": {
+      "mark": 4,
+      "source": 0,
+      "ref": {
+       "code": 0
+      },
+      "u3": "",
+      "u4": -1,
+      "u5": -1,
+      "u6": 1,
+      "u7": 0,
+      "u8": ""
+     },
+     "u13": 16,
+     "u14": 16,
+     "u15": {
+      "guid": "d2314b5d-8da4-4e0f-822b-45e7500eae09"
+     },
+     "field_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "field_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "header_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "header_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "footer_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "footer_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "text_font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "header_font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "footer_font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "edit_mode": "Enter",
+     "location": "NewColumn",
+     "header_horizontal_align": "Left",
+     "horizontal_align_in_column": "Auto",
+     "footer_horizontal_align": "Left",
+     "name": "",
+     "u31": [],
+     "width_computed": -1,
+     "size_change": "Change",
+     "format": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "value_type": {
+      "mark": "Pattern",
+      "types": [
+       {
+        "kind": "N",
+        "digits": 15,
+        "fraction_digits": 3,
+        "nonnegative": false
+       }
+      ]
+     },
+     "u36": 0,
+     "cell_height": 1,
+     "control_type": {
+      "guid": "381ed624-9217-4e63-85db-c4c3cb87daae"
+     },
+     "control": {
+      "element": {
+       "content": {
+        "content_kind": 9,
+        "pattern": {
+         "mark": "Pattern",
+         "types": [
+          {
+           "kind": "N",
+           "digits": 15,
+           "fraction_digits": 3,
+           "nonnegative": false
+          }
+         ]
+        },
+        "u2": {
+         "u0": {
+          "u0": {
+           "u0": 16,
+           "enabled": true,
+           "back_color": {
+            "mark": 3,
+            "color_kind": 4,
+            "value": {
+             "code": 0
+            }
+           },
+           "text_color": {
+            "mark": 3,
+            "color_kind": 4,
+            "value": {
+             "code": 0
+            }
+           },
+           "font": {
+            "version": 7,
+            "source": "Auto",
+            "overrides": {
+             "scale_set": false
+            },
+            "L1+0": 1,
+            "scale": 100
+           },
+           "transparent": false,
+           "border_color": {
+            "mark": 3,
+            "color_kind": 4,
+            "value": {
+             "code": 0
+            }
+           },
+           "field_back_color": {
+            "mark": 3,
+            "color_kind": 4,
+            "value": {
+             "code": 0
+            }
+           },
+           "field_text_color": {
+            "mark": 3,
+            "color_kind": 4,
+            "value": {
+             "code": 0
+            }
+           },
+           "button_back_color": {
+            "mark": 3,
+            "color_kind": 3,
+            "value": {
+             "code": -7
+            }
+           },
+           "button_text_color": {
+            "mark": 3,
+            "color_kind": 3,
+            "value": {
+             "code": -21
+            }
+           },
+           "border": {
+            "mark": 3,
+            "color_kind": 1,
+            "value": {
+             "code": -18
+            },
+            "border_type": "WithoutBorder",
+            "explicit": false,
+            "u5": 0
+           },
+           "tool_tip": {
+            "mark": 1,
+            "count": 0,
+            "items": []
+           },
+           "u13": 0,
+           "u14": 0,
+           "u15": 100,
+           "view": "As83",
+           "u17": 0
+          },
+          "record_version": 30,
+          "u2": 0,
+          "multi_line_code": 0,
+          "wrap": false,
+          "password_mode_mirror": false,
+          "choice_list_button": false,
+          "choice_button": false,
+          "clear_button": false,
+          "spin_button": false,
+          "open_button": false,
+          "fixed_fraction_digits": true,
+          "text_edit": false,
+          "read_only": false,
+          "digits": 15,
+          "fraction_digits": 3,
+          "nonnegative": false,
+          "horizontal_align": "Auto",
+          "vertical_align": "Top",
+          "u19": ["U"],
+          "u20": ["U"],
+          "mask": "",
+          "u22": 1,
+          "u23": 1,
+          "u24": 0,
+          "u25": 0,
+          "multi_line_mirror": false,
+          "mark_negatives": false,
+          "picture": {
+           "mark": 4,
+           "source": 0,
+           "ref": {
+            "code": 0
+           },
+           "u3": "",
+           "u4": -1,
+           "u5": -1,
+           "u6": 1,
+           "u7": 0,
+           "u8": ""
+          },
+          "choice_button_picture": {
+           "mark": 4,
+           "source": 0,
+           "ref": {
+            "code": 0
+           },
+           "u3": "",
+           "u4": -1,
+           "u5": -1,
+           "u6": 1,
+           "u7": 0,
+           "u8": ""
+          },
+          "date_fractions": "Date",
+          "choice_list_height": 0,
+          "choice_list_width": 0,
+          "shortcut": {
+           "mark": 0,
+           "key": 0,
+           "modifiers": 0
+          },
+          "format": {
+           "mark": 1,
+           "count": 0,
+           "items": []
+          },
+          "auto_mark_incomplete": false,
+          "auto_choice_incomplete": false,
+          "incomplete_choice_mode": "OnEnterPressed",
+          "extended_edit_mirror": false,
+          "u39": 0,
+          "u40": 0,
+          "u41": 0,
+          "u42": 16777215,
+          "u43": 2
+         }
+        },
+        "u3": {
+         "u0": 1,
+         "u1": {
+          "u0": {
+           "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+          },
+          "u1": {
+           "u0": 4,
+           "u1": ["U"],
+           "u2": ["U"],
+           "multi_line": false,
+           "mask": "",
+           "password_mode": false,
+           "extended_edit": false
+          }
+         }
+        },
+        "events": {
+         "count": 0,
+         "items": []
+        },
+        "text_edit_mirror": false,
+        "choose_type": true,
+        "u7": 0,
+        "type_link": {
+         "u0": 1,
+         "items": []
+        },
+        "list_choice_mode": false
+       },
+       "empty_chunks": 0
+      },
+      "links": []
+     },
+     "u40": 0,
+     "u41": 0,
+     "u42": 0,
+     "u43": 0,
+     "u44": 0,
+     "width_mirror": 1e2
+    },
+    "u2": [-1],
+    "u3": [-1],
+    "u4": [-1]
+   },
+   "u2": 0,
+   "u3": 0
+  }
+ }
+}

@@ -1,0 +1,65 @@
+{
+ "forms": 4993,
+ "unreadable": 0,
+ "shapes": {
+  "PatternType.B": {
+   "1": 5448
+  },
+  "PatternType.D": {
+   "1": 5422,
+   "2": 4571
+  },
+  "PatternType.N": {
+   "1": 2538,
+   "4": 16036
+  },
+  "PatternType.Ref": {
+   "2": 51794
+  },
+  "PatternType.S": {
+   "1": 18446,
+   "3": 17367
+  },
+  "TypedValue.B": {
+   "2": 192
+  },
+  "TypedValue.N": {
+   "2": 4226
+  },
+  "TypedValue.Ref": {
+   "3": 4518
+  },
+  "TypedValue.S": {
+   "2": 466
+  },
+  "TypedValue.U": {
+   "1": 11
+  }
+ },
+ "values": {
+  "PatternType.D": {
+   "1": {
+    "D": 4534,
+    "T": 37
+   }
+  },
+  "PatternType.N": {
+   "3": {
+    "0": 8024,
+    "1": 8012
+   }
+  },
+  "PatternType.S": {
+   "2": {
+    "0": 1651,
+    "1": 15716
+   }
+  },
+  "TypedValue.B": {
+   "1": {
+    "0": 96,
+    "1": 96
+   }
+  }
+ }
+}

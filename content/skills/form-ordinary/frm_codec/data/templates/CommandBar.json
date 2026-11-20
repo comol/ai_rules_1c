@@ -1,0 +1,240 @@
+{
+ "kind": "CommandBar",
+ "node": {
+  "type": "CommandBar",
+  "index": 4,
+  "content": {
+   "content_kind": 2,
+   "u1": {
+    "u0": {
+     "u0": 16,
+     "enabled": true,
+     "back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "font": {
+      "version": 7,
+      "source": "Auto",
+      "overrides": {
+       "scale_set": false
+      },
+      "L1+0": 1,
+      "scale": 100
+     },
+     "transparent": false,
+     "border_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "field_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "field_text_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "button_back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "button_text_color": {
+      "mark": 3,
+      "color_kind": 3,
+      "value": {
+       "code": -21
+      }
+     },
+     "border": {
+      "mark": 3,
+      "color_kind": 0,
+      "value": {
+       "code": 0
+      },
+      "border_type": "WithoutBorder",
+      "explicit": false,
+      "u5": 0,
+      "style_item": {
+       "guid": "48312c09-257f-4b29-b280-284dd89efc1e"
+      }
+     },
+     "tool_tip": {
+      "mark": 1,
+      "count": 0,
+      "items": []
+     },
+     "u13": 0,
+     "u14": 0,
+     "u15": 100,
+     "u16": 0,
+     "u17": 0
+    },
+    "record_version": 9,
+    "orientation": "Auto",
+    "auto_fill": false,
+    "buttons_alignment": "Left",
+    "secondary": true,
+    "u6": 1,
+    "actions": {
+     "mark": 5,
+     "u1": {
+      "guid": "00000000-0000-0000-0000-000000000000"
+     },
+     "last_number": 0,
+     "u3": 1,
+     "actions": [],
+     "button_sets": [
+      {
+       "mark": 5,
+       "ref_id": {
+        "guid": "b78f2e80-ec68-11d4-9dcf-0050bae2bc79"
+       },
+       "code": 4,
+       "u3": 0,
+       "buttons": [],
+       "L1+0": [
+        -1,
+        0,
+        [0]
+       ]
+      }
+     ]
+    },
+    "u8": {
+     "guid": "b78f2e80-ec68-11d4-9dcf-0050bae2bc79"
+    },
+    "u9": 4,
+    "u10": {
+     "guid": "9d0a2e40-b978-11d4-84b6-008048da06df"
+    },
+    "default_button": 0,
+    "u12": 0,
+    "u13": 0
+   }
+  },
+  "coords": {
+   "mark": 8,
+   "x": 0,
+   "y": 0,
+   "right": 0,
+   "bottom": 0,
+   "visible": true,
+   "top_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "bottom_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "left_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "right_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "u10": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "u11": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "dependents_top": [],
+   "dependents_bottom": [],
+   "dependents_left": [],
+   "dependents_right": [],
+   "list5": [],
+   "list6": [],
+   "page": 0,
+   "page_sequence": 0,
+   "tab_order": 0,
+   "manual_anchor_h": false,
+   "manual_anchor_v": false
+  },
+  "name_block": {
+   "mark": 14,
+   "name": "",
+   "action_source": 4294967295,
+   "modifies_data": false,
+   "skip_on_input": false,
+   "first_in_group": false
+  },
+  "elements": {
+   "count": 0,
+   "items": []
+  }
+ }
+}

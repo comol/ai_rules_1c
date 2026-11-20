@@ -1,0 +1,38 @@
+{
+ "forms": 4993,
+ "unreadable": 0,
+ "shapes": {
+  "3|0": {
+   "mark:i,source:i,ref:d": 6629,
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:i": 109304
+  },
+  "3|1": {
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:i": 5415
+  },
+  "3|2": {
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:i,u8:i,u9:i,u10:i,u11:i": 1
+  },
+  "3|3": {
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:l,u8:i": 1508
+  },
+  "4|0": {
+   "mark:i,source:i,ref:d,u3:l,u4:l": 3672,
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:i,u8:s": 244710
+  },
+  "4|1": {
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:i,u8:s": 11856
+  },
+  "4|2": {
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:i,u8:i,u9:i,u10:i,u11:i,u12:s": 1
+  },
+  "4|3": {
+   "mark:i,source:i,ref:d,u3:s,u4:i,u5:i,u6:i,u7:l,u8:i,u9:s": 4977
+  },
+  "7|0": {
+   "mark:i,source:i,ref:d,u3:l,u4:l,u5:i,u6:i,u7:i": 3889
+  },
+  "8|0": {
+   "mark:i,source:i,ref:d,u3:l,u4:l,u5:i,u6:i,u7:i,u8:i": 5169
+  }
+ }
+}

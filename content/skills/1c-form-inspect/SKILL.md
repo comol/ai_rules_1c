@@ -34,7 +34,7 @@ Graph form tools use names, not `form_ref`. Keep the returned base `project_id` 
 
 ## Ordinary forms
 
-`Forms/<Имя>/Ext/Form.bin` is a binary container: none of the XML routes see it. Read it with `unpack_ordinary_form(form_path, workspace_path)` and write it back with `build_ordinary_form(workspace_path, output_path, verify=true)` — the contract, workspace layout and the `verification.status == "match"` criterion are in `content/skills/v8unpack-cf/SKILL.md → Ordinary forms`. Never edit `Form.bin` directly.
+`Forms/<Имя>/Ext/Form.bin` is a binary container: none of the XML routes see it. Read it with the `form-ordinary` skill — `decode` (layout by its format map), `brief` (what the user sees and what the module changes), `render` — and change it there too, not through `1c-metadata-manage` (`content/skills/form-ordinary/SKILL.md`). Never edit `Form.bin` directly.
 
 ## After the change
 

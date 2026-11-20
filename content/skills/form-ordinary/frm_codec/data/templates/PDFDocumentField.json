@@ -1,0 +1,111 @@
+{
+ "kind": "PDFDocumentField",
+ "node": {
+  "type": "PDFDocumentField",
+  "index": 4,
+  "content": {
+   "content_kind": 0
+  },
+  "coords": {
+   "mark": 8,
+   "x": 0,
+   "y": 0,
+   "right": 0,
+   "bottom": 0,
+   "visible": true,
+   "top_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "bottom_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "left_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "right_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "u10": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "u11": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "dependents_top": [],
+   "dependents_bottom": [],
+   "dependents_left": [],
+   "dependents_right": [],
+   "list5": [],
+   "list6": [],
+   "page": 0,
+   "page_sequence": 0,
+   "tab_order": 0,
+   "manual_anchor_h": false,
+   "manual_anchor_v": false
+  },
+  "name_block": {
+   "mark": 14,
+   "name": "",
+   "action_source": 4294967295,
+   "modifies_data": false,
+   "skip_on_input": false,
+   "first_in_group": false
+  },
+  "elements": {
+   "count": 0,
+   "items": []
+  }
+ }
+}

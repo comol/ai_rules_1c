@@ -1,0 +1,57 @@
+{
+ "action": {
+  "mark": 7,
+  "id": {
+   "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "u2": 1,
+  "kind": {
+   "guid": "e1692cc2-605b-4535-84dd-28440238746c"
+  },
+  "action": {
+   "mark": 3,
+   "handler": "",
+   "description": {
+    "mark": 1,
+    "name": "",
+    "u2": {
+     "mark": 1,
+     "count": 0,
+     "items": []
+    },
+    "u3": {
+     "mark": 1,
+     "count": 0,
+     "items": []
+    },
+    "u4": {
+     "mark": 1,
+     "count": 0,
+     "items": []
+    },
+    "picture": {
+     "mark": 4,
+     "source": 0,
+     "ref": {
+      "code": 0
+     },
+     "u3": "",
+     "u4": -1,
+     "u5": -1,
+     "u6": 1,
+     "u7": 0,
+     "u8": ""
+    },
+    "u6": [0, 0, 0]
+   }
+  },
+  "extras": {
+   "shortcut": {
+    "mark": 0,
+    "key": 0,
+    "modifiers": 0
+   }
+  },
+  "L1+0": 0
+ }
+}

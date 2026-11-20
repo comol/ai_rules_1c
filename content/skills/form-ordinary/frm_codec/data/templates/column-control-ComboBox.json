@@ -1,0 +1,169 @@
+{
+ "kind": "ComboBox",
+ "value_type": {
+  "mark": "Pattern",
+  "types": [
+   {
+    "kind": "N",
+    "digits": 10,
+    "fraction_digits": 0,
+    "nonnegative": false
+   }
+  ]
+ },
+ "content": {
+  "content_kind": 2,
+  "u1": {
+   "u0": {
+    "u0": 16,
+    "enabled": true,
+    "back_color": {
+     "mark": 3,
+     "color_kind": 4,
+     "value": {
+      "code": 0
+     }
+    },
+    "text_color": {
+     "mark": 3,
+     "color_kind": 4,
+     "value": {
+      "code": 0
+     }
+    },
+    "font": {
+     "version": 7,
+     "source": "Auto",
+     "overrides": {
+      "scale_set": false
+     },
+     "L1+0": 1,
+     "scale": 100
+    },
+    "transparent": false,
+    "border_color": {
+     "mark": 3,
+     "color_kind": 4,
+     "value": {
+      "code": 0
+     }
+    },
+    "field_back_color": {
+     "mark": 3,
+     "color_kind": 4,
+     "value": {
+      "code": 0
+     }
+    },
+    "field_text_color": {
+     "mark": 3,
+     "color_kind": 4,
+     "value": {
+      "code": 0
+     }
+    },
+    "button_back_color": {
+     "mark": 3,
+     "color_kind": 3,
+     "value": {
+      "code": -7
+     }
+    },
+    "button_text_color": {
+     "mark": 3,
+     "color_kind": 3,
+     "value": {
+      "code": -21
+     }
+    },
+    "border": {
+     "mark": 3,
+     "color_kind": 1,
+     "value": {
+      "code": -18
+     },
+     "border_type": "WithoutBorder",
+     "explicit": false,
+     "u5": 0
+    },
+    "tool_tip": {
+     "mark": 1,
+     "count": 0,
+     "items": []
+    },
+    "u13": 0,
+    "u14": 0,
+    "u15": 100,
+    "u16": 0,
+    "u17": 0
+   },
+   "record_version": 30,
+   "u2": 0,
+   "u3": 0,
+   "u4": 1,
+   "u5": 0,
+   "u6": 1,
+   "choice_button": false,
+   "clear_button": false,
+   "spin_button": false,
+   "open_button": false,
+   "u11": 1,
+   "text_edit": false,
+   "read_only": false,
+   "u14": 255,
+   "u15": 0,
+   "u16": 0,
+   "u17": 4,
+   "u18": 0,
+   "u19": ["U"],
+   "u20": ["U"],
+   "u21": "",
+   "u22": 0,
+   "u23": 1,
+   "u24": 1,
+   "choice_list": [],
+   "L1+0": 0,
+   "L1+1": 0,
+   "L1+2": [
+    4,
+    0,
+    [0],
+    "",
+    -1,
+    -1,
+    1,
+    0,
+    ""
+   ],
+   "L1+3": [
+    4,
+    0,
+    [0],
+    "",
+    -1,
+    -1,
+    1,
+    0,
+    ""
+   ],
+   "L1+4": 0,
+   "choice_list_height": 0,
+   "choice_list_width": 0,
+   "L1+7": [0, 0, 0],
+   "L1+8": [1, 0],
+   "L1+9": 0,
+   "L1+10": 0,
+   "L1+11": 0,
+   "L1+12": 0,
+   "L1+13": 0,
+   "L1+14": 0,
+   "L1+15": 0,
+   "L1+16": 16777215,
+   "L1+17": 2
+  },
+  "events": {
+   "count": 0,
+   "items": []
+  }
+ }
+}

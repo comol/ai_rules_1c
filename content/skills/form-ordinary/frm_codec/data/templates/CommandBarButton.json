@@ -1,0 +1,53 @@
+{
+ "node": {
+  "mark": 8,
+  "name": "",
+  "modifies_data": false,
+  "u3": 1,
+  "text": {
+   "mark": 1,
+   "count": 1,
+   "items": [
+    {
+     "lang": "ru",
+     "text": "CommandBarButton__base"
+    }
+   ]
+  },
+  "u5": 1,
+  "owner": {
+   "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "number": 1,
+  "u8": 1e2,
+  "button_type": "Action",
+  "representation": "Auto",
+  "enabled": true,
+  "check": false,
+  "u13": 1,
+  "u14": 0,
+  "u15": 0,
+  "id": {
+   "guid": "00000000-0000-0000-0000-000000000000"
+  }
+ },
+ "action": {
+  "mark": 7,
+  "id": {
+   "guid": "00000000-0000-0000-0000-000000000000"
+  },
+  "u2": 1,
+  "kind": {
+   "guid": "abde0c9a-18a6-4e0c-bbaa-af26b911b3e6"
+  },
+  "action": {
+   "mark": 1,
+   "ref_id": {
+    "guid": "357c6a54-357d-425d-a2bd-22f4f6e86c87"
+   },
+   "ref_code": 2147483647
+  },
+  "extras": {},
+  "L1+0": 0
+ }
+}

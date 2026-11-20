@@ -1,0 +1,1241 @@
+{
+ "version": 27,
+ "form": {
+  "kind": 18,
+  "title": {
+   "caption": {
+    "mark": 1,
+    "count": 1,
+    "items": [
+     {
+      "lang": "ru",
+      "text": "Форма"
+     }
+    ]
+   },
+   "last_index": 17,
+   "u2": 17
+  },
+  "container": {
+   "type_guid": {
+    "guid": "09ccdc77-ea1a-4a6d-ab1c-3435eada2433"
+   },
+   "layout_holder": {
+    "u0": 1,
+    "layout_list": {
+     "layout": {
+      "layout_version": 16,
+      "enabled": true,
+      "back_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "text_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "font": {
+       "version": 7,
+       "source": "Auto",
+       "overrides": {
+        "scale_set": false
+       },
+       "L1+0": 1,
+       "scale": 100
+      },
+      "u5": 0,
+      "border_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "field_back_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "field_text_color": {
+       "mark": 3,
+       "color_kind": 4,
+       "value": {
+        "code": 0
+       }
+      },
+      "button_back_color": {
+       "mark": 3,
+       "color_kind": 3,
+       "value": {
+        "code": -7
+       }
+      },
+      "button_text_color": {
+       "mark": 3,
+       "color_kind": 3,
+       "value": {
+        "code": -21
+       }
+      },
+      "border": {
+       "mark": 3,
+       "color_kind": 0,
+       "value": {
+        "code": 0
+       },
+       "border_type": "WithoutBorder",
+       "explicit": false,
+       "u5": 0,
+       "style_item": {
+        "guid": "48312c09-257f-4b29-b280-284dd89efc1e"
+       }
+      },
+      "u12": [1, 0],
+      "u13": 0,
+      "u14": 0,
+      "u15": 100,
+      "u16": 0,
+      "u17": 0
+     },
+     "u1": 26,
+     "dependents_top": [],
+     "dependents_bottom": [
+      {
+       "mark": 0,
+       "element": 17,
+       "side": 1
+      }
+     ],
+     "dependents_left": [
+      {
+       "mark": 0,
+       "element": 16,
+       "side": 2
+      },
+      {
+       "mark": 0,
+       "element": 17,
+       "side": 2
+      }
+     ],
+     "dependents_right": [
+      {
+       "mark": 0,
+       "element": 16,
+       "side": 3
+      },
+      {
+       "mark": 0,
+       "element": 17,
+       "side": 3
+      }
+     ],
+     "list5": [],
+     "list6": [],
+     "pictures": {
+      "u0": 8,
+      "picture_size": 1,
+      "picture": {
+       "mark": 4,
+       "source": 0,
+       "ref": {
+        "code": 0
+       },
+       "u3": "",
+       "u4": -1,
+       "u5": -1,
+       "u6": 1,
+       "u7": 0,
+       "u8": ""
+      },
+      "u3": [
+       4,
+       0,
+       [0],
+       "",
+       -1,
+       -1,
+       1,
+       0,
+       ""
+      ],
+      "u4": [
+       4,
+       0,
+       [0],
+       "",
+       -1,
+       -1,
+       1,
+       0,
+       ""
+      ],
+      "u5": 100,
+      "u6": 0,
+      "u7": 0,
+      "u8": 0
+     },
+     "show_tabs": "DontUse",
+     "separate_by_page": true,
+     "pages": {
+      "kind": 1,
+      "count": 1,
+      "items": [
+       {
+        "u0": 5,
+        "caption": {
+         "mark": 1,
+         "count": 1,
+         "items": [
+          {
+           "lang": "ru",
+           "text": "Страница1"
+          }
+         ]
+        },
+        "title_picture": {
+         "mark": 8,
+         "source": 0,
+         "ref": {
+          "code": 4,
+          "u1": 0,
+          "u2": [0],
+          "u3": "",
+          "u4": -1,
+          "u5": -1,
+          "u6": 1,
+          "u7": 0,
+          "u8": ""
+         },
+         "u3": [
+          4,
+          0,
+          [0],
+          "",
+          -1,
+          -1,
+          1,
+          0,
+          ""
+         ],
+         "u4": [
+          4,
+          0,
+          [0],
+          "",
+          -1,
+          -1,
+          1,
+          0,
+          ""
+         ],
+         "u5": 100,
+         "u6": 0,
+         "u7": 0,
+         "u8": 0
+        },
+        "u3": -1,
+        "visible": true,
+        "enabled": true,
+        "name": "Страница1",
+        "u7": 1,
+        "u8": [
+         3,
+         4,
+         [0]
+        ],
+        "u9": [
+         3,
+         4,
+         [0]
+        ],
+        "u10": [7, 3, 0, 1, 100]
+       }
+      ]
+     },
+     "auto_rules": true,
+     "auto_tab_order": true,
+     "scroll_page_mode": false,
+     "guides": [
+      {
+       "u0": 2,
+       "u1": 8,
+       "u2": 1,
+       "u3": 1,
+       "u4": 1,
+       "u5": 0,
+       "u6": 0,
+       "u7": 0,
+       "u8": 0
+      },
+      {
+       "u0": 2,
+       "u1": 33,
+       "u2": 0,
+       "u3": 1,
+       "u4": 2,
+       "u5": 0,
+       "u6": 0,
+       "u7": 0,
+       "u8": 0
+      },
+      {
+       "u0": 2,
+       "u1": 392,
+       "u2": 1,
+       "u3": 1,
+       "u4": 3,
+       "u5": 0,
+       "u6": 0,
+       "u7": 8,
+       "u8": 0
+      },
+      {
+       "u0": 2,
+       "u1": 267,
+       "u2": 0,
+       "u3": 1,
+       "u4": 4,
+       "u5": 0,
+       "u6": 0,
+       "u7": 33,
+       "u8": 0
+      }
+     ],
+     "use_visible_area_only": false,
+     "default_control": [4294967295],
+     "picture_location": "Center",
+     "L8+1": 64,
+     "L8+2": 0,
+     "back_color": {
+      "mark": 3,
+      "color_kind": 4,
+      "value": {
+       "code": 0
+      }
+     },
+     "L8+4": 0,
+     "L8+5": 0,
+     "L8+6": 57,
+     "L8+7": 0,
+     "L8+8": 0
+    },
+    "events": {
+     "count": 0,
+     "items": []
+    }
+   },
+   "elements": {
+    "count": 2,
+    "items": [
+     {
+      "type": "CommandBar",
+      "index": 16,
+      "content": {
+       "content_kind": 2,
+       "u1": {
+        "u0": {
+         "u0": 16,
+         "enabled": true,
+         "back_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "text_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "font": {
+          "version": 7,
+          "source": "Auto",
+          "overrides": {
+           "scale_set": false
+          },
+          "L1+0": 1,
+          "scale": 100
+         },
+         "transparent": false,
+         "border_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "field_back_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "field_text_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "button_back_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "button_text_color": {
+          "mark": 3,
+          "color_kind": 3,
+          "value": {
+           "code": -21
+          }
+         },
+         "border": {
+          "mark": 3,
+          "color_kind": 0,
+          "value": {
+           "code": 0
+          },
+          "border_type": "Underline",
+          "explicit": true,
+          "u5": 0,
+          "style_item": {
+           "guid": "00000000-0000-0000-0000-000000000000"
+          }
+         },
+         "tool_tip": {
+          "mark": 1,
+          "count": 0,
+          "items": []
+         },
+         "u13": 0,
+         "u14": 0,
+         "u15": 100,
+         "u16": 0,
+         "u17": 0
+        },
+        "record_version": 9,
+        "orientation": "Auto",
+        "auto_fill": true,
+        "buttons_alignment": "Left",
+        "secondary": true,
+        "u6": 1,
+        "actions": {
+         "mark": 5,
+         "u1": {
+          "guid": "3917beb0-eed7-434c-a7f2-e1c7a6a4cc78"
+         },
+         "last_number": 8,
+         "u3": 1,
+         "actions": [],
+         "button_sets": [
+          {
+           "mark": 5,
+           "ref_id": {
+            "guid": "b78f2e80-ec68-11d4-9dcf-0050bae2bc79"
+           },
+           "code": 4,
+           "u3": 0,
+           "buttons": [],
+           "L1+0": [
+            0,
+            0,
+            [0]
+           ]
+          }
+         ]
+        },
+        "u8": {
+         "guid": "b78f2e80-ec68-11d4-9dcf-0050bae2bc79"
+        },
+        "u9": 4,
+        "u10": {
+         "guid": "9d0a2e40-b978-11d4-84b6-008048da06df"
+        },
+        "default_button": 0,
+        "u12": 0,
+        "u13": 0
+       }
+      },
+      "coords": {
+       "mark": 8,
+       "x": 0,
+       "y": 0,
+       "right": 400,
+       "bottom": 25,
+       "visible": true,
+       "top_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "bottom_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 16,
+         "side": 0,
+         "offset": 25
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "left_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 0,
+         "side": 2,
+         "offset": 0
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "right_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 0,
+         "side": 3,
+         "offset": 0
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "u10": [
+        0,
+        [2, -1, 6, 0],
+        [2, -1, 6, 0]
+       ],
+       "u11": [
+        0,
+        [2, -1, 6, 0],
+        [2, -1, 6, 0]
+       ],
+       "dependents_top": [
+        {
+         "mark": 0,
+         "element": 16,
+         "side": 1
+        }
+       ],
+       "dependents_bottom": [],
+       "dependents_left": [],
+       "dependents_right": [],
+       "list5": [],
+       "list6": [],
+       "page": 0,
+       "page_sequence": 0,
+       "tab_order": 1,
+       "manual_anchor_h": true,
+       "manual_anchor_v": false
+      },
+      "name_block": {
+       "mark": 14,
+       "name": "ДействияФормы",
+       "action_source": 0,
+       "modifies_data": false,
+       "skip_on_input": false,
+       "first_in_group": false
+      },
+      "elements": {
+       "count": 0,
+       "items": []
+      }
+     },
+     {
+      "type": "CommandBar",
+      "index": 17,
+      "content": {
+       "content_kind": 2,
+       "u1": {
+        "u0": {
+         "u0": 16,
+         "enabled": true,
+         "back_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "text_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "font": {
+          "version": 7,
+          "source": "Auto",
+          "overrides": {
+           "scale_set": false
+          },
+          "L1+0": 1,
+          "scale": 100
+         },
+         "transparent": false,
+         "border_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "field_back_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "field_text_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "button_back_color": {
+          "mark": 3,
+          "color_kind": 4,
+          "value": {
+           "code": 0
+          }
+         },
+         "button_text_color": {
+          "mark": 3,
+          "color_kind": 3,
+          "value": {
+           "code": -21
+          }
+         },
+         "border": {
+          "mark": 3,
+          "color_kind": 0,
+          "value": {
+           "code": 0
+          },
+          "border_type": "Overline",
+          "explicit": true,
+          "u5": 0,
+          "style_item": {
+           "guid": "00000000-0000-0000-0000-000000000000"
+          }
+         },
+         "tool_tip": {
+          "mark": 1,
+          "count": 0,
+          "items": []
+         },
+         "u13": 0,
+         "u14": 0,
+         "u15": 100,
+         "u16": 0,
+         "u17": 0
+        },
+        "record_version": 9,
+        "orientation": "Auto",
+        "auto_fill": false,
+        "buttons_alignment": "Right",
+        "secondary": false,
+        "u6": 1,
+        "actions": {
+         "mark": 5,
+         "u1": {
+          "guid": "417e4d81-26bb-4b15-9613-408fad5b88b9"
+         },
+         "last_number": 5,
+         "u3": 1,
+         "actions": [
+          {
+           "mark": 7,
+           "id": {
+            "guid": "c48be856-6e06-4f15-b76f-036e478088f7"
+           },
+           "u2": 1,
+           "kind": {
+            "guid": "fbe38877-b914-4fd5-8540-07dde06ba2e1"
+           },
+           "action": {
+            "mark": 6,
+            "u1": 0,
+            "u2": {
+             "guid": "00000000-0000-0000-0000-000000000000"
+            },
+            "standard_action": 141,
+            "ref": {
+             "mark": 1,
+             "u1": 0,
+             "ref_id": {
+              "guid": "357c6a54-357d-425d-a2bd-22f4f6e86c87"
+             },
+             "ref_code": 2147483647,
+             "u4": 0
+            },
+            "u5": 0,
+            "u6": 1
+           },
+           "extras": {},
+           "L1+0": 0
+          },
+          {
+           "mark": 7,
+           "id": {
+            "guid": "e7fe6411-8b0c-4474-8da2-f50288799719"
+           },
+           "u2": 1,
+           "kind": {
+            "guid": "fbe38877-b914-4fd5-8540-07dde06ba2e1"
+           },
+           "action": {
+            "mark": 6,
+            "u1": 0,
+            "u2": {
+             "guid": "00000000-0000-0000-0000-000000000000"
+            },
+            "standard_action": 140,
+            "ref": {
+             "mark": 1,
+             "u1": 0,
+             "ref_id": {
+              "guid": "357c6a54-357d-425d-a2bd-22f4f6e86c87"
+             },
+             "ref_code": 2147483647,
+             "u4": 0
+            },
+            "u5": 0,
+            "u6": 1
+           },
+           "extras": {},
+           "L1+0": 0
+          },
+          {
+           "mark": 7,
+           "id": {
+            "guid": "f599e509-b448-4b6b-9573-153fe262a3af"
+           },
+           "u2": 1,
+           "kind": {
+            "guid": "abde0c9a-18a6-4e0c-bbaa-af26b911b3e6"
+           },
+           "action": {
+            "mark": 1,
+            "ref_id": {
+             "guid": "9d0a2e40-b978-11d4-84b6-008048da06df"
+            },
+            "ref_code": 0
+           },
+           "extras": {},
+           "L1+0": 0
+          },
+          {
+           "mark": 7,
+           "id": {
+            "guid": "f3647be5-18b4-40b5-80ab-a5236fd1be15"
+           },
+           "u2": 1,
+           "kind": {
+            "guid": "abde0c9a-18a6-4e0c-bbaa-af26b911b3e6"
+           },
+           "action": {
+            "mark": 1,
+            "ref_id": {
+             "guid": "9d0a2e40-b978-11d4-84b6-008048da06df"
+            },
+            "ref_code": 0
+           },
+           "extras": {},
+           "L1+0": 0
+          },
+          {
+           "mark": 7,
+           "id": {
+            "guid": "c6eb6510-9687-411d-a00f-ef82a1174614"
+           },
+           "u2": 1,
+           "kind": {
+            "guid": "fbe38877-b914-4fd5-8540-07dde06ba2e1"
+           },
+           "action": {
+            "mark": 6,
+            "u1": 0,
+            "u2": {
+             "guid": "00000000-0000-0000-0000-000000000000"
+            },
+            "standard_action": "Zakryt",
+            "ref": {
+             "mark": 1,
+             "u1": 0,
+             "ref_id": {
+              "guid": "357c6a54-357d-425d-a2bd-22f4f6e86c87"
+             },
+             "ref_code": 2147483647,
+             "u4": 0
+            },
+            "u5": 0,
+            "u6": 1
+           },
+           "extras": {},
+           "L1+0": 0
+          }
+         ],
+         "button_sets": [
+          {
+           "mark": 5,
+           "ref_id": {
+            "guid": "b78f2e80-ec68-11d4-9dcf-0050bae2bc79"
+           },
+           "code": 4,
+           "u3": 0,
+           "buttons": [
+            {
+             "mark": 8,
+             "name": "ОсновныеДействияФормыОК",
+             "modifies_data": false,
+             "u3": 1,
+             "text": {
+              "mark": 1,
+              "count": 1,
+              "items": [
+               {
+                "lang": "ru",
+                "text": "OK"
+               }
+              ]
+             },
+             "u5": 1,
+             "owner": {
+              "guid": "417e4d81-26bb-4b15-9613-408fad5b88b9"
+             },
+             "number": 1,
+             "u8": 1e2,
+             "button_type": "Action",
+             "representation": "Text",
+             "enabled": true,
+             "check": false,
+             "u13": 1,
+             "u14": 0,
+             "u15": 0,
+             "id": {
+              "guid": "c48be856-6e06-4f15-b76f-036e478088f7"
+             }
+            },
+            {
+             "mark": 8,
+             "name": "Разделитель",
+             "modifies_data": false,
+             "u3": 1,
+             "text": {
+              "mark": 1,
+              "count": 0,
+              "items": []
+             },
+             "u5": 0,
+             "owner": {
+              "guid": "417e4d81-26bb-4b15-9613-408fad5b88b9"
+             },
+             "number": 2,
+             "u8": 1e2,
+             "button_type": "Separator",
+             "representation": "Text",
+             "enabled": true,
+             "check": false,
+             "u13": 1,
+             "u14": 0,
+             "u15": 0,
+             "id": {
+              "guid": "f599e509-b448-4b6b-9573-153fe262a3af"
+             }
+            },
+            {
+             "mark": 8,
+             "name": "ОсновныеДействияФормыСохранить",
+             "modifies_data": false,
+             "u3": 1,
+             "text": {
+              "mark": 1,
+              "count": 1,
+              "items": [
+               {
+                "lang": "ru",
+                "text": "Записать"
+               }
+              ]
+             },
+             "u5": 1,
+             "owner": {
+              "guid": "417e4d81-26bb-4b15-9613-408fad5b88b9"
+             },
+             "number": 3,
+             "u8": 1e2,
+             "button_type": "Action",
+             "representation": "Text",
+             "enabled": true,
+             "check": false,
+             "u13": 1,
+             "u14": 0,
+             "u15": 0,
+             "id": {
+              "guid": "e7fe6411-8b0c-4474-8da2-f50288799719"
+             }
+            },
+            {
+             "mark": 8,
+             "name": "Разделитель1",
+             "modifies_data": false,
+             "u3": 1,
+             "text": {
+              "mark": 1,
+              "count": 0,
+              "items": []
+             },
+             "u5": 0,
+             "owner": {
+              "guid": "417e4d81-26bb-4b15-9613-408fad5b88b9"
+             },
+             "number": 4,
+             "u8": 1e2,
+             "button_type": "Separator",
+             "representation": "Text",
+             "enabled": true,
+             "check": false,
+             "u13": 1,
+             "u14": 0,
+             "u15": 0,
+             "id": {
+              "guid": "f3647be5-18b4-40b5-80ab-a5236fd1be15"
+             }
+            },
+            {
+             "mark": 8,
+             "name": "ОсновныеДействияФормыЗакрыть",
+             "modifies_data": false,
+             "u3": 1,
+             "text": {
+              "mark": 1,
+              "count": 1,
+              "items": [
+               {
+                "lang": "ru",
+                "text": "Закрыть"
+               }
+              ]
+             },
+             "u5": 1,
+             "owner": {
+              "guid": "417e4d81-26bb-4b15-9613-408fad5b88b9"
+             },
+             "number": 5,
+             "u8": 1e2,
+             "button_type": "Action",
+             "representation": "Text",
+             "enabled": true,
+             "check": false,
+             "u13": 1,
+             "u14": 0,
+             "u15": 0,
+             "id": {
+              "guid": "c6eb6510-9687-411d-a00f-ef82a1174614"
+             }
+            }
+           ],
+           "L1+0": [
+            -1,
+            0,
+            [0]
+           ]
+          }
+         ]
+        },
+        "u8": {
+         "guid": "b78f2e80-ec68-11d4-9dcf-0050bae2bc79"
+        },
+        "u9": 4,
+        "u10": {
+         "guid": "220437f0-fe81-4b62-8376-835798c9be27"
+        },
+        "default_button": 1,
+        "u12": 0,
+        "u13": 0
+       }
+      },
+      "coords": {
+       "mark": 8,
+       "x": 0,
+       "y": 275,
+       "right": 400,
+       "bottom": 300,
+       "visible": true,
+       "top_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 17,
+         "side": 1,
+         "offset": -25
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "bottom_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 0,
+         "side": 1,
+         "offset": 0
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "left_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 0,
+         "side": 2,
+         "offset": 0
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "right_anchor": {
+        "mark": 0,
+        "rule": {
+         "mark": 2,
+         "object": 0,
+         "side": 3,
+         "offset": 0
+        },
+        "rule2": {
+         "mark": 2,
+         "object": -1,
+         "side": 6,
+         "offset": 0
+        }
+       },
+       "u10": [
+        0,
+        [2, -1, 6, 0],
+        [2, -1, 6, 0]
+       ],
+       "u11": [
+        0,
+        [2, -1, 6, 0],
+        [2, -1, 6, 0]
+       ],
+       "dependents_top": [
+        {
+         "mark": 0,
+         "element": 17,
+         "side": 1
+        }
+       ],
+       "dependents_bottom": [
+        {
+         "mark": 0,
+         "element": 17,
+         "side": 0
+        }
+       ],
+       "dependents_left": [],
+       "dependents_right": [],
+       "list5": [],
+       "list6": [],
+       "page": 0,
+       "page_sequence": 1,
+       "tab_order": 17,
+       "manual_anchor_h": true,
+       "manual_anchor_v": true
+      },
+      "name_block": {
+       "mark": 14,
+       "name": "ОсновныеДействияФормы",
+       "action_source": 0,
+       "modifies_data": false,
+       "skip_on_input": false,
+       "first_in_group": false
+      },
+      "elements": {
+       "count": 0,
+       "items": []
+      }
+     }
+    ]
+   }
+  },
+  "width": 400,
+  "height": 300,
+  "enter_key_behavior": "ControlNavigation",
+  "use_grid": false,
+  "use_align_lines": true,
+  "horizontal_grid_step": 4,
+  "vertical_grid_step": 4,
+  "save_count": 2,
+  "device_width": 400,
+  "device_height": 300,
+  "dpi": 96
+ },
+ "attributes": {
+  "u0": {
+   "main_attribute_id": 0
+  },
+  "next_id": 9,
+  "list": {
+   "count": 1,
+   "items": [
+    {
+     "u0": [0],
+     "u1": 0,
+     "u2": 0,
+     "u3": 1,
+     "name": "СправочникОбъект",
+     "pattern": {
+      "mark": "Pattern",
+      "types": [
+       {
+        "kind": "#",
+        "value_type": {
+         "guid": "76c61d48-624b-4fc9-8c47-a53b5680b183"
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "bindings": {
+   "items": []
+  }
+ },
+ "main_attribute": {
+  "main_attribute_type": {
+   "guid": "c5251418-7f99-4a2f-ba62-7f3c9e7bf914"
+  },
+  "u1": 1,
+  "u2": {
+   "u0": 2,
+   "save_values": false,
+   "saved_values": {
+    "u0": 0,
+    "items": []
+   },
+   "u3": 0
+  }
+ },
+ "events": {
+  "count": 0,
+  "items": []
+ },
+ "auto_title": true,
+ "window_state": "Normal",
+ "window_dock_location": "Left",
+ "u8": 0,
+ "window_location_center": false,
+ "size_change": "Change",
+ "context_menu_links": {
+  "count": 0
+ },
+ "u12": {
+  "u0": 0
+ },
+ "u13": {
+  "version": 8,
+  "u1": 0,
+  "caption_picture": {
+   "mark": 4,
+   "source": 0,
+   "ref": {
+    "code": 0
+   },
+   "u3": "",
+   "u4": -1,
+   "u5": -1,
+   "u6": 1,
+   "u7": 0,
+   "u8": ""
+  },
+  "u3": [
+   4,
+   0,
+   [0],
+   "",
+   -1,
+   -1,
+   1,
+   0,
+   ""
+  ],
+  "u4": [
+   4,
+   0,
+   [0],
+   "",
+   -1,
+   -1,
+   1,
+   0,
+   ""
+  ],
+  "u5": 100,
+  "u6": 0,
+  "u7": 0,
+  "u8": 0
+ },
+ "window_appearance_mode": "Normal",
+ "change_window_appearance_mode": "Auto",
+ "window_location_dont_overlap_owner": false,
+ "desktop_mode": false,
+ "allow_close": true,
+ "auto_fill_check": true
+}

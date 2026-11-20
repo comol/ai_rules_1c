@@ -1,18 +1,18 @@
 ---
 name: v8unpack-cf
-description: "Read and write 1C binaries without the platform: an ordinary form `Ext/Form.bin` via the `unpack_ordinary_form` / `build_ordinary_form` MCP tools, a whole CF / CFE / EPF via the `v8unpack` CLI. Use for `Form.bin`, обычные формы, or a binary with no infobase / Designer / `ibcmd`."
+description: "Read and write a whole 1C binary — CF / CFE / EPF — without the platform via the `v8unpack` CLI. Use for a binary with no infobase / Designer / `ibcmd`; one ordinary form (`Form.bin`, `form.frm`) is the form-ordinary skill."
 ---
 
 # v8unpack-cf — read and write 1C binary artifacts
 
-Two workflows live here, and they are not variants of one thing:
+This skill owns whole binaries. One ordinary form is not one of them:
 
 | You have | Route | Section |
 |---|---|---|
-| One **ordinary form** — `.../Forms/<Форма>/Ext/Form.bin` | MCP tools `unpack_ordinary_form` / `build_ordinary_form` | *Ordinary forms — `Form.bin`* |
+| One **ordinary form** — `.../Forms/<Форма>/Ext/Form.bin` or `form.frm` | skill `form-ordinary` (`content/skills/form-ordinary/SKILL.md`); MCP `unpack_ordinary_form` / `build_ordinary_form` only as its fallback | *Ordinary forms — `Form.bin`* |
 | A whole **CF / CFE / EPF** binary | `v8unpack` CLI (`-E` / `-B`) | *Whole binaries — CF / CFE / EPF* |
 
-Use either when the 1C:Enterprise platform is not at hand. When the configuration
+Use this skill when the 1C:Enterprise platform is not at hand. When the configuration
 lives in an infobase, extract it through the platform instead — see the
 `getconfigfiles` rule.
 
@@ -27,7 +27,7 @@ lives in an infobase, extract it through the platform instead — see the
 
 ## Ordinary forms — `Form.bin`
 
-Before any ordinary-form tool call or payload edit, read [ordinary-forms.md](docs/ordinary-forms.md): exact MCP contract, workspace, workflow and warnings. Never edit `Form.bin` directly or deflate its entries. Edit `payload/`, preserve the manifest, and require logical payload verification before delivery.
+An ordinary form is the `form-ordinary` skill's (`content/skills/form-ordinary/SKILL.md`): a named format map, edit operations, validation, rendering and the `Form.bin` round trip, with no MCP server. Fall back to the MCP pair `unpack_ordinary_form` / `build_ordinary_form` only when that skill cannot run here (no Python ≥ 3.12, a failing `selftest`) and the task is a lossless container round trip; then read [ordinary-forms.md](docs/ordinary-forms.md) first — exact MCP contract, workspace, workflow and warnings. Never edit `Form.bin` directly or deflate its entries.
 
 ## Whole binaries — CF / CFE / EPF
 
@@ -50,8 +50,9 @@ Of ordinary forms specifically — measured on a real extraction (`1C-Gitter`
   147 of 147 ordinary forms (`Тип формы` = `0`, element version `''` or `0-5-1`)
   came back empty, because neither version is in v8unpack's
   `FormCore.supported_form_versions` (`0-26`, `0-27`, `1`). So for the ordinary
-  forms of a modern configuration the CLI route yields no named elements, and the
-  layout has to be read from `Form.bin` — positionally.
+  forms of a modern configuration the CLI route yields no named elements; read
+  their layout from `Form.bin` with `form-ordinary` (`decode` names positions by
+  its format map).
 - **`v8unpack` 1.2.6 cannot write a container with compressed entries through
   `Container.build(nested=False)`** — it raises `struct.error`, because
   `Document.compress` returns no table-of-contents offset. Irrelevant for a
@@ -71,8 +72,13 @@ Of ordinary forms specifically — measured on a real extraction (`1C-Gitter`
   a binary artifact and no platform.
 - `1c-metadata-manage` — MCP-based skill for operating on the metadata structure once the
   sources are unpacked. It owns **managed** forms (`Ext/Form.xml`); ordinary forms
-  are this skill's, because there is no XML for it to edit.
-- `forms.md` — the router for managed-form work. It sends ordinary forms here.
+  are `form-ordinary`'s, because there is no XML for it to edit.
+- `form-ordinary` — ordinary forms (`Form.bin`, `form.frm`): reading, editing,
+  generation, rendering, `pack` / `unpack`, and `epf-copyinfo` for an `.epf` built
+  by `ibcmd`.
+- `forms.md` — the router for managed-form work. It sends ordinary forms to
+  `form-ordinary`.
 - `mcp-1c-tools` — the MCP catalog. `unpack_ordinary_form` / `build_ordinary_form`
   are listed there under both `1c-code-metadata-mcp` and `1c-graph-metadata-mcp`;
-  [ordinary-forms.md](docs/ordinary-forms.md) is the contract they share.
+  [ordinary-forms.md](docs/ordinary-forms.md) is the contract they share — the
+  fallback route.

@@ -1,5 +1,10 @@
 # Ordinary forms — `Form.bin`
 
+**Fallback route.** The primary route for an ordinary form is the `form-ordinary`
+skill (`content/skills/form-ordinary/SKILL.md`). Use the MCP pair below only when
+that skill cannot run here (no Python ≥ 3.12, a failing `selftest`) and the task
+is a lossless container round trip.
+
 **An ordinary form is not XML.** In a Designer file export a managed form writes
 `Forms/<Имя>/Ext/Form.xml`; an ordinary form writes `Forms/<Имя>/Ext/Form.bin` — a
 1C container holding two payload entries: `form` (the layout, a brace tree) and
@@ -128,9 +133,11 @@ single-quoted literals (`'C:\src\...\Form.bin'`) when the path contains `$`.
   A workspace without `ordinary-form.json` is not a workspace (`manifest_missing`),
   and a missing payload entry is refused (`payload_missing`) rather than built
   around.
-- **A standalone `Form.bin` names nothing.** Its brace tree is positional: it is
-  structurally parseable, and no token in it says "this is a button called X". Do
-  not invent element names, types or handlers from it. Named element trees
+- **Through this route a standalone `Form.bin` names nothing.** The brace tree in
+  `payload/form` is positional: it is structurally parseable, and these tools
+  label no token "this is a button called X". Do not invent element names, types
+  or handlers from it — the `form-ordinary` skill's `decode` names positions by
+  its format map. Named element trees
   (`*.elem.json`) come from high-level CF / CFE / EPF extraction, where the
   surrounding metadata supplies the names — and even there v8unpack 1.2.6 writes a
   populated tree only for **managed** forms (see [Limitations](../SKILL.md#limitations)).
@@ -144,7 +151,8 @@ single-quoted literals (`'C:\src\...\Form.bin'`) when the path contains `$`.
 
 | Situation | Route |
 |---|---|
-| One ordinary form, sources already on disk | `unpack_ordinary_form` / `build_ordinary_form` |
+| One ordinary form, sources already on disk | `form-ordinary` skill |
+| The same, and `form-ordinary` cannot run here | `unpack_ordinary_form` / `build_ordinary_form` |
 | Every form of a `.cf` / `.cfe` / `.epf` at once | CLI `-E`, then the per-form files it writes |
 | The infobase is available and you want XML sources | `/getconfigfiles` — not this skill |
 | A managed form (`Ext/Form.xml`) | `1c-metadata-manage` skill — not this skill |

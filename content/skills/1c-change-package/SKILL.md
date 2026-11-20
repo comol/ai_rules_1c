@@ -10,7 +10,7 @@ The deliverable is a document, not an edit: the agent reads the current code, de
 
 ## When this is the deliverable
 
-- **Manual** — the agent must not or cannot write the change itself: a vendor object «на замке» the user chose not to take off support or borrow into an extension (`content/skills/1c-metadata-manage/docs/support-manage.md`); an ordinary / binary form (`content/rules/forms.md` — ordinary forms are not edited as `Form.xml`); an object locked in the configuration repository by another user (`content/skills/1c-repository-manage/SKILL.md` — never bypass the lock); the code is reachable only through MCP; or the user asked for instructions / code to copy.
+- **Manual** — the agent must not or cannot write the change itself: a vendor object «на замке» the user chose not to take off support or borrow into an extension (`content/skills/1c-metadata-manage/docs/support-manage.md`); an ordinary form the `form-ordinary` skill cannot change here — it does not run or refuses the operation (`content/skills/form-ordinary/SKILL.md`); an object locked in the configuration repository by another user (`content/skills/1c-repository-manage/SKILL.md` — never bypass the lock); the code is reachable only through MCP; or the user asked for instructions / code to copy.
 - **Review** — the user wants to see the change before it is applied: «покажи дифф», «покажи изменения», «сравни текущий и новый код», «сделай ревью изменения».
 - The user named a mode — keep it. Both fit and the goal is unclear — ask one short question before reading a reference.
 

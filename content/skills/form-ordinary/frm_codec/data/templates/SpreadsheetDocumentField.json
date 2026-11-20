@@ -1,0 +1,308 @@
+{
+ "kind": "SpreadsheetDocumentField",
+ "node": {
+  "type": "SpreadsheetDocumentField",
+  "index": 4,
+  "content": {
+   "content_kind": 18,
+   "u1": 26,
+   "u2": 35,
+   "u3": 158,
+   "u4": 98,
+   "u5": 5,
+   "u6": 5,
+   "u7": 1,
+   "enabled": true,
+   "border_color": {
+    "mark": 3,
+    "color_kind": 4,
+    "value": {
+     "code": 0
+    }
+   },
+   "border": {
+    "mark": 3,
+    "color_kind": 1,
+    "value": {
+     "code": -18
+    },
+    "border_type": "WithoutBorder",
+    "explicit": false,
+    "u5": 0
+   },
+   "u11": {
+    "u0": 8,
+    "u1": 1,
+    "u2": 12,
+    "u3": ["ru", "ru", 1, 1, "ru", "Русский", "Русский", 1],
+    "u4": [128, 72],
+    "u5": [0],
+    "u6": 0,
+    "u7": [0, 0],
+    "u8": [0, 0],
+    "u9": [0, 0],
+    "u10": [0, 0],
+    "u11": [0, 0],
+    "u12": [0, 0],
+    "u13": 0,
+    "u14": 2,
+    "u15": 0,
+    "u16": [
+     0,
+     0,
+     {
+      "guid": "00000000-0000-0000-0000-000000000000"
+     },
+     0
+    ],
+    "u17": 0,
+    "u18": 0,
+    "u19": 0,
+    "u20": 0,
+    "u21": 0,
+    "u22": 0,
+    "u23": 0,
+    "u24": 0,
+    "u25": 0,
+    "u26": [0],
+    "u27": [0],
+    "u28": [0],
+    "u29": [0],
+    "u30": "",
+    "u31": [
+     [
+      0,
+      6,
+      6,
+      ["N", 1000],
+      7,
+      ["N", 1000],
+      8,
+      ["N", 1000],
+      9,
+      ["N", 1000],
+      10,
+      ["N", 1000],
+      11,
+      ["N", 1000]
+     ]
+    ],
+    "u32": [
+     0,
+     -1,
+     -1,
+     -1,
+     -1,
+     {
+      "guid": "00000000-0000-0000-0000-000000000000"
+     }
+    ],
+    "u33": 0,
+    "u34": 0,
+    "u35": 0,
+    "u36": 0,
+    "u37": 0,
+    "u38": 0,
+    "u39": 0,
+    "u40": 1,
+    "u41": 0,
+    "u42": 1,
+    "u43": 0,
+    "u44": 0,
+    "u45": 0,
+    "u46": 0,
+    "u47": 0,
+    "u48": 2,
+    "u49": [
+     3,
+     3,
+     [-1]
+    ],
+    "u50": [
+     3,
+     3,
+     [-3]
+    ],
+    "u51": 0,
+    "u52": 0,
+    "u53": 0,
+    "u54": "",
+    "read_only_mirror": false,
+    "u56": [3, 0, 0, 100, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0, 0],
+    "u57": [0],
+    "u58": 0,
+    "u59": 0,
+    "u60": 0,
+    "u61": 1,
+    "u62": 0,
+    "u63": 0,
+    "u64": 0
+   },
+   "save_position": false,
+   "save_fixing_position": true,
+   "u14": {
+    "version": 3,
+    "u1": 0,
+    "u2": 0,
+    "u3": 100,
+    "show_grid_mirror": false,
+    "show_headers_mirror": false,
+    "u6": 0,
+    "show_groups_mirror_1": true,
+    "show_groups_mirror_2": true,
+    "u9": 0,
+    "black_and_white_view_mirror": false,
+    "u11": 0,
+    "u12": 0,
+    "u13": 0,
+    "u14": 0,
+    "u15": 0,
+    "u16": 0,
+    "u17": 0,
+    "u18": 0,
+    "u19": 0,
+    "u20": 0,
+    "u21": "ru",
+    "u22": 0,
+    "u23": 1,
+    "u24": [
+     3,
+     0,
+     0,
+     0,
+     0,
+     {
+      "guid": "00000000-0000-0000-0000-000000000000"
+     }
+    ],
+    "u25": 0,
+    "u26": 0,
+    "u27": 0,
+    "u28": 0,
+    "u29": 0
+   },
+   "horizontal_scroll_bar": true,
+   "vertical_scroll_bar": true,
+   "events": {
+    "count": 0,
+    "items": []
+   },
+   "read_only": false,
+   "protection": false,
+   "read_only_mirror": false,
+   "show_grid": false,
+   "show_headers": false,
+   "show_groups": true,
+   "black_and_white_view": false,
+   "enable_start_drag": true,
+   "enable_drag": true,
+   "show_selection": "WhenActive",
+   "output": "Auto",
+   "u29": 0,
+   "u30": 0,
+   "horizontal_scroll_bar_mirror": true,
+   "vertical_scroll_bar_mirror": true
+  },
+  "coords": {
+   "mark": 8,
+   "x": 0,
+   "y": 0,
+   "right": 0,
+   "bottom": 0,
+   "visible": true,
+   "top_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "bottom_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "left_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "right_anchor": {
+    "mark": 0,
+    "rule": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    },
+    "rule2": {
+     "mark": 2,
+     "object": -1,
+     "side": 6,
+     "offset": 0
+    }
+   },
+   "u10": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "u11": [
+    0,
+    [2, -1, 6, 0],
+    [2, -1, 6, 0]
+   ],
+   "dependents_top": [],
+   "dependents_bottom": [],
+   "dependents_left": [],
+   "dependents_right": [],
+   "list5": [],
+   "list6": [],
+   "page": 0,
+   "page_sequence": 0,
+   "tab_order": 0,
+   "manual_anchor_h": false,
+   "manual_anchor_v": false
+  },
+  "name_block": {
+   "mark": 14,
+   "name": "",
+   "action_source": 4294967295,
+   "modifies_data": false,
+   "skip_on_input": false,
+   "first_in_group": false
+  },
+  "elements": {
+   "count": 0,
+   "items": []
+  }
+ }
+}

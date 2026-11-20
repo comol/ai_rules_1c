@@ -1,0 +1,376 @@
+{
+ "field": {
+  "string": {
+   "props": {
+    "wrap": true,
+    "choice_button": false,
+    "clear_button": false,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    }
+   }
+  },
+  "decimal": {
+   "props": {
+    "wrap": false,
+    "choice_button": false,
+    "clear_button": false,
+    "u22": 1
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    }
+   }
+  },
+  "dateTime": {
+   "props": {
+    "wrap": false,
+    "choice_button": true,
+    "clear_button": false,
+    "u22": 2
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    }
+   }
+  },
+  "catalog": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "8585207b-9ca7-425b-9385-e8fd67c4e148"
+     },
+     "u1": {
+      "u0": 5,
+      "u1": 0,
+      "u2": 0,
+      "u3": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      },
+      "u4": [1, 0]
+     }
+    }
+   }
+  },
+  "document": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "11fe1b25-97c5-4d25-ab3f-8c9a5655122e"
+     },
+     "u1": {
+      "u0": 3,
+      "u1": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      }
+     }
+    }
+   }
+  },
+  "enum": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "30ee7b7c-8dac-4e20-b58e-e7f7742ae8d8"
+     },
+     "u1": {
+      "u0": 1,
+      "u1": 1,
+      "u2": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      }
+     }
+    }
+   }
+  },
+  "composite": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0,
+    "digits": 0
+   },
+   "u3": {
+    "u0": 2,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    },
+    "u2": [
+     {
+      "guid": "8585207b-9ca7-425b-9385-e8fd67c4e148"
+     },
+     [
+      5,
+      0,
+      2,
+      {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      },
+      [1, 0]
+     ]
+    ]
+   }
+  }
+ },
+ "column": {
+  "string": {
+   "props": {
+    "wrap": true,
+    "choice_button": false,
+    "clear_button": false,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    }
+   }
+  },
+  "decimal": {
+   "props": {
+    "wrap": false,
+    "choice_button": false,
+    "clear_button": false,
+    "u22": 1
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    }
+   }
+  },
+  "dateTime": {
+   "props": {
+    "wrap": false,
+    "choice_button": true,
+    "clear_button": false,
+    "u22": 2
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     "u1": {
+      "u0": 4,
+      "u1": ["U"],
+      "u2": ["U"],
+      "multi_line": false,
+      "mask": "",
+      "password_mode": false,
+      "extended_edit": false
+     }
+    }
+   }
+  },
+  "catalog": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "8585207b-9ca7-425b-9385-e8fd67c4e148"
+     },
+     "u1": {
+      "u0": 5,
+      "u1": 0,
+      "u2": 0,
+      "u3": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      },
+      "u4": [1, 0]
+     }
+    }
+   }
+  },
+  "document": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "11fe1b25-97c5-4d25-ab3f-8c9a5655122e"
+     },
+     "u1": {
+      "u0": 3,
+      "u1": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      }
+     }
+    }
+   }
+  },
+  "enum": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0
+   },
+   "u3": {
+    "u0": 1,
+    "u1": {
+     "u0": {
+      "guid": "30ee7b7c-8dac-4e20-b58e-e7f7742ae8d8"
+     },
+     "u1": {
+      "u0": 1,
+      "u1": 1,
+      "u2": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      }
+     }
+    }
+   }
+  },
+  "composite": {
+   "props": {
+    "wrap": true,
+    "choice_button": true,
+    "clear_button": true,
+    "u22": 0,
+    "digits": 255
+   },
+   "u3": {
+    "u0": 2,
+    "u1": {
+     "u0": {
+      "guid": "8585207b-9ca7-425b-9385-e8fd67c4e148"
+     },
+     "u1": {
+      "u0": 5,
+      "u1": 0,
+      "u2": 2,
+      "u3": {
+       "guid": "00000000-0000-0000-0000-000000000000"
+      },
+      "u4": [1, 0]
+     }
+    },
+    "u2": [
+     {
+      "guid": "9a7643d2-19e9-45e2-8893-280bc9195a97"
+     },
+     [
+      4,
+      ["U"],
+      ["U"],
+      0,
+      "",
+      0,
+      0
+     ]
+    ]
+   }
+  }
+ }
+}

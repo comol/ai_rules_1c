@@ -162,7 +162,7 @@ Identity formats differ by tool. Path endpoints and `affected_subgraph.roots` ac
 | `unpack_ordinary_form` | `form_path`, `workspace_path`, `overwrite=false`, `include="summary"`, `max_chars=4000` | Admin-profile file operation: unpack `Form.bin` |
 | `build_ordinary_form` | `workspace_path`, `output_path`, `overwrite=false`, `verify=true` | Admin-profile file operation: rebuild and logically verify `Form.bin` |
 
-An ordinary `Form.bin` is a binary container, not XML. Do not edit it directly. A rebuilt binary may differ in bytes because of timestamps; `verification.status == "match"` is the round-trip criterion.
+An ordinary `Form.bin` is a binary container, not XML. Do not edit it directly. The primary route is `content/skills/form-ordinary/SKILL.md`; this pair is its fallback. A rebuilt binary may differ in bytes because of timestamps; `verification.status == "match"` is the round-trip criterion.
 
 ## Observability, contract and safe templates
 

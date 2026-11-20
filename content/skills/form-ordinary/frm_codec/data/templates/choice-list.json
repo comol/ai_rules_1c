@@ -1,0 +1,70 @@
+{
+ "block": {
+  "mark": 9,
+  "columns": {
+   "count": 2,
+   "items": [
+    {
+     "index": 0,
+     "name": "Value",
+     "pattern": {
+      "mark": "Pattern",
+      "types": []
+     },
+     "caption": "Значение",
+     "u4": 10
+    },
+    {
+     "index": 1,
+     "name": "Presentation",
+     "pattern": {
+      "mark": "Pattern",
+      "types": [
+       {
+        "kind": "#",
+        "value_type": {
+         "guid": "87024738-fc2a-4436-ada1-df79d395c424"
+        }
+       }
+      ]
+     },
+     "caption": "Представление",
+     "u4": 10
+    }
+   ]
+  },
+  "u2": {
+   "u0": 2,
+   "u1": 2,
+   "u2": 0,
+   "u3": 0,
+   "u4": 1,
+   "u5": 1,
+   "rows": {
+    "mark": 1,
+    "count": 0,
+    "items": []
+   },
+   "u7": -1,
+   "u8": 0
+  },
+  "u3": [0, 0]
+ },
+ "row": {
+  "mark": 2,
+  "index": 0,
+  "u2": 2,
+  "value": {
+   "kind": "S",
+   "value": ""
+  },
+  "presentation": {
+   "kind": "#",
+   "value_type": {
+    "guid": "87024738-fc2a-4436-ada1-df79d395c424"
+   },
+   "u2": [0]
+  },
+  "u5": 0
+ }
+}
