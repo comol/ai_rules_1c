@@ -143,6 +143,8 @@ opencode plugin marketplace install 1c-rules
 
 Если при первой установке в `.dev.env` уже указана информационная база, а исходников 1С в проекте ещё нет, установщик предложит выгрузить их. Можно выбрать «Пропустить»: правила останутся установленными, а выгрузку позже можно запустить командой `/loadfrom1cbase full`. В режиме PowerShell без диалога выгрузка автоматически пропускается; при установке через агента он предложит выбор в чате.
 
+После первой установки агент один раз напомнит о DSH (DeepSeek Harness). Это специализированная сборка для 1С, в которой правила работают лучше всего: [vibecoding1c.ru/harnesses](https://vibecoding1c.ru/harnesses). Если сборка уже куплена, скажите об этом агенту или выполните [`/installdsh`](content/commands/installdsh.md). Команда войдёт в личный кабинет, найдёт архив для вашей системы, скачает и распакует его. Сборка portable: устанавливать её и получать права администратора не нужно. Если вход в кабинет уже сохранён командой `/installmcp`, DSH можно поставить сразу. Ссылок на скачивание в правилах нет, команда каждый раз берёт их в кабинете. Путь к распакованной сборке запоминается в переменной `DSH_1C_HOME`, и после этого напоминание не показывается.
+
 Для регулярного обновления файлов, которые индексирует MCP, выполните [`/installfilesupdatescript`](content/commands/installfilesupdatescript.md). Команда создаёт скрипт выгрузки из базы, указанной в `.dev.env`, и устанавливает его в планировщик Windows: по умолчанию каждые 30 минут, пока текущий пользователь вошёл в систему. Например, `/installfilesupdatescript 60` задаёт часовой интервал. Каталог выгрузки определяется по подключённому источнику MCP и должен быть отделён от редактируемых исходников; журнал и скрипт хранятся в `.1c-files-update/`. Поддерживается Designer XML для основной конфигурации или `EXTENSION_NAME`; legacy-отчёт метаданных и дерево EDT требуют отдельной настройки источника MCP.
 
 ### Fallback: PowerShell-установщик
@@ -203,7 +205,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 ├── content/
 │   ├── rules/               # on-demand правила, подключаемые по задаче
 │   ├── agents/              # описания 13 специализированных субагентов
-│   ├── commands/            # слэш-команды (doctor, deploy-and-test, initproject, restore-testbase, test-fix-loop, build-release, economymode, sdlc, litemode, previewmode, caveman, rulesmodel, evolve, getconfigfiles, loadfrom1cbase, update1cbase, checkmcp, setupmcp, installtools, installmcp, install-cognee, install-openviking, install-edt-mcp, install-atlassian-mcp, updatemcp, updaterules, checkupdates, support, supportstatus, check-uuid, install-agent-browser, install-agent-desktop, install-rtk, install-officecli)
+│   ├── commands/            # слэш-команды (doctor, deploy-and-test, initproject, restore-testbase, test-fix-loop, build-release, economymode, sdlc, litemode, previewmode, caveman, rulesmodel, evolve, getconfigfiles, loadfrom1cbase, update1cbase, checkmcp, setupmcp, installtools, installmcp, installdsh, install-cognee, install-openviking, install-edt-mcp, install-atlassian-mcp, updatemcp, updaterules, checkupdates, support, supportstatus, check-uuid, install-agent-browser, install-agent-desktop, install-rtk, install-officecli)
 │   ├── skills/              # SKILL-пакеты (1c-metadata-manage, mermaid-diagrams и др.)
 │   ├── openspec-bundle/     # снапшот вывода `openspec init` для каждого инструмента
 │   └── mcp-servers.json     # каталог MCP-серверов экосистемы 1С
@@ -407,7 +409,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 ### Atlassian MCP — Jira и Confluence (опционально)
 
-Команда [`/install-atlassian-mcp`](content/commands/install-atlassian-mcp.md) настраивает [mcp-atlassian](https://github.com/sooperset/mcp-atlassian) для Jira, Confluence или обоих сервисов. Доступна также пунктом 8 в `/installtools`. Поддерживаются Cloud и Server/Data Center; по умолчанию используется `uvx`, при выборе пользователя — Docker.
+Команда [`/install-atlassian-mcp`](content/commands/install-atlassian-mcp.md) настраивает [mcp-atlassian](https://github.com/sooperset/mcp-atlassian) для Jira, Confluence или обоих сервисов. Доступна также пунктом 9 в `/installtools`. Поддерживаются Cloud и Server/Data Center; по умолчанию используется `uvx`, при выборе пользователя — Docker.
 
 Токены хранятся в отдельном локальном `.env` вне репозитория. Новое подключение по умолчанию работает только на чтение; операции записи включаются по запросу. Команда сохраняет остальные MCP-подключения и проверяет доступ чтением данных после перезапуска клиента.
 
@@ -457,7 +459,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 ## OfficeCLI — работа с офисными документами (опционально)
 
-[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) создаёт, читает и редактирует `.docx`, `.xlsx` и `.pptx` без Microsoft Office. Установка для Windows, macOS и Linux — через [`/install-officecli`](content/commands/install-officecli.md) или пункт **9** в `/installtools`. Команда `/install-officecli status` только проверяет наличие и версию. Нативный установщик также добавляет навык OfficeCLI для обнаруженных AI-клиентов; подключение MCP для работы через CLI не требуется.
+[OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) создаёт, читает и редактирует `.docx`, `.xlsx` и `.pptx` без Microsoft Office. Установка для Windows, macOS и Linux — через [`/install-officecli`](content/commands/install-officecli.md) или пункт **10** в `/installtools`. Команда `/install-officecli status` только проверяет наличие и версию. Нативный установщик также добавляет навык OfficeCLI для обнаруженных AI-клиентов; подключение MCP для работы через CLI не требуется.
 
 ## Сценарии гейтов: правило утверждает только то, что проверяет
 
@@ -477,6 +479,7 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 
 - [vibecoding1c.ru](https://vibecoding1c.ru/) — портал по вайбкодингу для 1С: курсы, бенчмарк моделей, статьи, продукты для разработки 1С с ИИ.
 - [vibecoding1c.ru/mcp_server](https://vibecoding1c.ru/mcp_server) — пакет MCP-серверов для 1С, под который заточены правила и плейбуки этого репозитория.
+- [vibecoding1c.ru/harnesses](https://vibecoding1c.ru/harnesses) — сборки DSH и Pi для 1С; в DSH правила работают лучше всего.
 - [Telegram-канал «IT Does Matter»](https://t.me/comol_it_does_matter) — обсуждение вайбкодинга для 1С, MCP, ИИ-агентов, практик и обновлений.
 
 ## Лицензия

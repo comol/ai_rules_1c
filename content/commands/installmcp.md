@@ -245,7 +245,7 @@ Add the credentials entry **only** if the user explicitly agreed in step 1.1.a. 
 ```markdown
 ## YYYY-MM-DD — MCP Distribution — vibecoding1c.ru credentials
 
-- **Scope:** `/installmcp`, `/updatemcp` slash commands. Used by the headless Tilda Members API flow (`POST /api/login/` → `POST /api/getpage/`) and, on fallback, by any browser-automation MCP (e.g. `cursor-ide-browser` in Cursor).
+- **Scope:** `/installmcp`, `/updatemcp` and `/installdsh` slash commands. Used by the headless Tilda Members API flow (`POST /api/login/` → `POST /api/getpage/`) and, on fallback, by any browser-automation MCP (e.g. `cursor-ide-browser` in Cursor).
 - **Rule:** authenticate to `https://vibecoding1c.ru/` with `tilda_login=<email>` and `tilda_password=<password>`. Both flows need fresh credentials on every run (no long-lived session is cached here on purpose — the token is re-issued each time).
 - **Why:** the user explicitly authorized storing these credentials in `memory.md` on `<YYYY-MM-DD>`, noting the access scope is limited to fetching a public MCP distribution link.
 - **Source:** user during `/installmcp`.

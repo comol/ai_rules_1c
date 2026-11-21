@@ -73,6 +73,10 @@ jobs:
         shell: powershell
         run: .\tools\tests\code-owner-setting.ps1
 
+      - name: DSH recommendation
+        shell: powershell
+        run: .\tools\tests\dsh-recommendation.ps1
+
       - name: Optional initial source dump
         shell: powershell
         run: .\tools\tests\initial-source-dump.ps1

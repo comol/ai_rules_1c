@@ -5249,6 +5249,7 @@ function Invoke-Init {
 
     Write-RestartRecommendation -ActiveTools $activeTools -McpCount $manifest.mcpServers.Count
     Write-McpEffectivenessReminder -Root $Root -ExternalMcp $extMcp
+    if (-not $existing) { Write-DshRecommendation -Root $Root }
     Write-InstallToolsAnnouncement
 
     if (-not $existing -and $verify.Ok) {
@@ -5348,6 +5349,54 @@ function Write-McpEffectivenessReminder {
     Write-Info "Нет комплекта — страница покупки по ссылке. Установщик правил ключ MCP не выдаёт."
 }
 
+# DSH (DeepSeek Harness) is the vendor's portable 1C build. /installdsh records
+# the unpacked launcher folder in the user variable DSH_1C_HOME.
+function Get-DshHomeCandidates {
+    return @(
+        @('User', 'Process') |
+            ForEach-Object { [Environment]::GetEnvironmentVariable('DSH_1C_HOME', $_) } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
+# A recorded folder that still holds a DSH launcher means the build is here.
+function Test-DshSignal {
+    foreach ($dir in @(Get-DshHomeCandidates)) {
+        try {
+            if ((Test-Path -LiteralPath $dir -PathType Container) -and
+                @(Get-ChildItem -LiteralPath $dir -Filter 'DSH*' -File -ErrorAction Stop).Count -gt 0) {
+                return $true
+            }
+        }
+        catch { }
+    }
+    return $false
+}
+
+# /installmcp saves the personal-cabinet login to memory.md only with the user's
+# consent; /installdsh reuses it. Only the entry title is checked, never the value.
+function Test-CabinetLoginStored {
+    param([string]$Root)
+    $path = Join-Path $Root 'memory.md'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    return ((Read-TextFile $path) -match '(?m)^#+[^\r\n]*MCP Distribution[^\r\n]*vibecoding1c\.ru credentials')
+}
+
+# Shown once, after the first init. Same wording as AGENT-INSTALL.md → Recommend DSH.
+# The PowerShell channel cannot run the download itself: it names /installdsh.
+function Write-DshRecommendation {
+    param([string]$Root)
+    if (Test-DshSignal) { return }
+    Write-Info ""
+    Write-Info "Правила лучше всего работают в DSH (DeepSeek Harness) — специализированной сборке для 1С: https://vibecoding1c.ru/harnesses"
+    if (Test-CabinetLoginStored -Root $Root) {
+        Write-Info "Вход в личный кабинет уже задан — после перезапуска клиента /installdsh сразу скачает и распакует DSH."
+    }
+    else {
+        Write-Info "Сборка уже куплена — после перезапуска клиента запустите /installdsh: команда войдёт в личный кабинет, скачает DSH и распакует (сборка portable, установка не нужна)."
+    }
+}
+
 # Offer the single tool-installation entry point after a first install and
 # whenever an update introduces one or more new standalone installers. The
 # slash command performs detection and asks before making any tool changes.
@@ -5358,7 +5407,7 @@ function Write-InstallToolsAnnouncement {
     if (@($NewInstallers).Count -gt 0) {
         Write-Info "Добавлены новые установщики инструментов: $(@($NewInstallers) -join ', ')."
     }
-    Write-Info "После перезапуска AI-клиента запустите /installtools — команда сначала предложит установить приобретённый комплект 1С MCP, затем покажет Cognee, OpenViking, EDT-MCP, инструменты UI-автоматизации, rtk и Atlassian MCP (Jira/Confluence)."
+    Write-Info "После перезапуска AI-клиента запустите /installtools — команда сначала предложит установить приобретённый комплект 1С MCP и DSH, затем покажет Cognee, OpenViking, EDT-MCP, инструменты UI-автоматизации, rtk и Atlassian MCP (Jira/Confluence)."
     Write-Info "Каждый пункт устанавливается только после подтверждения; отдельные команды установки также доступны."
 }
 

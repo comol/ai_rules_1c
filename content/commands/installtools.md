@@ -16,14 +16,15 @@ Always show tools in this order. The 1C MCP bundle is always first.
 | # | Tool | Purpose | Recommend when | Standalone command |
 |---|---|---|---|---|
 | 1 | 1C MCP server bundle | Documentation, metadata and code search, syntax checks, templates/project memory, BSP search, graph analysis and code review | Recommended for every 1C project; this is the primary ruleset tool bundle and requires a purchased distribution | `/installmcp` |
-| 2 | Cognee memory MCP | Persistent agent memory; primary write destination whenever connected | Recommended when the user wants general cross-session memory; optional to install | `/install-cognee` |
-| 3 | OpenViking memory MCP | Persistent agent memory and context retrieval; searched alongside Cognee and other connected memory providers | Recommended when the user wants OpenViking context retrieval or a primary memory store without Cognee | `/install-openviking` |
-| 4 | EDT-MCP | Live access to the EDT workspace, errors, native refactoring, metadata/forms, launches and debugging | Recommended only when the user develops in a locally installed 1C:EDT | `/install-edt-mcp` |
-| 5 | agent-browser | Token-efficient browser automation based on accessibility snapshots | Recommended for automated tests of a published 1C web client | `/install-agent-browser` |
-| 6 | agent-desktop | Vercel Labs desktop accessibility, window actions and screenshots | OS dialogs and native applications outside the 1C testing model | `/install-agent-desktop` |
-| 7 | rtk | Third-party, user-global shell-output compression proxy — fewer tokens on every shell call (git, docker, platform commands) | Optional; only on explicit selection — also offered by `/economymode` | `/install-rtk` |
-| 8 | Atlassian MCP | Access to Jira issues and Confluence pages in Cloud or Server/Data Center | Optional for projects using Jira or Confluence | `/install-atlassian-mcp` |
-| 9 | OfficeCLI | Create, read and edit Word, Excel and PowerPoint files without Microsoft Office | Optional; recommended when the workflow includes `.docx`, `.xlsx` or `.pptx` documents | `/install-officecli` |
+| 2 | DSH (DeepSeek Harness) | The vendor's portable 1C build of the agent client; the ruleset works best in it. Bought separately, downloaded from the personal cabinet and unpacked | When the user has bought it; purchase page https://vibecoding1c.ru/harnesses | `/installdsh` |
+| 3 | Cognee memory MCP | Persistent agent memory; primary write destination whenever connected | Recommended when the user wants general cross-session memory; optional to install | `/install-cognee` |
+| 4 | OpenViking memory MCP | Persistent agent memory and context retrieval; searched alongside Cognee and other connected memory providers | Recommended when the user wants OpenViking context retrieval or a primary memory store without Cognee | `/install-openviking` |
+| 5 | EDT-MCP | Live access to the EDT workspace, errors, native refactoring, metadata/forms, launches and debugging | Recommended only when the user develops in a locally installed 1C:EDT | `/install-edt-mcp` |
+| 6 | agent-browser | Token-efficient browser automation based on accessibility snapshots | Recommended for automated tests of a published 1C web client | `/install-agent-browser` |
+| 7 | agent-desktop | Vercel Labs desktop accessibility, window actions and screenshots | OS dialogs and native applications outside the 1C testing model | `/install-agent-desktop` |
+| 8 | rtk | Third-party, user-global shell-output compression proxy — fewer tokens on every shell call (git, docker, platform commands) | Optional; only on explicit selection — also offered by `/economymode` | `/install-rtk` |
+| 9 | Atlassian MCP | Access to Jira issues and Confluence pages in Cloud or Server/Data Center | Optional for projects using Jira or Confluence | `/install-atlassian-mcp` |
+| 10 | OfficeCLI | Create, read and edit Word, Excel and PowerPoint files without Microsoft Office | Optional; recommended when the workflow includes `.docx`, `.xlsx` or `.pptx` documents | `/install-officecli` |
 
 Do not list an optional tool as required merely because its installer exists.
 
@@ -42,6 +43,7 @@ Read `USE_EDT` from the project `.dev.env` before evaluating EDT tools. It is a 
 - missing, empty or invalid — in the normal interactive command, ask once whether the project uses EDT and persist `USE_EDT=true|false` without changing any other `.dev.env` key. In `/installtools status`, report `USE_EDT: unknown` and do not ask or write.
 
 - **1C MCP bundle:** check the current tool schema for known 1C MCP tools; then check client MCP configuration, `BASESAI_MCP_GLOBAL_ROOT` / `MCP_GLOBAL_ROOT` plus `install.manifest.json`, and relevant Docker containers. A ruleset-generated MCP config alone does not prove the purchased servers are installed or running.
+- **DSH:** follow `content/commands/installdsh.md` → *1. Detect*. Also note whether the cabinet login is stored, that is, whether `memory.md` has the entry `MCP Distribution — vibecoding1c.ru credentials`. Check only the entry title; do not read or show the password.
 - **Cognee:** check for exposed Cognee memory tools, a `cognee` / `cognee-memory` MCP entry, a `cognee-mcp` container, and the configured health endpoint (the standalone command defaults to `http://127.0.0.1:8010/health`).
 - **OpenViking:** check for exposed OpenViking memory tools and an `openviking` MCP entry; inspect the configured installation manifest, `openviking-server --version` when already installed, and the configured health endpoint (default `http://127.0.0.1:1933/health`). For Docker inspect the existing container; for a remote endpoint do not require a local package/container. A healthy HTTP process alone does not verify model access or MCP memory operations. Do not install packages or start the service during detection.
 - **EDT-MCP:** check for an `edt-mcp` / `EDT MCP Server` client entry and `http://127.0.0.1:8765/health`. A stopped EDT makes health inconclusive; do not report the plugin missing solely because EDT is closed.
@@ -65,12 +67,15 @@ If the 1C MCP bundle is not clearly installed and at least one of its providers 
 
 If the user has not purchased it, provide the product page `https://vibecoding1c.ru/mcp_server` (download after login is `https://vibecoding1c.ru/mcpserver`) and continue with the optional tools. Do not ask for Tilda credentials unless the user selected the MCP bundle.
 
+DSH gets no purchase question of its own. Its menu row carries the purchase page, and a user who has already bought it says so by selecting the row. If DSH is not detected and the cabinet login is stored, mark the row «вход в личный кабинет задан — установлю сразу».
+
 Then ask one consolidated question for remaining permitted `not installed` or `uncertain` tools (`off` only on explicit selection):
 
 > Which additional tools should I install? Reply with numbers, `recommended`, `all`, or `none`. Each selected installer may ask only for settings it actually needs.
 
 Treat `recommended` contextually:
 
+- DSH: select when the user has said it is purchased. A stored cabinet login marks the row but does not select it.
 - Cognee: select only if the user wants general memory beyond `1c-templates-mcp` project memory.
 - OpenViking: select when the user requests OpenViking or its context retrieval. Do not infer a request to install both memory servers from a request for general memory alone.
 - EDT-MCP: select when `USE_EDT=true`. If the flag is `false`, select only on an explicit numbered choice; a detected local EDT installation alone does not change the project preference.
@@ -85,14 +90,15 @@ Treat `recommended` contextually:
 Execute selected installers sequentially in catalog order by loading and following their command files:
 
 1. `installmcp.md`
-2. `install-cognee.md`
-3. `install-openviking.md`
-4. `install-edt-mcp.md`
-5. `install-agent-browser.md`
-6. `install-agent-desktop.md`
-7. `install-rtk.md`
-8. `install-atlassian-mcp.md`
-9. `install-officecli.md`
+2. `installdsh.md`
+3. `install-cognee.md`
+4. `install-openviking.md`
+5. `install-edt-mcp.md`
+6. `install-agent-browser.md`
+7. `install-agent-desktop.md`
+8. `install-rtk.md`
+9. `install-atlassian-mcp.md`
+10. `install-officecli.md`
 
 If a slash-command dispatcher cannot invoke another slash command directly, execute that command file as the procedure. Do not tell the user to repeat the same selection manually.
 

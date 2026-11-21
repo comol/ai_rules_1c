@@ -188,7 +188,7 @@ After the MCP config is written (init / update / add), **recommend that the user
 
 When updating an existing project, carry the configured value of `TOOL_WINDOWS_MCP` into `TOOL_AGENT_DESKTOP` if the new key is missing. Preserve an existing new key and all other settings.
 
-After a first rules installation, invoke the `/installtools` procedure as the single tool-setup entry point. On the interactive agent channel, load `content/commands/installtools.md` and present its menu in the same installation task; do not wait for the user to discover the new slash command. On the PowerShell channel, which cannot start an AI slash-command turn, print an explicit instruction to restart the client and run `/installtools`. The procedure must always put the purchased 1C MCP server bundle first, then offer Cognee memory, OpenViking memory, EDT-MCP, `agent-browser`, agent-desktop, rtk, Atlassian MCP, and OfficeCLI with descriptions, recommendations, current status, and an explicit install/skip choice. Do not invoke `/installmcp` as a separate post-install branch: the general command owns that question and dispatches to the standalone installer when selected.
+After a first rules installation, invoke the `/installtools` procedure as the single tool-setup entry point. On the interactive agent channel, load `content/commands/installtools.md` and present its menu in the same installation task; do not wait for the user to discover the new slash command. On the PowerShell channel, which cannot start an AI slash-command turn, print an explicit instruction to restart the client and run `/installtools`. The procedure must always put the purchased 1C MCP server bundle first and DSH second, then offer Cognee memory, OpenViking memory, EDT-MCP, `agent-browser`, agent-desktop, rtk, Atlassian MCP, and OfficeCLI with descriptions, recommendations, current status, and an explicit install/skip choice. Do not invoke `/installmcp` as a separate post-install branch: the general command owns that question and dispatches to the standalone installer when selected.
 
 On update, compare the pre-update manifest's installed `install*.md` command names with the updated source. Invoke `/installtools` only when at least one installer command is new. The PowerShell channel performs this comparison and prints the new filenames plus the post-restart command; the interactive agent channel performs the comparison and runs the procedure in the same update task. Routine updates with no new tool installer must not open the menu again.
 
@@ -200,6 +200,22 @@ After a successful `init` **and** after a successful `update`, if the purchased 
 > Комплект уже куплен — `/installtools` или `/installmcp`. Нет комплекта — страница покупки по ссылке. Установщик правил ключ MCP не выдаёт.
 
 Skip the reminder when either signal is present (external install **or** a non-empty `SUPPORT_KEY`). Do not ask for Tilda credentials here — that belongs to `/installmcp` after the user confirms a purchase. The PowerShell installer prints the same text via `Write-McpEffectivenessReminder`. The same reminder is required from `/updaterules` and from `/checkupdates` when 1C MCP tools are not in the current session.
+
+### Recommend DSH after the first install
+
+Recommend DSH once, after a successful first `init`. Skip it on `update`, `add` and a re-init of an installed project, and skip it when DSH is detected (`content/commands/installdsh.md` → *1. Detect*). Text, in Russian:
+
+> Правила лучше всего работают в DSH (DeepSeek Harness) — специализированной сборке для 1С: https://vibecoding1c.ru/harnesses
+> Сборка уже куплена — скажите об этом: `/installdsh` войдёт в личный кабинет, скачает DSH и распакует (сборка portable, установка не нужна).
+
+The cabinet login is stored when `memory.md` has the entry `MCP Distribution — vibecoding1c.ru credentials`, which `/installmcp` writes. In that case replace the second line with «Вход в личный кабинет уже задан — DSH можно установить сразу.» and offer the choice **«Установить DSH сразу» / «Позже»**.
+
+- On the interactive agent channel this recommendation is the DSH row of the `/installtools` menu that follows the install. Do not send it as a separate message as well.
+- An agent that ran the PowerShell installer presents the same choice in chat.
+- When the user says the build is purchased, run `content/commands/installdsh.md`. When they say it is already unpacked, record its folder there (step 7) without downloading.
+- Do not ask a separate purchase question, do not repeat the recommendation after a refusal, and never write a download address into the project.
+
+The PowerShell installer prints the same text via `Write-DshRecommendation`.
 
 ### Announce the /economymode command
 
