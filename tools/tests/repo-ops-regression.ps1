@@ -300,6 +300,18 @@ Register-Case 'commit: nothing changed creates no version and says so' {
     Assert-Contains $r.Out 'No new repository version was created' 'no version'
 }
 
+Register-Case 'display: a short password is masked by its key, not as a substring' {
+    param($Work)
+    $c = New-RepoCase $Work
+    $r = Invoke-RepoOps $c @('-Operation', 'commit', '-Objects', (N 'catalog'), '-Comment', 'TASK-1: version 2.1', '-RepositoryPassword', '1') 'commit-unchanged.log' 0
+    Assert-Equal 0 $r.ExitCode 'exit code'
+    Assert-Contains $r.Out '-comment "TASK-1: version 2.1"' 'comment intact in Running:'
+    Assert-Contains $r.Out '/ConfigurationRepositoryP"***"' 'password masked by its key'
+    Assert-NotContains $r.Out '/ConfigurationRepositoryP"1"' 'password not shown'
+    Assert-NotContains $r.Out 'TASK-***' 'digits of the comment not masked'
+    Assert-Contains $r.CommandLine '/ConfigurationRepositoryP"1"' 'the platform still gets the password'
+}
+
 Register-Case 'update: success without an operation block means an unbound infobase' {
     param($Work)
     $c = New-RepoCase $Work

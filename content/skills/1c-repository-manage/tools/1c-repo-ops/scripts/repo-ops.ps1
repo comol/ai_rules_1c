@@ -204,12 +204,18 @@ function Get-DevEnvValue {
 
 # --- Shared helpers (same contracts as 1c-db-ops) ---
 function Protect-Secrets {
-    # Redact literal secret values from a display string (String.Replace is literal, not regex).
-    param([string]$Text, [string[]]$Secrets)
+    # Redact secrets from a display command line. A password key value (/P"x",
+    # /ConfigurationRepositoryP"x") is masked by the key at any length. A passed secret is
+    # also replaced as a literal substring elsewhere (String.Replace is literal, not regex),
+    # but only from 6 characters on: a one- or two-character password would otherwise turn
+    # matching digits of a commit comment or a temp path into *** and the printed command
+    # line could no longer be checked.
     # A secret with a quote reaches the command line doubled (ConvertTo-QuotedText), so both
     # forms are redacted. Longest first: a shorter form replaced earlier could break a longer
     # one that contains it and leave part of that secret visible. (No -Unique: it ignores case.)
-    $forms = @(foreach ($s in $Secrets) { if ($s) { $s; $s.Replace('"', '""') } }) | Sort-Object -Property Length -Descending
+    param([string]$Text, [string[]]$Secrets)
+    $Text = [regex]::Replace($Text, '(?i)((?:^|\s)/(?:ConfigurationRepository)?P")(?:[^"]|"")*(?=")', '$1***')
+    $forms = @(foreach ($s in $Secrets) { if ($s -and $s.Length -ge 6) { $s; $s.Replace('"', '""') } }) | Sort-Object -Property Length -Descending
     foreach ($f in $forms) { $Text = $Text.Replace($f, '***') }
     return $Text
 }
