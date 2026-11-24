@@ -1,19 +1,19 @@
 ---
-description: Coding standards index — which rule or routed standard owns forbidden constructs, naming, comments, module regions, queries, data access, performance, forms, and reuse; load before writing or reviewing BSL or metadata
+description: Coding standards index — routes forbidden constructs, naming, comments, module regions, queries, performance, forms and helper reuse; load before writing or reviewing BSL or metadata
 alwaysApply: false
 category: development
 ---
 
 # Coding Standards — index
 
-Load the owner that matches the task; do not preload the whole set. Routed standards (`standards(name="…")`) are fetched from `1C-docs-mcp` per `AGENTS.md → Path convention`. Precedence: where the code you edit already follows a different convention in a purely stylistic matter, the codebase wins (`AGENTS.md → Core Principles → "Codebase conventions first"`); ВерблюжьяНотация for identifiers and every non-style rule never yield.
+Load the owner that matches the task; do not preload the whole set. Routed standards (`standards(name="…")`) are fetched from `1C-docs-mcp` per `AGENTS.md → Path convention`. Precedence: under `CODE_OWNER=user` (default), where edited code follows a different purely stylistic convention, the codebase wins (`AGENTS.md → Core Principles`; under `CODE_OWNER=agent`, see `dev-standards-env-process.md → CODE_OWNER`). ВерблюжьяНотация for identifiers and every non-style rule never yield.
 
 | Topic | Owner |
 |---|---|
 | Formatting, quality limits, **forbidden constructs** (ternary `?(...)`, `Выполнить()` / `Вычислить()`, hardcoded credentials, `Сообщить()`, `ЗаписьЖурналаРегистрации()` without a task, `Попытка` around DB reads / writes, comparison with `Истина` / `Ложь`, Yoda syntax), **naming** (ВерблюжьяНотация; no Hungarian notation, global-context names, magic numbers, negative booleans) | `standards(name="dev-standards-code-style") §2` |
 | Public procedure / function documentation | `standards(name="dev-standards-code-style") §5` |
 | Typography (no «ё» in identifiers, quotes, dashes) | `standards(name="dev-standards-code-style") §6` |
-| Comments — only motivation, non-trivial algorithm, constraints, `TODO No.<task>` markers, platform hacks; never paraphrase or author / history banners | `standards(name="dev-standards-code-style") §7` |
+| Comments — only motivation, non-trivial algorithm, constraints, `TODO No.<task>` markers, platform hacks; never paraphrase or author / history banners (except the single new-module header block of `dev-standards-change-markers.md §3` when `COMPANY` and `DEVELOPER` are set) | `standards(name="dev-standards-code-style") §7` |
 | Internal review after each edit (quick-fix: changed fragment + locks / transactions nearby; full-cycle: full list); outer-transaction check | `standards(name="dev-standards-code-style") §8`; budget — `verification-policy.md → Validator budget` |
 | Change markers in typical code, metadata naming, object-type selection | `dev-standards-change-markers.md` |
 | Module regions (Russian, БСП-style; no regions inside procedures) | `module-structure.md` |
@@ -21,7 +21,7 @@ Load the owner that matches the task; do not preload the whole set. Routed stand
 | Reference attributes — never dot notation (`Контрагент.ИНН`); `ОбщегоНазначения.ЗначениеРеквизитаОбъекта` and the batch variants **[Project rule — stricter than ITS standard]** | `standards(name="dev-standards-architecture") §4` |
 | Performance baseline; anti-pattern catalog with severity; platform pitfalls | `standards(name="dev-standards-architecture") §5`, `standards(name="anti-patterns")`, `standards(name="platform-solutions")` |
 | Queries — routing and pre-flight | `query-design.md` (load first for any non-trivial query) |
-| Managed forms — routing | `forms.md` (load first; companions via its table) |
+| Forms (managed and ordinary) — routing | `forms.md` (load first; managed companions via its table, ordinary forms route to `form-ordinary`) |
 | Locks and transactions · logging · extensions · registers · СКД · БСП access rights | `standards(name="locks-and-transactions")` · `standards(name="logging-strategy")` · `standards(name="extension-patterns")` · `standards(name="registers-design")` · `standards(name="dcs-design")` (advanced two-pass composition — `standards(name="dcs-advanced-composition")`) · `standards(name="bsp-access-rights")` |
 
 ## Code reuse

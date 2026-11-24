@@ -1,5 +1,5 @@
 ---
-description: Designing 1C registers — dimensions, resources, attributes, periodicity, indexes, balances vs turnovers, posting / reposting / sequence restoration. Load when creating or restructuring an information / accumulation / accounting register.
+description: Designing 1C registers — dimensions, resources, periodicity, indexes, balances vs turnovers, posting/sequences. Load when creating or restructuring a register.
 alwaysApply: false
 category: development
 ---

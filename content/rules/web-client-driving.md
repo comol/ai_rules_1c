@@ -1,5 +1,5 @@
 ---
-description: Driving the 1C web client in UI tests — snapshot, lists / grids / reports, field filling, dialogs, login as a user, file choice, anti-loop discipline. Load after the `ui-testing-tools.md` preflight, before the first action on the web client.
+description: Driving the 1C web client — snapshots, lists/grids/reports, field filling, dialogs, login, files, anti-loop limits. Load after ui-testing-tools.md preflight before web actions.
 alwaysApply: false
 category: tooling
 ---

@@ -1,5 +1,5 @@
 ---
-description: Common obligations of every 1C subagent — CONFUSION, MCP-first search, mutation gates, validator evidence, done criteria, Handoff block. Loaded by every subagent at start and by a parent writing a delegation brief.
+description: Common subagent obligations — CONFUSION, MCP-first search, mutation gates, validator evidence, done criteria, Handoff block. Loaded by every subagent and delegating parent.
 alwaysApply: false
 category: workflow
 ---
@@ -10,7 +10,7 @@ category: workflow
 
 ## Common obligations
 
-Every subagent inherits `AGENTS.md` in full — its hard gates are not repeated in agent prompts. A model profile is taken only from your own known model — `AGENT_MODEL` describes the parent. This section adds only what is **subagent-specific**; every agent prompt opens with a one-line preamble pointing here. Parent agents and subagent authors must not weaken any item.
+Every subagent inherits `AGENTS.md` in full — its hard gates are not repeated in agent prompts. A model profile comes from your own known model unless `AGENT_MODEL=off` disables profiles project-wide; a concrete `AGENT_MODEL` slug describes the parent only. This section adds only what is **subagent-specific**; every agent prompt opens with a one-line preamble pointing here. Parent agents and subagent authors must not weaken any item.
 
 ### CONFUSION on material forks
 
@@ -28,7 +28,7 @@ Subagent-specific: the chain binds subagents exactly as it binds the parent; whe
 
 Canon — `AGENTS.md → Skills and Subagents` (metadata mutations through the `1c-metadata-manage` skill, infobase operations through the slash commands / `db-ops`, repository operations through `1c-repository-manage`, vendor-support refusals); exceptions only per `content/skills/1c-metadata-manage/SKILL.md → Hard rule`.
 
-Subagent-specific: the gates bind **every** mutating subagent, not only `1c-metadata-manager`. A `1c-developer` / `1c-error-fixer` / `1c-refactoring` / `1c-performance-optimizer` task that turns out to require a form or metadata change either drives it through the skill itself or reports it back to the parent for delegation — it never hand-edits the XML. In EDT projects (`.dev.env` `USE_EDT=true`) establish the source format before the first mutation and route per `content/rules/edt-workflow.md`; hand-editing `*.mdo` / `*.form` is a defect with no exception. Name the path used in the report: `Metadata tooling: …`, `EDT tooling: …`, `Repository tooling: …`.
+Subagent-specific: the gates bind **every** mutating subagent, not only `1c-metadata-manager`. A `1c-developer` / `1c-error-fixer` / `1c-refactoring` / `1c-performance-optimizer` task that turns out to require a form or metadata change either drives it through the skill itself or reports it back to the parent for delegation — it never hand-edits the XML. In EDT projects (`.dev.env` `USE_EDT=true`) establish the source format before the first mutation and route per `content/rules/edt-workflow.md`; hand-editing `*.mdo` / `*.form` is a defect with no exception. Name the path used in the report using the applicable tooling lines of `verification-delivery.md` (`Metadata tooling: …`, `IB tooling: …`, `Repository tooling: …`, `EDT tooling: …`).
 
 ### Validator chain (mutating agents)
 

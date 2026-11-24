@@ -38,25 +38,23 @@ Consumed by the triage and debugging rules at task time. All are **Defaulted** �
 | `{QUICKFIX_MAX_LINES}` | Line budget of the quick-fix path (`AGENTS.md → Triage`): the maximum changed BSL lines for which a one-logical-change-in-one-module edit may stay quick-fix. Promotion triggers (`verification-policy.md → Triage details`) always win over the budget. | Defaulted | Empty / invalid = `40`. Raise for teams comfortable with larger direct edits; lower for stricter projects. |
 | `{DEBUG_FAST_PATH}` | Debugging fast-path mode (`standards(name="systematic-debugging") → Fast path`): `standard` \| `extended` \| `off`. Controls when a directly evidenced bug may skip the full 4-phase loop. | Defaulted | Empty / invalid = `standard` |
 | `{VERIFICATION_DEPTH}` | SDLC QA profile: `lite` \| `standard` \| `full`. Selects the Gates 1–3 set for every task path; the semantics live only in `verification-policy.md → "Verification depth levels"`. Set by `/sdlc`; `/litemode` remains a compatibility alias. Every depth preserves `UI_TESTING`. | Defaulted | Empty / invalid = `standard` |
-| `{CAVEMAN}` | caveman communication-style auto-activation (`content/skills/caveman/SKILL.md`): `on` \| `auto` \| `off`. Controls whether the terse style turns on automatically and for which tasks. Does not affect the mandatory report structure or verification. | Defaulted | Empty / invalid = `auto` |
-| `{METADATA_PREVIEW}` | When wrapper `-Preview` on `Invoke-1CEdit.ps1` runs before a metadata write: `auto` \| `on` \| `off`. Toggled by `/previewmode`. Does not relax native `-DryRun` / `-Force` on deletions. | Defaulted | Empty / invalid = `auto` — preview only a `-Force` re-compile that replaces an existing artifact whole |
-| `{AGENT_MODEL}` | Fallback and off switch of the active-model profile layer (`AGENTS.md → Active model adaptation`, router `model-adaptation.md → Selecting the profile`). The profile follows the model the agent knows it runs; a slug (`opus5` \| `sonnet5` \| `fable5` \| `gpt56` \| `gpt6`) decides only for an agent that cannot tell; `off` disables profiles. Read at task time — no re-render, no client restart. Edited by `/rulesmodel`. A profile tunes initiative and communication and never weakens a hard gate. | Defaulted | Empty / unrecognised = profile by self-knowledge, or the base ruleset when the model has no profile |
+| `{CAVEMAN}` | `caveman` style auto-activation (`content/skills/caveman/SKILL.md`): `auto` \| `on` \| `off` (details below) | Defaulted | Empty / invalid = `auto` |
+| `{METADATA_PREVIEW}` | Wrapper `-Preview` on `Invoke-1CEdit.ps1` before a metadata write: `auto` \| `on` \| `off` (toggled by `/previewmode`; canon — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`; never relaxes native `-DryRun` / `-Force` on deletions) | Defaulted | Empty / invalid = `auto` — preview only a `-Force` re-compile replacing an existing artifact whole |
+| `{AGENT_MODEL}` | Fallback and off switch of the active-model profile layer (`AGENTS.md → Active model adaptation`, `model-adaptation.md → Selecting the profile`): `opus5` \| `sonnet5` \| `fable5` \| `gpt56` \| `gpt6` \| `off`. Read at task time; edited by `/rulesmodel`. | Defaulted | Empty / unrecognised = profile by self-knowledge, or base ruleset |
 
 ### `CAVEMAN` — caveman auto-activation
 
-Controls **whether** the terse `caveman` communication style (`content/skills/caveman/SKILL.md`) turns on **automatically** and for **which** tasks. It is **Defaulted** — empty / invalid resolves to `auto`, and the agent **must not** ask for the value. It affects only presentation: model selection, the five-step development procedure, verification depth, and the mandatory report structure are all unchanged.
+Presentation only — procedure, verification depth and mandatory report structure are unchanged.
 
-| Value | Meaning |
-|---|---|
-| `auto` (default / empty) | The skill auto-classifies by task type: on for development (writing / editing / refactoring code, debugging, deploy, shell), off for analysis / review / documentation — where readable prose is the deliverable. |
-| `on` | `caveman` is active for **all** tasks — development and analysis / review / documentation alike. Only the skill's safety switches apply (code, error text, destructive / security / ordered blocks stay in normal grammar). |
-| `off` | Automatic activation is disabled — `caveman` never turns on by itself on any task. It can still be enabled by an explicit in-session force ("caveman please"), which holds until session end. |
+- **`auto` (default / empty)** — on for development (writing / editing / refactoring, debugging, deploy, shell), off for analysis / review / documentation.
+- **`on`** — active on all tasks (subject to the skill's safety switches).
+- **`off`** — no auto-activation; explicit session force still works.
 
-**Precedence:** an explicit session force always wins over `CAVEMAN`; otherwise the `CAVEMAN` value applies (`on` → all tasks, `auto` → by task type, `off` → no auto-on). The persistent value is edited by the `/caveman on|auto|off` command (`content/commands/caveman.md`); session-only force uses the phrases "caveman please" / "stop caveman" or a `/caveman lite|full|ultra` level switch.
+**Precedence:** session force ("caveman please" / "stop caveman" / `/caveman lite|full|ultra`) overrides `.dev.env`; persistent editor — `/caveman on|auto|off` (`content/commands/caveman.md`).
 
 ### `METADATA_PREVIEW` — wrapper dry-run before a metadata write
 
-Controls **when** `Invoke-1CEdit.ps1 -Preview` (run the tool, show a unified diff, restore the tree) precedes the same call without `-Preview`. The canonical editor is the `/previewmode` slash command (`on` / `auto` / `off`, plus `once` for a single session-scoped preview). Value semantics, what the wrapper previews and what it never does — `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`.
+Canonical editor: `/previewmode on|auto|off|once` (`once` = single session-scoped preview). Semantics and rollback boundaries: `content/skills/1c-metadata-manage/docs/edit-preview.md → When preview runs`.
 
 ## `CODE_OWNER` — who owns the code
 

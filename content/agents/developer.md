@@ -27,7 +27,7 @@ Handoff in / out — `content/rules/subagent-core.md → Handoff in / out (imple
 ## Form and Query Rules
 
 - **Forms:** load `content/rules/forms.md` first, then the companions it selects. Form-module BSL logic is regular code work; creating or structurally changing `Form.xml` / layouts / metadata objects falls under the inherited metadata gate — drive it through the `1c-metadata-manage` skill or report back for delegation to `1c-metadata-manager`.
-- Minimize client-server round trips; prefer `&НаСервереБезКонтекста` over `&НаСервере` when form context is not needed; prefer `Асинх` over `ОписаниеОповещения`.
+- Minimize client-server round trips; prefer `&НаСервереБезКонтекста` over `&НаСервере` when form context is not needed; prefer `Асинх` over `ОписаниеОповещения` when `PLATFORM_VERSION >= 8.3.18` (else `ОписаниеОповещения`; `standards(name="async-methods")`).
 - **Queries:** load `content/rules/query-design.md` first for any non-trivial query; hard rules in `standards(name="dev-standards-architecture") §3 → "Queries"`.
 
 ## Development Workflow

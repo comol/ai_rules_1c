@@ -1,5 +1,5 @@
 ---
-description: Retrieving routed 1C standards from `1C-docs-mcp` — the `standards` tool, the `standards(name="…") §N` reference form, paging, unavailable server. Load when following a `standards(name=…)` reference for the first time in a session.
+description: Retrieving routed 1C standards via 1C-docs-mcp `standards` tool — naming, paging, unavailable server. Load on the first `standards(name=…)` lookup in a session.
 alwaysApply: false
 category: tooling
 ---

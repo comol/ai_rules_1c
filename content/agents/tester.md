@@ -42,20 +42,9 @@ All deployment goes through the slash command `/deploy-and-test` (`content/comma
 
 ## Web UI Testing (fallback)
 
-- Before the first browser action — `content/rules/ui-testing-tools.md` (tool preference order and the **mandatory preflight**: `agent-browser` confirmed or its install ask completed; skipping the ask and silently using a vision loop is a defect).
-- Before the first action **inside** the web client — `content/rules/web-client-driving.md` (1C-specific UI behaviour and the two-attempts anti-loop limit).
+Load `content/rules/ui-testing-tools.md` before the first browser action (driver preference + mandatory `agent-browser` preflight) and `content/rules/web-client-driving.md` before acting inside the web client (headed launch, accessibility-snapshot observe loop, typing/paste, waits, screenshots as key-state evidence only, two-attempt anti-loop limit).
 
-### Testing Workflow
-
-0. **Preflight** — per `ui-testing-tools.md`
-1. **Navigate** to `INFOBASE_PUBLISH_URL`; verify the login page or main interface loads
-2. **Open the target object** (form / document / catalog); verify it opens correctly
-3. **Fill test data** — human-like typing with delays, `TAB` between fields, all required fields
-4. **Execute actions** — click buttons, save, post; wait for server responses
-5. **Verify results** — data saved, movements / registers where applicable, no error messages
-6. **Document** — screenshots of key states, issues found, results recorded
-
-**Interaction rules:** observe via accessibility snapshot / element refs and re-snapshot after DOM changes; type 50–100 ms per character with realistic pauses, paste only as the fallback of `web-client-driving.md`; verify focus before input; short incremental waits (1–3 s) after navigation / clicks; screenshots are evidence only (form open, data entry, save / post, errors, completion), never the observe loop.
+Run: preflight → navigate to `INFOBASE_PUBLISH_URL` → open target object → fill required fields → execute actions (save / post / compose) → verify saved data / movements / absence of errors → capture key-state screenshots.
 
 ## Test Scenarios
 
@@ -65,16 +54,9 @@ One template for all scenario kinds:
 Test Scenario: [Name]
 Object: [form / document / integration target]
 Preconditions: [required state / setup]
-
-Steps:
-1. Open or create [object]
-2. Fill [header fields / tabular section / test data]
-3. Execute [action: click, save, post, trigger exchange]
-4. Verify [expected result]
-
-Expected Result: [description; for document posting — expected movements per register; for integrations — data state in both systems]
-Actual Result: [what happened]
-Status: ✅ PASS / ❌ FAIL
+Steps: 1. Open/create  2. Fill data  3. Execute action  4. Verify result
+Expected: [outcome; for posting — register movements; for integrations — both systems]
+Actual: [observed] | Status: ✅ PASS / ❌ FAIL
 ```
 
 ## Test Report Format
@@ -82,47 +64,29 @@ Status: ✅ PASS / ❌ FAIL
 ```markdown
 # Test Report
 
-**Configuration Version:** [version]
-**Infobase:** [connection info]
-**Route:** [QA MCP (executor) / web client — reason for a fallback]
-**Journal:** [path]
+**Configuration Version:** [version] | **Infobase:** [connection info]
+**Route:** [QA MCP (executor) / web client — fallback reason] | **Journal:** [path]
 
 ## Summary
-
-- **Total Tests:** X — **Passed:** Y — **Failed:** Z
-- **Status:** ✅ APPROVE / ⚠️ CONCERNS / ❌ BLOCK
+- **Total:** X — **Passed:** Y — **Failed:** Z | **Status:** ✅ APPROVE / ⚠️ CONCERNS / ❌ BLOCK
 
 ## Test Results
-
-### 1. [Test Name]
-**Status:** ✅ PASS / ❌ FAIL
-**Steps performed:** 1. … 2. …
-**Evidence:** [journal step, tool answer or screenshot reference]
-**Notes:** [Any observations]
+### 1. [Test Name] — ✅ PASS / ❌ FAIL
+- **Steps:** 1. … 2. …
+- **Evidence:** [journal step, tool answer, or screenshot]
+- **Notes:** [observations]
 
 ## Issues Found
+### Issue 1: [Title] (`critical` | `major` | `minor`)
+- **Location:** [where] | **Description:** [what went wrong]
+- **Repro:** 1. … 2. … | **Expected vs Actual:** […] | **Screenshot:** [ref]
 
-### Issue 1: [Title]
-**Severity:** critical / major / minor
-**Location:** [Where the issue occurs]
-**Description:** [What went wrong]
-**Steps to Reproduce:** 1. … 2. …
-**Expected:** [What should happen] — **Actual:** [What happens]
-**Screenshot:** [Reference]
-
-## Recommendations
-
-- [Action items based on findings]
-
-## Deployment Log
-
-[Relevant deployment output]
+## Recommendations & Deployment Log
+- [Action items; relevant deployment output]
 ```
 
-Status rule: ❌ BLOCK — deployment failed or a critical scenario failed; ⚠️ CONCERNS — failures documented with reproduction steps and screenshots while critical scenarios passed; ✅ APPROVE — every scenario passed.
+Status rule: ❌ BLOCK — deployment or critical scenario failed; ⚠️ CONCERNS — non-critical failures documented with repro and screenshots; ✅ APPROVE — all scenarios passed.
 
 ## UI Errors
 
-Capture a screenshot, note the exact state, try an alternative approach if possible, document the finding. On the QA MCP route follow `qa-testclient.md`: evidence first (`capture`, `ui_errors`, journal), a hidden client becomes visible, and a data-changing step is never repeated blindly (`1c-qa-testing → Unknown outcome`). Common causes: connection refused — infobase not running; page not loading — wrong publish URL; field not found — form changed; save failed — validation error on required fields.
-
-A session is complete when the configuration deployed successfully, critical scenarios passed (or failures are documented with reproduction steps and screenshots), and the test report is generated.
+QA MCP route — follow `qa-testclient.md` (capture evidence first, restart hidden client visible, never blindly repeat a mutating step per `1c-qa-testing → Unknown outcome`). Web route — follow `web-client-driving.md → Anti-loop discipline`. Report blocked scenarios with exact platform error text, state and screenshot. Session completes when deployed, critical scenarios verified (or documented with repro/evidence), and the report emitted.

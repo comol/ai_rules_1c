@@ -1,5 +1,5 @@
 ---
-description: Configuration file synchronization contract — directions, export and import modes, partial loads, end-to-end order of dump, edit, load, check and DB update. Load before /loadfrom1cbase, /update1cbase, /getconfigfiles or a db-ops load or dump.
+description: Configuration sync contract — export/import modes, partial loads, dump-edit-load-check-apply order. Load before /loadfrom1cbase, /update1cbase, /getconfigfiles or db-ops.
 alwaysApply: false
 category: workflow
 ---
@@ -43,4 +43,4 @@ Add required parent descriptors / registrations for new objects and dependencies
 
 Every Designer launch of these stages reads its verdict from three signals — `content/rules/designer-batch-checks.md → The verdict is three signals, not the exit code`.
 
-Reference: 1C:Enterprise 8.3.27 Administrator Guide, [batch configuration commands](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Appendix_7._Startup_command-line_options_of_1C_Enterprise/7.4._Running_Designer_in_batch_mode/7.4.4._Configurations_and_extensions/?language=tr). Check version-dependent options against the target platform's installed help if the online guide is unavailable.
+Reference: 1C:Enterprise 8.3.27 Administrator Guide, [batch configuration commands](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Appendix_7._Startup_command-line_options_of_1C_Enterprise/7.4._Running_Designer_in_batch_mode/7.4.4._Configurations_and_extensions/). Check version-dependent options against the target platform's installed help if the online guide is unavailable.

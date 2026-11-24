@@ -47,7 +47,7 @@ Each subagent owns specific OpenSpec artifacts. Use this table to decide where a
 | **1c-planner** | `specs/`, `changes/<id>/proposal.md`, `design.md` | `changes/<id>/tasks.md` |
 | **1c-architect** | `specs/`, `changes/<id>/proposal.md` | `changes/<id>/design.md` |
 | **1c-arch-reviewer** | `changes/<id>/design.md`, `proposal.md`, `specs/` | review notes (no artifact writes) |
-| **1c-developer** | `specs/`, active `changes/<id>/` | code; ticks `tasks.md`; reports to the parent any delta change the implementation needs |
+| **1c-developer** | `specs/`, active `changes/<id>/` | code; reports verified task evidence to the parent, who ticks `tasks.md` after DoD reconciliation; reports any delta change the implementation needs |
 | **1c-metadata-manager** | `specs/`, active `changes/<id>/` | metadata XML/forms; reports to the parent the delta changes that new or changed metadata objects need |
 | **1c-refactoring** | `specs/`, active `changes/<id>/` | code; reports to the parent when observable behaviour changes |
 | **1c-performance-optimizer** | `specs/` (NFR/perf requirements) | code; reports to the parent when a perf NFR changes |

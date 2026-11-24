@@ -500,11 +500,9 @@ foreach ($file in $scanned) {
 
         foreach ($m in [regex]::Matches($line, $anchorPattern)) {
             $refFile = $m.Groups[1].Value
-            $section = $m.Groups[2].Value
-            # Nested anchors ("A -> B -> C"): only the first segment is reliably a
-            # heading; deeper ones are often list items (A.7, Gate 3a, section 8).
-            $section = ($section -split $ARROW)[0]
-            $section = ($section -replace $decorationPattern, '').Trim().TrimEnd('.', ',', ';').ToLowerInvariant()
+            $rawAnchor = $m.Groups[2].Value
+            $segments = @($rawAnchor -split $ARROW)
+            $section = ($segments[0] -replace $decorationPattern, '').Trim().TrimEnd('.', ',', ';').ToLowerInvariant()
             if (-not $section) { continue }
 
             # Anchors that are correct but cannot resolve to a heading:
@@ -536,7 +534,83 @@ foreach ($file in $scanned) {
             if (-not $hit) {
                 Add-Problem -Level warning -File $file.FullName -Line $lineNo -Message ("anchor '" + $section + "' not found as a heading in " + $refFile)
             }
+
+            if ($segments.Count -ge 2) {
+                $sub = ($segments[1] -replace $decorationPattern, '').Trim().TrimEnd('.', ',', ';').ToLowerInvariant()
+                $skipSub = (-not $sub) -or ($sub -match '^[a-z]\.\d+$') -or ($sub -match '^\d+$') -or $sub.StartsWith([string][char]0xA7) -or ($sub -match '[<>]')
+                if (-not $skipSub) {
+                    $subHit = $false
+                    foreach ($heading in $headings) {
+                        if ($heading -eq $sub -or $heading.Contains($sub) -or $sub.Contains($heading)) { $subHit = $true; break }
+                    }
+                    if (-not $subHit) {
+                        $targetBody = [System.IO.File]::ReadAllText($targetPath, [System.Text.Encoding]::UTF8).ToLowerInvariant()
+                        if ($targetBody.Contains($sub)) { $subHit = $true }
+                    }
+                    if (-not $subHit) {
+                        Add-Problem -Level warning -File $file.FullName -Line $lineNo -Message ("nested anchor '" + $sub + "' not found in " + $refFile)
+                    }
+                }
+            }
         }
+    }
+}
+
+# --------------------------------------------------------------------------
+# Ruleset hygiene - .dev.env.example key sync, orphan rules, English prose
+# --------------------------------------------------------------------------
+
+$envExamplePath = Join-Path $Root '.dev.env.example'
+if (Test-Path -LiteralPath $envExamplePath) {
+    $envRulesCombined = ''
+    foreach ($rel in @('content/rules/dev-standards-env.md', 'content/rules/dev-standards-env-process.md', 'content/rules/tool-policy.md')) {
+        $p = Join-Path $Root ($rel -replace '/', '\')
+        if (Test-Path -LiteralPath $p) {
+            $envRulesCombined += [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) + "`n"
+        }
+    }
+    $envLines = [System.IO.File]::ReadAllLines($envExamplePath, [System.Text.Encoding]::UTF8)
+    for ($i = 0; $i -lt $envLines.Count; $i++) {
+        if ($envLines[$i] -match '^#?\s*([A-Z][A-Z0-9_]+)=') {
+            $k = $Matches[1]
+            if ($envRulesCombined -notmatch ('(?<![A-Z0-9_])' + [regex]::Escape($k) + '(?![A-Z0-9_])')) {
+                Add-Problem -Level error -File $envExamplePath -Line ($i + 1) -Message ("env key '" + $k + "' is not documented in dev-standards-env*.md or tool-policy.md")
+            }
+        }
+    }
+}
+
+$scannedText = @{}
+foreach ($sf in $scanned) {
+    $scannedText[$sf.FullName] = [System.IO.File]::ReadAllText($sf.FullName, [System.Text.Encoding]::UTF8)
+}
+foreach ($rf in $ruleFiles) {
+    $stemPat = '(?<![A-Za-z0-9_-])' + [regex]::Escape($rf.BaseName) + '(\.md|(?![A-Za-z0-9_-]))'
+    $refCount = 0
+    foreach ($kv in $scannedText.GetEnumerator()) {
+        if ($kv.Key -eq $rf.FullName) { continue }
+        if ($kv.Value -match $stemPat) { $refCount++; break }
+    }
+    if ($refCount -eq 0) {
+        Add-Problem -Level warning -File $rf.FullName -Line 1 -Message 'orphan rule: no incoming reference from AGENTS.md, rules, agents, commands, skills or docs'
+    }
+}
+
+$openGuillemet = [string][char]0xAB
+$closeGuillemet = [string][char]0xBB
+$guillemetPat = $openGuillemet + '[^' + $closeGuillemet + ']+' + $closeGuillemet
+foreach ($rf in $ruleFiles) {
+    $lines = [System.IO.File]::ReadAllLines($rf.FullName, [System.Text.Encoding]::UTF8)
+    $inFence = $false
+    $cyrProse = 0
+    foreach ($l in $lines) {
+        if ($l -match '^```') { $inFence = -not $inFence; continue }
+        if ($inFence -or $l -match '^\s*(>|#|\|)') { continue }
+        $clean = $l -replace ($BT + '[^' + $BT + ']+' + $BT), '' -replace $guillemetPat, '' -replace '"[^"]+"', ''
+        if (([regex]::Matches($clean, '[\u0400-\u04FF]')).Count -ge 25) { $cyrProse++ }
+    }
+    if ($cyrProse -ge 3) {
+        Add-Problem -Level warning -File $rf.FullName -Line 1 -Message ($cyrProse.ToString() + ' lines of non-quoted Cyrillic prose - content/rules prose is English per AGENTS.md')
     }
 }
 

@@ -1,5 +1,5 @@
 ---
-description: Selected-object export from an infobase — minimal closure of the object list, ibcmd or Designer export, verdict check. Load for /getconfigfiles or a partial export; the synchronization contract is config-sync-contract.md.
+description: Selected-object export from an infobase — minimal closure, ibcmd or Designer export, verdict check. Load for /getconfigfiles or partial export.
 alwaysApply: false
 category: workflow
 ---

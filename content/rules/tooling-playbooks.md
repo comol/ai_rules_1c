@@ -1,5 +1,5 @@
 ---
-description: Per-task MCP tool playbooks — code writing, review, architecture, error fixing, performance, safe refactoring with impact analysis, metadata XML, forms, integrations. Load for code / review / debug / refactor / performance / metadata work.
+description: Per-task MCP playbooks — coding, review, architecture, debugging, performance, refactoring, metadata XML, forms, integrations. Load for full-cycle 1C work.
 alwaysApply: false
 category: tooling
 ---
@@ -14,7 +14,7 @@ Use the smallest set that closes the real context gaps; do not promote a task to
 
 | Task shape | Required before edit | Required after edit |
 |---|---|---|
-| **Quick-fix BSL** | The target module / procedure and any directly referenced helper needed to understand the change | The validator chain of the active `VERIFICATION_DEPTH` on the touched module (default `standard`: `syntaxcheck` → `check_1c_code`; `verification-policy.md → Verification depth levels`) |
+| **Quick-fix BSL** | `recall` (`project-memory.md`, first eligible reader); the target module / procedure and any directly referenced helper needed to understand the change | The validator chain of the active `VERIFICATION_DEPTH` on the touched module (default `standard`: `syntaxcheck` → `check_1c_code`; `verification-policy.md → Verification depth levels`) |
 | **Full-cycle BSL** | Common preamble below; `search_code` / `codesearch` for local patterns; `get_object_dossier` / `metadatasearch` when metadata shape affects the code; platform / БСП / ITS docs only when a versioned API or standard matters | The validator chain; impact analysis when public surface or metadata usage changed (`verification-gates.md → Gate 4`) |
 | **Metadata XML / forms** | Similar object / form examples, metadata lookup, `get_xsd_schema`; **the mutation goes through the `1c-metadata-manage` skill** (hard gate, `AGENTS.md → Skills and Subagents`) | `verify_xml`; the skill's validation / form compilation |
 | **Integrations / platform APIs** | Existing integrations, templates, relevant БСП APIs, platform docs for exact API names and version availability, security requirements | The validator chain; ITS check when relying on an ITS standard |
@@ -36,7 +36,7 @@ Load `content/rules/coding-standards.md` first; forms — `forms.md`; non-trivia
 2. `search_code` → `codesearch` — existing patterns in the configuration; `search_function` — an existing routine to reuse; `get_module_structure` — the module you will edit.
 3. `metadatasearch` / `get_metadata_details` — attribute names and types; `bsl_scope_members` — members of a context.
 4. `docinfo` (exact name) / `docsearch` (by description) — built-in functions; `ssl_search` — reusable БСП functions.
-5. Validator chain; then `vcvalidatequery` (`1c-data-mcp`, if exposed) for every new / non-trivial query string, especially after AI generation.
+5. Validator chain; then `vcvalidatequery` (`1c-data-mcp`, when exposed and on a dev / test IB — never on `INFOBASE_ROLE=prod`, `verification-gates.md → Gate 3a`) for every new / non-trivial query string, especially after AI generation.
 
 ## Code Review
 

@@ -55,7 +55,7 @@ Define observable success (reproduce the bug, enumerate invalid inputs, keep beh
 
 ### 5. Deliver Clearly
 
-Report changes, every modified file, checks and real limitations; for non-trivial BSL/metadata/spec work also the context sources used and relevant omissions. Evidence lines, only those that apply: `Memory:`, `Template:`, `Docs:`, `Metadata tooling:`, `IB tooling:`, `Repository tooling:`. Contract: `content/rules/verification-delivery.md`.
+Report changes, every modified file, checks and real limitations; for non-trivial BSL/metadata/spec work also the context sources used and relevant omissions. Evidence lines, only those that apply: `Memory:`, `Template:`, `Typical reuse:`, `Docs:`, `Metadata tooling:`, `IB tooling:`, `Repository tooling:`, `EDT tooling:`. Contract: `content/rules/verification-delivery.md`.
 
 ## Project info
 
@@ -115,7 +115,7 @@ Load `content/rules/<name>.md` on its trigger only; routers pull companions and 
 
 - settings, platform/ИБ, UI-test policy → `dev-standards-env`
 - typical-code changes, metadata naming → `dev-standards-change-markers`
-- new or restructured module / query / managed form → `module-structure` / `query-design` / `forms`
+- new or restructured module / query / form → `module-structure` / `query-design` / `forms`
 - code, review, debug, refactor, performance, metadata work → `tooling-playbooks`, except quick-fix (see `verification-policy`)
 - `USE_EDT=true` → `edt-workflow`; several source contours → `multi-contour-search`
 - applying a configuration/extension, missing MCP validators → `designer-batch-checks`

@@ -1,5 +1,5 @@
 ---
-description: Creating or substantially changing a managed form (`Form.xml` + `Form.Module.bsl`), including typical-form modification, element placement, fill checks, commands. Load from `forms.md` for any form creation or presentation task.
+description: Managed-form creation and structure (`Form.xml`) — typical-form edits, element placement, fill checks, commands, main attribute. Load from `forms.md` for form structure.
 alwaysApply: false
 category: forms
 ---

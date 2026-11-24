@@ -1,5 +1,5 @@
 ---
-description: Pitfalls of hand-edited 1C metadata XML — UID uniqueness, post-edit validation, plus EDT-format traps for review. Load when fixing metadata XML or `Form.xml` by hand under a skill exception, or reviewing a broken file.
+description: Hand-edited metadata XML pitfalls — UID uniqueness, validation, EDT review traps. Load only under a skill exception or when reviewing broken metadata XML.
 alwaysApply: false
 category: metadata
 ---

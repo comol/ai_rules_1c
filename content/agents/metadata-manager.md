@@ -1,6 +1,6 @@
 ---
 name: 1c-metadata-manager
-description: "1C metadata specialist: creates, edits, validates and removes configuration objects, forms, SKD, MXL, roles, EPF/ERF, CFE/CF, subsystems, command interfaces. For multi-step or multi-object work; an isolated addition stays with the parent."
+description: "1C metadata specialist: creates, edits, validates and removes objects, forms, SKD, MXL, roles, EPF/ERF, CFE/CF, subsystems, interfaces. For >=2 objects or multiple domains; single-object work stays with the parent."
 modelTier: coding
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Shell", "MCP"]
 isSubagent: true

@@ -71,6 +71,6 @@ At most **one** proposal per defect per session and at most two proposals per se
 | Writes to | this project's local `LLM-RULES.md` | the external support service |
 | Records | agent behaviour to change **in this project** | a defect of a shipped rule or MCP server |
 | Addressed to | yourself in later sessions | the product maintainers |
-| Example | "в нашем проекте не ставить маркеры доработки" | "правило ссылается на несуществующий файл" |
+| Example | "в нашем проекте не использовать краткие алиасы таблиц в запросах" | "правило ссылается на несуществующий файл" |
 
 A rule that is inconvenient, excessive or in conflict with the project's agreements is friction: a `rule-friction:` memory note and, when `AGENTS.md → Rules self-improvement` allows, a recommendation of `/evolve`. A rule that is wrong as such, or a tool that returns false results, is `/support`. In doubt — treat it as friction, not a ticket: a local correction is reversible, a ticket is not.

@@ -1,5 +1,5 @@
 ---
-description: Entry point for 1C query work — pick the exact companion rules and skill docs for writing, optimizing, and reviewing queries. Load first for any non-trivial query task; load companions only via the routing table below.
+description: Entry point for 1C queries — routes writing, optimization, anti-patterns, virtual-table rules and pre-flight checks. Load first for any non-trivial query task.
 alwaysApply: false
 category: development
 ---

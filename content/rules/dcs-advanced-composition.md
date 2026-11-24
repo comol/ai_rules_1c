@@ -1,5 +1,5 @@
 ---
-description: Advanced СКД composition — two-pass preprocessing of detail records before roll-up, direct query execution for memory-heavy reports. Load only when the standard `ПриКомпоновкеРезультата` override is not enough.
+description: Advanced СКД composition — two-pass detail preprocessing before roll-up, direct query execution. Load only when standard `ПриКомпоновкеРезультата` is not enough.
 alwaysApply: false
 category: development
 ---

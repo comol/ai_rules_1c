@@ -1,5 +1,5 @@
 ---
-description: Designer batch checks of a configuration or extension — `/CheckModules`, `/CheckConfig`, extension applicability, `/DumpResult` verdict, backup / rollback. Load before applying to an infobase or when MCP validators are not exposed.
+description: Designer batch checks — `/CheckModules`, `/CheckConfig`, extension applicability, three-signal `/DumpResult` verdict, backup/rollback. Load before IB apply or without MCP validators.
 alwaysApply: false
 category: quality
 ---

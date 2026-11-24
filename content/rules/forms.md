@@ -1,5 +1,5 @@
 ---
-description: Entry point for managed-form work — pick the exact companion rules for `Form.xml`, `Form.Module.bsl`, events, async code, reserved names, and XML validation. Load first for any form task; load companions only via the routing table below.
+description: Entry point for 1C form work — routes managed-form companions (Form.xml, Form.Module.bsl, events, async) and ordinary forms (form-ordinary). Load first for any form task.
 alwaysApply: false
 category: forms
 ---
@@ -24,7 +24,7 @@ This file is the **router** for managed-form work. Load it first, then load only
 | Client-server architecture (directives, round trips) | `standards(name="dev-standards-architecture") §3 → "Client-Server Interaction"`, `standards(name="anti-patterns") → "Excessive Client-Server Calls"`, `standards(name="anti-patterns") → "Using &НаСервере Instead of &НаСервереБезКонтекста"` |
 | Client-side async code (`Асинх` / `Ждать`) | `standards(name="async-methods")` |
 | Working on an adopted form of an extension | `standards(name="extension-patterns")`, `standards(name="dev-standards-architecture") §2` |
-| **Ordinary form (обычная форма)** — `Ext/Form.bin` (or `form.frm` beside it) and no `Form.xml` | `content/skills/form-ordinary/SKILL.md` — nothing on this page applies |
+| **Ordinary form (обычная форма)** — `Ext/Form.bin` (or `form.frm` beside it) and no `Form.xml` | `content/skills/form-ordinary/SKILL.md` — managed-form XML rules on this page do not apply (`form-module.md` still applies to its BSL module) |
 
 > **Ordinary forms are a different document, not a variant of this one.** A 1C form is either managed (`Forms/<Имя>/Ext/Form.xml`, declarative, `DataPath` bindings) or ordinary (`Forms/<Имя>/Ext/Form.bin`, a binary container holding the layout and the form module). The sidecar `Forms/<Имя>.xml` says which, via `<FormType>`. Everything on this page — `forms-add.md`, `standards(name="form-patterns")`, the `1c-metadata-manage` gate — is about the managed document. For an ordinary form the layout is a brace file inside a binary container: read, edit, generate and render it with the `form-ordinary` skill, and never hand-edit `Form.bin`. Its form module is regular BSL and `form-module.md` still applies to the code you put in it.
 

@@ -1,5 +1,5 @@
 ---
-description: Project parameters from .dev.env — classes and ask-policy, code generation, infobase / deployment keys, INFOBASE_ROLE, repository binding, UI_TESTING, USE_EDT. Process and model keys — dev-standards-env-process.md
+description: Project `.dev.env` parameters — classes, codegen, infobase/deploy, INFOBASE_ROLE, repository, UI_TESTING, USE_EDT. Process/model keys — dev-standards-env-process.md.
 alwaysApply: false
 category: development
 ---
@@ -42,7 +42,7 @@ No field in `.dev.env` blocks the entire ruleset. **Every parameter is task-scop
 
 Both these parameters and the practices they govern — adding a project prefix to new objects (`PREFIX`) and stamping modification comments with company / developer attribution (`COMPANY`, `DEVELOPER`) — are **recommendations**, not hard requirements. They reflect a project convention; their absence is not a defect, code without a prefix or without modification banners is fully valid. When any of the three is empty in `.dev.env`, do **not** ask the user — apply the fallback below silently and proceed.
 
-- **`PREFIX` is empty** — create new metadata objects, attributes, tabular sections, form elements, roles and subsystems **without a prefix**. Inside templates and examples, the placeholder `{PREFIX}` resolves to an empty string (`{PREFIX}ContractAmount` → `ContractAmount`, `{PREFIX}EventSubscriptions` → `EventSubscriptions`, `{PREFIX}AddedObjects` → `AddedObjects`). All other naming rules in `dev-standards-change-markers.md §4` still apply (synonyms, role naming inside subsystems, etc.). Naming collisions with typical metadata become the user's responsibility — flag any collision you notice, but do not invent a prefix to avoid it.
+- **`PREFIX` is empty** — create new metadata objects, attributes, tabular sections, form elements, roles and subsystems **without a prefix**. Inside templates and examples, the placeholder `{PREFIX}` resolves to an empty string (`{PREFIX}СуммаДоговора` → `СуммаДоговора`, `{PREFIX}ПодпискиНаСобытия` → `ПодпискиНаСобытия`, `{PREFIX}ДобавленныеОбъекты` → `ДобавленныеОбъекты`). All other naming rules in `dev-standards-change-markers.md §4` still apply (synonyms, role naming inside subsystems, etc.). Naming collisions with typical metadata become the user's responsibility — flag any collision you notice, but do not invent a prefix to avoid it.
 - **`COMPANY` or `DEVELOPER` is empty** — do **not** emit modification markers (`COMMENT_OPEN` / `COMMENT_CLOSE`) in any module, even when modifying typical (standard) code. Removed typical code is still commented out, not deleted, and new procedures in typical modules are still placed at the end of the relevant region — but without the surrounding `// +++ … / // --- …` banners. The single header block for entirely new (non-typical) modules described in `dev-standards-change-markers.md §3` is also skipped when either parameter is empty.
 - **Both fallbacks are independent** — an empty `PREFIX` does not suppress markers, and empty `COMPANY` / `DEVELOPER` does not enable a prefix.
 - **`{TASK}` is irrelevant when markers are not emitted** — do not ask for it.

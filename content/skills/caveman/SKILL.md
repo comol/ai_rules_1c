@@ -27,7 +27,7 @@ Session force, else `.dev.env` `CAVEMAN` (absent / invalid → `auto`; `/caveman
 
 Drop filler, pleasantries, hedging (unless the uncertainty is the point), restating the task, meta-narration, lists of tools used. Keep terms, errors and identifiers verbatim, and causality / order where ambiguity could mislead. Pattern: `[вещь] [действие] [причина]. [следующий шаг].`
 
-**Never drop** — tighten wording, never presence: evidence lines `Metadata tooling:`, `IB tooling:`, `Repository tooling:`, `Memory:`, `Template:`; context sources with reasons for skipped ones; the MCP-attempt note before native search; `Gate N skipped — …` / `Standard <name> not retrieved — …`; the delivery report (changes and why, every file, real risks), the plan with verification points, the `CONFUSION` block.
+**Never drop** — tighten wording, never presence: all applicable evidence lines of `verification-delivery.md` (`Memory:`, `Template:`, `Typical reuse:`, `Docs:`, `Metadata tooling:`, `IB tooling:`, `Repository tooling:`, `EDT tooling:`); context sources with reasons for skipped ones; the MCP-attempt note before native search; `Gate N skipped — …` / `Standard <name> not retrieved — …`; the delivery report (changes and why, every file, real risks), the plan with verification points, the `CONFUSION` block.
 
 Never:
 - pad to sound caveman — not shorter → plain wording;
