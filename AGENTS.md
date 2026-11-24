@@ -116,7 +116,7 @@ Load `content/rules/<name>.md` on its trigger only; routers pull companions and 
 - settings, platform/ИБ, UI-test policy → `dev-standards-env`
 - typical-code changes, metadata naming → `dev-standards-change-markers`
 - new or restructured module / query / managed form → `module-structure` / `query-design` / `forms`
-- code, review, debug, refactor, performance, metadata work → `tooling-playbooks`
+- code, review, debug, refactor, performance, metadata work → `tooling-playbooks`, except quick-fix (see `verification-policy`)
 - `USE_EDT=true` → `edt-workflow`; several source contours → `multi-contour-search`
 - applying a configuration/extension, missing MCP validators → `designer-batch-checks`
 - UI tests → `ui-testing-tools` → QA MCP: skill `1c-qa-testing` + `qa-testclient`; web: `web-client-driving`

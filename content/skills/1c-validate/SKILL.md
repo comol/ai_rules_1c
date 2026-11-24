@@ -7,7 +7,7 @@ allowed-tools: mcp__1c-syntax-checker-mcp__syntaxcheck_file, mcp__1c-syntax-chec
 
 # 1c-validate — the validator chain
 
-Order for touched BSL: `syntaxcheck_file` → `check_1c_code` → `review_1c_code`, at the depth of `VERIFICATION_DEPTH` and within the budget of `content/rules/verification-policy.md → Validator budget` (one clean pass on the latest state; after a blocking fix one confirmation at `standard`, up to two at `full`; never a run on unchanged content). Pure metadata XML without BSL: `verify_xml` once. Which gates a change needs — `content/rules/verification-gates.md`.
+Select BSL validators from the depth table in `content/rules/verification-policy.md` using the task path and explicit review request. Run the selected chain in order on the saved modules, within that policy's retry budget. Changed metadata XML also requires `verify_xml`. Full-cycle gate procedures and unavailable validators — `content/rules/verification-gates.md`.
 
 ## Tools and exact arguments
 

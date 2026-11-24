@@ -104,6 +104,31 @@ function Write-Utf8 {
     [System.IO.File]::WriteAllText($Path, $Text, $utf8)
 }
 
+function Get-SearchOrderPattern {
+    param([string]$RequiredTool)
+    # The CLI's regex target "trace" is newline-delimited compact JSON. Look at
+    # tool_use blocks, not tool names quoted in assistant text or tool results.
+    # On these search tools the arguments are flat. Skip complete members so
+    # reordered keys, escaped quotes and braces inside a path/pattern are safe.
+    $string = '"(?:[^"\\]|\\.)*"'
+    $flatObject = '\{(?:' + $string + '|[^{}"\n])*\}'
+    $value = '(?:' + $string + '|' + $flatObject + '|true|false|null|-?[0-9.]+)'
+    $members = '(?:' + $string + ':' + $value + ',)*'
+    $toolUse = '\{(?=' + $members + '"type":"tool_use")'
+    $mcp = $toolUse + '(?=' + $members + '"name":"' + [regex]::Escape($RequiredTool) + '")'
+
+    # Only the destination of a native call exempts a rules/settings read.
+    $settingsPath = '(?:[^"\\]|\\.)*?(?:\.claude[/\\]|\.dev\.env"|AGENTS\.md"|CLAUDE\.md"|RULES\.md"|memory\.md"|openspec[/\\])'
+    $inputField = $members + '"input":\{' + $members
+    $settings = $inputField + '"(?:file_path|path|glob)":"' + $settingsPath
+    $rulesGlob = '(?=' + $members + '"name":"Glob")' + $inputField + '"pattern":"' + $settingsPath
+    $native = $toolUse + '(?=' + $members + '"name":"(?:Grep|Glob|Read)")' + '(?!' + $settings + '|' + $rulesGlob + ')'
+
+    # Reach the first required MCP call without crossing a native source search.
+    # Nothing is required after MCP. Multiple tool_use blocks can share a line.
+    return '^(?:(?!' + $native + ')[\s\S])*?' + $mcp
+}
+
 function ConvertTo-PosixPath {
     # The scaffold runs under bash; on Windows that is Git Bash (C:\x -> /c/x).
     param([string]$Path)
@@ -338,6 +363,17 @@ foreach ($sc in @($corpus.scenarios)) {
     # A native tool on the "after" side must not match reading the ruleset or
     # the project settings: the mcp-policy gate makes that the first action.
     $n = 0
+    $beforeSearch = [string](Get-Field $sc 'before_native_search' '')
+    if ($beforeSearch) {
+        $requiredTool = Resolve-ToolName $beforeSearch
+        $orderPattern = Get-SearchOrderPattern $requiredTool
+        $grader = @(
+            '---', 'name: search-order', 'type: regex', 'target: trace',
+            ("pattern: '" + $orderPattern + "'"), 'match: contains', '---',
+            ($requiredTool + ' must precede any native source search. An MCP-only answer is sufficient.')
+        )
+        Write-Utf8 (Join-Path $gradersDir 'search-order.md') (($grader -join "`n") + "`n")
+    }
     foreach ($pair in @(Get-Field $sc 'order')) {
         $n++
         $after = Resolve-ToolName ([string]$pair.after)

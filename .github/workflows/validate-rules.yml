@@ -169,6 +169,10 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Replay optional native search against rendered graders
+        shell: powershell
+        run: node tools/tests/search-order-regression.mjs "$env:RUNNER_TEMP\gate-evals"
+
       - name: Support-guard hook (Node hook vs PowerShell guard)
         shell: powershell
         run: .\tools\tests\support-guard-hook.ps1 -RequireNode

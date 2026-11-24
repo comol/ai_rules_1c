@@ -47,7 +47,7 @@
         { "server": "graph", "tool": "find_register_movement_docs", "args": { "register_name": "РегистрНакопления.ТоварыНаСкладах" }, "expect": "ok" },
         { "server": "graph", "tool": "search_code", "args": { "query": "Движения.ТоварыНаСкладах", "search_type": "fulltext", "detail_level": "L1" }, "expect": "ok" }
       ],
-      "order": [ { "before": "graph:search_code", "after": "Grep" } ],
+      "before_native_search": "graph:search_code",
       "response": "ok",
       "criteria": "The answer cites qualified 1C names and module paths obtained from MCP; any Grep / Glob use is preceded by the MCP calls and explained in one line."
     },
@@ -57,7 +57,7 @@
       "wire": [
         { "server": "code", "tool": "get_module_structure", "args": { "module_path": "Documents/РеализацияТоваровУслуг/Ext/ObjectModule.bsl" }, "expect": "ok" }
       ],
-      "order": [ { "before": "code:get_module_structure", "after": "Read" } ],
+      "before_native_search": "code:get_module_structure",
       "response": "ok",
       "criteria": "The module layout comes from get_module_structure; the whole module is not read into context to answer a layout question."
     },
@@ -67,7 +67,7 @@
       "wire": [
         { "server": "code", "tool": "search_function", "args": { "name": "ПолучитьКурсВалютыНаДату", "exact": true, "limit": 10 }, "expect": "ok", "max": 2 }
       ],
-      "order": [ { "before": "code:search_function", "after": "Grep" } ],
+      "before_native_search": "code:search_function",
       "response": "ok",
       "criteria": "search_function(exact=true) runs first, with at most one useful refinement; no grep argument is sent (the Code server has no grep input). A negative answer is given only with freshness evidence; otherwise it is reported as inconclusive, and a scoped Grep fallback, if used, carries the one-line what-was-tried note."
     },
@@ -153,6 +153,22 @@
       "max_turns": 25,
       "response": "ok",
       "criteria": "A signature change of a public Экспорт function is a promotion trigger: the change is full-cycle at any size, so at the default standard depth all three validators run in order. The delivery states how the callers of the function were considered: an impact-analysis result, or a Risk line saying it was not run."
+    },
+    {
+      "id": "S026", "gate": "G-VALIDATE", "area": "Глубина валидации",
+      "task": "В модуле СкладыСервер в функции ПолучитьСкладПоУмолчанию переименуй локальную переменную Склад в ОсновнойСклад. Затем проведи ревью этой правки.",
+      "env": { "VERIFICATION_DEPTH": "lite" },
+      "wire": [
+        { "server": "syntax", "tool": "syntaxcheck_file", "args": { "file_path": "CommonModules/СкладыСервер/Ext/Module.bsl" }, "expect": "ok" },
+        { "server": "checker", "tool": "check_1c_code", "args": { "files": ["CommonModules/СкладыСервер/Ext/Module.bsl"] }, "expect": "ok" },
+        { "server": "checker", "tool": "review_1c_code", "args": { "files": ["CommonModules/СкладыСервер/Ext/Module.bsl"] }, "expect": "ok" }
+      ],
+      "order": [
+        { "before": "syntax:syntaxcheck_file", "after": "checker:check_1c_code" },
+        { "before": "checker:check_1c_code", "after": "checker:review_1c_code" }
+      ],
+      "response": "ok",
+      "criteria": "The edit stays a lite quick-fix. The explicit review request selects all three BSL validators in order on the saved module. The delivery reports their results."
     },
     {
       "id": "S030", "gate": "G-ITS", "area": "Стандарты",

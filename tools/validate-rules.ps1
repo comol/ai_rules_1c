@@ -65,6 +65,10 @@
     Byte ceiling for AGENTS.md. Ratchet it downward as the file shrinks; never
     raise it without a deliberate decision.
 
+.PARAMETER Release
+    Require the standards checkout via -StandardsDir or ONEC_STANDARDS_DIR.
+    Report the Git revision whose standard bodies were checked.
+
 .PARAMETER RuleMaxBytes
     Byte ceiling for one file under content/rules. Above it, split detail into
     a companion rule loaded on its own trigger.
@@ -82,6 +86,9 @@
 .PARAMETER SubagentStartMaxBytes
     Byte ceiling for AGENTS.md + content/rules/subagent-core.md + the largest
     agent prompt - the context every subagent pays before its first action.
+
+.PARAMETER QuickFixSearchMaxBytes
+    Byte ceiling for a quick-fix that first locates the procedure by MCP search.
 
 .PARAMETER SkillDescriptionMaxBytes
     Byte ceiling for one skill description. Hosts list every skill description
@@ -126,7 +133,9 @@ param(
     [int]$SkillDescriptionTotalMaxBytes = 6144,
     [int]$AgentDescriptionTotalMaxBytes = 3072,
     [int]$RuleDescriptionTotalMaxBytes = 11264,
-    [switch]$Strict
+    [switch]$Strict,
+    [switch]$Release,
+    [int]$QuickFixSearchMaxBytes = 81920
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +147,9 @@ $Root = (Resolve-Path -LiteralPath $Root).Path
 # corpus). Resolve the directory once: parameter -> ONEC_STANDARDS_DIR -> a
 # sibling MCP_Docs_new checkout -> none (body and heading checks are skipped).
 if (-not $StandardsDir) { $StandardsDir = $env:ONEC_STANDARDS_DIR }
+if ($Release -and (-not $StandardsDir -or -not (Test-Path -LiteralPath $StandardsDir -PathType Container))) {
+    throw 'Release validation requires an existing standards checkout via -StandardsDir or ONEC_STANDARDS_DIR.'
+}
 if (-not $StandardsDir) {
     $sibling = Join-Path $Root '..\..\MCP_Docs_new\data\corpora\1c-standards\content\standards'
     if (Test-Path -LiteralPath $sibling) { $StandardsDir = (Resolve-Path -LiteralPath $sibling).Path }
@@ -554,6 +566,17 @@ $scaffold     = @('Where this standard lives', 'Sections')
 $routedCount  = 0
 if ($standardsDir) {
     Write-Host ('Standards bodies: ' + $standardsDir)
+    if ($Release) {
+        $revision = git -C $standardsDir rev-parse --verify HEAD
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the Git revision of the standards corpus.' }
+        $bodyNames = @(Get-ChildItem -LiteralPath $standardsDir -File -Filter '*.md' | Select-Object -ExpandProperty Name)
+        if ($bodyNames.Count -eq 0) { throw 'The standards corpus contains no Markdown bodies.' }
+        git -C $standardsDir ls-files --error-unmatch -- $bodyNames | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The standards revision does not track every body being checked.' }
+        $changes = git -C $standardsDir status --porcelain -- '*.md'
+        if ($LASTEXITCODE -ne 0 -or $changes) { throw 'Cannot verify the standards bodies against the recorded Git revision.' }
+        Write-Host ('Standards revision: ' + $revision)
+    }
 }
 else {
     Write-Host 'Standards bodies: not available - body and heading checks skipped (pass -StandardsDir or set ONEC_STANDARDS_DIR)' -ForegroundColor Yellow
@@ -708,6 +731,12 @@ if (Test-Path -LiteralPath $scenarioPath) {
             if ($gateIds.Contains($g)) { $gateUse[$g]++ } else { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' names unknown gate ' + $g) }
             if (-not [string]$sc.task) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' has no task') }
             if (-not [string]$sc.criteria) { Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: scenario ' + $sid + ' has no criteria') }
+            if ($sc.PSObject.Properties['before_native_search']) {
+                $requiredCalls = @($sc.wire | ForEach-Object { [string]$_.server + ':' + [string]$_.tool })
+                if ($requiredCalls -notcontains $sc.before_native_search) {
+                    Add-Problem -Level error -File $scenarioPath -Message ('gate scenarios: ' + $sid + ' before_native_search must name a required wire call')
+                }
+            }
             foreach ($step in @($sc.wire)) {
                 $srv = [string]$step.server
                 $tool = [string]$step.tool
@@ -854,9 +883,19 @@ foreach ($rel in $quickFixFiles) {
     if (Test-Path -LiteralPath $path) { $quickBytes += Get-BudgetBytes $path }
     else { Add-Problem -Level error -File $path -Message 'quick-fix budget: listed file is missing - update $quickFixFiles' }
 }
-Write-Host ('Quick-fix load set: {0:N0} bytes (~{1:N0} tokens), ceiling {2:N0}' -f $quickBytes, [math]::Round($quickBytes / 3.7), $QuickFixMaxBytes)
+Write-Host ('Quick-fix (known target): {0:N0} bytes (~{1:N0} tokens), ceiling {2:N0}' -f $quickBytes, [math]::Round($quickBytes / 3.7), $QuickFixMaxBytes)
 if ($quickBytes -gt $QuickFixMaxBytes) {
     Add-Problem -Level error -File (Join-Path $Root 'content/rules/verification-policy.md') -Message ('quick-fix load set exceeded: ' + $quickBytes + ' bytes > ' + $QuickFixMaxBytes + '. A quick-fix closes on the Quick-fix gate alone; move full-cycle detail back to its owner.')
+}
+
+# Locating a procedure adds the source-discovery rule and the code-search skill.
+$searchBytes = $quickBytes
+foreach ($rel in @('content/rules/mcp-first-search.md', 'content/skills/1c-code-search/SKILL.md')) {
+    $searchBytes += Get-BudgetBytes (Join-Path $Root $rel)
+}
+Write-Host ('Quick-fix (with code search): {0:N0} bytes (~{1:N0} tokens), ceiling {2:N0}' -f $searchBytes, [math]::Round($searchBytes / 3.7), $QuickFixSearchMaxBytes)
+if ($searchBytes -gt $QuickFixSearchMaxBytes) {
+    Add-Problem -Level error -File (Join-Path $Root 'AGENTS.md') -Message ('quick-fix search load set exceeded: ' + $searchBytes + ' bytes > ' + $QuickFixSearchMaxBytes)
 }
 
 $corePath = Join-Path $Root 'content/rules/subagent-core.md'
