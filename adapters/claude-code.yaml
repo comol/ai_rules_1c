@@ -59,8 +59,10 @@ agents:
       # the server-level forms `mcp__<server>`, `mcp__<server>__*`, `mcp__*`
       # (no glob on the tool part). So the state-changing tools of the servers
       # this ruleset installs are denied by full name, action-only servers as
-      # a whole, plus built-ins that act outside the session. User-added
-      # servers are not covered; extend the list for them.
+      # a whole, plus built-ins that act outside the session. `register_graph_project`
+      # stays: it only fills the in-memory registry the graph server loses at
+      # every restart, and without it the reads answer project_not_accessible.
+      # User-added servers are not covered; extend the list for them.
       readOnly:
         whenNoneOf: [Write, Edit, Shell]
         deny:
@@ -72,8 +74,18 @@ agents:
           - mcp__1c-templates-mcp__add_template
           - mcp__1c-templates-mcp__plugin_reload
           - mcp__1c-code-metadata-mcp__reindex
+          - mcp__1c-code-metadata-mcp__plugin_reload
+          - mcp__1c-code-metadata-mcp__register_external_result_link
           - mcp__1c-code-metadata-mcp__unpack_ordinary_form
           - mcp__1c-code-metadata-mcp__build_ordinary_form
+          - mcp__1c-graph-metadata-mcp__refresh_graph_project
+          - mcp__1c-graph-metadata-mcp__refresh_extension_layers
+          - mcp__1c-graph-metadata-mcp__delete_graph_project
+          - mcp__1c-graph-metadata-mcp__reload_plugins
+          - mcp__1c-graph-metadata-mcp__unpack_ordinary_form
+          - mcp__1c-graph-metadata-mcp__build_ordinary_form
+          - mcp__1c-syntax-checker-mcp__plugin_reload
+          - mcp__1c-ssl-mcp__plugin_reload
           - mcp__cognee-memory__remember
           - mcp__cognee-memory__forget
           - mcp__openviking__remember

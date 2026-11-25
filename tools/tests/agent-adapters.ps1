@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Offline installer regressions for ZCode, MiMo Code, Kimi, Cline, Command Code and Codex.
+    Offline installer regressions for Claude Code, ZCode, MiMo Code, Kimi, Cline, Command Code and Codex.
 .DESCRIPTION
     Runs the real installer and adapters against a small source fixture. Checks
     discovery, permissions, MCP shape, update ownership and scoped removal.
@@ -64,6 +64,43 @@ try {
     }
     $catalog = '{"servers":[{"id":"fixture-http","url":"http://127.0.0.1:1/mcp","headers":{"X-Test":"fixture"},"connectionId":"omit-in-strict-clients","description":"fixture"},{"id":"fixture-stdio","command":"node","args":["server.js"],"env":{"FIXTURE":"yes"}},{"id":"user-collision","url":"http://127.0.0.1:2/mcp"}]}'
     Write-Fixture (Join-Path $SourceRoot 'content/mcp-servers.json') $catalog
+
+    # Claude Code: a read-only agent inherits the whole MCP pool, so the adapter denies the
+    # state-changing tools of the servers this ruleset installs (toolsToDenylist.readOnly).
+    $claudeProject = Join-Path $Work 'claude-code'
+    [void][IO.Directory]::CreateDirectory((Join-Path $claudeProject '.claude'))
+    $null = Invoke-Installer $claudeProject @('init', '-Tools', 'claude-code')
+    $claudeReader = Get-Content -LiteralPath (Join-Path $claudeProject '.claude/agents/explorer.md') -Raw
+    $claudeWriter = Get-Content -LiteralPath (Join-Path $claudeProject '.claude/agents/developer.md') -Raw
+    Assert-True ($claudeWriter -notmatch '(?m)^disallowedTools:') 'claude-code: writer unexpectedly restricted'
+    $denyMatch = [regex]::Match($claudeReader, '(?m)^disallowedTools:\s*"([^"\r\n]+)"')
+    Assert-True $denyMatch.Success 'claude-code: no reader denylist'
+    $denied = @($denyMatch.Groups[1].Value -split ',\s*')
+    foreach ($name in @('Write', 'Edit', 'Bash', 'PowerShell', 'Monitor', 'EnterWorktree', 'mcp__1c-data-mcp__vcexecutecode',
+            'mcp__1c-templates-mcp__remember', 'mcp__1c-code-metadata-mcp__reindex', 'mcp__1c-graph-metadata-mcp__delete_graph_project',
+            'mcp__edt-mcp__modify_metadata', 'mcp__agent-browser')) {
+        Assert-True ($denied -contains $name) "claude-code: reader keeps $name"
+    }
+    foreach ($name in @('Read', 'Grep', 'Glob', 'mcp__1c-templates-mcp', 'mcp__1c-templates-mcp__recall', 'mcp__1c-graph-metadata-mcp__register_graph_project', 'mcp__1c-data-mcp__vcexecutequery')) {
+        Assert-True ($denied -notcontains $name) "claude-code: reader lost $name"
+    }
+    # Every denied tool must be a known one, recorded from the server image or named in the
+    # tool docs (gated tools): a renamed tool would leave a dead entry and an open hole.
+    $toolDocs = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'content/skills/mcp-1c-tools/docs') -Filter '*.md' |
+            ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+    $denyWithTool = @($denied | Where-Object { $_ -match '^mcp__.+?__.+$' })
+    Assert-True ($denyWithTool.Count -gt 40) "claude-code: only $($denyWithTool.Count) full tool names denied"
+    foreach ($entry in $denyWithTool) {
+        $null = $entry -match '^mcp__(?<server>.+?)__(?<tool>.+)$'
+        $server = $Matches['server']; $toolName = $Matches['tool']
+        $recorded = Join-Path $RepoRoot "tools/tests/eval-mocks/$server/_tools.json"
+        $names = @()
+        if (Test-Path -LiteralPath $recorded) {
+            $names = @([regex]::Matches([IO.File]::ReadAllText($recorded), '(?m)^\s{0,8}"name":\s*"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+        }
+        Assert-True ($names -contains $toolName -or $toolDocs -match ('\b' + [regex]::Escape($toolName) + '\b')) "claude-code: unknown denied tool $entry"
+    }
+    Pass 'claude-code: read-only agents lose state-changing tools, writers keep theirs'
 
     $clients = @(
         @{ Id = 'zcode'; Dir = '.zcode'; Mcp = '.zcode/config.json' },
