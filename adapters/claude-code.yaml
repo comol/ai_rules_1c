@@ -60,8 +60,8 @@ agents:
       # (no glob on the tool part). So the state-changing tools of the servers
       # this ruleset installs are denied by full name, action-only servers as
       # a whole, plus built-ins that act outside the session. `register_graph_project`
-      # stays: it only fills the in-memory registry the graph server loses at
-      # every restart, and without it the reads answer project_not_accessible.
+      # stays: an older graph image loses its project registry at every restart,
+      # and without the call the reads answer project_not_accessible.
       # User-added servers are not covered; extend the list for them.
       readOnly:
         whenNoneOf: [Write, Edit, Shell]

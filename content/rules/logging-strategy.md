@@ -1,5 +1,5 @@
 ---
-description: Positive logging strategy for 1C — when to write to the event log, severity levels, category names, structured payload, secrets / PII bans. Load when code writes to the event log or a task asks for logging.
+description: Positive logging strategy for 1C — when to write to the event log, severity levels, category names, event context fields, secrets / PII bans. Load when code writes to the event log or a task asks for logging.
 alwaysApply: false
 category: development
 ---
