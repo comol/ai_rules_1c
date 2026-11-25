@@ -37,7 +37,7 @@ The same convention applies to `docs/*.md` references like `skills/1c-metadata-m
 
 XML saving in `form-edit`, `form-add`, `remove-form`, `form-compile` registration, `meta-edit`, `cf-edit`, `cfe-borrow` registration/merge, `skd-edit`, `subsystem-edit`, `subsystem-compile` registration, `interface-edit`, `role-edit`, `add-template` and `add-help` retains the input CRLF/LF style and uses Configurator's compact empty tags (`<Tag/>`). Formatting-only changes should not be repaired by a global replacement that can alter literal XML in comments or CDATA.
 
-On Windows use the shipped `.ps1` entry points. Before selecting a Linux/macOS runtime, using a Python port, or resolving a missing runtime, read [runtime-selection.md](docs/runtime-selection.md) for the exact supported commands and limitations. A missing runtime never permits hand-editing metadata XML.
+On Windows use the shipped `.ps1` entry points, started as `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>.ps1 …`: on a machine with the default Restricted policy Windows PowerShell 5.1 refuses a plain `-File` run ("running scripts is disabled on this system"), and `-ExecutionPolicy Bypass` is the per-process fix that changes no machine setting. Before selecting a Linux/macOS runtime, using a Python port, or resolving a missing runtime, read [runtime-selection.md](docs/runtime-selection.md) for the exact supported commands and limitations. A missing runtime never permits hand-editing metadata XML.
 
 ## Logical addressing and optional preview
 

@@ -7,7 +7,7 @@ Comprehensive configuration management: create scaffold, edit properties/composi
 ## 1. Init — Create Configuration Scaffold
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1 -Name "<Name>" [-Synonym "<text>"] [-OutputDir "<path>"] [-Version "<x.y.z.w>"] [-Vendor "<name>"] [-CompatibilityMode Version8_3_27] [-FormatVersion 2.20]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1 -Name "<Name>" [-Synonym "<text>"] [-OutputDir "<path>"] [-Version "<x.y.z.w>"] [-Vendor "<name>"] [-CompatibilityMode Version8_3_27] [-FormatVersion 2.20]
 ```
 
 Creates minimal configuration structure: `Configuration.xml`, `Languages/Русский.xml`, `Ext/ClientApplicationInterface.xml` and basic directory structure.
@@ -22,7 +22,7 @@ Creates minimal configuration structure: `Configuration.xml`, `Languages/Рус�
 ## 2. Edit — Modify Configuration Properties
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-edit.ps1 -ConfigPath '<path>' -Operation <op> -Value '<value>'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-edit.ps1 -ConfigPath '<path>' -Operation <op> -Value '<value>'
 ```
 
 | Parameter | Description |
@@ -73,7 +73,7 @@ Full property reference: [cf-edit-reference.md](../tools/1c-cf-manage/cf-edit-re
 ## 3. Info — Analyze Configuration Structure
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-info.ps1 -ConfigPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-info.ps1 -ConfigPath "<path>"
 ```
 
 Displays configuration properties, object counts by type, compatibility mode, version, and other key information.
@@ -83,7 +83,7 @@ Displays configuration properties, object counts by type, compatibility mode, ve
 ## 4. Validate — Check Configuration Correctness
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-validate.ps1 -ConfigPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-validate.ps1 -ConfigPath "<path>"
 ```
 
 | Parameter | Description |
@@ -115,7 +115,7 @@ For a **complete hierarchical Designer XML dump**, run the read-only composition
 check after `cf-validate` (or `cfe-validate` for an extension):
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/dump-validate.ps1 -ConfigPath "<dump-directory>" -Format Json
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/dump-validate.ps1 -ConfigPath "<dump-directory>" -Format Json
 ```
 
 `ConfigPath` also accepts `Configuration.xml`. `Format` is `Text` by default or

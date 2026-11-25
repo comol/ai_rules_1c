@@ -57,7 +57,7 @@ Changing support state is the right call when the change genuinely cannot live i
 ## Part 3: `support-edit` — Changing the State
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-support-manage/scripts/support-edit.ps1 -Path "<target>" -Set editable
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-support-manage/scripts/support-edit.ps1 -Path "<target>" -Set editable
 ```
 
 | Parameter | Description |

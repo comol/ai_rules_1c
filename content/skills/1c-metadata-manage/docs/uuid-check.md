@@ -34,7 +34,7 @@ Slash command: `/check-uuid` (source: `content/commands/check-uuid.md`).
 ## Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1 -ConfigPath "<src>" [-IncludeIntra] [-Fix]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1 -ConfigPath "<src>" [-IncludeIntra] [-Fix]
 ```
 
 Exit codes: `0` — clean (or repaired), `1` — duplicates found.

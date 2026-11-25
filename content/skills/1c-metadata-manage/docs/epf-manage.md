@@ -23,7 +23,7 @@ Generates the minimal set of XML source files for a 1C external data processor: 
 ### Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-epf-scaffold/scripts/init.ps1 -Name "<Name>" [-Synonym "<Synonym>"] [-SrcDir "<SrcDir>"] [-FormatVersion "2.17"]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-epf-scaffold/scripts/init.ps1 -Name "<Name>" [-Synonym "<Synonym>"] [-SrcDir "<SrcDir>"] [-FormatVersion "2.17"]
 ```
 
 `-FormatVersion` (default `2.17`) is the dump format of the scaffold: a standalone EPF has no `Configuration.xml` to inherit it from, and the form / template / help tools read the version from this root file. Tested range `2.17`–`2.21`; outside it the scaffold is still emitted, with a warning on stderr; a malformed value exits 1. Use the version of the platform that will build it (`2.17` = 8.3.24, `2.21` = 8.5). The synonym is XML-escaped (`&`, `<`, `>`).
@@ -61,7 +61,7 @@ Generates the minimal set of XML source files for a 1C external report: root met
 ### Usage
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-erf-scaffold/scripts/init.ps1 -Name "<Name>" [-Synonym "<Synonym>"] [-SrcDir "<SrcDir>"] [-WithSKD] [-BspForms] [-FormatVersion "2.17"]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-erf-scaffold/scripts/init.ps1 -Name "<Name>" [-Synonym "<Synonym>"] [-SrcDir "<SrcDir>"] [-WithSKD] [-BspForms] [-FormatVersion "2.17"]
 ```
 
 | Parameter | Required | Default | Description |
@@ -120,7 +120,7 @@ Builds an EPF or ERF file from XML sources using the 1C platform. The same scrip
 ### Usage
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-epf-build/scripts/epf-build.ps1 <parameters>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-epf-build/scripts/epf-build.ps1 <parameters>
 ```
 
 | Parameter | Required | Description |
@@ -194,7 +194,7 @@ Disassembles an EPF or ERF file into XML sources using the 1C platform (hierarch
 ### Usage
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-epf-dump/scripts/epf-dump.ps1 <parameters>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-epf-dump/scripts/epf-dump.ps1 <parameters>
 ```
 
 | Parameter | Required | Description |
@@ -265,7 +265,7 @@ The script auto-detects the type (ExternalDataProcessor or ExternalReport).
 ### Usage
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-epf-validate/scripts/epf-validate.ps1 -ObjectPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-epf-validate/scripts/epf-validate.ps1 -ObjectPath "<path>"
 ```
 
 | Parameter | Required | Default | Description |

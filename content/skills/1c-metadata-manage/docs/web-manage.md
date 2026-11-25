@@ -101,7 +101,7 @@ If `.dev.env` has no infobase configured — stop and ask the user to fill `INFO
 Reports whether Apache is running, which infobases are published and the latest errors of the Apache log.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.ps1 [-ApachePath <path>]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.ps1 [-ApachePath <path>]
 ```
 
 Default `-ApachePath` is `tools/apache24` relative to the working directory (the project root).
@@ -120,7 +120,7 @@ How to read the output:
 Generates `default.vrd`, patches `httpd.conf`, downloads a portable Apache if needed, and starts the service.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1 `
     [-V8Path <path>] `
     [-InfoBasePath <path> | -InfoBaseServer <name> -InfoBaseRef <name>] `
     [-UserName <name>] [-Password <secret>] `
@@ -172,7 +172,7 @@ After success, report the URLs the script prints (`<host>` is the bind address o
 Stops Apache but keeps the publication entries in `httpd.conf` and the generated `default.vrd` files. Re-run `web-publish` with the same publication parameters to start it again.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1 [-ApachePath <path>]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1 [-ApachePath <path>]
 ```
 
 Use this when:
@@ -188,11 +188,11 @@ Use this when:
 Removes the publication block from `httpd.conf` and deletes the publication directory (including `default.vrd`). If this Apache instance is running, the script restarts it when other publications remain or stops it when none remain. The infobase itself is **not** touched.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
     -AppName <publication> `
     [-ApachePath <path>] -DryRun
 
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1 `
     -AppName <publication> `
     [-ApachePath <path>] -Force
 ```
