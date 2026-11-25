@@ -356,6 +356,30 @@ Register-Case 'commit: nothing changed creates no version and says so' {
     Assert-Contains $r.Out 'No new repository version was created' 'no version'
 }
 
+Register-Case 'commit: -CommentFile passes quotes and every line' {
+    param($Work)
+    $c = New-RepoCase $Work
+    $file = Join-Path $Work 'comment.txt'
+    $q = [string][char]34
+    [System.IO.File]::WriteAllText($file, ('TASK-1: ' + $q + 'x' + $q + "`r`nsecond line`n"), (New-Object System.Text.UTF8Encoding($true)))
+    $r = Invoke-RepoOps $c @('-Operation', 'commit', '-Objects', (N 'catalog'), '-CommentFile', $file) 'commit-unchanged.log' 0
+    Assert-Equal 0 $r.ExitCode 'exit code'
+    Assert-Contains $r.CommandLine ('-comment ' + $q + 'TASK-1: ' + $q + $q + 'x' + $q + $q + $q) 'quotes doubled, kept'
+    Assert-Contains $r.CommandLine ('-comment ' + $q + 'second line' + $q) 'second line'
+    $r = Invoke-RepoOps $c @('-Operation', 'commit', '-Objects', (N 'catalog'), '-CommentFile', $file, '-Comment', 'x') 'commit-unchanged.log' 0
+    Assert-Equal 1 $r.ExitCode 'both comments refused'
+    $r = Invoke-RepoOps $c @('-Operation', 'commit', '-Objects', (N 'catalog'), '-CommentFile', (Join-Path $Work 'missing.txt')) 'commit-unchanged.log' 0
+    Assert-Equal 1 $r.ExitCode 'missing file refused'
+    $r = Invoke-RepoOps $c @('-Operation', 'status', '-CommentFile', $file) '' 0
+    Assert-Equal 1 $r.ExitCode 'not a commit'
+    [System.IO.File]::WriteAllBytes($file, [byte[]](0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2))
+    $r = Invoke-RepoOps $c @('-Operation', 'commit', '-Objects', (N 'catalog'), '-CommentFile', $file) 'commit-unchanged.log' 0
+    Assert-Equal 1 $r.ExitCode 'a file that is not UTF-8 is refused'
+    [System.IO.File]::WriteAllText($file, "  `r`n")
+    $r = Invoke-RepoOps $c @('-Operation', 'commit', '-Objects', (N 'catalog'), '-CommentFile', $file) 'commit-unchanged.log' 0
+    Assert-Equal 1 $r.ExitCode 'an empty comment is refused'
+}
+
 Register-Case 'display: a short password is masked by its key, not as a substring' {
     param($Work)
     $c = New-RepoCase $Work

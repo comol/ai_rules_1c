@@ -12,7 +12,8 @@ Use this skill when the project's configuration is **bound to a 1C configuration
 `.dev.env` `REPOSITORY_PATH` is the explicit project statement "we work with a configuration repository":
 
 - **`REPOSITORY_PATH` is set** → repository mode is ON for the whole SDLC. Load [docs/repo-sdlc.md](docs/repo-sdlc.md) before the first mutation of configuration objects in the session: metadata edits, config loads and DB updates are constrained by repository locks, and finished work must be committed. Ignoring the binding is a defect — the local edit will either fail to save or diverge from the team's repository. Disconnecting the configuration from the repository is **forbidden** for as long as this mode is on (Safety invariant 5).
-- **`REPOSITORY_PATH` is empty** and the user asks for a repository operation → ask once for the repository address, write it to `REPOSITORY_PATH`, proceed.
+- **`REPOSITORY_PATH` is empty** and the user asks to **read** a repository (`status`, `history`, `dump`, `diff`) → ask once for the address and credentials, pass them in the call (`-RepositoryPath`, `-RepositoryUser`, `-RepositoryPassword`) and leave `.dev.env` alone: one history lookup must not switch the whole project to lock-before-edit.
+- **`REPOSITORY_PATH` is empty** and the user asks for `lock` / `update` / `commit` / `unlock` → ask once for the address and whether the project is developed through this repository. On «да» write `REPOSITORY_PATH` (repository mode is ON from now on) and proceed; otherwise report that these operations belong to repository mode and stop.
 - **`REPOSITORY_PATH` is empty** and nothing in the task mentions a repository → this skill does not apply; never ask about it up front.
 
 Parameter canon (classes, empty-value behavior): `content/rules/dev-standards-env.md → Infobase / deployment parameters`.

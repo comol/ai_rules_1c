@@ -1,4 +1,4 @@
-﻿# repo-ops v1.2 — 1C configuration repository (хранилище конфигурации) operations
+﻿# repo-ops v1.3 — 1C configuration repository (хранилище конфигурации) operations
 # Part of the 1c-repository-manage skill (1c-rules).
 # Conventions follow 1c-metadata-manage/tools/1c-db-ops (encoding fallback,
 # non-interactive launch, secret masking, exit-0 log-lie detection, /DumpResult).
@@ -8,6 +8,8 @@
 # v1.2 (2026-11-12) fixes found on a live repository (8.3.27): diff without -Version
 # resolves the head first, a forced unlock that leaves another user's lock in place is
 # a failure.
+# v1.3 (2026-11-25): -CommentFile, a 600 s default timeout for the operations that are safe
+# to repeat, short passwords masked by their key.
 <#
 .SYNOPSIS
     Операции с хранилищем конфигурации 1С в пакетном режиме Конфигуратора.
@@ -53,6 +55,9 @@
 
 .EXAMPLE
     .\repo-ops.ps1 -Operation commit -Objects "Справочник.Номенклатура" -Comment "Задача 123: новый реквизит"
+
+.EXAMPLE
+    .\repo-ops.ps1 -Operation commit -Objects "Справочник.Номенклатура" -CommentFile "C:\Temp\comment.txt"
 #>
 
 [CmdletBinding(PositionalBinding=$false)]
@@ -68,6 +73,11 @@ param(
 
     [Parameter(Mandatory=$false)]
     [string]$Comment,
+
+    # UTF-8 text file with the commit comment: Windows PowerShell 5.1 drops the quotes of a
+    # -Comment value passed through powershell -File and breaks on a multi-line one.
+    [Parameter(Mandatory=$false)]
+    [string]$CommentFile,
 
     # -1 = latest version: -v is omitted (the platform takes the head); diff reads the head
     # number first, because /CompareCfg requires -SecondVersion for the repository side
@@ -119,7 +129,10 @@ param(
     [Parameter(Mandatory=$false)]
     [int]$MaxReportChars = 16000,
 
-    # 0 = no timeout. On expiry the Designer process is killed and exit is 1.
+    # On expiry the Designer process is killed and exit is 1; 0 = no timeout. Not given:
+    # 600 for status / history / lock / unlock (short and safe to repeat), no timeout for
+    # diff / update / commit / dump - they take as long as the configuration is large, and
+    # killing a commit half-way leaves its result unknown.
     [Parameter(Mandatory=$false)]
     [int]$TimeoutSeconds = 0,
 
@@ -811,9 +824,35 @@ if ($objectList.Count -gt 0 -and -not (($objectOps + @('diff')) -contains $Opera
     exit 1
 }
 
+if (-not $PSBoundParameters.ContainsKey('TimeoutSeconds') -and @('status', 'history', 'lock', 'unlock') -contains $Operation) {
+    $TimeoutSeconds = 600
+}
+
+if ($CommentFile) {
+    if ($Operation -ne 'commit') {
+        Write-Host "Error: -CommentFile does not apply to '$Operation'" -ForegroundColor Red
+        exit 1
+    }
+    if ($Comment) {
+        Write-Host "Error: pass either -Comment or -CommentFile, not both" -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Test-Path -LiteralPath $CommentFile -PathType Leaf)) {
+        Write-Host "Error: -CommentFile not found: $CommentFile" -ForegroundColor Red
+        exit 1
+    }
+    try {
+        $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $Comment = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $CommentFile).ProviderPath, $strictUtf8)
+    } catch {
+        Write-Host "Error: -CommentFile is not valid UTF-8: $CommentFile" -ForegroundColor Red
+        exit 1
+    }
+}
+
 if ($Operation -eq 'commit') {
     if (-not $Comment -or -not $Comment.Trim()) {
-        Write-Host "Error: -Comment is required for commit (task reference + what changed)" -ForegroundColor Red
+        Write-Host "Error: -Comment or -CommentFile is required for commit (task reference + what changed)" -ForegroundColor Red
         exit 1
     }
 }
