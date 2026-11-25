@@ -54,6 +54,12 @@ Once a driver is chosen, load `web-client-driving.md` before the first action �
 
 Never invent a parallel stack (PowerShell screenshot loops, custom OCR, ad-hoc vision pipelines) while a tool from this list can cover the need.
 
+## agent-browser MCP wrapper and CLI
+
+Observed failure mode (agent-browser 0.37.1, MCP `core` profile, 1C web client, twice in independent sessions): every MCP call returned nothing until the client's timeout (`no response or progress for 1800s`) while Chrome was alive and the page had loaded. The cause was a JavaScript `confirm` raised by the page (`web-client-driving.md → Pitfalls measured on a live publication`). The CLI named the pending dialog at once; the `core` profile has no dialog tool — those are in the `tabs` profile, and whether `agent-browser mcp --tools core,tabs` avoids the hang is unverified.
+
+Workaround that held: drive the run through the CLI binary with the shell's own timeout per call — `agent-browser dialog status`, `agent-browser dialog accept` clear the page; on a shared host use your own `--namespace`. Take CLI syntax from the version-matched `agent-browser skills get core`, not from MCP argument names: the `screenshot` path is positional (`--path` fails with `Element not found: --path`), and `find` has no double-click action. In Windows PowerShell 5.1 call the binary directly (`& agent-browser eval $js`) — `Start-Process -ArgumentList` re-splits arguments with spaces and the JavaScript arrives cut. The CLI's stderr shows up as `NativeCommandError` records: that is its message, often the useful one, not a crash — judge by `$LASTEXITCODE` and do not add `2>&1`.
+
 ## Token discipline
 
 - Prefer **structured snapshots** (a11y tree / DOM refs) over images. Vision on full-page screenshots is the expensive path that `agent-browser` exists to avoid.
