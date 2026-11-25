@@ -64,7 +64,7 @@ node "<skill-dir>/scripts/md_to_docx.js" "<input.md>" "[output.docx]"
 - Lists: bulleted and numbered (with nesting); wrapped continuation lines join the same item. Each numbered list, including nested lists and lists inside quotes, starts at its first source ordinal (`4.` starts at 4); subsequent markers such as repeated `1.` continue that list. Blank lines between items keep a list together; a separate paragraph or another block ends it
 - Block quotes (`>`): marker stripped, wrapped lines joined, nested lists kept; left bar + indent
 - Paragraphs: hard-wrapped lines join until a blank line or the next block (heading, list, table, quote, fence, hr, image)
-- Inline formatting: **bold**, *italic*, `code`, [links](url)
+- Inline formatting: **bold**, *italic*, `code`, [links](url); `code`, links and *italic* nested inside **bold** (or `code` and links inside *italic*) keep both formats
 - Internal anchor links: `<a id="name"></a>` before a heading becomes a bookmark; `[text](#name)` links resolve to it (external `http(s)` / `mailto:` links stay external)
 - Images (`![alt](path)`) — resolved relative to the source MD folder; scaled down proportionally to fit the section's printable width and height, with room for paragraph spacing and one caption line (longer captions may continue on the next page)
 - Horizontal rules (`---`)
