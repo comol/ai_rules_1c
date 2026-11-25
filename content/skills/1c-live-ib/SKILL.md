@@ -2,7 +2,7 @@
 name: 1c-live-ib
 description: "Answer what only the running infobase knows — does a query parse, what it returns on real data, does a BSL fragment run, what the event log recorded — via the 1c-data-mcp service on the infobase. Read-only by default; any mutation needs explicit user consent."
 argument-hint: "<query text | bsl fragment | lasterror>"
-allowed-tools: mcp__1c-data-mcp__validatequery, mcp__1c-data-mcp__vcexecutequery, mcp__1c-data-mcp__vcexecutecode, mcp__1c-data-mcp__vcloggetlasterror
+allowed-tools: mcp__1c-data-mcp__vcvalidatequery, mcp__1c-data-mcp__vcexecutequery, mcp__1c-data-mcp__vcexecutecode, mcp__1c-data-mcp__vcloggetlasterror
 ---
 
 # 1c-live-ib — the running infobase
