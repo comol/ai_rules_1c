@@ -1,5 +1,6 @@
-﻿# subsystem-compile v1.39 — Create 1C subsystem from JSON definition
+﻿# subsystem-compile v1.40 — Create 1C subsystem from JSON definition
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: .dev.env SUPPORT_GUARD first (fail-closed on an unreadable bin); subsystem-validate is the
 #   sibling in this scripts dir, a missing validator or its non-zero exit is the exit code.
 [CmdletBinding(PositionalBinding=$false)]
@@ -874,7 +875,7 @@ if (-not $NoValidate) {
 		Write-Host ""
 		Write-Host "--- Running subsystem-validate ---"
 		$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
-		& $psExe -NoProfile -File $validateScript -SubsystemPath $targetXml
+		& $psExe -NoProfile -ExecutionPolicy Bypass -File $validateScript -SubsystemPath $targetXml
 		$script:validateExitCode = $LASTEXITCODE
 		if ($script:validateExitCode -ne 0) {
 			[Console]::Error.WriteLine("[ERROR] subsystem-validate завершился с кодом $($script:validateExitCode): файл записан, но проверка не пройдена. Разберите вывод выше перед загрузкой в базу.")

@@ -1,5 +1,6 @@
-﻿# cf-edit v1.37 — Edit 1C configuration root (Configuration.xml)
+﻿# cf-edit v1.38 — Edit 1C configuration root (Configuration.xml)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: .dev.env first: SUPPORT_GUARD (support guard, fail-closed on an unreadable bin) and
 #   NEW_OBJECT_POSITION (add-childObject: end by default, byName on request) win over .v8-project.json.
 # Local: cf-validate is the sibling in this scripts dir; a missing validator or its non-zero exit is the exit code.
@@ -1441,7 +1442,7 @@ if (-not $NoValidate) {
 		Write-Host ""
 		Write-Host "--- Running cf-validate ---"
 		$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
-		& $psExe -NoProfile -File $validateScript -ConfigPath $resolvedPath
+		& $psExe -NoProfile -ExecutionPolicy Bypass -File $validateScript -ConfigPath $resolvedPath
 		$script:validateExitCode = $LASTEXITCODE
 		if ($script:validateExitCode -ne 0) {
 			[Console]::Error.WriteLine("[ERROR] cf-validate завершился с кодом $($script:validateExitCode): изменение записано, но проверка не пройдена. Разберите вывод выше перед загрузкой в базу.")

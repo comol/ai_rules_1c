@@ -1,5 +1,6 @@
-﻿# meta-compile v1.132 — Compile 1C metadata object from JSON
+﻿# meta-compile v1.133 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: an existing object is refused unless -Force (upstream only warns; a recompile
 # gives the object a new uuid). NEW_OBJECT_POSITION and SUPPORT_GUARD come from .dev.env
 # first (.v8-project.json is the fallback); the support guard fails closed on an
@@ -288,7 +289,7 @@ if ($def -is [array] -or ($null -ne $def -and $def.GetType().BaseType.Name -eq '
 			$item | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $tmpJson
 			$psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell.exe' }
 			$forceArg = if ($Force) { " -Force" } else { "" }
-			$proc = Start-Process -FilePath $psExe -ArgumentList "-NoProfile -File `"$PSCommandPath`" -JsonPath `"$tmpJson`" -OutputDir `"$OutputDir`"$forceArg" -NoNewWindow -Wait -PassThru
+			$proc = Start-Process -FilePath $psExe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -JsonPath `"$tmpJson`" -OutputDir `"$OutputDir`"$forceArg" -NoNewWindow -Wait -PassThru
 			if ($proc.ExitCode -eq 0) { $batchOk++ } else { $batchFail++ }
 		} finally {
 			Remove-Item $tmpJson -Force -ErrorAction SilentlyContinue

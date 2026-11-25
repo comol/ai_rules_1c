@@ -330,6 +330,21 @@ Register-Case 'meta-edit: add-attribute keeps BOM, LF and tight self-closing tag
     Assert-True (($delta.Added | Where-Object { $_ -notmatch '^\s*$' }).Count -eq $delta.Added.Count) 'blank lines added'
 }
 
+Register-Case 'tools: every nested powershell / pwsh -File launch passes -ExecutionPolicy' {
+    param($Work)
+    $bad = @()
+    foreach ($f in Get-ChildItem -LiteralPath $ToolsDir -Recurse -Filter '*.ps1') {
+        $n = 0
+        foreach ($line in [System.IO.File]::ReadAllLines($f.FullName, [System.Text.Encoding]::UTF8)) {
+            $n++
+            if ($line -match '^\s*#') { continue }
+            if ($line -match 'WriteLine|Write-Host' ) { continue }
+            if ($line -match '-NoProfile\b.*\s-File\b' -and $line -notmatch '-ExecutionPolicy') { $bad += "$($f.Name):$n" }
+        }
+    }
+    Assert-Equal 0 $bad.Count "nested -File launches without -ExecutionPolicy: $($bad -join ', ')"
+}
+
 Register-Case 'meta-edit: add-attribute on a CRLF dump keeps CRLF' {
     param($Work)
     Copy-Fixture 'config-dump' $Work "`r`n"

@@ -1,5 +1,6 @@
-﻿# role-edit v1.12 — Edit existing 1C role rights in place
+﻿# role-edit v1.13 — Edit existing 1C role rights in place
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: support guard reads .dev.env SUPPORT_GUARD first and fails closed on an unreadable
 # support state; the sibling role-validate is ..\..\1c-role-validate\scripts in this layout,
 # its absence is refused before any write (-NoValidate is the only opt-out) and its exit
@@ -2466,7 +2467,7 @@ if (-not $NoValidate) {
 	Write-Host ""
 	Write-Host "--- Running role-validate ---"
 	$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
-	& $psExe -NoProfile -File $script:validateScript -RightsPath $script:rightsPath
+	& $psExe -NoProfile -ExecutionPolicy Bypass -File $script:validateScript -RightsPath $script:rightsPath
 	$script:validateExitCode = $LASTEXITCODE
 	if ($script:validateExitCode -ne 0) {
 		[Console]::Error.WriteLine("[ERROR] role-validate завершился с кодом $($script:validateExitCode): изменение записано, но роль не проходит проверку. Разберите вывод выше перед загрузкой в базу.")

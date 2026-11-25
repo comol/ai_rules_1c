@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# meta-edit v1.77 — Edit existing 1C metadata object XML
+# meta-edit v1.78 — Edit existing 1C metadata object XML
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, synced at
 #         4fc37e1f992057847228a69837337bd3c141c059 — the same upstream state the
 #         vendored meta-edit.ps1 was synced from.
+# Local (2026-11-25): the printed form-add / add-template hints carry -ExecutionPolicy Bypass.
 # Licence: MIT, Copyright (c) 2025-2026 Nick Shirokov. Full notice and permission
 #          text: ../../../NOTICE.md (installed as
 #          skills/1c-metadata-manage/NOTICE.md).
@@ -4229,7 +4230,7 @@ def deny_add_form(object_path):
         "регистрацию, дескриптор, Ext/Form.xml и модуль):\n"
         f'          Linux/macOS: python3 "{form_add_py}" -ObjectPath "{object_path}" '
         "-FormName ИмяФормы -Purpose Object -SetDefault\n"
-        f'          Windows:     powershell -NoProfile -File "{form_add_ps1}" '
+        f'          Windows:     powershell -NoProfile -ExecutionPolicy Bypass -File "{form_add_ps1}" '
         f'-ObjectPath "{object_path}" -FormName ИмяФормы -Purpose Object -SetDefault\n'
         "        -Purpose выбирается по слоту формы (Object/List/Choice/Record); -SetDefault "
         "перезапишет уже назначенную форму по умолчанию — проверьте её перед запуском.\n"
@@ -4356,7 +4357,7 @@ def main():
         sys.stderr.write(
             "[ERROR] Операция add-template в meta-edit не поддерживается: генератор не "
             "создаёт дескриптор и содержимое макета. Ничего не изменено.\n"
-            f'        Используйте PowerShell: powershell -NoProfile -File "{template_add}" '
+            f'        Используйте PowerShell: powershell -NoProfile -ExecutionPolicy Bypass -File "{template_add}" '
             f'-ObjectName "{args.ObjectPath}" -TemplateName ИмяМакета -TemplateType ТипМакета\n'
             "        TemplateType: HTML, Text, SpreadsheetDocument, BinaryData, DataCompositionSchema.\n"
             "        Python-версия add-template пока не поставляется.\n")

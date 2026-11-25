@@ -65,7 +65,7 @@ Pass criterion: the root always-on files exist, and either the installed tool la
 Frontmatter, `content/...` path references, Markdown links, `<file>.md → Section` anchors, routed-standards heading parity, and the `AGENTS.md` always-on byte budget are owned by the validator script — do **not** re-derive them by hand. In the `1c-rules` source repository run:
 
 ```powershell
-powershell -NoProfile -File tools\validate-rules.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\validate-rules.ps1
 ```
 
 and report its output: every `ERRORS` line → **FAIL**, every `WARNINGS` line → **WARN**, with the file and line exactly as printed; `OK` → **OK**. In an installed project the script is not shipped — report **SKIP**; file presence there is covered by the manifest check in Check 1.
