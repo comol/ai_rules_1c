@@ -158,6 +158,17 @@ git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 & $env:TEMP\1c-rules\install.ps1 init -Source $env:TEMP\1c-rules
 ```
 
+На Linux и macOS тот же скрипт работает под PowerShell 7:
+
+```bash
+git clone https://github.com/comol/ai_rules_1c.git /tmp/1c-rules
+pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -ProjectRoot /path/to/1c-project -Tools cursor,codex -NonInteractive
+```
+
+Это относится к раскладке правил. Инструменты платформы 1С на Linux ограничены — см. `content/skills/1c-metadata-manage/docs/runtime-selection.md`.
+
+Существующий MCP-конфиг проекта установщик не заменяет: в JSON добавляет только недостающие подключения, ваши серверы, адреса, заголовки и настройки остаются; `.codex/config.toml`, созданный не установщиком, и нечитаемый JSON не трогает вовсе.
+
 Имя локальной папки произвольное: в примерах используется `1c-rules`, но установленный или рабочий каталог может называться иначе.
 
 Параметр `-Source` также принимает URL напрямую — в этом случае установщик сам делает shallow-clone в кэш под `$env:TEMP` (ключ кэша — хэш URL) и переиспользует его при повторных запусках; требует `git` в `PATH`:

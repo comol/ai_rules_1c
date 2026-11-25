@@ -11,6 +11,7 @@
         absolute path; unmatched patterns are reported; the report tells
         overwritten files from kept ones;
       - USE_EDT follows the working tree;
+      - the user's own MCP config survives init, update and remove;
       - an unchanged adapter entry file stays managed across updates.
     No network, client executable or infobase is touched.
 #>
@@ -216,6 +217,82 @@ try {
         Assert-True ((Read-Text (Join-Path $project '.dev.env')) -match "(?m)^USE_EDT=$($c.Value)\s*$") "init $($c.Name): expected USE_EDT=$($c.Value)"
     }
     Pass 'USE_EDT follows the tree on init and update, a user value is kept'
+
+    # ------------------------------------------------------------ the user's own MCP config
+    $catalogPath = Join-Path $SourceRoot 'content/mcp-servers.json'
+    Write-Fixture $catalogPath '{"servers":[{"id":"1c-one","url":"http://127.0.0.1:1/mcp"},{"id":"1c-two","url":"http://127.0.0.1:2/mcp"}]}'
+    $userJson = '{"mcpServers":{"user-server":{"url":"http://127.0.0.1:9999/mcp"},"1c-two":{"url":"http://10.0.0.5:8002/mcp","headers":{"Authorization":"fixture"}}},"userSetting":"' + [string][char]0x041F + '"}'
+    $clients = @(
+        @{ Tool = 'claude-code'; Path = '.mcp.json'; Key = 'mcpServers' },
+        @{ Tool = 'cursor'; Path = '.cursor/mcp.json'; Key = 'mcpServers' },
+        @{ Tool = 'kimi'; Path = '.kimi-code/mcp.json'; Key = 'mcpServers' },
+        @{ Tool = 'qwen'; Path = '.qwen/settings.json'; Key = 'mcpServers' },
+        @{ Tool = 'kilocode'; Path = '.kilo/kilo.json'; Key = 'mcp' }
+    )
+    foreach ($c in $clients) {
+        $project = Join-Path $Work ('mcp-' + $c.Tool)
+        $config = Join-Path $project $c.Path
+        Write-Fixture (Join-Path $project '.dev.env') "INFOBASE_PATH=`nUSE_EDT=false`nCODE_OWNER=user`n"
+        Write-Fixture $config ($userJson.Replace('mcpServers', $c.Key))
+        foreach ($run in @(@('init', '-Tools', $c.Tool), @('update'))) {
+            $null = Invoke-Installer $project $run
+            $json = [IO.File]::ReadAllText($config, $Utf8) | ConvertFrom-Json
+            $servers = $json.($c.Key)
+            Assert-True ($servers.'user-server'.url -eq 'http://127.0.0.1:9999/mcp') "$($c.Tool) $($run[0]): the user server is lost"
+            Assert-True ($servers.'1c-two'.url -eq 'http://10.0.0.5:8002/mcp' -and $servers.'1c-two'.headers.Authorization -eq 'fixture') "$($c.Tool) $($run[0]): the user URL or headers are replaced"
+            Assert-True ($json.userSetting -eq [string][char]0x041F) "$($c.Tool) $($run[0]): a user setting is lost or re-encoded"
+            Assert-True ([bool]$servers.'1c-one') "$($c.Tool) $($run[0]): the missing catalog server was not added"
+        }
+        # A server the installer added follows the catalog; the user's do not.
+        Write-Fixture $catalogPath '{"servers":[{"id":"1c-one","url":"http://127.0.0.1:11/mcp"},{"id":"1c-two","url":"http://127.0.0.1:2/mcp"}]}'
+        $null = Invoke-Installer $project @('update')
+        $servers = ([IO.File]::ReadAllText($config, $Utf8) | ConvertFrom-Json).($c.Key)
+        $oneText = $servers.'1c-one' | ConvertTo-Json -Depth 5 -Compress
+        Assert-True ($oneText -match '127\.0\.0\.1:11/mcp') "$($c.Tool): the managed server was not refreshed: $oneText"
+        Assert-True ($servers.'1c-two'.url -eq 'http://10.0.0.5:8002/mcp') "$($c.Tool): the user server was refreshed"
+        $null = Invoke-Installer $project @('remove')
+        $json = [IO.File]::ReadAllText($config, $Utf8) | ConvertFrom-Json
+        $servers = $json.($c.Key)
+        Assert-True ($servers.'user-server' -and $servers.'1c-two' -and -not $servers.'1c-one' -and $json.userSetting) "$($c.Tool): remove did not leave exactly the user's config"
+        Write-Fixture $catalogPath '{"servers":[{"id":"1c-one","url":"http://127.0.0.1:1/mcp"},{"id":"1c-two","url":"http://127.0.0.1:2/mcp"}]}'
+    }
+    Pass 'user MCP config (JSON): servers, URLs, headers and settings survive init, update and remove'
+
+    foreach ($c in $clients) {
+        $project = Join-Path $Work ('mcp-bad-' + $c.Tool)
+        $config = Join-Path $project $c.Path
+        Write-Fixture (Join-Path $project '.dev.env') "INFOBASE_PATH=`nUSE_EDT=false`nCODE_OWNER=user`n"
+        foreach ($bad in @('{invalid json', '{"' + $c.Key + '":[]}')) {
+            Write-Fixture $config $bad
+            $null = Invoke-Installer $project @('init', '-Tools', $c.Tool)
+            Assert-True ((Read-Text $config) -eq $bad) "$($c.Tool): an unreadable user config was overwritten"
+            $null = Invoke-Installer $project @('update', '-Force')
+            Assert-True ((Read-Text $config) -eq $bad) "$($c.Tool): -Force overwrote an unreadable user config"
+            Remove-Item -LiteralPath (Join-Path $project '.ai-rules.json') -Force
+        }
+    }
+    $project = Join-Path $Work 'mcp-codex'
+    $toml = "[mcp_servers.custom]`nurl = `"http://127.0.0.1:9099/mcp`"`n`n[features]`nmulti_agent = false`n"
+    Write-Fixture (Join-Path $project '.dev.env') "INFOBASE_PATH=`nUSE_EDT=false`nCODE_OWNER=user`n"
+    Write-Fixture (Join-Path $project '.codex/config.toml') $toml
+    foreach ($run in @(@('init', '-Tools', 'codex'), @('update'), @('update', '-Force'), @('remove'))) {
+        $null = Invoke-Installer $project $run
+        Assert-True ((Read-Text (Join-Path $project '.codex/config.toml')) -eq $toml) "codex $($run[0]): the user's config.toml changed"
+    }
+    Pass 'user MCP config: unreadable JSON and Codex TOML are never overwritten'
+
+    # A config the installer created stays managed as a whole.
+    $project = New-Project 'mcp-own'
+    $config = Join-Path $project '.mcp.json'
+    Assert-True ([bool](Read-Text $config | ConvertFrom-Json).mcpServers.'1c-one') 'a fresh config was not created'
+    Write-Fixture $catalogPath '{"servers":[{"id":"1c-one","url":"http://127.0.0.1:21/mcp"}]}'
+    $null = Invoke-Installer $project @('update')
+    $servers = (Read-Text $config | ConvertFrom-Json).mcpServers
+    Assert-True (($servers.'1c-one' | ConvertTo-Json -Compress) -match ':21/mcp' -and -not $servers.'1c-two') 'a managed config did not follow the catalog'
+    $null = Invoke-Installer $project @('remove')
+    Assert-True (-not (Test-Path -LiteralPath $config)) 'remove left a managed config'
+    Write-Fixture $catalogPath '{"servers":[]}'
+    Pass 'a config created by the installer still follows the catalog'
 
     # ------------------------------------------------------------ adapter entry file
     $project = New-Project 'entry'

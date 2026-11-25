@@ -3362,6 +3362,18 @@ function Invoke-McpPhase {
             }
         }
 
+        # A config that exists and was never ours holds the user's own servers
+        # and, in Codex, every other client setting. JSON is merged per server
+        # below; TOML has no safe key-level merge here and is left untouched
+        # and untracked, so no update or remove ever touches it.
+        $isUserConfig = (Test-Path -LiteralPath $absTarget) -and
+            -not $Manifest.files.Contains($target) -and -not $script:PreviousFiles.Contains($target)
+        $isJsonConfig = ([string]$adapter.mcp.format) -eq 'json'
+        if ($isUserConfig -and -not $isJsonConfig) {
+            Write-Warn "  [$tool] MCP config: $target создан не установщиком — оставляю без изменений. Подключения 1С добавьте через /setupmcp."
+            continue
+        }
+
         # `mcp.merge: true` (set in adapter yaml) — when the target file is
         # a SHARED tool config (e.g. `.kilo/kilo.json` carries not only MCP
         # but also `instructions`, `skills.paths`, custom permissions; or
@@ -3387,7 +3399,32 @@ function Invoke-McpPhase {
         }
 
         $finalContent = $content
-        $mergeServers = $adapter.mcp -is [System.Collections.IDictionary] -and $adapter.mcp['mergeServers']
+        $mergeServers = [bool]($adapter.mcp -is [System.Collections.IDictionary] -and $adapter.mcp['mergeServers'])
+        # The user's own config (see above), now or at an earlier install, takes
+        # the per-server merge whatever the adapter says: user servers, their
+        # URLs and headers, and all other settings stay.
+        $tracksServers = $Manifest.files.Contains($target) -and $Manifest.files[$target].Contains('managedServers')
+        if (-not $mergeServers -and $isJsonConfig -and ($isUserConfig -or $tracksServers)) {
+            if (-not $mergeRequested) {
+                $renderedKeys = @(($content | ConvertFrom-Json).PSObject.Properties.Name)
+                $mergeKey = @(@('mcpServers', 'mcp', 'servers') | Where-Object { $renderedKeys -contains $_ })[0]
+            }
+            $userProblem = ''
+            if (Test-Path -LiteralPath $absTarget) {
+                try {
+                    $probe = ConvertTo-OrderedHashtable (Get-Content -LiteralPath $absTarget -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop)
+                    if ($probe -isnot [System.Collections.IDictionary]) { throw 'not a JSON object' }
+                    $null = Get-McpConfigMap -Config $probe -Key $mergeKey -Create
+                }
+                catch { $userProblem = $_.Exception.Message }
+            }
+            if ($userProblem) {
+                Write-Warn "  [$tool] MCP config: $target не разбирается как JSON-объект — не перезаписываю ($userProblem). Исправьте файл и повторите update или добавьте подключения через /setupmcp."
+                continue
+            }
+            $mergeServers = $true
+            $mergeRequested = $true
+        }
         $managedServers = @()
         if ($mergeRequested -and $mergeServers) {
             # New adapters merge individual servers. A pre-existing server
@@ -3395,7 +3432,7 @@ function Invoke-McpPhase {
             # it; keep it on init/add. Invalid JSON must never be overwritten.
             $merged = [ordered]@{}
             if (Test-Path -LiteralPath $absTarget) {
-                $merged = ConvertTo-OrderedHashtable (Get-Content -LiteralPath $absTarget -Raw | ConvertFrom-Json -ErrorAction Stop)
+                $merged = ConvertTo-OrderedHashtable (Get-Content -LiteralPath $absTarget -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop)
             }
             $currentServers = Get-McpConfigMap -Config $merged -Key $mergeKey -Create
             $renderedObj = ConvertTo-OrderedHashtable ($content | ConvertFrom-Json)
@@ -3442,8 +3479,10 @@ function Invoke-McpPhase {
                 $finalContent = (ConvertTo-Json $merged -Depth 20)
             }
             catch {
-                Write-Info "  [$tool] MCP merge: existing $target не парсится как JSON — пишу заново. Ошибка: $($_.Exception.Message)"
-                $finalContent = $content
+                # A shared config holds user settings beside the MCP key; an
+                # unreadable one is never replaced, not even by -Force.
+                Write-Warn "  [$tool] MCP merge: $target не парсится как JSON — не перезаписываю: в нём могут быть ваши настройки. Исправьте файл и повторите. Ошибка: $($_.Exception.Message)"
+                continue
             }
         }
 
