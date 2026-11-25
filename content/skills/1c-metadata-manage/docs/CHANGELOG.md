@@ -460,6 +460,10 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 
 ## meta-manage.md
 
+### Local feature `2026-11-25` — `modules: false`
+
+`meta-compile` v1.130 → **v1.131**, local: it always wrote empty `Ext/ObjectModule.bsl`, `ManagerModule.bsl`, `ValueManagerModule.bsl` and `RecordSetModule.bsl` stubs for the types that have them, so a report on a DCS with no code needed the files deleted by hand. The top-level definition key `modules: false` (default `true`) skips them and creates no `Ext/` directory just for them. `Module.bsl` of CommonModule / HTTPService / WebService and `CommandModule.bsl` of CommonCommand are not affected, existing files are never deleted. A non-boolean value is refused before anything is written. Pinned by `tools/tests/metadata-tools-regression.ps1`.
+
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `meta-compile` v1.126 → **v1.130**, `meta-edit` v1.73 → **v1.77** (both runtimes), `meta-validate` v1.45 → **v1.47** (both runtimes), `meta-info` v1.16 → **v1.17**. `meta-remove` did not change. `meta-decompile` is not vendored.

@@ -1,10 +1,12 @@
-﻿# meta-compile v1.130 — Compile 1C metadata object from JSON
+﻿# meta-compile v1.131 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 # Local: an existing object is refused unless -Force (upstream only warns; a recompile
 # gives the object a new uuid). NEW_OBJECT_POSITION and SUPPORT_GUARD come from .dev.env
 # first (.v8-project.json is the fallback); the support guard fails closed on an
 # unreadable Ext/ParentConfigurations.bin. An object left unregistered (no
 # Configuration.xml / ChildObjects) exits 3. Batch mode re-runs the same PowerShell edition.
+# Local (2026-11-25): top-level `modules: false` skips the empty ObjectModule / ManagerModule /
+# ValueManagerModule / RecordSetModule stubs (a report on a DCS with no code).
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
@@ -643,6 +645,13 @@ if (-not $def.name) {
 }
 
 $objName = "$($def.name)"
+
+# Ключ `modules` (дефолт true): false — не создавать пустые заготовки ObjectModule / ManagerModule /
+# ValueManagerModule / RecordSetModule (отчёт на СКД без кода). На Module.bsl общих модулей и сервисов
+# и CommandModule.bsl общей команды не влияет: модуль там и есть содержимое объекта.
+# Читается здесь, до первой записи: неверное значение — ошибка без файлов.
+$createObjectModules = Get-DslBool $def @('modules') $true
+
 
 # --- 2. XML helpers ---
 
@@ -5810,7 +5819,7 @@ $typesWithValueManagerModule = @("Constant")
 # Types with Module.bsl (general)
 $typesWithModule = @("CommonModule","HTTPService","WebService")
 
-if ($objType -in $typesWithObjectModule) {
+if ($createObjectModules -and $objType -in $typesWithObjectModule) {
 	$modulePath = Join-Path $extDir "ObjectModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5818,7 +5827,7 @@ if ($objType -in $typesWithObjectModule) {
 		$modulesCreated += $modulePath
 	}
 }
-if ($objType -in $typesWithManagerModule) {
+if ($createObjectModules -and $objType -in $typesWithManagerModule) {
 	$modulePath = Join-Path $extDir "ManagerModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5826,7 +5835,7 @@ if ($objType -in $typesWithManagerModule) {
 		$modulesCreated += $modulePath
 	}
 }
-if ($objType -in $typesWithValueManagerModule) {
+if ($createObjectModules -and $objType -in $typesWithValueManagerModule) {
 	$modulePath = Join-Path $extDir "ValueManagerModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5834,7 +5843,7 @@ if ($objType -in $typesWithValueManagerModule) {
 		$modulesCreated += $modulePath
 	}
 }
-if ($objType -in $typesWithRecordSetModule) {
+if ($createObjectModules -and $objType -in $typesWithRecordSetModule) {
 	$modulePath = Join-Path $extDir "RecordSetModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir

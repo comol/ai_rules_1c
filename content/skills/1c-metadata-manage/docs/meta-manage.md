@@ -68,6 +68,8 @@ The **complete `meta-compile` DSL grammar** — every object type with its type-
 }
 ```
 
+Object modules: by default the compiler creates empty `Ext/ObjectModule.bsl` / `ManagerModule.bsl` / `ValueManagerModule.bsl` / `RecordSetModule.bsl` stubs for the types that have them. Pass `"modules": false` to skip them (a report on a DCS with no code): `{ "type": "Report", "name": "Sales", "modules": false }`. It does not affect `Module.bsl` of CommonModule / HTTPService / WebService or `CommandModule.bsl` of CommonCommand (there the module is the object's content), and it never deletes an existing file.
+
 ### Attributes — Shorthand
 
 ```

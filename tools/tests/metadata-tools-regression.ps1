@@ -1086,6 +1086,36 @@ Register-Case 'meta-compile: a brand-new type group lands in canonical type orde
     Assert-Equal 1 $delta.Added.Count "registration must add exactly one line, added: $($delta.Added -join ' | ')"
 }
 
+# Writes a definition JSON next to the fixture and compiles it; returns the tool run.
+function Invoke-MetaCompileJson([string]$Work, [string]$Json, [string]$FileName = 'def.json', [string[]]$Extra = @()) {
+    [System.IO.File]::WriteAllText((Join-Path $Work $FileName), $Json, (New-Object System.Text.UTF8Encoding($false)))
+    return (Invoke-Tool $MetaCompile (@('-JsonPath', (Join-Path $Work $FileName), '-OutputDir', $Work) + $Extra) $Work)
+}
+
+Register-Case 'meta-compile: modules=false skips the empty object / manager module stubs, default keeps them' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $run = Invoke-MetaCompileJson $Work '{"type":"Report","name":"NoCodeReport","modules":false}' 'no-modules.json'
+    Assert-Equal 0 $run.ExitCode "meta-compile modules=false (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'Reports\NoCodeReport.xml')) 'the report XML was not written'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Reports\NoCodeReport\Ext\ObjectModule.bsl'))) 'ObjectModule.bsl was created despite modules=false'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Reports\NoCodeReport\Ext\ManagerModule.bsl'))) 'ManagerModule.bsl was created despite modules=false'
+
+    $run = Invoke-MetaCompileJson $Work '{"type":"Report","name":"CodeReport"}' 'with-modules.json'
+    Assert-Equal 0 $run.ExitCode "meta-compile default modules (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'Reports\CodeReport\Ext\ObjectModule.bsl')) 'default: ObjectModule.bsl is missing'
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'Reports\CodeReport\Ext\ManagerModule.bsl')) 'default: ManagerModule.bsl is missing'
+
+    # modules=false never touches the module of a common module: there the module is the object's content.
+    $run = Invoke-MetaCompileJson $Work '{"type":"CommonModule","name":"NoStubModule","modules":false}' 'common-module.json'
+    Assert-Equal 0 $run.ExitCode "meta-compile CommonModule modules=false (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'CommonModules\NoStubModule\Ext\Module.bsl')) 'CommonModule Module.bsl must stay'
+
+    $run = Invoke-MetaCompileJson $Work '{"type":"Report","name":"BadFlag","modules":"maybe"}' 'bad-flag.json'
+    Assert-True ($run.ExitCode -ne 0) 'a non-boolean modules value was accepted'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Reports\BadFlag.xml'))) 'a refused definition wrote the report'
+}
+
 Register-Case 'meta-compile: re-registering the same object is a no-op' {
     param($Work)
     Copy-Fixture 'config-dump' $Work "`n"
