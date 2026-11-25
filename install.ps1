@@ -54,9 +54,12 @@
     (exact match or `*` wildcard, e.g. `.claude/rules-1c/tooling-playbooks.md`
     or `.claude/skills/*`). Implies -Force for the matching paths only; all
     other drifted files keep the user's edits. Multiple paths are passed
-    COMMA-separated (PowerShell array syntax):
-    `-ForcePaths .claude/skills/*,.claude/rules-1c/forms.md` — a space-separated
-    list would bind only the first path.
+    COMMA-separated: `-ForcePaths .claude/skills/*,.claude/rules-1c/forms.md`.
+    The list works as an array (`&` / `-Command`) and as one string
+    (`powershell -File install.ps1 ... -ForcePaths "a,b"`); a space-separated
+    list would bind only the first path. A leading `./` and an absolute path
+    inside the project are accepted. A pattern that matches no managed path is
+    reported at the end of the run.
 
 .PARAMETER McpMode
     How to handle the MCP phase. `auto` (default) — detect an external MCP
@@ -1840,12 +1843,13 @@ function Invoke-OpenSpecArtifacts {
         }
         $toolCopied = 0
         $toolKept = 0
-        Get-ChildItem -Recurse -File -Path $toolBundle -ErrorAction SilentlyContinue | ForEach-Object {
+        # -Force: the bundle lives under dot directories, hidden on Linux / macOS.
+        Get-ChildItem -Recurse -Force -File -LiteralPath $toolBundle -ErrorAction SilentlyContinue | ForEach-Object {
             $rel = Get-InstallerRelativePath -BasePath $toolBundle -ChildPath $_.FullName
             $destRel = Get-OpenSpecBundleDestRel -Tool $tool -Rel $rel
             if ($Manifest.files.Contains($destRel)) {
                 $existing = $Manifest.files[$destRel]
-                if ($existing -and $existing.userModified) {
+                if ($existing -and $existing.userModified -and -not (Test-ForcePath $destRel)) {
                     $toolKept++
                     return
                 }
@@ -2374,6 +2378,57 @@ function Resolve-ManifestPath {
 # the force to paths matching one of the patterns (exact match or `*`/`?`
 # wildcard via -like). Used uniformly by the artefact, MCP, entry, and skill
 # placement paths so the overwrite contract is identical everywhere.
+function ConvertTo-ForcePathPattern {
+    # One -ForcePaths item in the form manifest keys use: forward slashes,
+    # project-relative, no leading `./`. A path outside the project is returned
+    # as given (user-scope keys are absolute).
+    param(
+        [string]$Pattern,
+        [string]$Root
+    )
+    $p = ([string]$Pattern).Trim().Trim('"', "'").Replace('\', '/')
+    if (-not $p) { return '' }
+    $base = ([string]$Root).Replace('\', '/').TrimEnd('/') + '/'
+    if ($base -ne '/' -and $p.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { $p = $p.Substring($base.Length) }
+    while ($p.StartsWith('./')) { $p = $p.Substring(2) }
+    return $p
+}
+
+function Resolve-ForcePathList {
+    # `powershell -File` does not split `a,b` into an array, so every element is
+    # split here. An explicit list that comes out empty is an error: treating it
+    # as "no list" would turn `-Force -ForcePaths ","` into "force everything".
+    param(
+        [string[]]$Paths,
+        [string]$Root
+    )
+    $result = @()
+    foreach ($item in @($Paths)) {
+        foreach ($part in ([string]$item).Split(',')) {
+            $p = ConvertTo-ForcePathPattern -Pattern $part -Root $Root
+            if ($p -and $result -notcontains $p) { $result += $p }
+        }
+    }
+    if ($result.Count -eq 0) { throw '-ForcePaths is given but names no path.' }
+    return , $result
+}
+
+function Get-UnmatchedForcePaths {
+    # Patterns of -ForcePaths that match none of the given project-relative
+    # paths: a typo or a wrong separator must not look like a done overwrite.
+    param([string[]]$KnownPaths)
+    $unmatched = @()
+    foreach ($pat in @($script:ForcePaths)) {
+        if (-not $pat) { continue }
+        $hit = $false
+        foreach ($known in @($KnownPaths)) {
+            if (([string]$known).Replace('\', '/') -like $pat) { $hit = $true; break }
+        }
+        if (-not $hit) { $unmatched += $pat }
+    }
+    return , $unmatched
+}
+
 function Test-ForcePath {
     param([string]$Rel)
     # -ForcePaths implies -Force for the listed paths (per the documented
@@ -2384,8 +2439,8 @@ function Test-ForcePath {
     $norm = ([string]$Rel).Replace('\', '/')
     foreach ($pat in $script:ForcePaths) {
         if (-not $pat) { continue }
-        $p = ([string]$pat).Replace('\', '/')
-        if ($norm -like $p) { return $true }
+        # Patterns are already in manifest form (Resolve-ForcePathList).
+        if ($norm -like $pat) { return $true }
     }
     return $false
 }
@@ -4415,13 +4470,81 @@ function Read-DevEnvKeys {
     return $result
 }
 
+function Get-SourceScanSkipDirs {
+    # Directories that never hold 1C sources: installed rules and dependencies.
+    return @('.git', '.cursor', '.claude', '.kilo', '.kilocode', '.codex', '.agents',
+        '.opencode', '.kimi-code', '.qwen', '.commandcode', '.cline', '.zcode',
+        '.mimocode', '.pi', '.ai-agent', 'node_modules', '.venv')
+}
+
+function Find-SourceFormats {
+    # Which source formats the working tree holds: EDT projects (`.project` plus
+    # `DT-INF/` or `src/Configuration/Configuration.mdo`) and Designer dumps
+    # (`Configuration.xml`). Looks at the project root and three levels below -
+    # an EDT workspace keeps the projects in subdirectories - and at EXPORT_PATH.
+    # Reads directory listings only; links are not followed.
+    param(
+        [string]$Root,
+        [string]$ExportPath
+    )
+    $skipDirs = Get-SourceScanSkipDirs
+    $edt = @()
+    $designer = @()
+    $level = @($Root)
+    if ($ExportPath) {
+        $exportAbs = if ([IO.Path]::IsPathRooted($ExportPath)) { $ExportPath } else { Join-Path $Root $ExportPath }
+        if (Test-Path -LiteralPath (Join-Path $exportAbs 'Configuration.xml') -PathType Leaf) { $designer += $exportAbs }
+    }
+    for ($depth = 0; $depth -le 3 -and $level.Count -gt 0; $depth++) {
+        $next = @()
+        foreach ($dir in $level) {
+            if ((Test-Path -LiteralPath (Join-Path $dir '.project') -PathType Leaf) -and
+                ((Test-Path -LiteralPath (Join-Path $dir 'DT-INF') -PathType Container) -or
+                (Test-Path -LiteralPath (Join-Path $dir 'src/Configuration/Configuration.mdo') -PathType Leaf))) {
+                # A root project may sit beside a Designer dump, so only a
+                # nested EDT project ends the descent.
+                $edt += $dir
+                if ($depth -gt 0) { continue }
+            }
+            if (Test-Path -LiteralPath (Join-Path $dir 'Configuration.xml') -PathType Leaf) {
+                if ($designer -notcontains $dir) { $designer += $dir }
+                continue
+            }
+            if ($depth -eq 3) { continue }
+            foreach ($sub in @(Get-ChildItem -LiteralPath $dir -Directory -Force -ErrorAction SilentlyContinue)) {
+                if ($skipDirs -contains $sub.Name) { continue }
+                if ($sub.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                $next += $sub.FullName
+            }
+        }
+        $level = $next
+    }
+    return @{ Edt = @($edt); Designer = @($designer) }
+}
+
+function Resolve-EdtUsageDefault {
+    # Default for USE_EDT taken from the tree: 'true' only when it holds an EDT
+    # project and no Designer dump. Both formats = the user decides which one is
+    # authoritative (edt-workflow.md), so the default stays 'false'.
+    param(
+        [string]$Root,
+        [string]$ExportPath
+    )
+    $formats = Find-SourceFormats -Root $Root -ExportPath ([string]$ExportPath).Trim().Trim('"', "'")
+    $edtPath = ''
+    if ($formats.Edt.Count -gt 0) {
+        $edtPath = $formats.Edt[0].Substring($Root.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+        if (-not $edtPath) { $edtPath = '.' }
+    }
+    $value = if ($edtPath -and $formats.Designer.Count -eq 0) { 'true' } else { 'false' }
+    return @{ Value = $value; EdtPath = $edtPath; Hybrid = ([bool]$edtPath -and $formats.Designer.Count -gt 0) }
+}
+
 function Test-InitialDumpSources {
     # Ignore installed rules and dependencies, but include partial dumps and EDT.
     param([string]$Root)
 
-    $skipDirs = @('.git', '.cursor', '.claude', '.kilo', '.kilocode', '.codex', '.agents',
-        '.opencode', '.kimi-code', '.qwen', '.commandcode', '.cline', '.zcode',
-        '.mimocode', '.pi', '.ai-agent', 'node_modules', '.venv')
+    $skipDirs = Get-SourceScanSkipDirs
     $pending = New-Object 'System.Collections.Generic.Queue[string]'
     $pending.Enqueue($Root)
     while ($pending.Count -gt 0) {
@@ -4639,7 +4762,8 @@ function Place-DevEnv {
     if ($detectedPrefix)  { $text = Set-DevEnvValue -Text $text -Key 'PREFIX'           -Value $detectedPrefix }
 
     # Interactive prompts for the human-only fields
-    $edtUsage = 'false'
+    $edtDefault = Resolve-EdtUsageDefault -Root $Root
+    $edtUsage = $edtDefault.Value
     if (-not $NonInteractive) {
         Write-Info ''
         Write-Info '  Заполнение .dev.env (Enter — оставить поле пустым/значением по умолчанию):'
@@ -4654,7 +4778,9 @@ function Place-DevEnv {
         $val = Read-Required 'IB_PASSWORD (пусто — без пароля, /P опускается; не храните прод-пароли)' '';                                       if ($val) { $text = Set-DevEnvValue -Text $text -Key 'IB_PASSWORD'         -Value $val }
         $val = Read-Required 'LOG_PATH (файл лога Designer''а; пусто — $env:TEMP\1cv8.log)' '';                                                if ($val) { $text = Set-DevEnvValue -Text $text -Key 'LOG_PATH'            -Value $val }
         $val = Read-Required 'INFOBASE_PUBLISH_URL (URL веб-публикации для UI-тестов; пусто — UI-тесты пропускаются)' '';                      if ($val) { $text = Set-DevEnvValue -Text $text -Key 'INFOBASE_PUBLISH_URL' -Value $val }
-        $edtAnswer = Read-Choice 'Используется ли в этом проекте 1C:EDT? Это повлияет на рекомендации и EDT-интеграции' @('да', 'нет') 'нет'
+        $edtHint = if ($edtDefault.EdtPath) { " (найден проект EDT: $($edtDefault.EdtPath))" } else { '' }
+        $edtSuggested = if ($edtDefault.Value -eq 'true') { 'да' } else { 'нет' }
+        $edtAnswer = Read-Choice "Используется ли в этом проекте 1C:EDT$($edtHint)? Это повлияет на рекомендации и EDT-интеграции" @('да', 'нет') $edtSuggested
         $edtUsage = if ($edtAnswer -eq 'да') { 'true' } else { 'false' }
     }
     $text = Set-DevEnvValue -Text $text -Key $script:UseEdtKey -Value $edtUsage
@@ -4697,6 +4823,12 @@ function Place-DevEnv {
     if ($detectedPath)    { Write-Info "    autodetected PLATFORM_PATH    = $detectedPath" }
     if ($detectedPrefix)  { Write-Info "    autodetected PREFIX           = $detectedPrefix" }
     Write-Info "    USE_EDT = $edtUsage"
+    if ($edtDefault.EdtPath -and -not $edtDefault.Hybrid) {
+        Write-Info "      (в дереве найден проект EDT: $($edtDefault.EdtPath))"
+    }
+    if ($edtDefault.Hybrid) {
+        Write-Warn "    Найдены и проект EDT ($($edtDefault.EdtPath)), и выгрузка Конфигуратора: решите, какая из них основная (edt-workflow.md)."
+    }
     Write-Info "    CODE_OWNER = $codeOwner"
     if ($agentModel) {
         Write-Info ("    AGENT_MODEL = $agentModel (" + [string]$script:AgentModelProfiles[$agentModel] + ") — профиль правил model-$agentModel.md")
@@ -4758,8 +4890,8 @@ function Ensure-ToolPolicySettings {
 function Ensure-EdtUsageSetting {
     # Migration for projects whose user-owned .dev.env predates USE_EDT.
     # It runs on update / add, where it would be the only interactive question
-    # of an otherwise unattended run — so it never asks. The conservative
-    # default (EDT not used) is written and reported; the question itself
+    # of an otherwise unattended run — so it never asks. The value follows the
+    # tree (Resolve-EdtUsageDefault) and is reported; the question itself
     # belongs to /installtools and /install-edt-mcp, which the user invokes
     # deliberately.
     param(
@@ -4774,7 +4906,9 @@ function Ensure-EdtUsageSetting {
     $current = if ($values.Contains($script:UseEdtKey)) { ([string]$values[$script:UseEdtKey]).Trim().ToLowerInvariant() } else { '' }
     if ($current -in @('true', 'false')) { return }
 
-    $edtUsage = 'false'
+    $exportPath = if ($values.Contains('EXPORT_PATH')) { [string]$values['EXPORT_PATH'] } else { '' }
+    $edtDefault = Resolve-EdtUsageDefault -Root $Root -ExportPath $exportPath
+    $edtUsage = $edtDefault.Value
 
     $text = Read-TextFile $target
     if ($text -match ('(?m)^' + [regex]::Escape($script:UseEdtKey) + '=')) {
@@ -4792,7 +4926,17 @@ function Ensure-EdtUsageSetting {
     if ($Manifest.files.Contains($script:DevEnvFileName)) {
         $Manifest.files[$script:DevEnvFileName]['installedHash'] = Get-FileSha256 $target
     }
-    Write-Info "  .dev.env: added USE_EDT=$edtUsage (по умолчанию 1C:EDT не используется)"
+    if ($edtUsage -eq 'true') {
+        Write-Info "  .dev.env: added USE_EDT=true (найден проект EDT: $($edtDefault.EdtPath); выгрузки Конфигуратора нет)"
+        Write-Info '    Если проект ведётся не в EDT, исправьте значение в .dev.env на false.'
+        return
+    }
+    if ($edtDefault.Hybrid) {
+        Write-Warn "  .dev.env: added USE_EDT=false, но в дереве есть и проект EDT ($($edtDefault.EdtPath)), и выгрузка Конфигуратора."
+        Write-Warn '    Решите, какая из них основная (edt-workflow.md), и при работе в EDT впишите в .dev.env USE_EDT=true.'
+        return
+    }
+    Write-Info "  .dev.env: added USE_EDT=$edtUsage (проект EDT в дереве не найден)"
     Write-Info '    Проект разрабатывается в 1C:EDT? Запустите /installtools или /install-edt-mcp — они спросят и запишут USE_EDT=true (можно просто исправить значение в .dev.env).'
 }
 
@@ -5623,6 +5767,98 @@ function Assert-AgentToolVocabulary {
     throw "Agent tool vocabulary gate failed ($($result.Violations.Count) file(s)). See errors above."
 }
 
+function Move-LegacyRules {
+    # Takes the managed files out of a retired rules directory without losing
+    # user edits, in every mode (interactive, -AssumeYes, -NonInteractive):
+    #   clean copy (hash = installedHash)  -> deleted;
+    #   modified copy, -NewDir given       -> moved there together with its
+    #       manifest entry, flagged userModified (the place phase keeps it, the
+    #       report lists it); if an edited or untracked file already sits at the
+    #       new path, neither is overwritten - the legacy copy is saved beside
+    #       it as `<name>.legacy`;
+    #   modified copy, no -NewDir          -> left in place, no longer tracked;
+    #   modified copy + -Force / -ForcePaths on the old or the new path -> deleted.
+    param(
+        [string]$Root,
+        [System.Collections.IDictionary]$Manifest,
+        [string]$LegacyDir,
+        [string]$NewDir
+    )
+    $keys = @($Manifest.files.Keys | Where-Object { ([string]$_).StartsWith("$LegacyDir/", [StringComparison]::OrdinalIgnoreCase) })
+    if ($keys.Count -eq 0) { return }
+    $removed = 0
+    $moved = @()
+    $aside = @()
+    $left = @()
+    foreach ($k in $keys) {
+        $entry = $Manifest.files[$k]
+        $abs = Join-Path $Root $k
+        $newKey = if ($NewDir) { $NewDir + $k.Substring($LegacyDir.Length) } else { '' }
+        if (-not (Test-Path -LiteralPath $abs -PathType Leaf)) {
+            [void]$Manifest.files.Remove($k)
+            $removed++
+            continue
+        }
+        $expected = if ($entry) { [string]$entry.installedHash } else { '' }
+        # Without a recorded hash the file cannot be proven to be ours unchanged.
+        $isClean = [bool]$expected -and ((Get-FileSha256 $abs) -eq $expected)
+        $isForced = (Test-ForcePath $k) -or ($newKey -and (Test-ForcePath $newKey))
+        if ($isClean -or $isForced) {
+            Remove-Item -LiteralPath $abs -Force
+            [void]$Manifest.files.Remove($k)
+            $removed++
+            continue
+        }
+        if (-not $newKey) {
+            [void]$Manifest.files.Remove($k)
+            $left += $k
+            continue
+        }
+        $newAbs = Join-Path $Root $newKey
+        $newParent = Split-Path -Parent $newAbs
+        if (-not (Test-Path -LiteralPath $newParent)) { New-Item -ItemType Directory -Path $newParent -Force | Out-Null }
+        $canMove = $true
+        if (Test-Path -LiteralPath $newAbs) {
+            $newEntry = if ($Manifest.files.Contains($newKey)) { $Manifest.files[$newKey] } else { $null }
+            $newHash = Get-FileSha256 $newAbs
+            # A shipped copy nobody edited, or the same content, gives way.
+            $canMove = ($newHash -eq (Get-FileSha256 $abs)) -or
+                ($newEntry -and -not $newEntry.userModified -and $newEntry.installedHash -eq $newHash)
+        }
+        if ($canMove) {
+            Move-Item -LiteralPath $abs -Destination $newAbs -Force
+            $entry['userModified'] = $true
+            [void]$Manifest.files.Remove($k)
+            $Manifest.files[$newKey] = $entry
+            $moved += $newKey
+        }
+        else {
+            $asideRel = "$newKey.legacy"
+            for ($i = 2; Test-Path -LiteralPath (Join-Path $Root $asideRel); $i++) { $asideRel = "$newKey.legacy$i" }
+            Move-Item -LiteralPath $abs -Destination (Join-Path $Root $asideRel)
+            [void]$Manifest.files.Remove($k)
+            $aside += $asideRel
+        }
+    }
+    $legacyAbs = Join-Path $Root $LegacyDir
+    if ((Test-Path -LiteralPath $legacyAbs) -and @(Get-ChildItem -LiteralPath $legacyAbs -File -Recurse -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        Remove-Item -LiteralPath $legacyAbs -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($removed -gt 0) { Write-Info "Migrated: removed $removed unchanged managed entries from legacy $LegacyDir/" }
+    if ($moved.Count -gt 0) {
+        Write-Warn "Migrated: $($moved.Count) user-modified file(s) moved from $LegacyDir/ with your edits:"
+        $moved | ForEach-Object { Write-Warn "  $_" }
+    }
+    if ($aside.Count -gt 0) {
+        Write-Warn "$($aside.Count) user-modified file(s) of $LegacyDir/ saved beside a different file at the new path - merge them by hand:"
+        $aside | ForEach-Object { Write-Warn "  $_" }
+    }
+    if ($left.Count -gt 0) {
+        Write-Warn "$($left.Count) user-modified file(s) left in $LegacyDir/ (no longer read or managed) - carry your edits over and delete them:"
+        $left | ForEach-Object { Write-Warn "  $_" }
+    }
+}
+
 function Invoke-Update {
     param(
         [string]$Root,
@@ -5654,90 +5890,28 @@ function Invoke-Update {
     $activeTools = @($manifest.tools)
     $adapters = Load-Adapters -SourceRoot $sourceRoot -Tools $activeTools
 
+    # Every path managed before this run, legacy ones included: -ForcePaths
+    # patterns are checked against it in the report.
+    $keysBefore = @($manifest.files.Keys)
+
     Write-Section 'Migration: legacy .ai-rules/rules/ mirror'
-    $legacyKeys = @($manifest.files.Keys | Where-Object { $_ -like '.ai-rules/rules/*' })
-    $legacyDirty = @()
-    foreach ($k in $legacyKeys) {
-        $abs = Join-Path $Root $k
-        if (Test-Path $abs) {
-            $entry = $manifest.files[$k]
-            $expected = if ($entry -and $entry.installedHash) { $entry.installedHash } else { '' }
-            $actual = Get-FileSha256 $abs
-            if ($expected -and ($actual -ne $expected)) { $legacyDirty += $k }
-        }
-    }
-    $proceedLegacy = $true
-    if ($legacyDirty.Count -gt 0) {
-        Write-Warn "Legacy .ai-rules/rules/ contains user-modified files: $($legacyDirty.Count)"
-        $legacyDirty | ForEach-Object { Write-Warn "  $_" }
-        if (-not $NonInteractive -and -not $AssumeYes) {
-            $proceedLegacy = Read-YesNo 'Delete legacy .ai-rules/rules/ anyway? (your edits will be lost)' $false
-        }
-    }
-    if ($proceedLegacy -and $legacyKeys.Count -gt 0) {
-        foreach ($k in $legacyKeys) {
-            $abs = Join-Path $Root $k
-            if (Test-Path $abs) { Remove-Item -Force $abs -ErrorAction SilentlyContinue }
-            $manifest.files.Remove($k)
-        }
-        $legacyDir = Join-Path $Root '.ai-rules/rules'
-        if (Test-Path $legacyDir) {
-            $remaining = Get-ChildItem -File -Recurse $legacyDir -ErrorAction SilentlyContinue
-            if (-not $remaining -or $remaining.Count -eq 0) {
-                Remove-Item -Recurse -Force $legacyDir -ErrorAction SilentlyContinue
-                $parent = Join-Path $Root '.ai-rules'
-                if (Test-Path $parent) {
-                    $parentItems = Get-ChildItem $parent -ErrorAction SilentlyContinue
-                    if (-not $parentItems -or $parentItems.Count -eq 0) {
-                        Remove-Item -Recurse -Force $parent -ErrorAction SilentlyContinue
-                    }
-                }
-            }
-        }
-        Write-Info "Migrated: removed $($legacyKeys.Count) legacy .ai-rules/rules/ entries"
+    # No client reads this mirror, so a modified file stays where it is (there is
+    # no single place to move it to with several active tools).
+    Move-LegacyRules -Root $Root -Manifest $manifest -LegacyDir '.ai-rules/rules'
+    $legacyParent = Join-Path $Root '.ai-rules'
+    if ((Test-Path -LiteralPath $legacyParent) -and @(Get-ChildItem -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        Remove-Item -LiteralPath $legacyParent -Force -ErrorAction SilentlyContinue
     }
 
     # Claude Code (v2.0.64+) auto-loads every .md under .claude/rules/ without
     # `paths` frontmatter into context at session start, so the adapter now
-    # installs on-demand rules under .claude/rules-1c/. Remove OUR tracked
-    # files from the legacy directory; files the user placed there personally
-    # are never tracked in the manifest and are kept, and the directory itself
-    # is removed only when it ends up empty.
+    # installs on-demand rules under .claude/rules-1c/. OUR tracked files leave
+    # the legacy directory: clean copies are deleted, modified ones move to the
+    # new directory with their manifest entry. Files the user placed there
+    # personally are never tracked in the manifest and are kept, and the
+    # directory itself is removed only when it ends up empty.
     Write-Section 'Migration: legacy .claude/rules/ (auto-loaded by Claude Code)'
-    $claudeLegacyKeys = @($manifest.files.Keys | Where-Object { $_ -like '.claude/rules/*' })
-    $claudeLegacyDirty = @()
-    foreach ($k in $claudeLegacyKeys) {
-        $abs = Join-Path $Root $k
-        if (Test-Path $abs) {
-            $entry = $manifest.files[$k]
-            $expected = if ($entry -and $entry.installedHash) { $entry.installedHash } else { '' }
-            $actual = Get-FileSha256 $abs
-            if ($expected -and ($actual -ne $expected)) { $claudeLegacyDirty += $k }
-        }
-    }
-    $proceedClaudeLegacy = $true
-    if ($claudeLegacyDirty.Count -gt 0) {
-        Write-Warn "Legacy .claude/rules/ contains user-modified managed files: $($claudeLegacyDirty.Count)"
-        $claudeLegacyDirty | ForEach-Object { Write-Warn "  $_" }
-        if (-not $NonInteractive -and -not $AssumeYes) {
-            $proceedClaudeLegacy = Read-YesNo 'Delete legacy .claude/rules/ copies anyway? (your edits will be lost; fresh copies go to .claude/rules-1c/)' $false
-        }
-    }
-    if ($proceedClaudeLegacy -and $claudeLegacyKeys.Count -gt 0) {
-        foreach ($k in $claudeLegacyKeys) {
-            $abs = Join-Path $Root $k
-            if (Test-Path $abs) { Remove-Item -Force $abs -ErrorAction SilentlyContinue }
-            $manifest.files.Remove($k)
-        }
-        $claudeRulesDir = Join-Path $Root '.claude/rules'
-        if (Test-Path $claudeRulesDir) {
-            $remaining = Get-ChildItem -File -Recurse $claudeRulesDir -ErrorAction SilentlyContinue
-            if (-not $remaining -or $remaining.Count -eq 0) {
-                Remove-Item -Recurse -Force $claudeRulesDir -ErrorAction SilentlyContinue
-            }
-        }
-        Write-Info "Migrated: removed $($claudeLegacyKeys.Count) managed entries from legacy .claude/rules/ (on-demand rules now live in .claude/rules-1c/)"
-    }
+    Move-LegacyRules -Root $Root -Manifest $manifest -LegacyDir '.claude/rules' -NewDir '.claude/rules-1c'
 
     Write-Section 'Migration: Codex prompts and .codex/skills/ (now .agents/skills/)'
     Remove-LegacyCodexArtifacts -Root $Root -Manifest $manifest
@@ -5793,7 +5967,10 @@ function Invoke-Update {
             # Non-interactive default: keep user edits.
             foreach ($d in $undecided) { $manifest.files[$d]['userModified'] = $true }
         }
-        $script:KeptThisRun = @($dirty | Where-Object { $manifest.files[$_] -and $manifest.files[$_].userModified })
+        # A forced file may still carry the flag of an earlier run until it is
+        # placed below; it is overwritten, so it is not "left at its version".
+        $script:KeptThisRun = @($dirty | Where-Object {
+                $manifest.files[$_] -and $manifest.files[$_].userModified -and -not (Test-ForcePath $_) })
     }
 
     # Rescan
@@ -5811,13 +5988,16 @@ function Invoke-Update {
     # userModified on every update. The OpenSpec bundle has the same rule:
     # Invoke-OpenSpecArtifacts leaves a file it finds on disk without an entry
     # to the user, so a dropped entry froze the bundle after the first update.
+    # Adapter entry files (CLAUDE.md / QWEN.md / KODA.md) follow the same
+    # contract: without its record an unchanged stub looks user-owned.
     $newFiles = [ordered]@{}
     foreach ($k in $manifest.files.Keys) {
         # Per-server MCP ownership must survive pruning so update can replace
         # our servers while preserving pre-existing user servers with any id.
         if ($manifest.files[$k].userModified -or $k -eq $script:AgentsMdFileName -or
             $manifest.files[$k].Contains('managedServers') -or
-            ([string]$manifest.files[$k].source).StartsWith('content/openspec-bundle/')) { $newFiles[$k] = $manifest.files[$k] }
+            ([string]$manifest.files[$k].source).StartsWith('content/openspec-bundle/') -or
+            ([string]$manifest.files[$k].source).EndsWith('#entry')) { $newFiles[$k] = $manifest.files[$k] }
     }
     $manifest.files = $newFiles
 
@@ -5896,7 +6076,14 @@ function Invoke-Update {
     if ($kept.Count -gt 0) {
         Write-Warn "  $($kept.Count) file(s) were LEFT AT THEIR PREVIOUS VERSION because they are user-modified — they did NOT receive this update:"
         $kept | ForEach-Object { Write-Warn "    $_" }
-        Write-Warn '  To pull the shipped version for these files, re-run `update -Force` (all of them) or `update -ForcePaths <path>[,<path>...]` (specific files, comma-separated). Your current edits to those files will be replaced.'
+        Write-Warn '  To pull the shipped version for these files, re-run `update -Force` (all of them) or `update -ForcePaths "<path>[,<path>...]"` (specific files, comma-separated, also through `powershell -File`). Your current edits to those files will be replaced.'
+    }
+    if ($script:ForcePaths) {
+        $unmatched = Get-UnmatchedForcePaths -KnownPaths ($keysBefore + @($manifest.files.Keys))
+        if ($unmatched.Count -gt 0) {
+            Write-Warn "  -ForcePaths: $($unmatched.Count) pattern(s) matched no managed path, nothing was overwritten by them:"
+            $unmatched | ForEach-Object { Write-Warn "    $_" }
+        }
     }
     if (-not $hadEconomyCommand) { Write-EconomyModeAnnouncement }
     if (-not $hadRulesModelCommand) { Write-RulesModelAnnouncement -Root $Root }
@@ -6310,6 +6497,12 @@ if ($Tools -and $Tools.Count -eq 1 -and $Tools[0].Contains(',')) {
 }
 
 try {
+    if ($PSBoundParameters.ContainsKey('ForcePaths')) {
+        $script:ForcePaths = Resolve-ForcePathList -Paths $ForcePaths -Root $projectRoot
+        if ($Command -eq 'update' -and $Tool) {
+            Write-Warn "Argument '$Tool' is ignored: -ForcePaths takes one comma-separated list (`"a,b`"), not a space-separated one."
+        }
+    }
     switch ($Command) {
         'init'   { Invoke-Init   -Root $projectRoot -SourceRootRequested $Source -RequestedTools $Tools }
         'update' { Invoke-Update -Root $projectRoot -SourceRootRequested $Source }

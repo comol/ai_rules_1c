@@ -28,7 +28,7 @@ EDT and Designer store the same configuration in **two different on-disk formats
 | Marker in the working tree | Format | Consequence |
 |---|---|---|
 | `Configuration.xml` at the root, `<Type>/<Name>.xml`, modules under `<Name>/Ext/…`, forms as `Forms/<Name>/Ext/Form.xml` | **Designer XML dump** | The whole ruleset applies **unchanged**. EDT is merely the human's editor; `1c-metadata-manage` remains the mutation gate. |
-| `.project` + `DT-INF/` + `src/Configuration.mdo`, objects as `src/<Type>/<Name>/<Name>.mdo`, forms as `…/Forms/<Name>/Form.form`, modules as sibling `*.bsl` | **EDT format (MDO)** | The XML toolchain of `1c-metadata-manage` does **not** address these files. Route metadata mutations per *Mutating metadata in an EDT-format tree* below. |
+| `.project` + `DT-INF/` + `src/Configuration/Configuration.mdo`, objects as `src/<Type>/<Name>/<Name>.mdo`, forms as `…/Forms/<Name>/Form.form`, modules as sibling `*.bsl` | **EDT format (MDO)** | The XML toolchain of `1c-metadata-manage` does **not** address these files. Route metadata mutations per *Mutating metadata in an EDT-format tree* below. |
 | Both present in one repo (XML dump plus a separate EDT workspace) | **Hybrid** | Name the authoritative one before editing, edit only there, and regenerate the other side through the documented conversion. Editing both by hand guarantees a silent divergence. |
 
 Hard rules for the EDT format:

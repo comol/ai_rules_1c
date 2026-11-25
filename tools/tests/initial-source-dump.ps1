@@ -10,7 +10,7 @@ $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'install.ps1'), [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 foreach ($name in @('Read-TextFile', 'Write-TextFile', 'Get-FileSha256', 'Read-DevEnvKeys',
-    'Set-DevEnvValue', 'Test-InitialDumpSources', 'Invoke-InitialSourceDump')) {
+    'Set-DevEnvValue', 'Get-SourceScanSkipDirs', 'Test-InitialDumpSources', 'Invoke-InitialSourceDump')) {
     $fn = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $fn) { throw "Missing function: $name" }
     . ([scriptblock]::Create($fn.Extent.Text))

@@ -144,6 +144,10 @@ jobs:
         shell: powershell
         run: .\tools\tests\installer-paths-regression.ps1
 
+      - name: Installer update keeps user edits and settings
+        shell: powershell
+        run: .\tools\tests\installer-update-safety.ps1
+
       - name: Preserve OpenCode configs (PowerShell 5.1)
         shell: powershell
         run: .\tools\tests\opencode-config-preservation.ps1

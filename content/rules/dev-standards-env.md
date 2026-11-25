@@ -125,7 +125,7 @@ Resolve `off` first: it blocks UI regardless of routes and starts no setup quest
 
 #### `USE_EDT` — project uses 1C:EDT
 
-`USE_EDT=true|false` is an **Install-time selection** and the durable project-level signal for the EDT branch of the ruleset. The installer asks once, **only while creating** `.dev.env`, among the other setup questions. A project whose existing `.dev.env` predates the key gets `USE_EDT=false` appended **without a question** — on an update that would be the single interactive prompt of an otherwise unattended run — and `-NonInteractive` writes the same conservative default.
+`USE_EDT=true|false` is an **Install-time selection** and the durable project-level signal for the EDT branch of the ruleset. The installer asks once, **only while creating** `.dev.env`, among the other setup questions. A project whose existing `.dev.env` predates the key gets a value appended **without a question**, and `-NonInteractive` writes the same one: `true` when the tree holds an EDT project and no Designer dump, otherwise `false`.
 
 | Value | Meaning |
 |---|---|
