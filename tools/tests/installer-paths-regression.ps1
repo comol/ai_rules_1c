@@ -6,6 +6,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $Installer = Join-Path $RepoRoot 'install.ps1'
+$PsExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
 $Work = Join-Path ([IO.Path]::GetTempPath()) ('installer-paths-' + [guid]::NewGuid().ToString('N'))
 $SourceRoot = Join-Path $Work 'source repository with long name'
 $Utf8 = New-Object Text.UTF8Encoding $false
@@ -21,7 +22,7 @@ function Read-Json([string]$Path) { Get-Content -LiteralPath $Path -Raw | Conver
 function Pass([string]$Name) { $script:Passed++; Write-Host "OK  $Name" }
 function Invoke-Installer([string]$Project, [string[]]$Arguments, [string]$SourcePath = $SourceRoot) {
     $log = Join-Path $Work ('run-' + [guid]::NewGuid().ToString('N') + '.log')
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Installer @Arguments `
+    & $PsExe -NoProfile -ExecutionPolicy Bypass -File $Installer @Arguments `
         -ProjectRoot $Project -Source $SourcePath -NonInteractive -McpMode managed *> $log
     Assert-True ($LASTEXITCODE -eq 0) "Installer failed: $(Get-Content -LiteralPath $log -Raw)"
     return (Get-Content -LiteralPath $log -Raw)
@@ -241,6 +242,8 @@ try {
 
     # Run the real init flow with explicit test consent and a local export stub.
     # This verifies the post-export project.md write, not just function order.
+    # The interactive export is Windows-only.
+    if ($env:OS -eq 'Windows_NT') {
     Write-Fixture (Join-Path $SourceRoot 'content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1') @'
 param($ConfigDir, $Mode, $InfoBasePath)
 [void][IO.Directory]::CreateDirectory($ConfigDir)
@@ -266,13 +269,15 @@ $script:McpMode = 'managed'
 Invoke-Init -Root $ProjectFixture -SourceRootRequested $SourceFixture -RequestedTools @('cursor')
 '@
     $exportLog = Join-Path $Work 'accepted-export.log'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -InstallerFile $Installer `
+    & $PsExe -NoProfile -ExecutionPolicy Bypass -File $wrapper -InstallerFile $Installer `
         -ProjectFixture $exportProject -SourceFixture $SourceRoot *> $exportLog
     Assert-True ($LASTEXITCODE -eq 0) "Accepted export failed: $(Get-Content -LiteralPath $exportLog -Raw)"
     Assert-True (([IO.File]::ReadAllText((Join-Path $exportProject 'openspec/project.md'))).Contains('DumpedConfig')) 'Successful initial dump did not refresh project.md'
     Assert-True ((Get-1cProjectInfo -Root $exportProject).Name -eq 'DumpedConfig') 'New EXPORT_PATH was not used after export'
     Assert-ManifestHashes $exportProject
     Pass 'Successful initial export refreshes project context and manifest through the real init flow'
+    }
+    else { Write-Host 'SKIP  Interactive initial export runs only on Windows.' }
 
     $managedAgentsHash = (Read-Json (Join-Path $project '.ai-rules.json')).files.'AGENTS.md'.installedHash
     $customAgents = ([IO.File]::ReadAllText($agentsPath)) + "`nUser instruction: keep this line."
