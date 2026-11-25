@@ -19,10 +19,10 @@ Takes a JSON definition of a Data Composition Schema and generates Template.xml 
 
 ```powershell
 # From file
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-compile/scripts/skd-compile.ps1 -DefinitionFile "<json>" -OutputPath "<Template.xml>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-skd-compile/scripts/skd-compile.ps1 -DefinitionFile "<json>" -OutputPath "<Template.xml>"
 
 # From string (no intermediate file)
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-compile/scripts/skd-compile.ps1 -Value '<json-string>' -OutputPath "<Template.xml>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-skd-compile/scripts/skd-compile.ps1 -Value '<json-string>' -OutputPath "<Template.xml>"
 ```
 
 ### JSON DSL — Quick Reference
@@ -192,7 +192,7 @@ Atomic modification operations on an existing Data Composition Schema: add, remo
 | `NoSelection` | (opt.) Don't add field to variant selection |
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-edit/scripts/skd-edit.ps1 -TemplatePath "<path>" -Operation <op> -Value "<value>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-skd-edit/scripts/skd-edit.ps1 -TemplatePath "<path>" -Operation <op> -Value "<value>"
 ```
 
 ### Batch Mode
@@ -310,7 +310,7 @@ Reads a Template.xml Data Composition Schema (DCS) and outputs a compact summary
 | `OutFile` | Write result to file (UTF-8 BOM) |
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-info/scripts/skd-info.ps1 -TemplatePath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-skd-info/scripts/skd-info.ps1 -TemplatePath "<path>"
 ```
 
 With mode specified:
@@ -356,7 +356,7 @@ Checks structural correctness of a Template.xml Data Composition Schema. Detects
 | `OutFile` | Write result to file |
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-validate/scripts/skd-validate.ps1 -TemplatePath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-skd-validate/scripts/skd-validate.ps1 -TemplatePath "<path>"
 ```
 
 ### Checks (~30)
@@ -409,7 +409,7 @@ Reverse of `1c-skd-compile`: reads an existing `Template.xml` (DataCompositionSc
 | `OutputPath` | (opt.) Write JSON DSL to this file; prints to stdout when omitted |
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-skd-decompile/scripts/skd-decompile.ps1 -TemplatePath "<Template.xml>" [-OutputPath "<schema.json>"]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-skd-decompile/scripts/skd-decompile.ps1 -TemplatePath "<Template.xml>" [-OutputPath "<schema.json>"]
 ```
 
 Fails fast (exit 2) when the root element is not `DataCompositionSchema` (e.g. a spreadsheet document — use `1c-mxl-decompile` instead); exit 3 on a construct it cannot take as a sample at all (picture cells, value storage, nested schemas) — use `1c-skd-edit` on such a report.
@@ -420,7 +420,7 @@ Fails fast (exit 2) when the root element is not `DataCompositionSchema` (e.g. a
 Downloads the platform XSD schemas of the dump format, by format version, into the project's schema directory (same resolution as section 4: `-OutPath`, else `V8_XSD_PATH`, else `.v8-project.json` `xsdPath`, else `.v8-xsd` next to `.dev.env`). `skd-validate` uses them; no platform install is needed.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-v8-xsd-fetch/scripts/v8-xsd-fetch.ps1 -Versions "2.20"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-v8-xsd-fetch/scripts/v8-xsd-fetch.ps1 -Versions "2.20"
 ```
 
 | Parameter | Description |

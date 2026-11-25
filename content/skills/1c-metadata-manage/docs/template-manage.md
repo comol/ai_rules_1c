@@ -21,13 +21,13 @@ Creates or removes a template (layout) of specified type and registers/unregiste
 ### Command (EPF)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" -TemplateType "<TemplateType>" [-Synonym "<Synonym>"] [-Lang "<lang>"] [-SrcDir "<SrcDir>"] [-SetMainSKD]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" -TemplateType "<TemplateType>" [-Synonym "<Synonym>"] [-Lang "<lang>"] [-SrcDir "<SrcDir>"] [-SetMainSKD]
 ```
 
 ### Command (configuration or extension object)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1 -ObjectName "SNiS/Documents/эс_ПланПотребностейВМатериалах.xml" -TemplateName "ПФ_КомплектовочнаяВедомость" -TemplateType SpreadsheetDocument
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1 -ObjectName "SNiS/Documents/эс_ПланПотребностейВМатериалах.xml" -TemplateName "ПФ_КомплектовочнаяВедомость" -TemplateType SpreadsheetDocument
 ```
 
 A relative XML path is resolved from the current directory, then from `SrcDir`. The descriptor and content are created beside that XML under `<ObjectName>/Templates/`; `SrcDir` is not required for an existing XML path. Name-only calls retain EPF lookup and lookup in configuration object-type folders under `SrcDir`.
@@ -98,8 +98,8 @@ An existing template is refused (except an HTML template getting another languag
 ### Commands (preview first, then execute)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/remove-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" [-SrcDir "<SrcDir>"] -DryRun
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/remove-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" [-SrcDir "<SrcDir>"] -Force
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/remove-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" [-SrcDir "<SrcDir>"] -DryRun
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-template-manage/scripts/remove-template.ps1 -ProcessorName "<ObjectName>" -TemplateName "<TemplateName>" [-SrcDir "<SrcDir>"] -Force
 ```
 
 The script refuses a real deletion without `-Force` (exit `2`) and a template that is not registered in `ChildObjects` (exit `1`). It parses and serializes the parent XML before mutating the source tree, writes it through a temporary file, then deletes the template files. An emptied `ChildObjects` becomes `<ChildObjects/>`, the file keeps its EOL and compact tags. Run the relevant metadata / MXL / DCS validator after execution. There is no support guard on removal — check the object's support state yourself before removing a template from a typical configuration.

@@ -23,7 +23,7 @@ Takes a compact JSON definition and generates `Template.xml` of a spreadsheet do
 ### Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-mxl-compile/scripts/mxl-compile.ps1 -JsonPath "<path>.json" -OutputPath "<path>/Template.xml"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-mxl-compile/scripts/mxl-compile.ps1 -JsonPath "<path>.json" -OutputPath "<path>/Template.xml"
 ```
 
 Parameters are named only (`-JsonPath`, `-OutputPath`); positional arguments are not bound.
@@ -149,7 +149,7 @@ Takes a `Template.xml` of a spreadsheet document and generates the JSON DSL. Rev
 ### Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-mxl-decompile/scripts/mxl-decompile.ps1 -TemplatePath "<path>/Template.xml" -OutputPath "<path>.json"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-mxl-decompile/scripts/mxl-decompile.ps1 -TemplatePath "<path>/Template.xml" -OutputPath "<path>.json"
 ```
 
 Always pass `-OutputPath`: without it the JSON goes to stdout followed by two summary lines (`Areas: …`, `Fonts: …`), so captured stdout is not valid JSON.
@@ -207,12 +207,12 @@ Specify either `-TemplatePath` (the file itself — unlike `mxl-validate`, a tem
 ### Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-mxl-info/scripts/mxl-info.ps1 -TemplatePath "<path>/Ext/Template.xml"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-mxl-info/scripts/mxl-info.ps1 -TemplatePath "<path>/Ext/Template.xml"
 ```
 
 Or by processor/template name:
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-mxl-info/scripts/mxl-info.ps1 -ProcessorName "<Name>" -TemplateName "<Template>" [-SrcDir "<dir>"]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-mxl-info/scripts/mxl-info.ps1 -ProcessorName "<Name>" -TemplateName "<Template>" [-SrcDir "<dir>"]
 ```
 
 Additional flags:
@@ -361,12 +361,12 @@ Checks `Template.xml` for structural errors that the 1C platform may silently ig
 ### Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-mxl-validate/scripts/mxl-validate.ps1 -TemplatePath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-mxl-validate/scripts/mxl-validate.ps1 -TemplatePath "<path>"
 ```
 
 Or by processor/template name:
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-mxl-validate/scripts/mxl-validate.ps1 -ProcessorName "<Name>" -TemplateName "<Template>" [-SrcDir "<dir>"]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-mxl-validate/scripts/mxl-validate.ps1 -ProcessorName "<Name>" -TemplateName "<Template>" [-SrcDir "<dir>"]
 ```
 
 ### Checks Performed

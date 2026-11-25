@@ -17,7 +17,7 @@ Never re-compile an existing role: `role-compile` issues a new UUID and rewrites
 Creates `Roles/<Name>.xml` and `Roles/<Name>/Ext/Rights.xml` from a JSON description and registers `<Role>` in `Configuration.xml`. The full JSON DSL (Russian, upstream original) is [`dsl-reference.md`](../tools/1c-role-compile/dsl-reference.md).
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -JsonPath "<role.json>" -OutputDir "<src-root-or-Roles>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1 -JsonPath "<role.json>" -OutputDir "<src-root-or-Roles>"
 ```
 
 | Parameter | Description |
@@ -80,8 +80,8 @@ Every problem in the description is collected and reported at once, then the run
 Changes rights, RLS, templates, flags, synonym or comment of an existing role in place: the UUID, the other rights, RLS and templates are kept, the file's BOM / EOL style is preserved.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-edit/scripts/role-edit.ps1 -RolePath "<role>" -Operation <op> -Value "<value>"
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-edit/scripts/role-edit.ps1 -RolePath "<role>" -DefinitionFile "<ops.json>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-role-edit/scripts/role-edit.ps1 -RolePath "<role>" -Operation <op> -Value "<value>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-role-edit/scripts/role-edit.ps1 -RolePath "<role>" -DefinitionFile "<ops.json>"
 ```
 
 | Parameter | Description |
@@ -126,7 +126,7 @@ Operations are applied in the order given.
 Parses a role's `Rights.xml` and outputs a compact summary: objects grouped by type, showing only allowed rights. Compression: thousands of XML lines → 50–150 lines of text.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-info/scripts/role-info.ps1 -RightsPath <path> -OutFile <output.txt>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-role-info/scripts/role-info.ps1 -RightsPath <path> -OutFile <output.txt>
 ```
 
 | Parameter | Required | Description |
@@ -173,7 +173,7 @@ Total: 138 allowed, 18 denied
 Checks a role's `Rights.xml`: XML format, namespace, global flags, object types, right names, nested kinds, RLS, templates, and — when `Roles/<RoleName>.xml` is found next to it (located from the `Rights.xml` path, there is no parameter for it) — the role metadata, the format version and the registration in `Configuration.xml`.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-role-validate/scripts/role-validate.ps1 -RightsPath <path> [-OutFile <output.txt>] [-Detailed] [-MaxErrors <n>]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-role-validate/scripts/role-validate.ps1 -RightsPath <path> [-OutFile <output.txt>] [-Detailed] [-MaxErrors <n>]
 ```
 
 | Parameter | Required | Description |

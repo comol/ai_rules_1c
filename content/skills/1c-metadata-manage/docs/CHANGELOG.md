@@ -22,6 +22,10 @@ No script files were brought into `tools/` — the operations are pure module-te
 
 ## cf-manage.md
 
+
+### Local fix `2026-11-25` — nested validator runs pass `-ExecutionPolicy Bypass`
+
+`cf-edit` v1.37 → **v1.38**: its sibling `cf-validate` was started with `-NoProfile -File` only. A child process does not carry the parent's `-ExecutionPolicy Bypass`, so on a machine whose policy refuses scripts the auto-validation failed with "running scripts is disabled on this system" although the edit itself ran. The nested launch now passes `-ExecutionPolicy Bypass`. Pinned by a static case in `tools/tests/metadata-tools-regression.ps1` (no nested `-NoProfile … -File` launch in `tools/**/*.ps1` without the flag).
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `cf-edit` v1.33 → **v1.37**, `cf-info` v1.10 → **v1.12**, `cf-init` v1.17 → **v1.18**. `cf-validate` did not change. `cf-edit-reference.md` is retargeted to the same pin.
@@ -438,6 +442,10 @@ Script refreshed from [Nikolay-Shirokov/cc-1c-skills](https://github.com/Nikolay
 
 ## interface-manage.md
 
+
+### Local fix `2026-11-25` — nested validator run passes `-ExecutionPolicy Bypass`
+
+`interface-edit` v1.26 → **v1.27**: the sibling `interface-validate` launch now carries `-ExecutionPolicy Bypass`, as `cf-edit` (see cf-manage.md).
 ### Upstream sync `2026-11-01` (`2e75b0f`)
 
 `interface-edit` v1.8 → **v1.26**, `interface-validate` v1.1 → **v1.7**.
@@ -459,6 +467,18 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 - **`interface-validate`** — universal validator improvements (one-liner output by default, `-Detailed`, folder path auto-resolution) — see `role-manage.md` → "Recent Additions".
 
 ## meta-manage.md
+
+
+### Local fix `2026-11-25` — nested runs pass `-ExecutionPolicy Bypass`
+
+`meta-edit` v1.77 → **v1.78** (both runtimes) and `meta-compile` v1.132 → **v1.133**: the nested `meta-validate` launch of `meta-edit.ps1` and the batch child of `meta-compile.ps1` now pass `-ExecutionPolicy Bypass`; the `form-add` / `add-template` hints that `meta-edit.ps1` and `meta-edit.py` print carry it too, so an agent copying a hint does not hit the policy error. `/doctor` (`content/commands/doctor.md`) got the flag in its `validate-rules.ps1` command.
+### Local feature `2026-11-25` — ScheduledJob `schedule` writes `Ext/Schedule.xml`
+
+`meta-compile` v1.131 → **v1.132**, local: only the object properties of a `ScheduledJob` were written, so no tool could set a schedule and agents copied `Ext/Schedule.xml` from a neighbouring job. The new key `schedule` (all sub-keys optional: `beginTime` / `endTime` / `completionTime`, `beginDate` / `endDate`, `daysRepeatPeriod`, `weeksPeriod`, `repeatPeriodInDay`, `repeatPause`, `completionInterval`, `dayInMonth`, `weekDayInMonth`, `weekDays`, `months`) writes `ScheduledJobs/<Name>/Ext/Schedule.xml` in the Designer shape (UTF-8 BOM, tabs, CRLF, `version` = detected format). No key, no file. An unknown sub-key or an out-of-range value is refused before anything is written; `schedule` on another object type is refused. `ent:DetailedDailySchedules` is out of scope. Pinned by `tools/tests/metadata-tools-regression.ps1`; verified by loading the result into a file infobase on 8.3.24 and dumping it back.
+
+### Local feature `2026-11-25` — `modules: false`
+
+`meta-compile` v1.130 → **v1.131**, local: it always wrote empty `Ext/ObjectModule.bsl`, `ManagerModule.bsl`, `ValueManagerModule.bsl` and `RecordSetModule.bsl` stubs for the types that have them, so a report on a DCS with no code needed the files deleted by hand. The top-level definition key `modules: false` (default `true`) skips them and creates no `Ext/` directory just for them. `Module.bsl` of CommonModule / HTTPService / WebService and `CommandModule.bsl` of CommonCommand are not affected, existing files are never deleted. A non-boolean value is refused before anything is written. Pinned by `tools/tests/metadata-tools-regression.ps1`.
 
 ### Upstream sync 2026-11-17 (4fc37e1)
 
@@ -589,6 +609,10 @@ The compile/decompile/info scripts (`mxl-compile`, `mxl-decompile`, `mxl-info`) 
 
 ## role-manage.md
 
+
+### Local fix `2026-11-25` — nested validator run passes `-ExecutionPolicy Bypass`
+
+`role-edit` v1.12 → **v1.13**: the sibling `role-validate` launch now carries `-ExecutionPolicy Bypass` (see cf-manage.md).
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `role-compile` v1.49 → **v1.51**, `role-edit` v1.11 → **v1.12**. `role-info` and `role-validate` did not change. No Python port of these two is vendored.
@@ -717,6 +741,10 @@ The PowerShell scripts under `tools/1c-skd-{compile,edit,info,validate}/scripts/
 
 ## subsystem-manage.md
 
+
+### Local fix `2026-11-25` — nested validator runs pass `-ExecutionPolicy Bypass`
+
+`subsystem-compile` v1.39 → **v1.40** and `subsystem-edit` v1.30 → **v1.31**: the sibling `subsystem-validate` launch now carries `-ExecutionPolicy Bypass` (see cf-manage.md).
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `subsystem-compile` v1.37 → **v1.39**, `subsystem-edit` v1.29 → **v1.30**. `subsystem-info` and `subsystem-validate` did not change. The Python port of `subsystem-edit` is not vendored.

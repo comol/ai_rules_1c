@@ -17,7 +17,7 @@ Adds built-in help to a 1C metadata object: help metadata file (`Help.xml`), HTM
 ## Command
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1 -ObjectName "<ObjectName>" [-Lang "<Lang>"] [-SrcDir "<SrcDir>"]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1 -ObjectName "<ObjectName>" [-Lang "<Lang>"] [-SrcDir "<SrcDir>"]
 ```
 
 The object directory must already have an `Ext/` folder. The tool refuses when `Ext/Help.xml` already exists, when `-Lang` is not a plain code (a path such as `../../x` would write outside `Ext/Help`), and on a locked vendor object (support guard, [support-manage.md](support-manage.md)). All refusals happen before any write.

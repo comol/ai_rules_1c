@@ -171,7 +171,7 @@ scaffold: скалярную регистрацию `<Form>Имя</Form>`, от�
 
 ```powershell
 # Windows
-powershell -NoProfile -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1 `
+powershell -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1 `
   -ObjectPath "config-dump/Catalogs/Номенклатура.xml" -FormName "ФормаЭлемента" -Purpose Object -SetDefault
 ```
 ```bash

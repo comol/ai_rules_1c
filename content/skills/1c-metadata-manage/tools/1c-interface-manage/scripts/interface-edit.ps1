@@ -1,5 +1,6 @@
-﻿# interface-edit v1.26 — Edit 1C CommandInterface.xml (+русские алиасы типов: формы с ё и без)
+﻿# interface-edit v1.27 — Edit 1C CommandInterface.xml (+русские алиасы типов: формы с ё и без)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: .dev.env SUPPORT_GUARD first (fail-closed on an unreadable bin); interface-validate is the
 #   sibling in this scripts dir, a missing validator or its non-zero exit is the exit code.
 [CmdletBinding(PositionalBinding=$false)]
@@ -828,7 +829,7 @@ if (-not $NoValidate) {
 		Write-Host ""
 		Write-Host "--- Running interface-validate ---"
 		$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
-		& $psExe -NoProfile -File $validateScript -CIPath $resolvedPath
+		& $psExe -NoProfile -ExecutionPolicy Bypass -File $validateScript -CIPath $resolvedPath
 		$script:validateExitCode = $LASTEXITCODE
 		if ($script:validateExitCode -ne 0) {
 			[Console]::Error.WriteLine("[ERROR] interface-validate завершился с кодом $($script:validateExitCode): изменение записано, но проверка не пройдена. Разберите вывод выше перед загрузкой в базу.")

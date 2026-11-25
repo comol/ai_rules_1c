@@ -25,7 +25,7 @@ Reading `Package.bin` directly to "just have a look" is the anti-pattern this gr
 ## 1. Info — Analyze Package Structure
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-info.ps1 -PackagePath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-info.ps1 -PackagePath "<path>"
 ```
 
 | Parameter | Required | Description |
@@ -65,7 +65,7 @@ With only a type name, pass `-Name` plus the sources root — the type is found 
 ## 2. Compile — Build a Package from an XML Schema
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-compile.ps1 -XsdPath "<schema.xsd>" -OutputDir "<sources-dir>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-compile.ps1 -XsdPath "<schema.xsd>" -OutputDir "<sources-dir>"
 ```
 
 | Parameter | Required | Description |
@@ -107,7 +107,7 @@ Two things the XDTO model has and XML Schema does not — `nillable` on an attri
 ## 3. Edit — Point Edits of an Existing Package
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-edit.ps1 -PackagePath "<path>" -Operation <op> -Target "<address>" -Value "<value>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-edit.ps1 -PackagePath "<path>" -Operation <op> -Target "<address>" -Value "<value>"
 ```
 
 Changes a single element without reading and rewriting the whole schema — for big packages (`EnterpriseData` is about a megabyte) this is the only practical path.
@@ -159,7 +159,7 @@ Path is `Type.Property`; the dot is safe because both are 1C identifiers. The pa
 ## 4. Decompile — Export a Package to an XML Schema
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-decompile.ps1 -PackagePath "<path>" -OutFile "<schema.xsd>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-decompile.ps1 -PackagePath "<path>" -OutFile "<schema.xsd>"
 ```
 
 | Parameter | Required | Description |
@@ -178,7 +178,7 @@ The exported XSD can be handed to a counterparty as-is. It is better than the De
 ## 5. Validate — Check a Package
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-validate.ps1 -PackagePath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-validate.ps1 -PackagePath "<path>"
 ```
 
 | Parameter | Required | Description |

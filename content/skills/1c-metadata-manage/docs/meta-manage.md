@@ -16,7 +16,7 @@ Takes a JSON definition of a metadata object and generates XML + modules in the 
 | `Force` | Replace an object whose XML already exists (see below). Without it such an object is refused |
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-compile/scripts/meta-compile.ps1 -JsonPath "<json>" -OutputDir "<ConfigDir>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-meta-compile/scripts/meta-compile.ps1 -JsonPath "<json>" -OutputDir "<ConfigDir>"
 ```
 
 `OutputDir` — directory containing type subfolders (`Catalogs/`, `Documents/`, ...) and `Configuration.xml`.
@@ -68,15 +68,21 @@ The **complete `meta-compile` DSL grammar** — every object type with its type-
 }
 ```
 
+Object modules: by default the compiler creates empty `Ext/ObjectModule.bsl` / `ManagerModule.bsl` / `ValueManagerModule.bsl` / `RecordSetModule.bsl` stubs for the types that have them. Pass `"modules": false` to skip them (a report on a DCS with no code): `{ "type": "Report", "name": "Sales", "modules": false }`. It does not affect `Module.bsl` of CommonModule / HTTPService / WebService or `CommandModule.bsl` of CommonCommand (there the module is the object's content), and it never deletes an existing file.
+
+Scheduled job: add `"schedule"` to write `Ext/Schedule.xml` (without it no file is written and the job has no schedule): `{ "type": "ScheduledJob", "name": "LoadRates", "methodName": "Rates.Load", "use": true, "schedule": { "beginTime": "08:15", "weekDays": [1,2,3,4,5] } }`. Keys (all optional): `beginTime`, `endTime`, `completionTime` (`HH:MM[:SS]`), `beginDate`, `endDate` (`YYYY-MM-DD`), `daysRepeatPeriod`, `weeksPeriod`, `repeatPeriodInDay` (seconds; `600` = every 10 minutes during the day), `repeatPause`, `completionInterval`, `dayInMonth` (0–31), `weekDayInMonth` (0–5), `weekDays` (1–7, default all), `months` (1–12, default all). Detailed daily schedules (`DetailedDailySchedules`) are not supported. An unknown key or a bad value is refused before anything is written. Full table: [`meta-dsl-spec.md`](../tools/1c-meta-compile/meta-dsl-spec.md) §7.9.
+
 ### Attributes — Shorthand
 
 ```
-"AttributeName"                     — String without qualifiers
+"AttributeName"                     — String(10): a bare name is a string of length 10
 "AttributeName: Type"               — with type
 "AttributeName: Type | req, index"  — with flags
 ```
 
-Types: `String(100)`, `Number(15,2)`, `Boolean`, `Date`, `DateTime`, `CatalogRef.Xxx`, `DocumentRef.Xxx`, `EnumRef.Xxx`, `ChartOfAccountsRef.Xxx`, `ChartOfCharacteristicTypesRef.Xxx`, `ChartOfCalculationTypesRef.Xxx`, `ExchangePlanRef.Xxx`, `BusinessProcessRef.Xxx`, `TaskRef.Xxx`, `DefinedType.Xxx`.
+Types: `String(N)`, `Number(15,2)`, `Boolean`, `Date`, `DateTime`, `CatalogRef.Xxx`, `DocumentRef.Xxx`, `EnumRef.Xxx`, `ChartOfAccountsRef.Xxx`, `ChartOfCharacteristicTypesRef.Xxx`, `ChartOfCalculationTypesRef.Xxx`, `ExchangePlanRef.Xxx`, `BusinessProcessRef.Xxx`, `TaskRef.Xxx`, `DefinedType.Xxx`.
+
+String length: a bare attribute name, `String` and `Строка` without parentheses are **`String(10)`** (what Designer gives a new attribute), not an unlimited string. Say the length: `String(100)`, `Строка(100)`. An unlimited string is `String(0)` / `Строка(0)`. An attribute that already exists with the wrong length is fixed with `meta-edit -Operation modify-attribute -Value "Name: type=String(0)"`.
 
 Russian type synonyms: `Строка`, `Число`, `Булево`, `Дата`, `СправочникСсылка.Xxx`, `ДокументСсылка.Xxx`, `ПланСчетовСсылка.Xxx`. The labels `meta-info` prints are accepted as input too (`ДокументОбъект.Заказ`, `ПВХСсылка.ВидыСубконто`, `Характеристика.Виды`, `НаборЗаписейРС.X`, …), so its output can be carried back into a definition.
 
@@ -223,13 +229,13 @@ Atomic modification operations on existing metadata object XML files.
 ### Inline Mode (simple operations)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.ps1 -ObjectPath "<path>" -Operation <op> -Value "<val>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.ps1 -ObjectPath "<path>" -Operation <op> -Value "<val>"
 ```
 
 ### JSON Mode (complex/combined operations)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.ps1 -DefinitionFile "<json>" -ObjectPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.ps1 -DefinitionFile "<json>" -ObjectPath "<path>"
 ```
 
 | Parameter | Description |
@@ -351,7 +357,7 @@ Reads a metadata object XML from a 1C configuration export and outputs a compact
 | `OutFile` | Write result to file (UTF-8 BOM) |
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-info/scripts/meta-info.ps1 -ObjectPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-meta-info/scripts/meta-info.ps1 -ObjectPath "<path>"
 ```
 
 ## Three Modes
@@ -412,7 +418,7 @@ Safely removes an object from a 1C configuration XML export. Before deletion, ch
 ## Usage
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-remove/scripts/meta-remove.ps1 -ConfigDir "<path>" -Object "Catalog.Товары"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-meta-remove/scripts/meta-remove.ps1 -ConfigDir "<path>" -Object "Catalog.Товары"
 ```
 
 ## Parameters
@@ -487,7 +493,7 @@ Checks a metadata object XML from a configuration export for structural errors: 
 `ObjectPath` auto-resolve: if a directory is given — looks for `<dirName>/<dirName>.xml`.
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1 -ObjectPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1 -ObjectPath "<path>"
 ```
 
 ## Supported Types

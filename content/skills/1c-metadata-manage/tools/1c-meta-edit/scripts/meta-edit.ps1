@@ -1,5 +1,6 @@
-﻿# meta-edit v1.77 — Edit existing 1C metadata object XML
+﻿# meta-edit v1.78 — Edit existing 1C metadata object XML
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: add-form / add-template are refused before any mutation, for every key
 # spelling and across the whole definition, and point at form-add / add-template
 # (Section 9.7); the auto-validator is resolved under the downstream dirs
@@ -4351,7 +4352,7 @@ if (Test-DefinitionAddsForm $def) {
 	$formAddPy = Join-Path $scaffoldDir 'form-add.py'
 	[Console]::Error.WriteLine("[ERROR] Операция add-form в meta-edit не поддерживается — она зарегистрировала бы форму вложенным дескриптором ChildObjects/Form с FormType=Ordinary и не создала бы файл формы. Такую выгрузку Конфигуратор не загружает.")
 	[Console]::Error.WriteLine("        Используйте штатный form-add (создаёт управляемую форму: скалярную регистрацию, дескриптор, Ext/Form.xml и модуль):")
-	[Console]::Error.WriteLine("          Windows:     powershell -NoProfile -File `"$formAddPs1`" -ObjectPath `"$resolvedPath`" -FormName ИмяФормы -Purpose Object -SetDefault")
+	[Console]::Error.WriteLine("          Windows:     powershell -NoProfile -ExecutionPolicy Bypass -File `"$formAddPs1`" -ObjectPath `"$resolvedPath`" -FormName ИмяФормы -Purpose Object -SetDefault")
 	[Console]::Error.WriteLine("          Linux/macOS: python3 `"$formAddPy`" -ObjectPath `"$resolvedPath`" -FormName ИмяФормы -Purpose Object -SetDefault")
 	[Console]::Error.WriteLine("        -Purpose выбирается по слоту формы (Object/List/Choice/Record); -SetDefault перезапишет уже назначенную форму по умолчанию — проверьте её перед запуском.")
 	[Console]::Error.WriteLine("        Ничего не изменено.")
@@ -4364,7 +4365,7 @@ if (Test-DefinitionAddsForm $def) {
 if (Test-DefinitionAddsForm $def 'templates') {
 	$templateAdd = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\1c-template-manage\scripts\add-template.ps1'))
 	[Console]::Error.WriteLine("[ERROR] Операция add-template в meta-edit не поддерживается: генератор не создаёт дескриптор и содержимое макета. Ничего не изменено.")
-	[Console]::Error.WriteLine("        Используйте: powershell -NoProfile -File `"$templateAdd`" -ObjectName `"$resolvedPath`" -TemplateName ИмяМакета -TemplateType ТипМакета")
+	[Console]::Error.WriteLine("        Используйте: powershell -NoProfile -ExecutionPolicy Bypass -File `"$templateAdd`" -ObjectName `"$resolvedPath`" -TemplateName ИмяМакета -TemplateType ТипМакета")
 	[Console]::Error.WriteLine("        TemplateType: HTML, Text, SpreadsheetDocument, BinaryData, DataCompositionSchema.")
 	exit 2
 }
@@ -4478,7 +4479,7 @@ if (-not $NoValidate) {
 	Write-Host ""
 	Write-Host "--- Running $($script:validateSkill) ---" -ForegroundColor DarkGray
 	$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
-	& $psExe -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
+	& $psExe -NoProfile -ExecutionPolicy Bypass -File $script:validateScript -ObjectPath $resolvedPath
 	$script:validateExitCode = $LASTEXITCODE
 	if ($script:validateExitCode -ne 0 -and $null -ne $script:importOriginalBytes) {
 		# Local: import-attribute не оставляет непроходящий проверку объект — исходные байты возвращаются.

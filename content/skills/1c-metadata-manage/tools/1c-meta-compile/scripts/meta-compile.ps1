@@ -1,10 +1,14 @@
-﻿# meta-compile v1.130 — Compile 1C metadata object from JSON
+﻿# meta-compile v1.133 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local (2026-11-25): the nested validator / batch child starts with -ExecutionPolicy Bypass.
 # Local: an existing object is refused unless -Force (upstream only warns; a recompile
 # gives the object a new uuid). NEW_OBJECT_POSITION and SUPPORT_GUARD come from .dev.env
 # first (.v8-project.json is the fallback); the support guard fails closed on an
 # unreadable Ext/ParentConfigurations.bin. An object left unregistered (no
 # Configuration.xml / ChildObjects) exits 3. Batch mode re-runs the same PowerShell edition.
+# Local (2026-11-25): top-level `modules: false` skips the empty ObjectModule / ManagerModule /
+# ValueManagerModule / RecordSetModule stubs (a report on a DCS with no code); ScheduledJob key
+# `schedule` writes Ext/Schedule.xml (validated before any write).
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
@@ -285,7 +289,7 @@ if ($def -is [array] -or ($null -ne $def -and $def.GetType().BaseType.Name -eq '
 			$item | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $tmpJson
 			$psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell.exe' }
 			$forceArg = if ($Force) { " -Force" } else { "" }
-			$proc = Start-Process -FilePath $psExe -ArgumentList "-NoProfile -File `"$PSCommandPath`" -JsonPath `"$tmpJson`" -OutputDir `"$OutputDir`"$forceArg" -NoNewWindow -Wait -PassThru
+			$proc = Start-Process -FilePath $psExe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -JsonPath `"$tmpJson`" -OutputDir `"$OutputDir`"$forceArg" -NoNewWindow -Wait -PassThru
 			if ($proc.ExitCode -eq 0) { $batchOk++ } else { $batchFail++ }
 		} finally {
 			Remove-Item $tmpJson -Force -ErrorAction SilentlyContinue
@@ -643,6 +647,88 @@ if (-not $def.name) {
 }
 
 $objName = "$($def.name)"
+
+# --- Расписание регламентного задания (ключ `schedule`) → Ext/Schedule.xml ---
+# Разбирается и проверяется ДО любой записи: неверный ключ или значение — ошибка в stderr, exit 1,
+# файлов нет. Подробные дневные расписания (ent:DetailedDailySchedules) не поддержаны.
+function Get-ScheduleParams($sched) {
+	$fail = { param($m) [Console]::Error.WriteLine("[ERROR] schedule: $m"); exit 1 }
+	if ($sched -isnot [System.Management.Automation.PSCustomObject] -and $sched -isnot [System.Collections.IDictionary]) {
+		& $fail "expected an object, e.g. {""beginTime"": ""08:15"", ""weekDays"": [1,2,3,4,5]}"
+	}
+	$known = @('beginTime','endTime','completionTime','beginDate','endDate','daysRepeatPeriod','weeksPeriod',
+		'repeatPeriodInDay','repeatPause','completionInterval','dayInMonth','weekDayInMonth','weekDays','months')
+	$given = @{}
+	$names = if ($sched -is [System.Collections.IDictionary]) { @($sched.Keys) } else { @($sched.PSObject.Properties | ForEach-Object { $_.Name }) }
+	foreach ($n in $names) {
+		$canon = $known | Where-Object { $_ -ceq $n } | Select-Object -First 1
+		if (-not $canon) { & $fail "unknown key '$n'. Valid: $($known -join ', ')" }
+		$given[$canon] = if ($sched -is [System.Collections.IDictionary]) { $sched[$n] } else { $sched.PSObject.Properties[$n].Value }
+	}
+	$p = [ordered]@{}
+	foreach ($k in 'beginTime','endTime','completionTime') {
+		$v = if ($given.ContainsKey($k) -and $null -ne $given[$k]) { "$($given[$k])".Trim() } else { '00:00:00' }
+		if ($v -match '^(\d{1,2}):(\d{2})$') { $v = "${v}:00" }
+		if ($v -notmatch '^(\d{1,2}):(\d{2}):(\d{2})$' -or [int]$Matches[1] -gt 23 -or [int]$Matches[2] -gt 59 -or [int]$Matches[3] -gt 59) {
+			& $fail "$k = ""$($given[$k])"": expected HH:MM:SS (or HH:MM), 00:00:00..23:59:59"
+		}
+		$p[$k] = '{0:00}:{1}:{2}' -f [int]$Matches[1], $Matches[2], $Matches[3]
+	}
+	foreach ($k in 'beginDate','endDate') {
+		$v = if ($given.ContainsKey($k) -and $null -ne $given[$k]) { "$($given[$k])".Trim() } else { '0001-01-01' }
+		$dt = [datetime]::MinValue
+		if ($v -notmatch '^\d{4}-\d{2}-\d{2}$' -or -not [datetime]::TryParseExact($v, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$dt)) {
+			& $fail "$k = ""$($given[$k])"": expected a date YYYY-MM-DD"
+		}
+		$p[$k] = $v
+	}
+	$ints = [ordered]@{ daysRepeatPeriod = @(1, 0, 1000000); weeksPeriod = @(1, 0, 1000000); repeatPeriodInDay = @(0, 0, 86400);
+		repeatPause = @(0, 0, 86400); completionInterval = @(0, 0, 86400); dayInMonth = @(0, 0, 31); weekDayInMonth = @(0, 0, 5) }
+	foreach ($k in $ints.Keys) {
+		$def0, $min, $max = $ints[$k]
+		$v = $def0
+		if ($given.ContainsKey($k) -and $null -ne $given[$k]) {
+			$raw = $given[$k]
+			$isInt = ($raw -is [int] -or $raw -is [long]) -or ($raw -is [string] -and $raw -match '^\d+$')
+			if (-not $isInt) { & $fail "$k = ${raw}: expected an integer $min..$max" }
+			$v = [long]"$raw"
+			if ($v -lt $min -or $v -gt $max) { & $fail "$k = ${v}: expected an integer $min..$max" }
+		}
+		$p[$k] = "$v"
+	}
+	foreach ($lk in @(@('weekDays', 7), @('months', 12))) {
+		$k = $lk[0]; $max = $lk[1]
+		$all = (1..$max) -join ' '
+		if (-not $given.ContainsKey($k) -or $null -eq $given[$k]) { $p[$k] = $all; continue }
+		$vals = @()
+		foreach ($e in @($given[$k])) {
+			$isInt = ($e -is [int] -or $e -is [long]) -or ($e -is [string] -and $e -match '^\d+$')
+			if (-not $isInt -or [long]"$e" -lt 1 -or [long]"$e" -gt $max) {
+				& $fail "$k contains ""$e"": expected integers 1..$max"
+			}
+			$vals += [int]"$e"
+		}
+		$p[$k] = (@($vals | Sort-Object -Unique) -join ' ')
+	}
+	return $p
+}
+# Ключ `modules` (дефолт true): false — не создавать пустые заготовки ObjectModule / ManagerModule /
+# ValueManagerModule / RecordSetModule (отчёт на СКД без кода). На Module.bsl общих модулей и сервисов
+# и CommandModule.bsl общей команды не влияет: модуль там и есть содержимое объекта.
+# Читается здесь, до первой записи: неверное значение — ошибка без файлов.
+$createObjectModules = Get-DslBool $def @('modules') $true
+
+$scheduleParams = $null
+$schedProp = $null
+if ($def -is [System.Collections.IDictionary]) { if ($def.Contains('schedule')) { $schedProp = @{ v = $def['schedule'] } } }
+elseif ($def.PSObject.Properties['schedule']) { $schedProp = @{ v = $def.PSObject.Properties['schedule'].Value } }
+if ($schedProp -and $null -ne $schedProp.v) {
+	if ($objType -ne 'ScheduledJob') {
+		[Console]::Error.WriteLine("[ERROR] schedule is only valid for type ScheduledJob (got $objType)")
+		exit 1
+	}
+	$scheduleParams = Get-ScheduleParams $schedProp.v
+}
 
 # --- 2. XML helpers ---
 
@@ -5810,7 +5896,7 @@ $typesWithValueManagerModule = @("Constant")
 # Types with Module.bsl (general)
 $typesWithModule = @("CommonModule","HTTPService","WebService")
 
-if ($objType -in $typesWithObjectModule) {
+if ($createObjectModules -and $objType -in $typesWithObjectModule) {
 	$modulePath = Join-Path $extDir "ObjectModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5818,7 +5904,7 @@ if ($objType -in $typesWithObjectModule) {
 		$modulesCreated += $modulePath
 	}
 }
-if ($objType -in $typesWithManagerModule) {
+if ($createObjectModules -and $objType -in $typesWithManagerModule) {
 	$modulePath = Join-Path $extDir "ManagerModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5826,7 +5912,7 @@ if ($objType -in $typesWithManagerModule) {
 		$modulesCreated += $modulePath
 	}
 }
-if ($objType -in $typesWithValueManagerModule) {
+if ($createObjectModules -and $objType -in $typesWithValueManagerModule) {
 	$modulePath = Join-Path $extDir "ValueManagerModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5834,7 +5920,7 @@ if ($objType -in $typesWithValueManagerModule) {
 		$modulesCreated += $modulePath
 	}
 }
-if ($objType -in $typesWithRecordSetModule) {
+if ($createObjectModules -and $objType -in $typesWithRecordSetModule) {
 	$modulePath = Join-Path $extDir "RecordSetModule.bsl"
 	if (-not (Test-Path $modulePath)) {
 		Ensure-ExtDir
@@ -5948,6 +6034,22 @@ if ($objType -eq "BusinessProcess") {
 		Write-XmlFileKeepEol $flowchartPath $flowchartXml $enc
 		$modulesCreated += $flowchartPath
 	}
+}
+
+# Расписание регламентного задания (Ext/Schedule.xml) — только при ключе `schedule`; параметры разобраны выше.
+if ($objType -eq "ScheduledJob" -and $scheduleParams) {
+	$sp = $scheduleParams
+	Ensure-ExtDir
+	$schedPath = Join-Path $extDir "Schedule.xml"
+	$schedNs = 'xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+	$schedAttrs = "BeginDate=`"$($sp.beginDate)`" EndDate=`"$($sp.endDate)`" BeginTime=`"$($sp.beginTime)`" EndTime=`"$($sp.endTime)`" CompletionTime=`"$($sp.completionTime)`" CompletionInterval=`"$($sp.completionInterval)`" RepeatPeriodInDay=`"$($sp.repeatPeriodInDay)`" RepeatPause=`"$($sp.repeatPause)`" WeekDayInMonth=`"$($sp.weekDayInMonth)`" DayInMonth=`"$($sp.dayInMonth)`" WeeksPeriod=`"$($sp.weeksPeriod)`" DaysRepeatPeriod=`"$($sp.daysRepeatPeriod)`""
+	$schedXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<JobSchedule $schedNs version=`"$($script:formatVersion)`">`r`n`t<Schedule $schedAttrs>`r`n"
+	foreach ($lt in @(@('WeekDays', $sp.weekDays), @('Months', $sp.months))) {
+		$schedXml += if ($lt[1]) { "`t`t<ent:$($lt[0])>$($lt[1])</ent:$($lt[0])>`r`n" } else { "`t`t<ent:$($lt[0])/>`r`n" }
+	}
+	$schedXml += "`t</Schedule>`r`n</JobSchedule>`r`n"
+	Write-XmlFileKeepEol $schedPath $schedXml $enc
+	$modulesCreated += $schedPath
 }
 
 # Предопределённые элементы (Ext/Predefined.xml). Root-элемент — по типу. Пусто/нет ключа → файл не создаём.

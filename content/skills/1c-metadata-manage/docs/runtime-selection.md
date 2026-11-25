@@ -19,7 +19,7 @@ Each tool of this skill ships as a PowerShell script (`*.ps1`). Some tools addit
 
 Rules:
 
-- **Windows** — run the `.ps1` (`powershell -NoProfile -File <script> …`). This is the reference runtime; the PowerShell scripts are the complete toolchain.
+- **Windows** — run the `.ps1` (`powershell -NoProfile -ExecutionPolicy Bypass -File <script> …`). This is the reference runtime; the PowerShell scripts are the complete toolchain.
 - **Linux / macOS** — run the available `.py` with `python3`, using the documented switches. The five metadata ports need `lxml`; the four web ports use the standard library but require compatible external Apache/1C binaries. Their operational differences and prerequisites are in [web-manage.md](web-manage.md). A Python entry point is not a claim that the platform web extension works on every OS. Installing `pwsh` likewise does not make Windows-specific PowerShell code portable.
 - `tools/tests/python-ports-regression.py` checks the metadata ports' parity, command inventory and installer packaging. `tools/tests/web-python-regression.py` checks web operations with isolated fixtures and mocked process calls; it does not certify a live Apache/1C deployment. CI runs both Python suites on Windows and Linux.
 

@@ -22,7 +22,7 @@ Detects objects that claim the same identity. The full description of the tool �
 2. **Run the check.**
 
    ```powershell
-   powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1 -ConfigPath "<path>" [-IncludeIntra]
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1 -ConfigPath "<path>" [-IncludeIntra]
    ```
 
    (In the `1c-rules` source repository, prefix the script path with `content/` — `SKILL.md → Path conventions`.)
@@ -36,7 +36,7 @@ Detects objects that claim the same identity. The full description of the tool �
    Before repairing, state the risk in one line: `-Fix` keeps the *first* occurrence and regenerates the rest, which is positional rather than semantic. If the dump has already been loaded into an infobase, regenerating a `uuid` makes the platform treat the object as new on the next load and orphans its data — in that case have the user decide which occurrence keeps the identity.
 
    ```powershell
-   powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1 -ConfigPath "<path>" [-IncludeIntra] -Fix
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1 -ConfigPath "<path>" [-IncludeIntra] -Fix
    ```
 
 5. **Confirm.** After a repair, re-run without `-Fix` and report the clean result. Then validate the affected objects (`meta-validate` / `cf-validate` — `content/skills/1c-metadata-manage/docs/meta-manage.md`, `content/skills/1c-metadata-manage/docs/cf-manage.md`) before the dump is loaded.

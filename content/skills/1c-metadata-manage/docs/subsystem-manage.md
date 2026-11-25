@@ -7,7 +7,7 @@ Comprehensive subsystem management: create from JSON, edit content/properties, a
 ## 1. Compile — Create Subsystem from JSON
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-compile.ps1 -Value '<json>' -OutputDir '<ConfigDir>'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-compile.ps1 -Value '<json>' -OutputDir '<ConfigDir>'
 ```
 
 | Parameter | Description |
@@ -47,7 +47,7 @@ Both `subsystem-compile` and `subsystem-edit` refuse to change a locked vendor c
 ## 2. Edit — Modify Existing Subsystem
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-edit.ps1 -SubsystemPath '<path>' -Operation <op> -Value '<value>'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-edit.ps1 -SubsystemPath '<path>' -Operation <op> -Value '<value>'
 ```
 
 | Parameter | Description |
@@ -75,7 +75,7 @@ Operation names are case-insensitive (`Add-Content` works). Content items accept
 ## 3. Info — Analyze Subsystem Structure
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-info.ps1 -SubsystemPath "<path>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-info.ps1 -SubsystemPath "<path>"
 ```
 
 | Parameter | Description |
@@ -99,7 +99,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-subsystem-man
 ## 4. Validate — Check Subsystem Correctness
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-validate.ps1 -SubsystemPath '<path>'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-validate.ps1 -SubsystemPath '<path>'
 ```
 
 | Parameter | Description |

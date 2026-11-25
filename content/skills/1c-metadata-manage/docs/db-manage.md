@@ -211,7 +211,7 @@ Take the platform path from `.dev.env` `PLATFORM_PATH` (falling back to `.v8-pro
 ### 1. Create Infobase
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-create.ps1 -InfoBasePath "C:\Bases\NewDB"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-create.ps1 -InfoBasePath "C:\Bases\NewDB"
 ```
 
 | Extra Parameter | Description |
@@ -227,7 +227,7 @@ After creation: offer to register via `1c-db-manage add`.
 ### 2. Run 1C Enterprise
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-run.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-run.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin"
 ```
 
 | Extra Parameter | Description |
@@ -243,7 +243,7 @@ Launches 1C in background — control returns immediately.
 ### 3. Update Database Configuration
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-update.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-update.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin"
 ```
 
 Applies main configuration changes to the database configuration (`/UpdateDBCfg`). Required step after `db-load-cf`, `db-load-xml`, `db-load-git`.
@@ -269,7 +269,7 @@ The update log is scanned after an exit-0 run: metadata rejections (`Невер�
 ### 4. Dump Configuration to CF
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-cf.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -OutputFile "config.cf"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-cf.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -OutputFile "config.cf"
 ```
 
 | Extra Parameter | Description |
@@ -283,7 +283,7 @@ powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/script
 ### 5. Load Configuration from CF
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-cf.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -InputFile "config.cf"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-cf.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -InputFile "config.cf"
 ```
 
 > **Warning**: Loading CF **completely replaces** the configuration. Request user confirmation before executing.
@@ -303,7 +303,7 @@ Within `/update1cbase` or `/deploy-and-test`, the apply stage is already part of
 ### 6. Dump Configuration to XML
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -ConfigDir "src/cf" -Mode Full
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -ConfigDir "src/cf" -Mode Full
 ```
 
 | Extra Parameter | Description |
@@ -342,7 +342,7 @@ For `-getChanges` reports or `-configDumpInfoForChanges` delta exports, use the 
 ### 7. Load Configuration from XML
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-xml.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -ConfigDir "src/cf" -Mode Full
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-xml.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -ConfigDir "src/cf" -Mode Full
 ```
 
 > **Warning**: Full load **replaces the entire configuration**. Request user confirmation.
@@ -372,7 +372,7 @@ Standalone load-only requests finish after loading. In `/update1cbase` / `/deplo
 ### 8. Load Changes from Git
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-git.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -ConfigDir "src/cf" -Source All
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-git.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -ConfigDir "src/cf" -Source All
 ```
 
 Determines changed configuration files from Git data and performs partial load into the infobase.
@@ -402,7 +402,7 @@ Run `-DryRun` first to inspect the exact scope. Deletions are reported, not skip
 ### 9. Dump Infobase to DT (backup / rollback point)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -OutputFile "C:\backup\base.dt"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -OutputFile "C:\backup\base.dt"
 ```
 
 Dumps the **whole infobase** — configuration **plus data**, settings and users. Unlike `db-dump-cf` (configuration only), a `.dt` is a full snapshot: this is the backup / rollback point, not a metadata export.
@@ -418,7 +418,7 @@ Take a DT dump before any irreversible operation: `db-load-dt`, a CF load over a
 ### 10. Load Infobase from DT
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -InputFile "C:\backup\base.dt"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-dt.ps1 -InfoBasePath "C:\Bases\MyDB" -UserName "Admin" -InputFile "C:\backup\base.dt"
 ```
 
 > **Irreversible.** Loading a `.dt` **completely overwrites the infobase** — configuration *and* all data. Whatever is in the base now is lost. `db-update` afterwards is **not** needed: the database configuration is already in sync inside the snapshot.
@@ -444,7 +444,7 @@ If the base is busy (active sessions), the load fails: for a server base pass `-
 ### 11. Extensions in the Infobase (`db-cfe-admin`)
 
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-cfe-admin.ps1 -Command list -InfoBasePath "C:\Bases\MyDB"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-cfe-admin.ps1 -Command list -InfoBasePath "C:\Bases\MyDB"
 ```
 
 The infobase side of extensions: what is connected, checks, connection properties, removal. Extension **sources** are [cfe-manage.md](cfe-manage.md); loading them is `db-load-xml -Extension` / `db-load-cf -Extension`, applying them `db-update -Extension`.
