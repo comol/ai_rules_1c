@@ -15,8 +15,9 @@
          keep/drop silently loses it on install.
       2. Cross-references - every `content/...` path mentioned anywhere in the
          ruleset resolves to a file that exists, and every relative Markdown link
-         resolves from the file that contains it. A broken reference turns a hard
-         gate into a dangling pointer without any visible error.
+         resolves from the file that contains it and stays inside its content/
+         section. A broken reference turns a hard gate into a dangling pointer
+         without any visible error.
       3. Section anchors - "<file>.md -> Section" references point at a heading
          that exists in the target file. Reported as warnings: the ruleset also
          uses non-heading anchors (section signs, "A.7"), which cannot be
@@ -464,6 +465,17 @@ foreach ($file in $scanned) {
             $target = Join-Path $ownDir ($m.Groups[1].Value -replace '/', '\')
             if (-not (Test-Path -LiteralPath $target)) {
                 Add-Problem -Level error -File $file.FullName -Line $lineNo -Message ('broken Markdown link: ' + $m.Groups[1].Value)
+            }
+            else {
+                # Each section of content/ is installed under its own directory
+                # (rules go to .cursor/rules, .claude/rules-1c, ...), so a relative link
+                # from one section into another is broken in the project. The
+                # installer rewrites the `content/<section>/...` form.
+                $ownSection = [regex]::Match($file.FullName.Replace('\', '/'), '/content/(rules|skills|agents|commands)/').Groups[1].Value
+                $targetSection = [regex]::Match([IO.Path]::GetFullPath($target).Replace('\', '/'), '/content/(rules|skills|agents|commands)/').Groups[1].Value
+                if ($ownSection -and $targetSection -and $targetSection -ne $ownSection) {
+                    Add-Problem -Level error -File $file.FullName -Line $lineNo -Message ('relative Markdown link leaves content/' + $ownSection + '/ and breaks after installation: ' + $m.Groups[1].Value + ' - write it as `content/<section>/...`')
+                }
             }
         }
 

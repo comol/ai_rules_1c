@@ -48,6 +48,10 @@ Local deltas re-applied: `.dev.env` `SUPPORT_GUARD` first, fail-closed on an unr
 
 `cf-edit` v1.11 → **v1.12** (support ticket 4e6f4e67, item 4): `add-childObject` always inserted a new entry by name inside its kind group (culture-aware `-gt`), whatever `NEW_OBJECT_POSITION` said. It now resolves the setting as `meta-compile` does — `end` (default) after the last object of the kind, as Configurator; `byName` with the 1C-tree comparator; order-sensitive kinds never sorted. Pinned by `tools/tests/metadata-tools-regression.ps1`.
 
+### Local fix `2026-11-25` — nested scripts run under `pwsh` on Linux / macOS
+
+`cf-edit`, `interface-edit`, `subsystem-compile`, `subsystem-edit`, `xdto-edit`, `meta-edit`, `role-edit` started their sibling validator with the literal `powershell.exe`, which does not exist outside Windows. Under PowerShell Core on another OS they now start the running `pwsh`; on Windows nothing changes. `dump-validate` built the directory of a nested subsystem with a trailing dot, which only Windows tolerates. From PR #38 by mavlenkov (Linux: 95 passed, 2 Windows-only cases skipped). The tools stay unsupported on Linux otherwise (`runtime-selection.md`).
+
 ### Local fix `2026-10-01` — sibling validators are found
 
 The auto-validation of `cf-edit`, `interface-edit`, `subsystem-compile` and `subsystem-edit` looked for the validator at upstream's `..\..\<validator>\scripts\` path, which does not exist in this layout, so it was skipped silently; `xdto-edit` looked for `xdto-decompile` / `xdto-compile` / `xdto-validate` the same way and refused every structural operation. All five now take the sibling script from their own `scripts` directory.

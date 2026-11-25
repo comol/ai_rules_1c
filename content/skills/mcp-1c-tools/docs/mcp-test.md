@@ -6,7 +6,7 @@ Contract checked against `pre-alpha/MCP_Test/src/mcp_1c_ui_test/server.py` and i
 
 ## Scope and gates
 
-Knowledge lookup and scenario inspection do not authorize starting an infobase session. Building a harness, recording or replaying requires an authorized test task, resolved target/manager connections and the existing [UI testing preflight](../../../rules/ui-testing-tools.md) and infobase procedures. Recorded/replayed UI actions may change business data. Generated BSL and harness changes remain subject to [verification gates](../../../rules/verification-gates.md); API-name checking and scenario lint are not replacements for BSL validation or a test verdict.
+Knowledge lookup and scenario inspection do not authorize starting an infobase session. Building a harness, recording or replaying requires an authorized test task, resolved target/manager connections and the existing UI testing preflight (`content/rules/ui-testing-tools.md`) and infobase procedures. Recorded/replayed UI actions may change business data. Generated BSL and harness changes remain subject to verification gates (`content/rules/verification-gates.md`); API-name checking and scenario lint are not replacements for BSL validation or a test verdict.
 
 ## Knowledge and platform discovery
 

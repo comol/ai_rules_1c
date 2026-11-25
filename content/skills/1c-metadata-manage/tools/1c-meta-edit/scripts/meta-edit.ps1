@@ -4477,7 +4477,8 @@ $script:validateExitCode = 0
 if (-not $NoValidate) {
 	Write-Host ""
 	Write-Host "--- Running $($script:validateSkill) ---" -ForegroundColor DarkGray
-	& powershell.exe -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
+	$psExe = if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { Join-Path $PSHOME 'pwsh' } else { 'powershell.exe' }
+	& $psExe -NoProfile -File $script:validateScript -ObjectPath $resolvedPath
 	$script:validateExitCode = $LASTEXITCODE
 	if ($script:validateExitCode -ne 0 -and $null -ne $script:importOriginalBytes) {
 		# Local: import-attribute не оставляет непроходящий проверку объект — исходные байты возвращаются.
