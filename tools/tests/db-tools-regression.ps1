@@ -18,6 +18,8 @@
         masked in the printed command line and passed unmasked to the platform;
       - /DumpResult: a non-zero or missing result fails an exit-0 launch;
       - db-update -Dynamic auto/disable, and log failure lines raise its exit code;
+      - db-update -SessionTerminate sits right after /UpdateDBCfg (1cv8) / is --session-terminate= (ibcmd)
+        and is refused through the additional-argument parameters;
       - the extension applicability check is opt-in (-ApplyCheck);
       - db-cfe-admin refuses an empty -Name/-Extension and gates delete behind -DryRun/-Force.
 
@@ -286,6 +288,30 @@ Register-Case 'db-update: -Dynamic auto / disable reach the platform as -Dynamic
     Assert-True ($run.Launches[0] -match '-Dynamic-(\s|$)') "disable: $($run.Launches[0])"
     $run = Invoke-Tool $Update @('-InfoBasePath', 'ib', '-Dynamic', 'off') $proj
     Assert-True ($run.Launches[0] -match '-Dynamic-(\s|$)') "off: $($run.Launches[0])"
+}
+
+Register-Case 'db-update: -SessionTerminate lands right after /UpdateDBCfg (1cv8) and as --session-terminate= (ibcmd)' {
+    param($Work)
+    $proj = New-Project $Work @()
+    $run = Invoke-Tool $Update @('-InfoBasePath', 'ib', '-Dynamic', 'auto', '-SessionTerminate', 'force') $proj
+    Assert-Equal 0 $run.ExitCode "1cv8 exit code (stdout: $($run.StdOut))"
+    Assert-True ($run.Launches[0] -match '/UpdateDBCfg -Dynamic\+ -SessionTerminate force /Out ') "1cv8 command line: $($run.Launches[0])"
+    # The same fake program, named ibcmd.exe, selects the ibcmd branch.
+    $ibcmd = Join-Path $script:FakeInstall 'bin\ibcmd.exe'
+    Copy-Item -LiteralPath (Join-Path $script:FakeInstall 'bin\1cv8.exe') -Destination $ibcmd -Force
+    $run = Invoke-Tool $Update @('-V8Path', $ibcmd, '-InfoBasePath', 'ib', '-SessionTerminate', 'force') $proj
+    Assert-Equal 0 $run.ExitCode "ibcmd exit code (stdout: $($run.StdOut))"
+    Assert-True ($run.Launches[0] -match 'config apply .*--session-terminate=force') "ibcmd command line: $($run.Launches[0])"
+    $run = Invoke-Tool $Update @('-InfoBasePath', 'ib', '-AdditionalV8Arguments:-SessionTerminate,force') $proj
+    Assert-True ($run.ExitCode -ne 0) 'a duplicate -SessionTerminate through the additional arguments was accepted'
+    Assert-Equal 0 $run.Launches.Count 'the platform was launched despite the refused argument'
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'use -SessionTerminate') "no hint to the new parameter: $($run.StdOut)"
+    $run = Invoke-Tool $Update @('-V8Path', $ibcmd, '-InfoBasePath', 'ib', '-AdditionalIbcmdArguments:--session-terminate=force') $proj
+    Assert-True ($run.ExitCode -ne 0) 'a duplicate --session-terminate through the additional arguments was accepted'
+    Assert-True ("$($run.StdOut)$($run.StdErr)" -match 'use -SessionTerminate') "no hint for the ibcmd spelling: $($run.StdOut)"
+    $run = Invoke-Tool $Update @('-InfoBasePath', 'ib', '-SessionTerminate', 'maybe') $proj
+    Assert-True ($run.ExitCode -ne 0) 'an unknown -SessionTerminate mode was accepted'
+    Assert-Equal 0 $run.Launches.Count 'the platform was launched with an unknown mode'
 }
 
 Register-Case 'db-update: a failure line in the log raises the exit code' {
