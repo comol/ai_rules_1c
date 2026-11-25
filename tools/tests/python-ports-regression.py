@@ -2705,17 +2705,19 @@ def _(work):
 def _(work):
     # SKILL.md keeps only the routing line (709ecac moved the command table out of the
     # always-loaded context); the table itself lives in docs/runtime-selection.md, which
-    # SKILL.md must link. Both texts together are what the agent reads.
+    # SKILL.md must link (an inline Markdown link, not a bare mention) and which alone must
+    # name every port. Both texts together are what the agent reads.
     skill_dir = os.path.join(REPO_ROOT, "content", "skills", "1c-metadata-manage")
     with open(os.path.join(skill_dir, "SKILL.md"), "rb") as handle:
-        skill = handle.read().decode("utf-8-sig")
-    assert_true("docs/runtime-selection.md" in skill,
-                "SKILL.md no longer routes to docs/runtime-selection.md")
+        skill_text = handle.read().decode("utf-8-sig")
+    assert_true(re.search(r"\[[^\]\r\n]+\]\(docs/runtime-selection\.md\)", skill_text) is not None,
+                "SKILL.md does not link to docs/runtime-selection.md")
     with open(os.path.join(skill_dir, "docs", "runtime-selection.md"), "rb") as handle:
-        text = skill + chr(10) + handle.read().decode("utf-8-sig")
+        runtime_text = handle.read().decode("utf-8-sig")
     for stem in PORTED_COMMANDS:
-        assert_true(f"{stem}.py" in text,
-                    f"neither SKILL.md nor docs/runtime-selection.md names the ported entry point {stem}.py")
+        assert_true(f"{stem}.py" in runtime_text,
+                    f"runtime-selection.md does not name the ported entry point {stem}.py")
+    text = skill_text + "\n" + runtime_text
     # The honest half: a tool with no Python peer must not be advertised with one.
     unported = sorted(
         entry for entry in os.listdir(TOOLS_DIR)
