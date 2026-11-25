@@ -75,12 +75,14 @@ Scheduled job: add `"schedule"` to write `Ext/Schedule.xml` (without it no file 
 ### Attributes — Shorthand
 
 ```
-"AttributeName"                     — String without qualifiers
+"AttributeName"                     — String(10): a bare name is a string of length 10
 "AttributeName: Type"               — with type
 "AttributeName: Type | req, index"  — with flags
 ```
 
-Types: `String(100)`, `Number(15,2)`, `Boolean`, `Date`, `DateTime`, `CatalogRef.Xxx`, `DocumentRef.Xxx`, `EnumRef.Xxx`, `ChartOfAccountsRef.Xxx`, `ChartOfCharacteristicTypesRef.Xxx`, `ChartOfCalculationTypesRef.Xxx`, `ExchangePlanRef.Xxx`, `BusinessProcessRef.Xxx`, `TaskRef.Xxx`, `DefinedType.Xxx`.
+Types: `String(N)`, `Number(15,2)`, `Boolean`, `Date`, `DateTime`, `CatalogRef.Xxx`, `DocumentRef.Xxx`, `EnumRef.Xxx`, `ChartOfAccountsRef.Xxx`, `ChartOfCharacteristicTypesRef.Xxx`, `ChartOfCalculationTypesRef.Xxx`, `ExchangePlanRef.Xxx`, `BusinessProcessRef.Xxx`, `TaskRef.Xxx`, `DefinedType.Xxx`.
+
+String length: a bare attribute name, `String` and `Строка` without parentheses are **`String(10)`** (what Designer gives a new attribute), not an unlimited string. Say the length: `String(100)`, `Строка(100)`. An unlimited string is `String(0)` / `Строка(0)`. An attribute that already exists with the wrong length is fixed with `meta-edit -Operation modify-attribute -Value "Name: type=String(0)"`.
 
 Russian type synonyms: `Строка`, `Число`, `Булево`, `Дата`, `СправочникСсылка.Xxx`, `ДокументСсылка.Xxx`, `ПланСчетовСсылка.Xxx`. The labels `meta-info` prints are accepted as input too (`ДокументОбъект.Заказ`, `ПВХСсылка.ВидыСубконто`, `Характеристика.Виды`, `НаборЗаписейРС.X`, …), so its output can be carried back into a definition.
 

@@ -74,7 +74,7 @@ JSON DSL для описания объектов метаданных конф�
 
 | DSL | XML |
 |-----|-----|
-| `String` или `String(100)` | `xs:string` + StringQualifiers (AllowedLength=Variable) |
+| `String` или `String(100)` | `xs:string` + StringQualifiers (AllowedLength=Variable). Без скобок длина **10** (как у нового реквизита в Конфигураторе), не неограниченная; неограниченная строка — `String(0)` |
 | `String(100,fixed)` | `xs:string` + AllowedLength=Fixed (строка фикс. длины) |
 | `Number(15,2)` | `xs:decimal` + NumberQualifiers |
 | `Number(10,0,nonneg)` | `xs:decimal` + AllowedSign=Nonnegative |
