@@ -4537,21 +4537,25 @@ function Find-SourceFormats {
     for ($depth = 0; $depth -le 3 -and $level.Count -gt 0; $depth++) {
         $next = @()
         foreach ($dir in $level) {
-            if ((Test-Path -LiteralPath (Join-Path $dir '.project') -PathType Leaf) -and
-                ((Test-Path -LiteralPath (Join-Path $dir 'DT-INF') -PathType Container) -or
-                (Test-Path -LiteralPath (Join-Path $dir 'src/Configuration/Configuration.mdo') -PathType Leaf))) {
-                # A root project may sit beside a Designer dump, so only a
-                # nested EDT project ends the descent.
+            # .NET checks: a tree may have thousands of directories at this depth.
+            $isEdtProject = [IO.File]::Exists([IO.Path]::Combine($dir, '.project')) -and
+                ([IO.Directory]::Exists([IO.Path]::Combine($dir, 'DT-INF')) -or
+                [IO.File]::Exists([IO.Path]::Combine($dir, 'src', 'Configuration', 'Configuration.mdo')))
+            if ($isEdtProject) {
+                # A root project may sit beside a Designer dump, so only a nested
+                # EDT project ends the descent; the sources of the root one are
+                # skipped below.
                 $edt += $dir
                 if ($depth -gt 0) { continue }
             }
-            if (Test-Path -LiteralPath (Join-Path $dir 'Configuration.xml') -PathType Leaf) {
+            if ([IO.File]::Exists([IO.Path]::Combine($dir, 'Configuration.xml'))) {
                 if ($designer -notcontains $dir) { $designer += $dir }
                 continue
             }
             if ($depth -eq 3) { continue }
             foreach ($sub in @(Get-ChildItem -LiteralPath $dir -Directory -Force -ErrorAction SilentlyContinue)) {
                 if ($skipDirs -contains $sub.Name) { continue }
+                if ($isEdtProject -and $sub.Name -in @('src', 'DT-INF')) { continue }
                 if ($sub.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
                 $next += $sub.FullName
             }
