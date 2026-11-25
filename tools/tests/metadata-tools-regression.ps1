@@ -1116,6 +1116,67 @@ Register-Case 'meta-compile: modules=false skips the empty object / manager modu
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'Reports\BadFlag.xml'))) 'a refused definition wrote the report'
 }
 
+Register-Case 'meta-compile: ScheduledJob schedule writes Ext/Schedule.xml in the Designer shape' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $json = '{"type":"ScheduledJob","name":"TestJob","methodName":"TestModule.Run","schedule":{"beginTime":"08:15","weekDays":[1,2,3,4,5],"repeatPeriodInDay":600}}'
+    $run = Invoke-MetaCompileJson $Work $json 'job.json'
+    Assert-Equal 0 $run.ExitCode "meta-compile ScheduledJob (stderr: $($run.StdErr))"
+    $sched = Join-Path $Work 'ScheduledJobs\TestJob\Ext\Schedule.xml'
+    Assert-True (Test-Path -LiteralPath $sched) 'Ext/Schedule.xml was not written'
+    $facts = Get-FileFacts $sched
+    Assert-True $facts.Bom 'Schedule.xml has no UTF-8 BOM'
+    Assert-Equal 0 $facts.LoneLf 'Schedule.xml must use CRLF only'
+    Assert-True ($facts.Crlf -gt 0) 'Schedule.xml has no CRLF'
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.LoadXml($facts.Text)
+    $root = $doc.DocumentElement
+    Assert-Equal 'JobSchedule' $root.LocalName 'root element'
+    Assert-Equal '2.17' $root.GetAttribute('version') 'version follows the configuration format'
+    $node = $root.FirstChild
+    while ($node -and $node.NodeType -ne 'Element') { $node = $node.NextSibling }
+    Assert-Equal 'Schedule' $node.LocalName 'child element'
+    Assert-Equal '08:15:00' $node.GetAttribute('BeginTime') 'BeginTime'
+    Assert-Equal '00:00:00' $node.GetAttribute('EndTime') 'EndTime'
+    Assert-Equal '600' $node.GetAttribute('RepeatPeriodInDay') 'RepeatPeriodInDay'
+    Assert-Equal '0' $node.GetAttribute('RepeatPause') 'RepeatPause'
+    Assert-Equal '0001-01-01' $node.GetAttribute('BeginDate') 'BeginDate'
+    Assert-Equal '1' $node.GetAttribute('WeeksPeriod') 'WeeksPeriod'
+    Assert-Equal '1' $node.GetAttribute('DaysRepeatPeriod') 'DaysRepeatPeriod'
+    Assert-Equal '1 2 3 4 5' ($node.SelectSingleNode("*[local-name()='WeekDays']").InnerText) 'WeekDays'
+    Assert-Equal '1 2 3 4 5 6 7 8 9 10 11 12' ($node.SelectSingleNode("*[local-name()='Months']").InnerText) 'Months'
+    Assert-True ($facts.Text -match '\t<Schedule BeginDate="0001-01-01" EndDate="0001-01-01" BeginTime="08:15:00" EndTime="00:00:00" CompletionTime="00:00:00" CompletionInterval="0" RepeatPeriodInDay="600" RepeatPause="0" WeekDayInMonth="0" DayInMonth="0" WeeksPeriod="1" DaysRepeatPeriod="1">') 'attribute order of <Schedule> differs from Designer'
+}
+
+Register-Case 'meta-compile: ScheduledJob without schedule writes no Schedule.xml' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $run = Invoke-MetaCompileJson $Work '{"type":"ScheduledJob","name":"PlainJob","methodName":"TestModule.Run"}' 'plain-job.json'
+    Assert-Equal 0 $run.ExitCode "meta-compile ScheduledJob (stderr: $($run.StdErr))"
+    Assert-True (Test-Path -LiteralPath (Join-Path $Work 'ScheduledJobs\PlainJob.xml')) 'the job XML was not written'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work 'ScheduledJobs\PlainJob'))) 'a Schedule directory appeared without a schedule key'
+}
+
+Register-Case 'meta-compile: an invalid ScheduledJob schedule is refused before anything is written' {
+    param($Work)
+    Copy-Fixture 'config-dump' $Work "`n"
+    $configBefore = (Get-FileHash -LiteralPath (Join-Path $Work 'Configuration.xml') -Algorithm SHA256).Hash
+    $bad = @(
+        @{ Name = 'BadDay';  Json = '{"type":"ScheduledJob","name":"BadDay","schedule":{"weekDays":[8]}}';          Pattern = 'weekDays' },
+        @{ Name = 'BadKey';  Json = '{"type":"ScheduledJob","name":"BadKey","schedule":{"beginTim":"08:15"}}';       Pattern = "unknown key 'beginTim'" },
+        @{ Name = 'BadTime'; Json = '{"type":"ScheduledJob","name":"BadTime","schedule":{"beginTime":"25:00"}}';     Pattern = 'beginTime' },
+        @{ Name = 'BadDate'; Json = '{"type":"ScheduledJob","name":"BadDate","schedule":{"beginDate":"2026-13-01"}}'; Pattern = 'beginDate' }
+    )
+    foreach ($case in $bad) {
+        $run = Invoke-MetaCompileJson $Work $case.Json "$($case.Name).json"
+        Assert-True ($run.ExitCode -ne 0) "$($case.Name): an invalid schedule was accepted"
+        Assert-True ("$($run.StdErr)" -match [regex]::Escape($case.Pattern)) "$($case.Name): no clear message: $($run.StdErr)"
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work "ScheduledJobs\$($case.Name).xml"))) "$($case.Name): the job XML was written"
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $Work "ScheduledJobs\$($case.Name)"))) "$($case.Name): the job directory was created"
+    }
+    Assert-Equal $configBefore (Get-FileHash -LiteralPath (Join-Path $Work 'Configuration.xml') -Algorithm SHA256).Hash 'Configuration.xml changed although every definition was refused'
+}
+
 Register-Case 'meta-compile: re-registering the same object is a no-op' {
     param($Work)
     Copy-Fixture 'config-dump' $Work "`n"

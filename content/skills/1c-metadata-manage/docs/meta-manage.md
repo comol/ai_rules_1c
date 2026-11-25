@@ -70,6 +70,8 @@ The **complete `meta-compile` DSL grammar** — every object type with its type-
 
 Object modules: by default the compiler creates empty `Ext/ObjectModule.bsl` / `ManagerModule.bsl` / `ValueManagerModule.bsl` / `RecordSetModule.bsl` stubs for the types that have them. Pass `"modules": false` to skip them (a report on a DCS with no code): `{ "type": "Report", "name": "Sales", "modules": false }`. It does not affect `Module.bsl` of CommonModule / HTTPService / WebService or `CommandModule.bsl` of CommonCommand (there the module is the object's content), and it never deletes an existing file.
 
+Scheduled job: add `"schedule"` to write `Ext/Schedule.xml` (without it no file is written and the job has no schedule): `{ "type": "ScheduledJob", "name": "LoadRates", "methodName": "Rates.Load", "use": true, "schedule": { "beginTime": "08:15", "weekDays": [1,2,3,4,5] } }`. Keys (all optional): `beginTime`, `endTime`, `completionTime` (`HH:MM[:SS]`), `beginDate`, `endDate` (`YYYY-MM-DD`), `daysRepeatPeriod`, `weeksPeriod`, `repeatPeriodInDay` (seconds; `600` = every 10 minutes during the day), `repeatPause`, `completionInterval`, `dayInMonth` (0–31), `weekDayInMonth` (0–5), `weekDays` (1–7, default all), `months` (1–12, default all). Detailed daily schedules (`DetailedDailySchedules`) are not supported. An unknown key or a bad value is refused before anything is written. Full table: [`meta-dsl-spec.md`](../tools/1c-meta-compile/meta-dsl-spec.md) §7.9.
+
 ### Attributes — Shorthand
 
 ```

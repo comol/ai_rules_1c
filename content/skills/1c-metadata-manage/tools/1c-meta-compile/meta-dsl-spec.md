@@ -1140,8 +1140,37 @@ ChildObjects и модулей.
 | `predefined` | `false` | Predefined |
 | `restartCountOnFailure` | `3` | RestartCountOnFailure |
 | `restartIntervalOnFailure` | `10` | RestartIntervalOnFailure |
+| `schedule` | нет | Локально: объект, по которому пишется `Ext/Schedule.xml` (см. ниже). Нет ключа — файла нет |
 
 Без ChildObjects и модулей.
+
+#### `schedule` — расписание (`ScheduledJobs/<Имя>/Ext/Schedule.xml`)
+
+Все ключи необязательные, имена — camelCase. Неизвестный ключ или значение вне диапазона — ошибка в stderr, exit 1, ничего не записано. Подробные дневные расписания (`ent:DetailedDailySchedules`) не поддерживаются. Формат файла берётся из конфигурации (`version` = формат выгрузки).
+
+| Ключ | Умолчание | Атрибут / элемент `Schedule` | Значение |
+|------|-----------|------------------------------|----------|
+| `beginTime` | `00:00:00` | BeginTime | `HH:MM:SS`, допускается `HH:MM` |
+| `endTime` | `00:00:00` | EndTime | то же |
+| `completionTime` | `00:00:00` | CompletionTime | то же |
+| `beginDate` | `0001-01-01` | BeginDate | `YYYY-MM-DD` |
+| `endDate` | `0001-01-01` | EndDate | `YYYY-MM-DD` |
+| `daysRepeatPeriod` | `1` | DaysRepeatPeriod | целое ≥ 0 |
+| `weeksPeriod` | `1` | WeeksPeriod | целое ≥ 0 |
+| `repeatPeriodInDay` | `0` | RepeatPeriodInDay | секунды между запусками в течение дня (`600` — каждые 10 минут); `0` — раз в день |
+| `repeatPause` | `0` | RepeatPause | секунды, 0–86400 |
+| `completionInterval` | `0` | CompletionInterval | секунды, 0–86400 |
+| `dayInMonth` | `0` | DayInMonth | 0–31 |
+| `weekDayInMonth` | `0` | WeekDayInMonth | 0–5 |
+| `weekDays` | все: `[1,2,3,4,5,6,7]` | `ent:WeekDays` | массив 1–7 (1 — понедельник); `[]` пишет `<ent:WeekDays/>` |
+| `months` | все: `[1..12]` | `ent:Months` | массив 1–12; `[]` пишет `<ent:Months/>` |
+
+```json
+{ "type": "ScheduledJob", "name": "ЗагрузкаКурсов", "methodName": "РаботаСКурсами.Загрузить", "use": true,
+  "schedule": { "beginTime": "08:15", "weekDays": [1,2,3,4,5] } }
+```
+
+Каждые 10 минут в течение дня: `"schedule": { "repeatPeriodInDay": 600 }`.
 
 Формат `methodName`: `"МодульСервер.Процедура"` — при компиляции авто-дополняется до `CommonModule.МодульСервер.Процедура`. Если уже содержит `CommonModule.` — оставляется как есть.
 

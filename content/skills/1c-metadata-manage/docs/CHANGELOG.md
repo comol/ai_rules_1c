@@ -460,6 +460,10 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 
 ## meta-manage.md
 
+### Local feature `2026-11-25` — ScheduledJob `schedule` writes `Ext/Schedule.xml`
+
+`meta-compile` v1.131 → **v1.132**, local: only the object properties of a `ScheduledJob` were written, so no tool could set a schedule and agents copied `Ext/Schedule.xml` from a neighbouring job. The new key `schedule` (all sub-keys optional: `beginTime` / `endTime` / `completionTime`, `beginDate` / `endDate`, `daysRepeatPeriod`, `weeksPeriod`, `repeatPeriodInDay`, `repeatPause`, `completionInterval`, `dayInMonth`, `weekDayInMonth`, `weekDays`, `months`) writes `ScheduledJobs/<Name>/Ext/Schedule.xml` in the Designer shape (UTF-8 BOM, tabs, CRLF, `version` = detected format). No key, no file. An unknown sub-key or an out-of-range value is refused before anything is written; `schedule` on another object type is refused. `ent:DetailedDailySchedules` is out of scope. Pinned by `tools/tests/metadata-tools-regression.ps1`; verified by loading the result into a file infobase on 8.3.24 and dumping it back.
+
 ### Local feature `2026-11-25` — `modules: false`
 
 `meta-compile` v1.130 → **v1.131**, local: it always wrote empty `Ext/ObjectModule.bsl`, `ManagerModule.bsl`, `ValueManagerModule.bsl` and `RecordSetModule.bsl` stubs for the types that have them, so a report on a DCS with no code needed the files deleted by hand. The top-level definition key `modules: false` (default `true`) skips them and creates no `Ext/` directory just for them. `Module.bsl` of CommonModule / HTTPService / WebService and `CommandModule.bsl` of CommonCommand are not affected, existing files are never deleted. A non-boolean value is refused before anything is written. Pinned by `tools/tests/metadata-tools-regression.ps1`.
