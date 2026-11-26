@@ -69,3 +69,7 @@ The `"page"` field allows the compiler to automatically calculate absolute width
 ### 4. Compile
 
 `1c-mxl-compile` → `1c-mxl-validate` → `1c-mxl-info`
+
+### 5. Compare with the source
+
+On Windows, `1c-mxl-render` draws the compiled layout as a PNG (`1c-metadata-manage/docs/mxl-render.md`): put it beside the source image to check column proportions and wrapping.
