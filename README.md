@@ -109,6 +109,7 @@ opencode plugin marketplace install 1c-rules
 
 Правила и команды собираются под конкретный инструмент адаптерами из `adapters/*.yaml`. Поддерживаются:
 
+- **DeepSeek Harness** (`dsh`) читает `AGENTS.md` из корня проекта и навыки из `.dsh/skills/`. Правила, роли и сценарии находятся в `.dsh/rules-1c/`, `.dsh/agents-1c/` и `.dsh/commands-1c/`. В сборке для 1С их разворачивает команда `/rules1c deploy`.
 - **Cursor** (`.cursor/rules/`, `.cursor/agents/`, `.cursor/commands/`, `.cursor/skills/`)
 - **Claude Code** (`.claude/rules-1c/`, `.claude/agents/`, `.claude/commands/`)
 - **OpenAI Codex** (`.codex/rules/`, `.codex/agents/`, `.codex/config.toml`; навыки и команды — навыками в `.agents/skills/`, команда вызывается как `$checkmcp`; `update` убирает прежние `~/.codex/prompts/` и `.codex/skills/`, кроме изменённых вами; рядом с Kimi Code, Pi и Command Code, которые тоже читают `.agents/skills/`, навыки и команды ставятся туда один раз для всех)
@@ -135,7 +136,7 @@ opencode plugin marketplace install 1c-rules
 
 ## Как попросить агента поставить правила
 
-Установка спроектирована как протокол, который выполняет сам ИИ-агент. Откройте проект в любимом ИИ-агенте (Cursor / Claude Code / Codex / OpenCode / Kilo Code / Kimi / Qwen / Command Code / Cline / Pi) и отправьте сообщение:
+Установка спроектирована как протокол, который выполняет сам ИИ-агент. Откройте проект в любимом ИИ-агенте (DSH / Cursor / Claude Code / Codex / OpenCode / Kilo Code / Kimi / Qwen / Command Code / Cline / Pi) и отправьте сообщение:
 
 > Установи правила из `https://github.com/comol/ai_rules_1c` по `AGENT-INSTALL.md`.
 
@@ -145,7 +146,7 @@ opencode plugin marketplace install 1c-rules
 
 Если при первой установке в `.dev.env` уже указана информационная база, а исходников 1С в проекте ещё нет, установщик предложит выгрузить их. Можно выбрать «Пропустить»: правила останутся установленными, а выгрузку позже можно запустить командой `/loadfrom1cbase full`. В режиме PowerShell без диалога выгрузка автоматически пропускается; при установке через агента он предложит выбор в чате.
 
-После первой установки агент один раз напомнит о DSH (DeepSeek Harness). Это специализированная сборка для 1С, в которой правила работают лучше всего: [vibecoding1c.ru/harnesses](https://vibecoding1c.ru/harnesses). Если сборка уже куплена, скажите об этом агенту или выполните [`/installdsh`](content/commands/installdsh.md). Команда войдёт в личный кабинет, найдёт архив для вашей системы, скачает и распакует его. Сборка portable: устанавливать её и получать права администратора не нужно. Если вход в кабинет уже сохранён командой `/installmcp`, DSH можно поставить сразу. Ссылок на скачивание в правилах нет, команда каждый раз берёт их в кабинете. Путь к распакованной сборке запоминается в переменной `DSH_1C_HOME`, и после этого напоминание не показывается.
+Если при первой установке выбран другой клиент и сборка DSH не обнаружена, агент один раз напомнит о DSH (DeepSeek Harness). Это специализированная сборка для 1С, в которой правила работают лучше всего: [vibecoding1c.ru/harnesses](https://vibecoding1c.ru/harnesses). Если сборка уже куплена, скажите об этом агенту или выполните [`/installdsh`](content/commands/installdsh.md). Команда войдёт в личный кабинет, найдёт архив для вашей системы, скачает и распакует его. Сборка portable: устанавливать её и получать права администратора не нужно. Если вход в кабинет уже сохранён командой `/installmcp`, DSH можно поставить сразу. Ссылок на скачивание в правилах нет, команда каждый раз берёт их в кабинете. Путь к распакованной сборке запоминается в переменной `DSH_1C_HOME`, и после этого напоминание не показывается.
 
 Для регулярного обновления файлов, которые индексирует MCP, выполните [`/installfilesupdatescript`](content/commands/installfilesupdatescript.md). Команда создаёт скрипт выгрузки из базы, указанной в `.dev.env`, и устанавливает его в планировщик Windows: по умолчанию каждые 30 минут, пока текущий пользователь вошёл в систему. Например, `/installfilesupdatescript 60` задаёт часовой интервал. Каталог выгрузки определяется по подключённому источнику MCP и должен быть отделён от редактируемых исходников; журнал и скрипт хранятся в `.1c-files-update/`. Поддерживается Designer XML для основной конфигурации или `EXTENSION_NAME`; legacy-отчёт метаданных и дерево EDT требуют отдельной настройки источника MCP.
 
@@ -157,6 +158,8 @@ opencode plugin marketplace install 1c-rules
 git clone https://github.com/comol/ai_rules_1c.git $env:TEMP\1c-rules
 & $env:TEMP\1c-rules\install.ps1 init -Source $env:TEMP\1c-rules
 ```
+
+Для DeepSeek Harness введите `dsh` в списке инструментов или передайте `-Tools dsh` при запуске `init`. Если в проекте уже есть каталог `.dsh/`, установщик распознает его автоматически.
 
 На Linux и macOS тот же скрипт работает под PowerShell 7:
 
@@ -221,7 +224,7 @@ pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -Proj
 ├── .agents/plugins/         # git-каталог Codex (читает и OpenCode)
 ├── plugins/1c-rules/        # тонкий marketplace-плагин: skills/hooks + вызов install.ps1
 ├── .dev.env.example         # шаблон параметров проекта
-├── adapters/                # адаптеры под инструменты (cursor, claude-code, codex, opencode, kilocode, kimi, qwen, command-code, cline, zcode, mimocode, pi, other)
+├── adapters/                # адаптеры под инструменты (dsh, cursor, claude-code, codex, opencode, kilocode, kimi, qwen, command-code, cline, zcode, mimocode, pi, other)
 ├── content/
 │   ├── rules/               # on-demand правила, подключаемые по задаче
 │   ├── agents/              # описания 13 специализированных субагентов
@@ -237,12 +240,12 @@ pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -Proj
 
 Независимо от канала установки (агент или `install.ps1`) на диске будет:
 
-- `AGENTS.md`, `USER-RULES.md`, `memory.md`, `LLM-RULES.md` — **в корне проекта**. Это требование инструментов: Cursor, Claude Code, Codex, OpenCode, Kilo, Kimi, Qwen, Command Code, Cline и Pi читают `AGENTS.md` именно из корня; перенос в `.cursor/`/`.claude/` отключит загрузку. Для Qwen дополнительно пишется stub `QWEN.md` → `AGENTS.md`.
-- директории активных инструментов (`.cursor/`, `.claude/`, `.codex/`, `.opencode/`, `.kilo/`, `.kimi-code/`, `.qwen/`, `.commandcode/`, `.cline/`, `.zcode/`, `.mimocode/`, `.pi/`, `.ai-agent/`) — для каждого детектированного. On-demand правила лежат в каталоге `rules` / `rules-1c` адаптера, не дублируются в отдельный «общий» каталог. Особенности MCP: Kilo — `.kilo/kilo.json` (`mcp`); Qwen — merge `mcpServers` в `.qwen/settings.json` (`httpUrl`); Command Code / Claude Code — общий `.mcp.json`; Cline и Pi — проектный MCP не пишется.
+- `AGENTS.md`, `USER-RULES.md`, `memory.md`, `LLM-RULES.md` — **в корне проекта**. Это требование инструментов: DSH, Cursor, Claude Code, Codex, OpenCode, Kilo, Kimi, Qwen, Command Code, Cline и Pi читают `AGENTS.md` именно из корня; перенос в `.cursor/`/`.claude/` отключит загрузку. Для Qwen дополнительно пишется stub `QWEN.md` → `AGENTS.md`.
+- директории активных инструментов (`.dsh/`, `.cursor/`, `.claude/`, `.codex/`, `.opencode/`, `.kilo/`, `.kimi-code/`, `.qwen/`, `.commandcode/`, `.cline/`, `.zcode/`, `.mimocode/`, `.pi/`, `.ai-agent/`) — для каждого детектированного. On-demand правила лежат в каталоге `rules` / `rules-1c` адаптера, не дублируются в отдельный «общий» каталог. Особенности MCP: Kilo — `.kilo/kilo.json` (`mcp`); Qwen — merge `mcpServers` в `.qwen/settings.json` (`httpUrl`); Command Code / Claude Code — общий `.mcp.json`; для DSH, Cline и Pi установщик пропускает запись проектного MCP.
 - `openspec/` — OpenSpec-воркспейс (если ещё не было).
 - `.ai-rules.json` — манифест с перечнем размещённых файлов, активных инструментов, выбранным каноническим каталогом on-demand правил и версией.
 
-`AGENTS.md` ссылается на on-demand правила по пути одного канонического каталога (приоритет `cursor → claude-code → kilocode → kimi → qwen → command-code → cline → zcode → mimocode → opencode → codex → pi → other`; `other` становится каноном только когда выбран без «реального» инструмента). При установке только под один инструмент в проекте появится ровно одна тулзовая директория плюс `AGENTS.md`/`USER-RULES.md`/`memory.md`/`LLM-RULES.md` в корне — без дополнительных общих папок.
+`AGENTS.md` ссылается на on-demand правила по пути одного канонического каталога (приоритет `cursor → claude-code → kilocode → kimi → qwen → command-code → cline → zcode → mimocode → opencode → codex → pi → dsh → other`; `other` становится каноном только когда выбран без «реального» инструмента). При установке только под один инструмент в проекте появится ровно одна тулзовая директория плюс `AGENTS.md`/`USER-RULES.md`/`memory.md`/`LLM-RULES.md` в корне — без дополнительных общих папок.
 
 Если активен ровно один инструмент, агент-установщик не задаёт уточняющих вопросов. PowerShell-fallback дополнительно поддерживает флаги `-Tools cursor,claude-code`, `-NonInteractive`, `-AssumeYes`. Полный протокол и описание манифеста — в [`AGENT-INSTALL.md`](AGENT-INSTALL.md).
 
@@ -495,7 +498,7 @@ pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -Proj
 
 ## OpenSpec
 
-Установщик безусловно разворачивает OpenSpec-воркспейс (`openspec/`) с режимом «не перезаписывать существующее». Слэш-команды `/opsx:propose`, `/opsx:apply`, `/opsx:archive`, `/opsx:explore`, `/opsx:sync`, `/opsx:update` разворачиваются автоматически для каждого активного инструмента из набора `cursor`, `claude-code`, `codex`, `opencode`, `kilocode` (бандлы — в `content/openspec-bundle/<tool>/`). Особенность Codex: его бандл содержит только SKILL-пакеты OpenSpec (`.agents/skills/openspec-*`), без слэш-команд — workflow вызывается через скиллы напрямую. Для `kimi`, `qwen`, `command-code`, `cline`, `zcode`, `mimocode`, `pi` и `other` тулз-специфичного OpenSpec-бандла нет — работайте напрямую с `openspec/specs/` и `openspec/changes/` (или через установленные OpenSpec skills, где они есть). Подробности — в [`openspec/README.md`](openspec/README.md).
+Установщик безусловно разворачивает OpenSpec-воркспейс (`openspec/`) с режимом «не перезаписывать существующее». Слэш-команды `/opsx:propose`, `/opsx:apply`, `/opsx:archive`, `/opsx:explore`, `/opsx:sync`, `/opsx:update` разворачиваются автоматически для каждого активного инструмента из набора `cursor`, `claude-code`, `codex`, `opencode`, `kilocode` (бандлы — в `content/openspec-bundle/<tool>/`). Особенность Codex: его бандл содержит только SKILL-пакеты OpenSpec (`.agents/skills/openspec-*`), без слэш-команд — workflow вызывается через скиллы напрямую. Для `kimi`, `qwen`, `command-code`, `cline`, `zcode`, `mimocode`, `pi`, `dsh` и `other` тулз-специфичного OpenSpec-бандла нет — работайте напрямую с `openspec/specs/` и `openspec/changes/` (или через установленные OpenSpec skills, где они есть). Подробности — в [`openspec/README.md`](openspec/README.md).
 
 ## Ссылки
 

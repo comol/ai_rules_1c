@@ -137,7 +137,7 @@ $script:CodeOwnerKey = 'CODE_OWNER'
 $script:CodeOwnerAnswer = $null
 $script:CodeOwnerAsked = $false
 $script:SupportKeys = @('SUPPORT_KEY', 'SUPPORT_EMAIL', 'SUPPORT_API_URL')
-$script:SupportedTools = @('cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'pi', 'other')
+$script:SupportedTools = @('dsh', 'cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'pi', 'other')
 # OpenCode configs belong to the user, including files tracked by older
 # installers. Never migrate, rewrite or remove any of these paths.
 $script:OpenCodeConfigPaths = @('opencode.json', 'opencode.jsonc', '.opencode/opencode.json', '.opencode/opencode.jsonc')
@@ -1374,6 +1374,7 @@ function ConvertTo-OrderedHashtable {
 function Get-ToolDetectionSignals {
     param([string]$Root)
     $signals = @{
+        'dsh'          = @((Test-Path -LiteralPath (Join-Path $Root '.dsh') -PathType Container))
         'cursor'       = @((Test-Path (Join-Path $Root '.cursor')))
         'claude-code'  = @((Test-Path (Join-Path $Root '.claude')), (Test-Path (Join-Path $Root 'CLAUDE.md')))
         'codex'        = @((Test-Path (Join-Path $Root '.codex')))
@@ -3056,7 +3057,7 @@ function Invoke-PlacePhase {
 # `other` is intentionally last: when combined with any "real" tool the real
 # tool's rules dir wins; `.ai-agent/rules/` becomes canonical only when
 # `other` is the only active tool.
-$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'opencode', 'codex', 'pi', 'other')
+$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'opencode', 'codex', 'pi', 'dsh', 'other')
 
 function Resolve-CanonicalRulesLayout {
     # Returns @{ Dir = <path>; Ext = <ext-without-dot> } for the highest-priority
@@ -3235,6 +3236,10 @@ function Invoke-McpPhase {
         [System.Collections.IDictionary]$Manifest
     )
     Unregister-OpenCodeConfigs -Manifest $Manifest
+    # With no project MCP target (e.g. DSH), skip catalog reads and probes.
+    # During "add" the manifest still belongs to the already installed tools.
+    $otherInstalledTools = @($Manifest.tools | Where-Object { $_ -notin $ActiveTools })
+    $ActiveTools = @($ActiveTools | Where-Object { $Adapters[$_].mcp.target })
     if ('opencode' -in $ActiveTools) {
         $existingConfigs = @($script:OpenCodeConfigPaths | Where-Object { Test-Path -LiteralPath (Join-Path $Root $_) })
         if ($existingConfigs.Count -gt 0) {
@@ -3243,7 +3248,7 @@ function Invoke-McpPhase {
         }
     }
     if ($ActiveTools.Count -eq 0) {
-        $Manifest.mcpServers = @()
+        if ($otherInstalledTools.Count -eq 0) { $Manifest.mcpServers = @() }
         return
     }
     $servers = Read-McpServers -Root $SourceRoot
@@ -3315,9 +3320,7 @@ function Invoke-McpPhase {
 
     foreach ($tool in $ActiveTools) {
         $adapter = $Adapters[$tool]
-        if (-not $adapter.mcp) { continue }
         $target = $adapter.mcp.target
-        if (-not $target) { continue }
         $content = New-McpConfig -ToolId $tool -Servers $servers
         $absTarget = Join-Path $Root $target
 
@@ -4511,7 +4514,7 @@ function Read-DevEnvKeys {
 
 function Get-SourceScanSkipDirs {
     # Directories that never hold 1C sources: installed rules and dependencies.
-    return @('.git', '.cursor', '.claude', '.kilo', '.kilocode', '.codex', '.agents',
+    return @('.git', '.dsh', '.cursor', '.claude', '.kilo', '.kilocode', '.codex', '.agents',
         '.opencode', '.kimi-code', '.qwen', '.commandcode', '.cline', '.zcode',
         '.mimocode', '.pi', '.ai-agent', 'node_modules', '.venv')
 }
@@ -5338,7 +5341,9 @@ function Invoke-Init {
         $planDirs += "$t -> $primary/"
     }
     Write-Info ("Will write per-tool files into: " + ($planDirs -join ', '))
-    Write-Info "MCP servers will be added to each tool's MCP config."
+    if ($adapters.Values | Where-Object { $_.mcp.target }) {
+        Write-Info "MCP servers will be added for tools with a project MCP config."
+    }
     if (-not $AssumeYes -and -not $NonInteractive) {
         if (-not (Read-YesNo 'Proceed with installation?' $true)) { return }
     }
@@ -5454,7 +5459,7 @@ function Invoke-Init {
 
     Write-RestartRecommendation -ActiveTools $activeTools -McpCount $manifest.mcpServers.Count
     Write-McpEffectivenessReminder -Root $Root -ExternalMcp $extMcp
-    if (-not $existing) { Write-DshRecommendation -Root $Root }
+    if (-not $existing -and $activeTools -notcontains 'dsh') { Write-DshRecommendation -Root $Root }
     Write-InstallToolsAnnouncement
 
     if (-not $existing -and $verify.Ok) {

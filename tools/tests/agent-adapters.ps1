@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Offline installer regressions for Claude Code, ZCode, MiMo Code, Kimi, Cline, Command Code and Codex.
+    Offline installer regressions for DSH, Claude Code, ZCode, MiMo Code, Kimi, Cline, Command Code and Codex.
 .DESCRIPTION
     Runs the real installer and adapters against a small source fixture. Checks
     discovery, permissions, MCP shape, update ownership and scoped removal.
@@ -101,6 +101,39 @@ try {
         Assert-True ($names -contains $toolName -or $toolDocs -match ('\b' + [regex]::Escape($toolName) + '\b')) "claude-code: unknown denied tool $entry"
     }
     Pass 'claude-code: read-only agents lose state-changing tools, writers keep theirs'
+
+    # The DSH-1C bundle calls "init -Tools dsh" even in an empty project.
+    $project = Join-Path $Work 'dsh'
+    [void][IO.Directory]::CreateDirectory($project)
+    $log = Invoke-Installer $project @('init', '-Tools', 'dsh')
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    Assert-True (@($manifest.tools).Count -eq 1 -and $manifest.tools[0] -eq 'dsh') 'DSH: manifest tool'
+    Assert-True (@($manifest.mcpServers).Count -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $project '.mcp.json'))) 'DSH: unexpected managed MCP'
+    Assert-True ($log -notmatch 'vibecoding1c\.ru/harnesses') 'DSH: offered to install the selected harness'
+    foreach ($rel in @('.dsh/rules-1c/probe.md', '.dsh/agents-1c/explorer.md', '.dsh/commands-1c/probe.md', '.dsh/skills/probe/SKILL.md')) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $project $rel)) "DSH: missing $rel"
+        Assert-True ($manifest.files.$rel.owners -contains 'dsh') "DSH: missing owner for $rel"
+    }
+    $entry = Get-Content -LiteralPath (Join-Path $project 'AGENTS.md') -Raw
+    Assert-True ($entry.Contains('.dsh/rules-1c/probe.md') -and $entry.Contains('.dsh/skills/probe/SKILL.md')) 'DSH: canonical links'
+    Write-Fixture (Join-Path $project '.dsh/rules-1c/probe.md') '# locally edited rule'
+    $null = Invoke-Installer $project @('update')
+    Assert-True ((Get-Content -LiteralPath (Join-Path $project '.dsh/rules-1c/probe.md') -Raw) -eq '# locally edited rule') 'DSH: update overwrote an edited rule'
+
+    $project = Join-Path $Work 'detected-dsh'
+    Write-Fixture (Join-Path $project '.dsh/features.json') '{}'
+    $log = Invoke-Installer $project @('init')
+    Assert-True ($log -match 'Detected tool: dsh \(auto-selected\)') 'DSH: project marker detection'
+    $null = Invoke-Installer $project @('add', '-Tool', 'cursor')
+    $null = Invoke-Installer $project @('remove', '-Tool', 'dsh')
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $project '.dsh/commands-1c/probe.md'))) 'DSH: scoped removal left managed scenario'
+    Assert-True (Test-Path -LiteralPath (Join-Path $project '.dsh/features.json')) 'DSH: scoped removal deleted user settings'
+    Assert-True (Test-Path -LiteralPath (Join-Path $project '.cursor/rules/probe.mdc')) 'DSH: removal affected Cursor'
+    $null = Invoke-Installer $project @('add', '-Tool', 'dsh')
+    $manifest = Read-Json (Join-Path $project '.ai-rules.json')
+    Assert-True ($manifest.mcpServers -contains 'fixture-http') 'DSH: add lost Cursor MCP entries'
+    Assert-True (Test-Path -LiteralPath (Join-Path $project '.dsh/commands-1c/probe.md')) 'DSH: add did not restore scenario'
+    Pass 'dsh: explicit init, discovery, update, add and scoped removal'
 
     $clients = @(
         @{ Id = 'zcode'; Dir = '.zcode'; Mcp = '.zcode/config.json' },

@@ -1,0 +1,33 @@
+# DeepSeek Harness loads AGENTS.md from the project root and discovers SKILL.md
+# bundles in .dsh/skills/. The DSH-1C /rules1c deploy command also expects the
+# three *-1c directories below. Roles and scenarios are read by path. The
+# harness manages MCP connections separately from the rules installer.
+tool: dsh
+schemaVersion: 1
+
+detection:
+  - exists: ".dsh/"
+
+rules:
+  copyTo: ".dsh/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+agents:
+  copyTo: ".dsh/agents-1c/{name}.md"
+  frontmatter:
+    # These fields document the role for a delegated session.
+    keep: [name, description, tools, modelHint, isSubagent]
+    rename:
+      modelHint: model
+    drop: [allowParallel, reasoningEffort]
+
+commands:
+  copyTo: ".dsh/commands-1c/{name}.md"
+  frontmatter:
+    keep: [description, argumentHint, allowedTools, userOnly]
+
+skills:
+  copyTo: ".dsh/skills/{name}/"
+  mode: verbatim

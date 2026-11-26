@@ -22,7 +22,7 @@ foreach ($name in $names) {
 # Init calls the recommendation only on a first install.
 $init = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-Init' }, $true)
 if (-not $init) { throw 'Missing function: Invoke-Init' }
-if ($init.Extent.Text -notmatch 'if \(-not \$existing\) \{ Write-DshRecommendation -Root \$Root \}') {
+if ($init.Extent.Text -notmatch 'if \(-not \$existing -and \$activeTools -notcontains ''dsh''\) \{ Write-DshRecommendation -Root \$Root \}') {
     throw 'Invoke-Init does not limit the DSH recommendation to a first install'
 }
 $update = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-Update' }, $true)
