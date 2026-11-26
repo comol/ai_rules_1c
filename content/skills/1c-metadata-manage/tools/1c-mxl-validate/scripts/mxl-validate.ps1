@@ -1,5 +1,6 @@
 ﻿# mxl-validate v1.12 — Validate 1C spreadsheet
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
+# Local: a path to the template descriptor Templates/<Name>.xml is redirected to its Ext/Template.xml (B2).
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Position=0)]
@@ -38,7 +39,9 @@ if (-not (Test-Path $TemplatePath)) {
 	}
 }
 # B2: Descriptor (Templates/Макет.xml → Templates/Макет/Ext/Template.xml)
-if (-not (Test-Path $TemplatePath) -and $TemplatePath.EndsWith(".xml")) {
+# Local: дескриптор — существующий файл, поэтому ветка не может требовать «пути нет»: иначе
+# проверялся сам дескриптор и печаталось «Validation OK … (5 checks)».
+if ($TemplatePath.EndsWith(".xml") -and [System.IO.Path]::GetFileName($TemplatePath) -ne "Template.xml") {
 	$stem = [System.IO.Path]::GetFileNameWithoutExtension($TemplatePath)
 	$dir = Split-Path $TemplatePath
 	$c = Join-Path (Join-Path (Join-Path $dir $stem) "Ext") "Template.xml"

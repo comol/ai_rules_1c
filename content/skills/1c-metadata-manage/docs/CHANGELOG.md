@@ -547,6 +547,10 @@ The PowerShell scripts under `tools/1c-meta-{compile,edit,info,remove,validate}/
 
 ## mxl-manage.md
 
+### Local fix `2026-11-26` — `mxl-validate` with the descriptor path checks the layout
+
+The descriptor branch (B2: `Templates/<Name>.xml` → `Templates/<Name>/Ext/Template.xml`) ran only when the given path did not exist. A descriptor always exists, so `mxl-validate` checked the descriptor itself and printed `Validation OK: Template.<Owner> (5 checks)`. The branch now redirects any existing `.xml` that is not `Template.xml` when its `Ext/Template.xml` is there. Checked on ZUP's `ВедомостьУплатыАДВ_11.ПФ_MXL_ФормаАДВ_11`: the descriptor, the directory, `…/Template.xml` without `Ext` and `Ext/Template.xml` now give the same `Validation OK: Template.ПФ_MXL_ФормаАДВ_11 (6 checks)`; the `mxl*` cases of `tools/tests/metadata-tools-regression.ps1` pass (7/7).
+
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `mxl-compile` v1.61 → **v1.64**, `mxl-validate` v1.11 → **v1.12**. `mxl-decompile` and `mxl-info` did not change.
