@@ -547,6 +547,10 @@ The PowerShell scripts under `tools/1c-meta-{compile,edit,info,remove,validate}/
 
 ## mxl-manage.md
 
+### Local fix `2026-11-26` — the width unit measured on the platform; `mxl-compile` page targets 820 / 1196
+
+A column-width unit of `Template.xml` is 1/8 of `ШиринаКолонки` (`10` is written as `80`) = 7/8 px at 96 dpi = 0.2315 mm. Measured on 1C 8.3.27 through COM automation on an empty file infobase: the layout read by `СериализаторXDTO` (root renamed `SpreadsheetDocument`, `languageSettings` dropped), `КоличествоСтраниц()` at 100 % on `Microsoft Print to PDF`, the left margin widened until the sheet splits. Six ZUP layouts: 0.2313–0.2335 mm per unit; their page count on A4 portrait with 10 mm margins matched the width for all six. `mxl-compile`'s `"page"` targets were 540 / 780 — about the A4 print width in points, not in width units — so a layout compiled to A4 portrait came out about 125 mm wide, two thirds of the sheet. They are now **820 / 1196** (190 / 277 mm), and `defaultWidth` is rounded down so the total stays within the target; compiled test layouts measured 189.0 mm (817 units) and 274.7 mm (1 187 units), one page wide. `mxl-render` v1.2 reports millimetres and draws at the measured scale (it took 1 px = 0.26 mm before, 14 % too wide).
+
 ### Local fix `2026-11-26` — `mxl-validate` with the descriptor path checks the layout
 
 The descriptor branch (B2: `Templates/<Name>.xml` → `Templates/<Name>/Ext/Template.xml`) ran only when the given path did not exist. A descriptor always exists, so `mxl-validate` checked the descriptor itself and printed `Validation OK: Template.<Owner> (5 checks)`. The branch now redirects any existing `.xml` that is not `Template.xml` when its `Ext/Template.xml` is there. Checked on ZUP's `ВедомостьУплатыАДВ_11.ПФ_MXL_ФормаАДВ_11`: the descriptor, the directory, `…/Template.xml` without `Ext` and `Ext/Template.xml` now give the same `Validation OK: Template.ПФ_MXL_ФормаАДВ_11 (6 checks)`; the `mxl*` cases of `tools/tests/metadata-tools-regression.ps1` pass (7/7).

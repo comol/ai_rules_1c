@@ -1,4 +1,4 @@
-# mxl-render v1.1 - draw a 1C spreadsheet layout (Template.xml) as a PNG sketch
+# mxl-render v1.2 - draw a 1C spreadsheet layout (Template.xml) as a PNG sketch
 # and estimate how its width prints on A4.
 # Local tool of this ruleset, not vendored from cc-1c-skills.
 #
@@ -7,16 +7,17 @@
 # named areas are drawn from the XML; pictures, charts, rotated text, header / footer
 # and conditional appearance are not.
 #
-# Scale. The unit of a column width in the XML is not documented (ColumnWidth in the
-# language is in "average characters"). It is drawn as one pixel at 96 dpi (0.75 pt,
-# 0.26 mm) - the scale at which the static texts of ZUP's vendor layouts fit the table
-# cells they sit in (95% of 2148 measured cells). Row height in the XML is points x 4
+# Scale. A column width unit in the XML is 1/8 of ColumnWidth (an "average character":
+# ColumnWidth 10 is written as 80), 7/8 of a pixel at 96 dpi = 0.2315 mm. Measured against
+# the page breaking of 1C 8.3.27 (Microsoft Print to PDF, 100%, 10 mm margins): six ZUP
+# layouts gave 0.2313-0.2335 mm per unit, and the 1C page count on A4 portrait matched the
+# prediction for all six. It is drawn at that scale. Row height in the XML is points x 4
 # (RowHeight is in points; single-line rows of a 9-10 pt font are 60-75 in the XML).
 # Fonts are drawn in points.
 #
-# Width. The report gives the width in units and an estimate in millimetres from that
-# scale - not checked against the 1C print preview. It compares the units with the
-# targets mxl-compile writes new layouts to (A4-portrait 540, A4-landscape 780) and,
+# Width. The report gives the width in units and in millimetres from that scale. It
+# compares the units with the targets mxl-compile writes new layouts to (A4-portrait 820,
+# A4-landscape 1196 - the A4 print width with 10 mm margins) and,
 # separately, estimates the print on A4 from the print settings the layout stores
 # (orientation, fitToPage, scale, margins); with fitToPage it gives the reduction.
 #
@@ -383,7 +384,7 @@ if ($MaxHeight -lt 200) { Stop-MxrRun "-MaxHeight must be at least 200 pixels" }
 
 	# --- Width verdict (whole layout, independent of -Area) ---
 
-	$pageTargets = [ordered]@{ "A4-portrait" = 540; "A4-landscape" = 780 }
+	$pageTargets = [ordered]@{ "A4-portrait" = 820; "A4-landscape" = 1196 }
 	$docWidth = 0.0
 	$setReport = New-Object System.Collections.Generic.List[string]
 	foreach ($set in ($sets.Values | Sort-Object { $_.Id })) {
@@ -420,11 +421,11 @@ if ($MaxHeight -lt 200) { Stop-MxrRun "-MaxHeight must be at least 200 pixels" }
 		foreach ($wv in $set.Widths) { $s += $wv }
 		if ($s -gt $maxUnits) { $maxUnits = $s }
 	}
-	# Scale: a width unit is drawn as one pixel at 96 dpi (0.75 pt) and a height unit as a
+	# Scale: a width unit is drawn as 7/8 of a pixel at 96 dpi (0.2315 mm) and a height unit as a
 	# quarter of a point (see the header). A very wide layout is zoomed out to stay readable.
 	$zoomEff = $Zoom
 	if ($maxUnits * $zoomEff -gt 15000) { $zoomEff = 15000 / $maxUnits }
-	$pxW = $zoomEff
+	$pxW = $zoomEff * 7.0 / 8.0
 	$pxPt = (96.0 / 72.0) * $zoomEff
 
 	Add-Type -AssemblyName System.Drawing
@@ -914,14 +915,14 @@ if ($MaxHeight -lt 200) { Stop-MxrRun "-MaxHeight must be at least 200 pixels" }
 	if ($focus) { $rowsLine += " (area $($focus.Name), $($focus.Type))" }
 	if ($truncated) { $rowsLine += "; TRUNCATED at -MaxHeight $MaxHeight px - draw one area with -Area, or raise -MaxHeight" }
 	Write-Host $rowsLine
-	# Millimetres are an estimate: one unit drawn as one pixel at 96 dpi (see the header), not
-	# checked against the 1C print preview. A4 is 210 x 297 mm; margins come from the layout's
+	# Millimetres: one unit is 7/8 px at 96 dpi = 0.2315 mm, measured against the 1C page
+	# breaking (see the header). A4 is 210 x 297 mm; margins come from the layout's
 	# print settings, else 10 mm a side (the value the platform writes when it saves a layout).
-	$mmPerUnit = 25.4 / 96.0
+	$mmPerUnit = 25.4 / 96.0 * 7.0 / 8.0
 	$widthMm = $docWidth * $mmPerUnit
 	Write-Host "Width (whole layout):"
 	foreach ($l in $setReport) { Write-Host $l }
-	Write-Host ("  layout: {0} units, about {1} mm (estimate: 1 unit = 1 px at 96 dpi = 0.26 mm; not checked against the 1C print preview)" -f [math]::Round($docWidth), [math]::Round($widthMm))
+	Write-Host ("  layout: {0} units, about {1} mm (1 unit = 1/8 character = 0.2315 mm, measured against 1C page breaking)" -f [math]::Round($docWidth), [math]::Round($widthMm))
 
 	$tp = $pageTargets["A4-portrait"]; $tl = $pageTargets["A4-landscape"]
 	if ($docWidth -le $tp) { $targetText = "within the portrait target" }
@@ -947,23 +948,23 @@ if ($MaxHeight -lt 200) { Stop-MxrRun "-MaxHeight must be at least 200 pixels" }
 	$availL = 297.0 - $leftMm - $rightMm
 	$pctP = [math]::Min(100, [math]::Floor(100.0 * $availP / [math]::Max(1.0, $widthMm)))
 	$pctL = [math]::Min(100, [math]::Floor(100.0 * $availL / [math]::Max(1.0, $widthMm)))
-	Write-Host ("A4 (estimate): portrait, {0} mm print width - {1}; landscape, {2} mm - {3}" -f [math]::Round($availP), $(if ($pctP -ge 100) { 'fits at 100%' } else { "does not fit at 100%, fitted to the page width about $pctP%" }), [math]::Round($availL), $(if ($pctL -ge 100) { 'fits at 100%' } else { "does not fit at 100%, fitted to the page width about $pctL%" }))
+	Write-Host ("A4: portrait, {0} mm print width - {1}; landscape, {2} mm - {3}" -f [math]::Round($availP), $(if ($pctP -ge 100) { 'fits at 100%' } else { "does not fit at 100%, fitted to the page width about $pctP%" }), [math]::Round($availL), $(if ($pctL -ge 100) { 'fits at 100%' } else { "does not fit at 100%, fitted to the page width about $pctL%" }))
 
 	if ($fitToPage) {
 		$o = $(if ($orientation -eq 'Landscape') { 'landscape' } else { 'portrait' })
 		$pct = $(if ($o -eq 'landscape') { $pctL } else { $pctP })
-		if ($pct -ge 100) { $verdict = "the layout is set to fit the page width (fitToPage): A4 $o, no reduction needed (estimate)" }
-		else { $verdict = "the layout is set to fit the page width (fitToPage): A4 $o, reduced to about $pct% (estimate)" }
+		if ($pct -ge 100) { $verdict = "the layout is set to fit the page width (fitToPage): A4 $o, no reduction needed" }
+		else { $verdict = "the layout is set to fit the page width (fitToPage): A4 $o, reduced to about $pct%" }
 	} elseif ($ps -and $orientation) {
 		$o = $(if ($orientation -eq 'Landscape') { 'landscape' } else { 'portrait' })
 		$avail = $(if ($o -eq 'landscape') { $availL } else { $availP })
 		$printed = $widthMm * $scale / 100.0
-		if ($printed -le $avail) { $verdict = "printed at $scale% on A4 $o it fits: about $([math]::Round($printed)) of $([math]::Round($avail)) mm (estimate)" }
-		else { $verdict = "printed at $scale% on A4 $o it runs past the print width: about $([math]::Round($printed)) of $([math]::Round($avail)) mm (estimate), unless the printing code sets FitToPage" }
+		if ($printed -le $avail) { $verdict = "printed at $scale% on A4 $o it fits: about $([math]::Round($printed)) of $([math]::Round($avail)) mm" }
+		else { $verdict = "printed at $scale% on A4 $o it runs past the print width: about $([math]::Round($printed)) of $([math]::Round($avail)) mm, unless the printing code sets FitToPage" }
 	} else {
-		if ($pctP -ge 100) { $verdict = "at 100% it fits A4 portrait (estimate)" }
-		elseif ($pctL -ge 100) { $verdict = "at 100% it fits A4 landscape; on portrait, fitted to the page width, about $pctP% (estimate)" }
-		else { $verdict = "wider than A4 landscape at 100%; fitted to the page width it prints at about $pctL% landscape or $pctP% portrait (estimate)" }
+		if ($pctP -ge 100) { $verdict = "at 100% it fits A4 portrait" }
+		elseif ($pctL -ge 100) { $verdict = "at 100% it fits A4 landscape; on portrait, fitted to the page width, about $pctP%" }
+		else { $verdict = "wider than A4 landscape at 100%; fitted to the page width it prints at about $pctL% landscape or $pctP% portrait" }
 		if ($pctP -lt 100) { $verdict += ". Whether it is fitted to the page is up to the printing code (SpreadsheetDocument.FitToPage)" }
 	}
 	Write-Host "Verdict: $verdict"

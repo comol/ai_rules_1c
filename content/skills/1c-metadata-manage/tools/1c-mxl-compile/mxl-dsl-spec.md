@@ -27,7 +27,7 @@ Only `columns` and `areas` are required. All row and column numbers in the DSL a
 | Key | Default | Meaning |
 |---|---|---|
 | `columns` | — (required) | Column count of the default column layout. `0` is allowed when every row lives in a `columnSets` layout |
-| `page` | — | `"A4-landscape"` (780), `"A4-portrait"` (540) or a number: derives `defaultWidth` from the `"Nx"` shares in `columnWidths` |
+| `page` | — | `"A4-landscape"` (1196), `"A4-portrait"` (820) or a number of width units (one unit is 1/8 of a column-width character, about 0.2315 mm; the two named targets are the A4 print width with 10 mm margins, 277 and 190 mm): derives `defaultWidth` from the `"Nx"` shares in `columnWidths` |
 | `defaultWidth` | `10` | Width of a column not listed in `columnWidths` |
 | `columnWidths` | `{}` | Keys `"1"`, `"3-14"`, `"5,7,9"`; value a number or `"Nx"` (multiple of `defaultWidth`, e.g. `"0.5x"`) |
 | `columnStyles` | — | Same keys; value a style name — the whole column carries it (§7) |

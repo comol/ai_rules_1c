@@ -6,6 +6,8 @@
 #        nothing behind.
 # Local: printSettings is written where the platform writes it (after namedItem); 'control'
 #        must be the base64 settings blob, a control kind there is refused.
+# Local: page targets A4-portrait 820 / A4-landscape 1196 width units (was 540 / 780, about the
+#        print width in points, not in width units); the default width is rounded down so the layout stays within it.
 [CmdletBinding(PositionalBinding=$false)]
 param(
 	[Parameter(Mandatory)]
@@ -483,9 +485,12 @@ function Parse-ColumnSpec {
 
 # --- 4a. Auto-calculate defaultWidth from page format ---
 
+# The print width of A4 with 10 mm margins (190 / 277 mm) in layout width units. A unit is 1/8
+# of ColumnWidth (an average character): 7/8 px at 96 dpi = 0.2315 mm, measured against the page
+# breaking of 1C 8.3.27 (Microsoft Print to PDF, 100%, 10 mm margins) on six ZUP layouts.
 $pageTargets = @{
-	"A4-landscape" = 780
-	"A4-portrait"  = 540
+	"A4-landscape" = 1196
+	"A4-portrait"  = 820
 }
 
 if ($def.page) {
@@ -527,7 +532,7 @@ if ($def.page) {
 		}
 
 		if ($totalUnits -gt 0) {
-			$defaultWidth = [int][math]::Round(($targetWidth - $absoluteSum) / $totalUnits)
+			$defaultWidth = [int][math]::Floor(($targetWidth - $absoluteSum) / $totalUnits)
 		}
 	}
 }
