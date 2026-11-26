@@ -60,7 +60,7 @@ Delegate to the **`1c-metadata-manager`** subagent (`content/agents/metadata-man
 | Form-compile DSL reference — full JSON DSL spec for `1c-form-compile`, `--from-object` mode, presets | [form-compile-dsl.md](docs/form-compile-dsl.md) |
 | Data Composition Schema (DCS/SKD) — create, edit, analyze, decompile, validate | [skd-manage.md](docs/skd-manage.md) |
 | Spreadsheet documents (MXL) — create, decompile, analyze, validate | [mxl-manage.md](docs/mxl-manage.md) |
-| Spreadsheet documents (MXL) — PNG sketch of a layout, A4 width verdict (Windows) | [mxl-render.md](docs/mxl-render.md) |
+| Spreadsheet documents (MXL) — PNG sketch of a layout, A4 width estimate (Windows) | [mxl-render.md](docs/mxl-render.md) |
 | Roles and access rights — create, edit, analyze, validate | [role-manage.md](docs/role-manage.md) |
 | External processors/reports (EPF/ERF) — scaffold, build, dump, validate | [epf-manage.md](docs/epf-manage.md) |
 | BSP/SSL registration and commands | [bsp-manage.md](docs/bsp-manage.md) |

@@ -1,5 +1,5 @@
-# mxl-render v1.0 - draw a 1C spreadsheet layout (Template.xml) as a PNG sketch
-# and say whether its width fits an A4 page.
+# mxl-render v1.1 - draw a 1C spreadsheet layout (Template.xml) as a PNG sketch
+# and estimate how its width prints on A4.
 # Local tool of this ruleset, not vendored from cc-1c-skills.
 #
 # The picture is a preview, not the platform's rendering: column widths, row heights,
@@ -7,13 +7,18 @@
 # named areas are drawn from the XML; pictures, charts, rotated text, header / footer
 # and conditional appearance are not.
 #
-# Scale. Column width in the XML is 1/8 of the "average character" the platform measures
-# widths in (ColumnWidth help); it is drawn as one pixel at 96 dpi (0.75 pt) - the scale at
-# which the static texts of ZUP's vendor layouts fit the table cells they sit in (95% of
-# 2148 measured cells). Row height in the XML is points x 4 (RowHeight is in points;
-# single-line rows of a 9-10 pt font are 60-75 in the XML). Fonts are drawn in points.
-# The width verdict uses mxl-compile's "page" targets (A4-portrait 540, A4-landscape 780),
-# the convention the rules compile layouts to.
+# Scale. The unit of a column width in the XML is not documented (ColumnWidth in the
+# language is in "average characters"). It is drawn as one pixel at 96 dpi (0.75 pt,
+# 0.26 mm) - the scale at which the static texts of ZUP's vendor layouts fit the table
+# cells they sit in (95% of 2148 measured cells). Row height in the XML is points x 4
+# (RowHeight is in points; single-line rows of a 9-10 pt font are 60-75 in the XML).
+# Fonts are drawn in points.
+#
+# Width. The report gives the width in units and an estimate in millimetres from that
+# scale - not checked against the 1C print preview. It compares the units with the
+# targets mxl-compile writes new layouts to (A4-portrait 540, A4-landscape 780) and,
+# separately, estimates the print on A4 from the print settings the layout stores
+# (orientation, fitToPage, scale, margins); with fitToPage it gives the reduction.
 #
 # Windows only: drawing uses System.Drawing (GDI+). pwsh on Linux / macOS has no GDI+,
 # and the run is refused before anything is written.
@@ -388,7 +393,7 @@ if ($MaxHeight -lt 200) { Stop-MxrRun "-MaxHeight must be at least 200 pixels" }
 		for ($i = 0; $i -lt $used; $i++) { $sum += $set.Widths[$i] }
 		if ($sum -gt $docWidth) { $docWidth = $sum }
 		$label = $(if ($set.Id) { "column set $($set.Id.Substring(0, [math]::Min(8, $set.Id.Length)))..." } else { "default column set" })
-		$setReport.Add(("  {0}: width {1} ({2} of {3} columns used, {4} rows)" -f $label, [math]::Round($sum), $used, $set.Widths.Length, $set.Rows))
+		$setReport.Add(("  {0}: {1} units ({2} of {3} columns used, {4} rows)" -f $label, [math]::Round($sum), $used, $set.Widths.Length, $set.Rows))
 	}
 
 	# --- Rows to draw ---
@@ -909,35 +914,59 @@ if ($MaxHeight -lt 200) { Stop-MxrRun "-MaxHeight must be at least 200 pixels" }
 	if ($focus) { $rowsLine += " (area $($focus.Name), $($focus.Type))" }
 	if ($truncated) { $rowsLine += "; TRUNCATED at -MaxHeight $MaxHeight px - draw one area with -Area, or raise -MaxHeight" }
 	Write-Host $rowsLine
-	Write-Host "Width (units of mxl-compile 'page'; whole layout):"
+	# Millimetres are an estimate: one unit drawn as one pixel at 96 dpi (see the header), not
+	# checked against the 1C print preview. A4 is 210 x 297 mm; margins come from the layout's
+	# print settings, else 10 mm a side (the value the platform writes when it saves a layout).
+	$mmPerUnit = 25.4 / 96.0
+	$widthMm = $docWidth * $mmPerUnit
+	Write-Host "Width (whole layout):"
 	foreach ($l in $setReport) { Write-Host $l }
-	$verdict = $null
-	foreach ($k in $pageTargets.Keys) {
-		$t = $pageTargets[$k]
-		if ($docWidth -le $t) {
-			Write-Host ("  {0} ({1}): fits" -f $k, $t)
-			if (-not $verdict) { $verdict = "fits $k" }
-		} else {
-			Write-Host ("  {0} ({1}): does not fit, {2} > {1}; fits at {3}%" -f $k, $t, [math]::Round($docWidth), [math]::Floor(100.0 * $t / $docWidth))
-		}
+	Write-Host ("  layout: {0} units, about {1} mm (estimate: 1 unit = 1 px at 96 dpi = 0.26 mm; not checked against the 1C print preview)" -f [math]::Round($docWidth), [math]::Round($widthMm))
+
+	$tp = $pageTargets["A4-portrait"]; $tl = $pageTargets["A4-landscape"]
+	if ($docWidth -le $tp) { $targetText = "within the portrait target" }
+	elseif ($docWidth -le $tl) { $targetText = "within the landscape target only ($([math]::Round($docWidth)) > $tp)" }
+	else { $targetText = "wider than both targets ($([math]::Round($docWidth)) > $tl)" }
+	Write-Host "mxl-compile targets (A4-portrait $tp, A4-landscape $tl units - what the rules compile new layouts to): $targetText"
+
+	$ps = $root.SelectSingleNode("d:printSettings", $ns)
+	$orientation = $null; $fitToPage = $false; $scale = 100.0
+	$leftMm = 10.0; $rightMm = 10.0
+	if ($ps) {
+		$orientation = Get-MxrText $ps "d:pageOrientation"
+		$fitToPage = ((Get-MxrText $ps "d:fitToPage") -eq 'true')
+		$scale = ConvertTo-MxrNumber (Get-MxrText $ps "d:scale") 100
+		if ($scale -le 0) { $scale = 100.0 }
+		$leftMm = (ConvertTo-MxrNumber (Get-MxrText $ps "d:leftMargin") 1000) / 100.0
+		$rightMm = (ConvertTo-MxrNumber (Get-MxrText $ps "d:rightMargin") 1000) / 100.0
+		Write-Host ("Print settings stored in the layout: orientation {0}, fitToPage {1}, scale {2}%, margins {3} + {4} mm" -f $(if ($orientation) { $orientation } else { 'not set' }), $(if ($fitToPage) { 'true' } else { 'false' }), $scale, $leftMm, $rightMm)
+	} else {
+		Write-Host "Print settings stored in the layout: none"
 	}
-	if (-not $verdict) {
-		$verdict = "wider than A4 landscape: print needs a scale of at most $([math]::Floor(100.0 * 780 / $docWidth))% or fitToPage"
-	} elseif ($verdict -eq 'fits A4-landscape') {
-		$verdict = "fits A4 landscape only, not portrait"
+	$availP = 210.0 - $leftMm - $rightMm
+	$availL = 297.0 - $leftMm - $rightMm
+	$pctP = [math]::Min(100, [math]::Floor(100.0 * $availP / [math]::Max(1.0, $widthMm)))
+	$pctL = [math]::Min(100, [math]::Floor(100.0 * $availL / [math]::Max(1.0, $widthMm)))
+	Write-Host ("A4 (estimate): portrait, {0} mm print width - {1}; landscape, {2} mm - {3}" -f [math]::Round($availP), $(if ($pctP -ge 100) { 'fits at 100%' } else { "does not fit at 100%, fitted to the page width about $pctP%" }), [math]::Round($availL), $(if ($pctL -ge 100) { 'fits at 100%' } else { "does not fit at 100%, fitted to the page width about $pctL%" }))
+
+	if ($fitToPage) {
+		$o = $(if ($orientation -eq 'Landscape') { 'landscape' } else { 'portrait' })
+		$pct = $(if ($o -eq 'landscape') { $pctL } else { $pctP })
+		if ($pct -ge 100) { $verdict = "the layout is set to fit the page width (fitToPage): A4 $o, no reduction needed (estimate)" }
+		else { $verdict = "the layout is set to fit the page width (fitToPage): A4 $o, reduced to about $pct% (estimate)" }
+	} elseif ($ps -and $orientation) {
+		$o = $(if ($orientation -eq 'Landscape') { 'landscape' } else { 'portrait' })
+		$avail = $(if ($o -eq 'landscape') { $availL } else { $availP })
+		$printed = $widthMm * $scale / 100.0
+		if ($printed -le $avail) { $verdict = "printed at $scale% on A4 $o it fits: about $([math]::Round($printed)) of $([math]::Round($avail)) mm (estimate)" }
+		else { $verdict = "printed at $scale% on A4 $o it runs past the print width: about $([math]::Round($printed)) of $([math]::Round($avail)) mm (estimate), unless the printing code sets FitToPage" }
+	} else {
+		if ($pctP -ge 100) { $verdict = "at 100% it fits A4 portrait (estimate)" }
+		elseif ($pctL -ge 100) { $verdict = "at 100% it fits A4 landscape; on portrait, fitted to the page width, about $pctP% (estimate)" }
+		else { $verdict = "wider than A4 landscape at 100%; fitted to the page width it prints at about $pctL% landscape or $pctP% portrait (estimate)" }
+		if ($pctP -lt 100) { $verdict += ". Whether it is fitted to the page is up to the printing code (SpreadsheetDocument.FitToPage)" }
 	}
 	Write-Host "Verdict: $verdict"
-	$ps = $root.SelectSingleNode("d:printSettings", $ns)
-	if ($ps) {
-		$parts = @()
-		foreach ($k in 'pageOrientation', 'scale', 'fitToPage', 'leftMargin', 'rightMargin') {
-			$v = Get-MxrText $ps "d:$k"
-			if ($v) { $parts += "$k=$v" }
-		}
-		Write-Host "Print settings of the layout: $($parts -join ', ') (margins in 1/100 mm)"
-	} else {
-		Write-Host "Print settings of the layout: none (the code that prints may still set orientation or FitToPage)"
-	}
 	$notDrawn = @()
 	if ($drawings.Count -gt 0) { $notDrawn += "$($drawings.Count) drawing(s) outlined only ($drawnDrawings in view)" }
 	if ($cellPictures -gt 0) { $notDrawn += "$cellPictures cell picture(s)" }
