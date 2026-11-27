@@ -1,6 +1,6 @@
-# 1C Extension Manage — Init, Borrow, Diff, Patch, Validate
+# 1C Extension Manage — Init, Borrow, Diff, Patch, Transfer, Validate
 
-Comprehensive extension (CFE) management: create scaffold, borrow objects from configuration, analyze changes, generate method interceptors, validate correctness.
+Comprehensive extension (CFE) management: create scaffold, borrow objects from configuration, analyze changes, generate method interceptors, check and transfer changes into the main configuration, validate correctness.
 
 ---
 
@@ -132,21 +132,23 @@ For an already borrowed object, preserve its existing identifier and base-object
 
 ## 3. Diff — Analyze Extension Changes
 
+Shows what the extension itself modifies: for each borrowed object — module interceptors, own methods, own subobjects and form edits relative to `BaseForm` (`+` added, `~` changed `was→became`, `>` moved); for own objects — their composition.
+
 ```powershell
-powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-diff.ps1 -ExtensionPath src -ConfigPath <config> -Mode A
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-diff.ps1 -ExtensionPath src\cfe\extname
 ```
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `ExtensionPath` | Path to extension (required) | — |
-| `ConfigPath` | Path to configuration (required) | — |
-| `Mode` | `A` (overview) / `B` (transfer check) | `A` |
+| `ExtensionPath` | Extension directory; comma-separated list for several; or a parent directory whose subdirectories are extensions (required) | — |
+| `Name` | Detailed breakdown only for these objects: `Type.Name`, comma-separated | — |
+| `Expand` | Borrowed objects without edits: `Type.Name` to expand one object, `*` to list all in summary | — |
+| `Limit` / `Offset` | Pagination of the report body | `150` / `0` |
+| `OutFile` | Write the report to a file | — |
 
-**Mode A** — overview: For each object shows `[BORROWED]` (interceptors, own attributes/TS/forms) or `[OWN]` (counts).
+The summary prints at the end; when a report is large, request details for specific objects with `-Name`. To inspect a borrowed form whole (with extension edits applied), use `form-info`. To check whether edits were transferred to the main configuration (formerly `Mode B`), use **`cfe-transfer`** (section 5 below).
 
-**Mode B** — transfer check: For each `&ИзменениеИКонтроль`, extracts `#Вставка`/`#КонецВставки` blocks and searches for them in the configuration module. Statuses: `[TRANSFERRED]`, `[NOT_TRANSFERRED]`, `[NEEDS_REVIEW]`.
-
-Both modes cover every borrowable kind, including `HTTPService`, `WebService`, `XDTOPackage`, `Style`, `WSReference` and `Bot`, the interceptors in common-form modules, and English BSL keywords.
+Covers every borrowable kind, including `HTTPService`, `WebService`, `XDTOPackage`, `Style`, `WSReference`, `Bot`, subsystems, common forms, and English BSL keywords.
 
 ---
 
@@ -232,7 +234,42 @@ Narrow the scope with `-ModulePath` (one module) or `-ModulePath` + `-MethodName
 
 ---
 
-## 5. Validate — Check Extension Correctness
+## 5. Transfer — Check & Transfer Extension Changes to Configuration
+
+Checks whether extension edits are already present in the main configuration (`-Mode check`, default) or transfers remaining edits directly into the configuration XML/BSL dump (`-Mode transfer`): `&ИзменениеИКонтроль` / `&Перед` / `&После` / `&Вместо` interceptors, own methods, form edits, borrowed-object metadata/predefined items, and own extension objects (modules, commands, enums, constants, defined types, catalogs, documents, registers, processors, reports, subscriptions, scheduled jobs, roles, etc.).
+
+```powershell
+# Check what is transferred and what remains
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-transfer.ps1 -ExtensionPath src\cfe\extname -ConfigPath src\cf -Mode check
+
+# Transfer remaining edits into the configuration dump (always save report outside dump)
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-transfer.ps1 -ExtensionPath src\cfe\extname -ConfigPath src\cf -Mode transfer -OutFile transfer-report.txt
+```
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `ExtensionPath` | Extension path; in `check` mode also comma-separated list or parent folder of extensions (required; in `transfer` mode one extension per run) | — |
+| `ConfigPath` | Main configuration XML dump directory (required) | — |
+| `Mode` | `check` (compare only) / `transfer` (write into configuration dump) | `check` |
+| `Name` | Filter to specific objects (`Type.Name`, comma-separated, using extension names) | — |
+| `Expand` | Expand collapsed rows: object name, section path, or `*` | — |
+| `IncludeDefaultRoles` | Include extension's own `DefaultRoles` in check/transfer | off |
+| `Tag` | Tag value substituted into `{tag}` of `cfeTransfer.insertComment` when configured | — |
+| `Limit` / `Offset` | Pagination in `check` mode | `150` / `0` |
+| `OutFile` | Save report to file (in `transfer` mode pass a path outside the dump) | — |
+
+### Transfer workflow and guardrails
+
+1. **Always run `check` first** to review the remainder; pass `-Name` for selective transfer. Missing `-Name` items are listed and exit `1`.
+2. **Support guard & object position**: honours `.dev.env` `SUPPORT_GUARD` (fail-closed on unreadable `Ext/ParentConfigurations.bin`) and `NEW_OBJECT_POSITION` before `.v8-project.json`. Optional project formatting rules (`devPrefix`, `cfeTransfer` — `insertComment`, `deletion`, `addDevPrefix`, `createRegions`, `regions`) live in `.v8-project.json` (see [db-manage.md](db-manage.md)).
+3. **Inspect `MANUAL`, `CONFLICT`, `WAITING`**: exit `1` in `transfer` mode allows partial writes — check `transferred now` and the changed-files list. Resolve `WAITING` dependencies (interdependent objects may require one run with all participants in `-Name`) and re-run.
+4. **Stored data migration**: if the report emits `Stored data is NOT migrated` (extension changes to data storage structure), **agree with the user how to migrate data before disabling or deleting the extension**.
+5. **Temporary edits**: exclude intentional temporary code from check/transfer with `// Временно: <причина>` or `// Не переносить: <причина>` above a method or on `#Вставка` / `#Удаление`; for form items place `// Не переносить элементы формы: <имена через запятую> — <причина>` at the top of the form module.
+6. **Post-transfer verification**: validate modified BSL modules and XML files (staged writes auto-invoke sibling `1c-form-validate`, `1c-meta-validate`, `1c-role-validate`, `1c-subsystem-manage`, `1c-xdto-manage`, `1c-mxl-validate`, `1c-skd-validate`), then re-run `cfe-transfer -Mode check` with the same filter.
+
+---
+
+## 6. Validate — Check Extension Correctness
 
 ```powershell
 powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-validate.ps1 -ExtensionPath src\cfe\ИмяРасширения -ConfigPath src\cf
@@ -315,8 +352,9 @@ The `init` step below is for a new extension only; an existing target starts fro
 1c-cfe-manage borrow               — borrow objects to modify
 1c-cfe-manage patch                 — generate interceptors
 1c-cfe-manage validate -ConfigPath   — check correctness (source-level, against the source config)
-1c-cfe-manage diff -Mode A          — review changes overview
-1c-cfe-manage diff -Mode B          — check transfer status
+1c-cfe-manage diff                  — review extension changes (own edits vs BaseForm)
+1c-cfe-manage transfer -Mode check  — check transfer status against main configuration
+1c-cfe-manage transfer -Mode transfer — transfer remaining edits into main configuration
 1c-cfe-manage patch -Check          — drift against the vendor original
    ↓ before loading into any infobase
 /CheckModules → /CheckCanApplyConfigurationExtensions → /CheckConfig

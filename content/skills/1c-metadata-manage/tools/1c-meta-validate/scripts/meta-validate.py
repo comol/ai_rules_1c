@@ -1,6 +1,6 @@
-# meta-validate v1.47 — Validate 1C metadata object structure (Python port)
+# meta-validate v1.48 — Validate 1C metadata object structure (Python port)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills, pinned at
-#         4fc37e1f992057847228a69837337bd3c141c059 — the same upstream state the
+#         29a3a9e46c6ecaa6d2d2baf4c00b8a7dc511a89e — the same upstream state the
 #         vendored meta-validate.ps1 was synced from.
 # Licence: MIT, Copyright (c) 2025-2026 Nick Shirokov. Full notice and permission
 #          text: ../../../NOTICE.md (installed as
@@ -310,7 +310,7 @@ structural_only_types = (
     "CommonTemplate", "CommonPicture", "SessionParameter", "SettingsStorage", "FilterCriterion",
     "IntegrationService", "Bot",
     "FunctionalOption", "FunctionalOptionsParameter", "Language", "Style", "StyleItem",
-    "WSReference", "XDTOPackage", "DocumentNumerator", "Sequence",
+    "WSReference", "XDTOPackage", "DocumentNumerator", "Sequence", "PaletteColor",
 )
 
 # Вложенные дескрипторы объекта: Forms/<Имя>.xml и Templates/<Имя>.xml. Корень тот же MetaDataObject,

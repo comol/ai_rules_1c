@@ -1,0 +1,35 @@
+# Adapter: Windsurf IDE (Codeium)
+#
+# Describes how to copy and adapt files from content/ for Windsurf.
+# Note: DeepSeek Harness (DSH) remains the primary target runtime for this ruleset.
+#
+# Layout:
+#   - Root `AGENTS.md` as always-on entry point.
+#   - On-demand rules under `.windsurf/rules-1c/` (deliberately NOT `.windsurf/rules/`,
+#     which Windsurf auto-loads eagerly).
+#   - Workflows / slash commands under `.windsurf/workflows/{name}.md`.
+#   - Skills under `.windsurf/skills/{name}/` (Agent Skills standard).
+#   - MCP in Windsurf is user-global (~/.codeium/windsurf/mcp_config.json), so `mcp` is omitted.
+
+tool: windsurf
+schemaVersion: 1
+
+detection:
+  - exists: ".windsurf/"
+  - exists: ".windsurfrules"
+
+rules:
+  copyTo: ".windsurf/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+commands:
+  copyTo: ".windsurf/workflows/{name}.md"
+  frontmatter:
+    keep: [description]
+    drop: [argumentHint, allowedTools]
+
+skills:
+  copyTo: ".windsurf/skills/{name}/"
+  mode: verbatim

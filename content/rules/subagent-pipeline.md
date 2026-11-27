@@ -103,12 +103,20 @@ Required for full-cycle unless explicitly prohibited by the user (`verification-
 
 The reviewer (eligible subagent or parent) checks requirements, correctness and regressions, plus applicable domain concerns:
 
+- structured defect cards and Legitimate Form counter-signals from `standards(name="review-defect-catalog")` (query via `standards(name="review-defect-catalog")` or `standards(query=...)` before reporting defects; cite card IDs and suppress matches to legitimate forms);
 - anti-patterns from `standards(name="anti-patterns")` and `standards(name="platform-solutions")`;
 - ITS standards via `its_help` → `fetch_its`;
 - style / ITS findings from the Stage 3 `review_1c_code` evidence when the active depth selected Gate 3 (`verification-policy.md`) — this stage adds no validator call of its own;
 - query patterns, transactional safety, lock granularity, posting boundaries.
 
 Report `critical` / `major` / `minor` findings (`subagent-core.md → Report vocabulary`). Resolve critical / major issues, each checked first (`verification-delivery.md → Soft gate C`, *Acting on findings*), and confirm affected checks before completion; minor issues are informational.
+
+**Re-review pass (`fix-pass`).** On pass 2+ after fixing review findings, do **not** re-review unchanged approved code from scratch — that causes non-converging review loops:
+
+- Supply the reviewer with only the **delta since the previous reviewed snapshot** (`fix.diff`) plus the explicit list of open findings from the prior pass.
+- Every prior open finding must be accounted for explicitly as **Closed** (verified in code) or **Still open** — never silently dropped.
+- **Escalate back to full change diff (`HEAD`)** if the fix alters a procedure/function signature, adds a new method, touches more than one method, or changes transaction/lock/posting boundaries.
+- Deterministic static validators (`syntaxcheck_file`, `verify_xml`, `hygiene-check.ps1`) still run on whole modified files (cheap and deterministic).
 
 ### Stage 5 — Verification gate (parent agent)
 

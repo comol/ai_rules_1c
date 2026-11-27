@@ -81,6 +81,8 @@ File is placed at the project root (next to `.git/`).
 | `v8path` | string | 1C platform bin directory. Optional — auto-detect if not set |
 | `databases` | array | Array of databases |
 | `default` | string | Default database id |
+| `devPrefix` | string[] | Optional project development prefixes (first is primary; used by `cfe-transfer` to distinguish own vs vendor objects and disambiguate transferred method names; overridable per database) |
+| `cfeTransfer` | object | Optional formatting policy for `cfe-transfer -Mode transfer` (`insertComment`, `deletion`, `addDevPrefix`, `createRegions`, `regions`, with optional `vendor` / `own` overrides; overridable per database) |
 
 ### Database Object Fields
 

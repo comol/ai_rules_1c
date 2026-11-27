@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "packs": [
+    {
+      "id": "zup-hr",
+      "title": "1С:ЗУП 3.1 (кадровый учёт и расчёт зарплаты)",
+      "description": "HR, average earnings, benefits/SFR, payroll registers and ZUP 3.1 API verification guide.",
+      "rules": ["rules/zup-hr-patterns.md"],
+      "skills": []
+    },
+    {
+      "id": "data-exchange",
+      "title": "Обмены 1С (КД 2.0, КД 3.1, EnterpriseData)",
+      "description": "Data Conversion 2.0/3.1 rules, EnterpriseData XDTO extensions, exchange plans and sync traps.",
+      "rules": ["rules/exchange-kd-patterns.md"],
+      "skills": []
+    },
+    {
+      "id": "1c-compatible",
+      "title": "Аудит «1С:Совместимо» и словарь терминов 1С",
+      "description": "1C:Compatible audit checklist (#stdNNN pointers) and canonical RU/EN 1C terminology dictionary.",
+      "rules": ["rules/1c-compatible-audit.md"],
+      "skills": []
+    },
+    {
+      "id": "meeting-to-tasks",
+      "title": "Разбор встреч в задачи и OpenSpec",
+      "description": "End-to-end skill: meeting audio/video/transcript to structured task breakdown and OpenSpec drafts.",
+      "rules": [],
+      "skills": ["skills/meeting-to-tasks"]
+    }
+  ]
+}

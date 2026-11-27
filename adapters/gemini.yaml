@@ -1,0 +1,40 @@
+# Adapter: Gemini CLI
+#
+# Describes how to copy and adapt files from content/ for Google Gemini CLI.
+# Note: DeepSeek Harness (DSH) remains the primary target runtime for this ruleset.
+#
+# Layout:
+#   - Root `AGENTS.md` + minimal `GEMINI.md` entry stub pointing at it.
+#   - On-demand rules under `.gemini/rules-1c/`.
+#   - Skills under `.gemini/skills/{name}/` (Agent Skills standard).
+#   - Project MCP merged into `.gemini/settings.json` under `mcpServers` (`httpUrl` for HTTP).
+
+tool: gemini
+schemaVersion: 1
+
+detection:
+  - exists: ".gemini/"
+  - exists: "GEMINI.md"
+
+rules:
+  copyTo: ".gemini/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+skills:
+  copyTo: ".gemini/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".gemini/settings.json"
+  schema: qwen-mcp
+  format: json
+  merge: true
+  mergeKey: mcpServers
+  mergeServers: true
+
+entry:
+  target: "GEMINI.md"
+  template: "See @AGENTS.md for project instructions.\n"

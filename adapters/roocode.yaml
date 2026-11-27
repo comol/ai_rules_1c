@@ -1,0 +1,44 @@
+# Adapter: Roo Code (VS Code extension)
+#
+# Describes how to copy and adapt files from content/ for Roo Code.
+# Note: DeepSeek Harness (DSH) remains the primary target runtime for this ruleset.
+#
+# Layout:
+#   - Root `AGENTS.md` as always-on entry point.
+#   - On-demand rules under `.roo/rules-1c/` (deliberately NOT `.roo/rules/`, which
+#     Roo Code auto-loads eagerly on every session).
+#   - Commands under `.roo/commands/{name}.md`.
+#   - Skills under `.roo/skills/{name}/` (Agent Skills standard).
+#   - Project MCP merged into `.roo/mcp.json` under `mcpServers`.
+
+tool: roocode
+schemaVersion: 1
+
+detection:
+  - exists: ".roo/"
+  - exists: ".roorules"
+
+rules:
+  copyTo: ".roo/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+commands:
+  copyTo: ".roo/commands/{name}.md"
+  frontmatter:
+    keep: [description]
+    drop: [argumentHint, allowedTools]
+
+skills:
+  copyTo: ".roo/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".roo/mcp.json"
+  schema: mcpServers
+  format: json
+  merge: true
+  mergeKey: mcpServers
+  mergeServers: true

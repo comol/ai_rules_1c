@@ -1,0 +1,57 @@
+# Adapter: GitHub Copilot (VS Code / Copilot CLI)
+#
+# Describes how to copy and adapt files from content/ for GitHub Copilot.
+# Note: DeepSeek Harness (DSH) remains the primary target runtime for this ruleset;
+# this adapter provides portability into GitHub Copilot workspaces.
+#
+# Layout:
+#   - Root `AGENTS.md` + minimal `.github/copilot-instructions.md` stub pointing to it.
+#   - On-demand rules under `.github/rules-1c/` (deliberately NOT `.github/instructions/`,
+#     which Copilot loads eagerly based on applyTo globs).
+#   - Custom agents under `.github/agents/{name}.agent.md`.
+#   - Prompt commands under `.github/prompts/{name}.prompt.md`.
+#   - Skills under `.github/skills/{name}/` (Agent Skills standard).
+#   - MCP servers merged into `.vscode/mcp.json` under top-level `servers` key.
+
+tool: copilot
+schemaVersion: 1
+
+detection:
+  - exists: ".github/copilot-instructions.md"
+  - exists: ".github/agents/"
+  - exists: ".github/skills/"
+
+rules:
+  copyTo: ".github/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+agents:
+  copyTo: ".github/agents/{name}.agent.md"
+  frontmatter:
+    keep: [name, description]
+    drop: [tools, modelHint, allowParallel, reasoningEffort, isSubagent]
+
+commands:
+  copyTo: ".github/prompts/{name}.prompt.md"
+  frontmatter:
+    keep: [description]
+    drop: [argumentHint, allowedTools]
+
+skills:
+  copyTo: ".github/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".vscode/mcp.json"
+  schema: "servers[id]={ type: 'http', url } | { type: 'stdio', command, args }"
+  format: json
+  merge: true
+  mergeKey: servers
+  mergeServers: true
+
+entry:
+  target: ".github/copilot-instructions.md"
+  template: "See @AGENTS.md for project instructions.\n"

@@ -573,8 +573,8 @@
     },
     {
       "function": "Get-MLText",
-      "maxVariants": 5,
-      "note": "upstream ratchet (ps1 <= 6): same task, different completeness per *-info",
+      "maxVariants": 6,
+      "note": "upstream ratchet (ps1 <= 6): same task, different completeness per *-info / form-decompile",
       "localVariants": []
     },
     {

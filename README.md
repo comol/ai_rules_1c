@@ -107,7 +107,7 @@ opencode plugin marketplace install 1c-rules
 
 ## Под какие ИИ-агенты адаптированы правила
 
-Правила и команды собираются под конкретный инструмент адаптерами из `adapters/*.yaml`. Поддерживаются:
+**Основная целевая среда для этого набора правил — [DSH (DeepSeek Harness)](https://vibecoding1c.ru/harnesses)**, специализированная сборка для 1С (`/installdsh`). Для переносимости в другие IDE и CLI-агенты правила и команды собираются под конкретный инструмент адаптерами из `adapters/*.yaml`. Поддерживаются:
 
 - **DeepSeek Harness** (`dsh`) читает `AGENTS.md` из корня проекта и навыки из `.dsh/skills/`. Правила, роли и сценарии находятся в `.dsh/rules-1c/`, `.dsh/agents-1c/` и `.dsh/commands-1c/`. В сборке для 1С их разворачивает команда `/rules1c deploy`.
 - **Cursor** (`.cursor/rules/`, `.cursor/agents/`, `.cursor/commands/`, `.cursor/skills/`)
@@ -122,7 +122,15 @@ opencode plugin marketplace install 1c-rules
 - **ZCode** (`zcode`; `.zcode/rules-1c/`, `.zcode/agents/`, `.zcode/commands/`, `.zcode/skills/`; MCP — `.zcode/config.json`, ключ `mcp.servers`; проверено по исходникам ZCode v3.14.3)
 - **MiMo Code** (`mimocode`; `.mimocode/rules-1c/`, `.mimocode/agents/`, `.mimocode/commands/`, `.mimocode/skills/`; MCP — корневой `mimocode.json`, ключ `mcp`)
 - **Pi** (`.pi/rules-1c/`, `.pi/prompts/` для команд, `.pi/skills/`; без субагентов и без MCP — у Pi нет встроенного MCP)
+- **GitHub Copilot** (`copilot`; `.github/rules-1c/`, `.github/agents/*.agent.md`, `.github/prompts/*.prompt.md`, `.github/skills/`, entry stub `.github/copilot-instructions.md`, MCP в `.vscode/mcp.json` под `servers`)
+- **Windsurf** (`windsurf`; `.windsurf/rules-1c/`, `.windsurf/workflows/`, `.windsurf/skills/`; MCP глобальный)
+- **Roo Code** (`roocode`; `.roo/rules-1c/`, `.roo/commands/`, `.roo/skills/`, MCP в `.roo/mcp.json` под `mcpServers`)
+- **Gemini CLI** (`gemini`; `.gemini/rules-1c/`, `.gemini/skills/`, entry stub `GEMINI.md`, MCP в `.gemini/settings.json` под `mcpServers` с `httpUrl`)
+- **Kiro** (`kiro`; `.kiro/rules-1c/`, `.kiro/skills/`, MCP в `.kiro/settings/mcp.json` под `mcpServers`)
+- **Yandex Code Assistant** (`yandex`; `.codeassistant/rules-1c/`, `.codeassistant/skills/`)
 - **Прочее (`other`, универсальный fallback)** (`.ai-agent/rules/`, `.ai-agent/agents/`, `.ai-agent/commands/`, `.ai-agent/skills/`, `.ai-agent/mcp.json`) — для любого ИИ-клиента, которого нет в списке выше (Aider, Continue, Cody и т.п.). Ничего не автодетектится — выбирается вручную при установке. На диск пишутся максимально портабельные правила: `AGENTS.md` в корне (де-факто стандарт для современных агентов), а on-demand-правила и описания субагентов — по нейтральным путям под `.ai-agent/` с минимальной frontmatter (`description` + `alwaysApply`).
+
+**Подключаемые доменные пакеты (`content/packs/`):** опциональные наборы для узких задач (`zup-hr` — ЗУП 3.1, `data-exchange` — КД 2.0/3.1 и EnterpriseData, `1c-compatible` — аудит «1С:Совместимо» и словарь терминов, `meeting-to-tasks` — разбор встреч в задачи и OpenSpec). По умолчанию не ставятся; выбираются при установке (`install.ps1 init -Packs zup-hr,data-exchange`) или позже отдельной командой [`/install-packs`](content/commands/install-packs.md) (`install.ps1 packs list|add|remove`).
 
 Один и тот же исходный набор правил из `content/` раскладывается во все активные инструменты одновременно, поэтому `AGENTS.md`, on-demand правила и описания субагентов остаются согласованными независимо от того, в каком клиенте вы работаете.
 
@@ -245,7 +253,7 @@ pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -Proj
 - `openspec/` — OpenSpec-воркспейс (если ещё не было).
 - `.ai-rules.json` — манифест с перечнем размещённых файлов, активных инструментов, выбранным каноническим каталогом on-demand правил и версией.
 
-`AGENTS.md` ссылается на on-demand правила по пути одного канонического каталога (приоритет `cursor → claude-code → kilocode → kimi → qwen → command-code → cline → zcode → mimocode → opencode → codex → pi → dsh → other`; `other` становится каноном только когда выбран без «реального» инструмента). При установке только под один инструмент в проекте появится ровно одна тулзовая директория плюс `AGENTS.md`/`USER-RULES.md`/`memory.md`/`LLM-RULES.md` в корне — без дополнительных общих папок.
+`AGENTS.md` ссылается на on-demand правила по пути одного канонического каталога (приоритет `cursor → claude-code → kilocode → kimi → qwen → command-code → cline → zcode → mimocode → opencode → codex → pi → copilot → windsurf → roocode → gemini → kiro → yandex → dsh → other`; `other` становится каноном только когда выбран без «реального» инструмента). При установке только под один инструмент в проекте появится ровно одна тулзовая директория плюс `AGENTS.md`/`USER-RULES.md`/`memory.md`/`LLM-RULES.md` в корне — без дополнительных общих папок.
 
 Если активен ровно один инструмент, агент-установщик не задаёт уточняющих вопросов. PowerShell-fallback дополнительно поддерживает флаги `-Tools cursor,claude-code`, `-NonInteractive`, `-AssumeYes`. Полный протокол и описание манифеста — в [`AGENT-INSTALL.md`](AGENT-INSTALL.md).
 
@@ -301,12 +309,19 @@ pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -Proj
 - `project-memory.md` — отдельный вход для памяти: приоритет записи Cognee → OpenViking → templates MCP, область поиска по сложности задачи, гейты recall-first и correction-capture, строка `Memory:` и локальный fallback. Обычная работа с памятью загружает только это правило и `tool-policy.md`, без общей MCP-политики 1С и скилла шаблонов.
 - `tool-policy.md` — общие значения `TOOL_*=auto/off/required` и проверка фактической доступности инструментов; правила работы с конкретной операцией остаются у её владельца.
 - `platform-solutions.md` — типичные ловушки платформы и проверенные шаблоны решений (включая фоновые задания из внешней обработки через БСП).
+- `platform-versions.md` — версии платформы 8.3 / 8.5, сохранение `formatVersion` (`2.13`–`2.22`) без молчаливой конвертации, нормализация `CompatibilityMode` / `ConfigurationExtensionCompatibilityMode` / `InterfaceCompatibilityMode`.
+- `git-safety.md` — безопасность Git (запрет AI-атрибуции, секретов, деструктивных команд без подтверждения), эталонный `.gitattributes` для 1С (EOL) и протокол ренормализации после импорта из хранилища.
+- `data-separation.md` — аудит разделения данных (SaaS / `ОбщиеРеквизиты`-разделители), защита от межтенантных утечек в фоновых заданиях, временном хранилище и обменах.
+- `rls-performant-bsp.md` — подключение объектов и расширений к производительному RLS БСП (`ТаблицыЗначенийДоступа`) и диагностика падений списков.
+- `log-analysis.md` — разбор ЖР и ТЖ (`TLOCK`, `TDEADLOCK`, `DBMSSQL`, `EXCP`): таймлайн, связывание с кодом, отделение первопричины от каскада откатов.
+- `localization.md` — локализация 1С (`НСтр`, `СтрШаблон`, `DefaultLanguage` / `LanguageCode` / `LocaleCode`, сохранение переводов в метаданных, `ДЛФ`).
+- `edt-pitfalls.md` — боевые грабли 1C:EDT (безопасные режимы `write_module_source`, монополия на ИБ, ошибки `zip:///`, большие конфигурации, кеш `rphost`, маршрутизация фасадного плагина `ai-edt`).
 
 ## Специализированные субагенты (`content/agents/`)
 
-Тринадцать ролей под конкретные задачи: `1c-explorer`, `1c-analytic`, `1c-planner`, `1c-architect`, `1c-arch-reviewer`, `1c-developer`, `1c-metadata-manager`, `1c-refactoring`, `1c-performance-optimizer`, `1c-error-fixer`, `1c-tester`, `1c-code-reviewer`, `1c-doc-writer`. Когда какой использовать — описано в `content/rules/subagents.md` (точка входа из `AGENTS.md → Skills and Subagents`).
+Четырнадцать ролей под конкретные задачи: `1c-explorer`, `1c-analytic`, `1c-planner`, `1c-architect`, `1c-arch-reviewer`, `1c-developer`, `1c-metadata-manager`, `1c-refactoring`, `1c-performance-optimizer`, `1c-error-fixer`, `1c-tester`, `1c-code-reviewer`, `1c-cold-reader`, `1c-doc-writer`. Когда какой использовать — описано в `content/rules/subagents.md` (точка входа из `AGENTS.md → Skills and Subagents`).
 
-Ревьюеры `1c-code-reviewer` и `1c-arch-reviewer` отключены, пока модель не задана явно в `SUBAGENT_MODEL_ANALYSIS` или пользователем для конкретного запуска. Наследование модели клиента и подстановка `SUBAGENT_MODEL_CODING` их не включают. При отключённом ревьюере запрошенное пользователем ревью выполняет головной агент; MCP-проверка `review_1c_code` сохраняется. Подробности — `content/rules/subagents.md → Reviewer model gate`.
+Ревьюеры `1c-code-reviewer`, `1c-cold-reader` и `1c-arch-reviewer` отключены, пока модель не задана явно в `SUBAGENT_MODEL_ANALYSIS` или пользователем для конкретного запуска. Наследование модели клиента и подстановка `SUBAGENT_MODEL_CODING` их не включают. При отключённом ревьюере запрошенное пользователем ревью выполняет головной агент; MCP-проверка `review_1c_code` сохраняется. Подробности — `content/rules/subagents.md → Reviewer model gate`.
 
 ## SKILL-пакеты (`content/skills/`)
 
@@ -358,6 +373,7 @@ pwsh -NoProfile -File /tmp/1c-rules/install.ps1 init -Source /tmp/1c-rules -Proj
 - **`mcp-1c-tools`** — роутер MCP-серверов экосистемы 1С: таблица «потребность → скилл операции» и fallback-цепочка (`graph → code-metadata → нативные Grep / Glob / Read` после ограниченного промаха). Каталог серверов вынесен в `docs/server-catalog.md` и нужен только для незнакомого сервера или дополнительной интеграции. Работа только с памятью использует прямой вход `project-memory.md`.
 - **Скиллы операций** (по одному на типовую операцию, каждый с точными именами аргументов своих инструментов, примерами вызовов в JSON и `allowed-tools`): **`1c-code-search`** — поиск BSL-кода, структуры модуля, членов контекста; **`1c-meta-info`** — факты об объекте метаданных (паспорт, реквизиты, колонки табличных частей, поиск по категории и описанию); **`1c-impact`** — использования, цепочки вызовов, влияние изменений, слои расширений; **`1c-form-inspect`** — чтение форм, артефактов, XSD и спецификаций форматов; **`1c-validate`** — цепочка валидаторов `syntaxcheck_file → check_1c_code → review_1c_code` и `verify_xml` в бюджете политики; **`1c-platform-help`** — справка платформы, проверка платформенной возможности, БСП, стандарты, ИТС; **`1c-templates-memory`** — шаблоны как база и память проекта; **`1c-live-ib`** — запросы и фрагменты в живой ИБ, последняя ошибка журнала. Как сервер отвечает — так агент действует: таблица «ответ сервера → действие» в `content/rules/mcp-policy.md`.
 - **`caveman`** — стиль общения: краткие рабочие ответы на русском, без лишнего объяснения. По умолчанию (`.dev.env` `CAVEMAN=auto`) включён на задачах разработки (реализация, отладка, деплой) и выключен на ревью / анализе / аудите / документации, где результатом является читаемый текст; `CAVEMAN=on` включает его на всех задачах; `CAVEMAN=off` отключает автоактивацию полностью. Явные команды `/caveman` работают в любом режиме.
+- **`1c-layout-from-excel`** — перенос печатного шаблона из `.xlsx` в макет MXL (`Template.xml`) через структурный разбор `OfficeCLI` (`/install-officecli`) и `mxl-compile` (`1c-metadata-manage`), с фиксацией границ переноса и data-contract проверкой данных до вывода.
 - **`img-grid-analysis`** — наложение пронумерованной сетки на изображение для определения пропорций колонок. Используется при генерации MXL-макетов из скриншотов или сканов печатных форм; даёт коэффициенты ширины колонок для JSON-DSL компилятора.
 - **`mermaid-diagrams`** — практическое руководство по диаграммам Mermaid, совместимым с большинством рендереров (плюс ASCII-сайдкары для просмотра в чистом Markdown).
 - **`powershell-windows`** — правила скриптинга в Windows PowerShell (разделители команд, кавычки путей, замены `curl`/`timeout`/`&&`, Docker, HTTP, JSON). Подгружается, когда правила выполняют shell-команды на Windows.

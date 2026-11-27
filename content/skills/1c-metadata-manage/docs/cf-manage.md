@@ -153,6 +153,23 @@ references or extension applicability. Supplier configurations under `Ext` are
 not traversed. Object ordering remains the responsibility of `cf-validate` /
 `cfe-validate`; there is no new alphabetical-order requirement.
 
+### Dump hygiene and nested orphans
+
+Complements `dump-validate.ps1` with read-only checks for **nested orphan artifacts** and **BSL file hygiene** (no Configurator or MCP required):
+
+```powershell
+# Full dump: nested Form/Template orphans, orphan object dirs, stray backup files, BSL hygiene
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/hygiene-check.ps1 -ConfigPath "<dump-directory>"
+
+# Targeted post-edit check on touched files only (fast, JSON optional)
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-cf-manage/scripts/hygiene-check.ps1 -Paths "Documents/Заказ/Ext/ObjectModule.bsl","Documents/Заказ.xml" -Format Json
+```
+
+Checks:
+- **Nested orphans (ERROR):** unregistered `Forms/*.xml`, `Forms/<Name>/`, `Templates/*.xml`, `Templates/<Name>/` not in parent `ChildObjects`; registered `<Form>`/`<Template>` missing on disk; orphan object directories without sibling `<Name>.xml`; leftover `.remove-form-quarantine*` directories.
+- **BSL hygiene:** invalid UTF-8, unresolved Git merge markers (`<<<<<<<`/`=======`/`>>>>>>>`), unresolved `// [РЕСИНК-КОНФЛИКТ]` markers, and unbalanced `#Область`/`#Если`/`#Вставка`/`#Удаление` blocks (**ERROR**); missing UTF-8 BOM, mixed CRLF/LF endings, direct `Сообщить()` calls, bare `TODO`/`FIXME` without a task reference, and stray `*.bak`/`*.orig`/`*.tmp`/`*.rej` files (**WARN**).
+- Exit `0` when no errors (add `-FailOnWarn` to treat warnings as failures); `-OutFile` must be outside the checked dump.
+
 ---
 
 ## Typical Workflow

@@ -53,9 +53,9 @@ Delegate to the **`1c-metadata-manager`** subagent (`content/agents/metadata-man
 
 | Task domain | Read before the operation |
 |---|---|
-| Metadata objects — create, edit, analyze, remove, validate | [meta-manage.md](docs/meta-manage.md) |
+| Metadata objects — create, edit, analyze, decompile, remove, validate | [meta-manage.md](docs/meta-manage.md) |
 | UUID integrity — duplicate identities in an XML dump | [uuid-check.md](docs/uuid-check.md) |
-| Managed forms — design, create, edit, analyze, validate | [form-manage.md](docs/form-manage.md) |
+| Managed forms — design, create, edit, analyze, decompile, validate | [form-manage.md](docs/form-manage.md) |
 | Managed-form layout patterns — archetypes, naming conventions, advanced patterns | fetch `standards(name="form-patterns")` on `1C-docs-mcp` (server not exposed → `content/rules/help-corpus-retrieval.md`) |
 | Form-compile DSL reference — full JSON DSL spec for `1c-form-compile`, `--from-object` mode, presets | [form-compile-dsl.md](docs/form-compile-dsl.md) |
 | Data Composition Schema (DCS/SKD) — create, edit, analyze, decompile, validate | [skd-manage.md](docs/skd-manage.md) |
@@ -65,7 +65,7 @@ Delegate to the **`1c-metadata-manager`** subagent (`content/agents/metadata-man
 | External processors/reports (EPF/ERF) — scaffold, build, dump, validate | [epf-manage.md](docs/epf-manage.md) |
 | BSP/SSL registration and commands | [bsp-manage.md](docs/bsp-manage.md) |
 | Configuration (CF) and complete dump integrity (CF/CFE) — create, edit, analyze, validate | [cf-manage.md](docs/cf-manage.md) |
-| Extensions (CFE) — create, borrow, diff, patch, validate | [cfe-manage.md](docs/cfe-manage.md) |
+| Extensions (CFE) — create, borrow, diff, patch, transfer, validate | [cfe-manage.md](docs/cfe-manage.md) |
 | Vendor support state — "на замке", editability, off-support | [support-manage.md](docs/support-manage.md) |
 | XDTO packages — analyze, create from XSD, export, edit, validate | [xdto-manage.md](docs/xdto-manage.md) |
 | Databases — create, run, load, dump, DT backup, extensions in the infobase (list, check, properties, delete) | [db-manage.md](docs/db-manage.md) |

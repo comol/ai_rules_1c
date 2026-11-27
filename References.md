@@ -14,16 +14,21 @@ Curated list of projects with rules / skills for AI assistants targeting 1C deve
 - [1c-enhanced-codemetadata](https://github.com/Arman-Kudaibergenov/1c-enhanced-codemetadata) — Arman-Kudaibergenov
 - [1c-feature-dev](https://github.com/Diversus23/1c-feature-dev) — Diversus23
 - [1c-platform-actions](https://github.com/svhov/1c-platform-actions) — svhov
+- [1c-quality-gate](https://github.com/Romandredan/1c-quality-gate) — Romandredan (MIT): Claude Code / OpenCode quality gate plugin. Source of ideas for `content/agents/cold-reader.md` (blind diff-only behavioral review with verbatim quote rule) and the silent-clean sentinel / isolated CFE base-config guard in `content/rules/verification-gates.md`. Its blocking Stop/shell hooks are intentionally not ported to preserve agent flexibility.
+- [1c-ssl-skills](https://github.com/brake71/1c-ssl-skills) — brake71 (MIT): BSP 3.1.11 skills and RED/GREEN behavioral evaluation harness (also source for PowerShell UTF-8 stdout encoding pitfalls in `content/skills/powershell-windows/SKILL.md`).
 - [1c-standards-claude-skill](https://github.com/SolovievHub/1c-standards-claude-skill) — SolovievHub
-- [cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) — Nikolay-Shirokov (MIT): source of the vendored `1c-metadata-manage` tools, synced at `4fc37e1` (2026-11-15; notice: `content/skills/1c-metadata-manage/NOTICE.md`; the support-guard hook stays at `2e75b0f`), of the configuration-repository log handling in `1c-repository-manage` (learnings from its `db-repo`, not vendored) and of the opt-in support-guard hook `plugins/1c-rules/hooks/support-guard.mjs` (notice beside it). Its `web-test` skill and `regress-example/` are not vendored; their platform findings are in `content/rules/web-client-driving.md` and `content/skills/1c-ui-regression/docs/regression-stand.md`.
-- [claude-code-skills-1c](https://github.com/Desko77/claude-code-skills-1c) — Desko77
+- [cc-1c-skills](https://github.com/Nikolay-Shirokov/cc-1c-skills) — Nikolay-Shirokov (MIT): source of the vendored `1c-metadata-manage` tools, synced at `29a3a9e` (2026-11-26; notice: `content/skills/1c-metadata-manage/NOTICE.md`; the support-guard hook stays at `2e75b0f`), of the configuration-repository log handling in `1c-repository-manage` (learnings from its `db-repo`, not vendored) and of the opt-in support-guard hook `plugins/1c-rules/hooks/support-guard.mjs` (notice beside it). Its `web-test` skill and `regress-example/` are not vendored; their platform findings are in `content/rules/web-client-driving.md` and `content/skills/1c-ui-regression/docs/regression-stand.md`.
+- [claude-code-bsl-lsp](https://github.com/1c-syntax/claude-code-bsl-lsp) — 1c-syntax: official BSL Language Server LSP plugin for Claude Code.
+- [claude-code-skills-1c](https://github.com/Desko77/claude-code-skills-1c) — Desko77 (MIT): source of ideas for `content/rules/git-safety.md`, `content/rules/edt-pitfalls.md`, `content/rules/rls-performant-bsp.md`, Cyrillic Windows rules in `content/skills/powershell-windows/SKILL.md`, and the optional domain pack catalog.
 - [claude_rules_1c](https://github.com/Dach-Coin/claude_rules_1c) — Dach-Coin
 - [cursor-1c-skills](https://github.com/Desko77/cursor-1c-skills) — Desko77
 - [form-ordinary](https://github.com/dreamadv81/form-ordinary) — dreamadv81 (MIT): vendored as `content/skills/form-ordinary/` at `a0f5294` (2026-11-16; notice: `content/skills/form-ordinary/NOTICE.md`), the primary route for ordinary forms (`Form.bin`, `form.frm`). Its platform pictures belong to 1C and are not under MIT.
 - [opencode_1c_rules](https://github.com/colVEEEN/opencode_1c_rules) — colVEEEN
 - [partial-load-config](https://github.com/Nikolay-Shirokov/partial-load-config) — Nikolay-Shirokov
 - [Pauk_1C](https://github.com/Mempemp/Pauk_1C) — Mempemp
+- [unica](https://github.com/IngvarConsulting/unica) — Ingvar Consulting (LGPL-3.0-or-later): 1C agent plugin supporting 8.3.27 and 8.5 (formats 2.21/2.22). Ideas adapted (no code copied) for `content/rules/platform-versions.md`, `content/rules/data-separation.md`, `content/rules/log-analysis.md`, `content/rules/localization.md`, `content/rules/mcp-policy.md → A.2`, and `content/skills/1c-metadata-manage/SKILL.md → Plan unit`.
 - [universal_1c_rules](https://github.com/fairballer-rgb/universal_1c_rules) — fairballer-rgb
+- [va-ai](https://github.com/Nikolay-Shirokov/va-ai) — Nikolay-Shirokov (MIT): Vanessa Automation BDD step library and validator.
 
 ## Generic rules for AI agents
 

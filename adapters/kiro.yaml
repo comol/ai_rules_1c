@@ -1,0 +1,36 @@
+# Adapter: Kiro (AWS Kiro IDE / CLI)
+#
+# Describes how to copy and adapt files from content/ for Kiro.
+# Note: DeepSeek Harness (DSH) remains the primary target runtime for this ruleset.
+#
+# Layout:
+#   - Root `AGENTS.md` as always-on entry point.
+#   - On-demand rules under `.kiro/rules-1c/` (deliberately NOT `.kiro/steering/`,
+#     which Kiro loads eagerly).
+#   - Skills under `.kiro/skills/{name}/` (Agent Skills standard).
+#   - Project MCP merged into `.kiro/settings/mcp.json` under `mcpServers`.
+
+tool: kiro
+schemaVersion: 1
+
+detection:
+  - exists: ".kiro/"
+
+rules:
+  copyTo: ".kiro/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+skills:
+  copyTo: ".kiro/skills/{name}/"
+  mode: verbatim
+
+mcp:
+  source: "content/mcp-servers.json"
+  target: ".kiro/settings/mcp.json"
+  schema: mcpServers
+  format: json
+  merge: true
+  mergeKey: mcpServers
+  mergeServers: true

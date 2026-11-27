@@ -1,5 +1,5 @@
 ---
-description: 1C:EDT branch of the ruleset — EDT project format, metadata / infobase gates, EDT-MCP routing, validation and DB update in an EDT workspace. Load when USE_EDT=true or the tree being edited is in EDT format (.mdo).
+description: 1C:EDT rules — MDO format, metadata/IB gates, EDT-MCP routing, validation and deploy. Load when USE_EDT=true or editing .mdo/.form trees.
 alwaysApply: false
 category: tooling
 ---
@@ -19,7 +19,7 @@ This file is the **EDT branch** of the ruleset. Everything else in `content/rule
 
 `USE_EDT=true` without EDT-MCP is valid. Generic work continues; dependent steps use the alternatives below or remain unverified. Recommend `/install-edt-mcp` at most once per session when relevant and policy permits; never recommend it for `TOOL_EDT=off`.
 
-Apply `TOOL_EDT` (`content/rules/mcp-policy.md → Tool availability`): `off` suppresses calls and installation recommendations; `required` blocks an EDT-MCP-dependent step if its capability is missing. Neither activates `USE_EDT`. Tools must be callable in this session; config/health alone is insufficient. Catalog: `content/skills/mcp-1c-tools/docs/edt-mcp.md`.
+Apply `TOOL_EDT` (`content/rules/mcp-policy.md → Tool availability`): `off` suppresses calls and installation recommendations; `required` blocks an EDT-MCP-dependent step if its capability is missing. Neither activates `USE_EDT`. Tools must be callable in this session; config/health alone is insufficient. Catalog: `content/skills/mcp-1c-tools/docs/edt-mcp.md`. For operational traps (safe `write_module_source` modes, thick-client monopoly, `zip:///` export errors, large configurations, `rphost` cache, and `ai-edt` facade plugin routing), load `content/rules/edt-pitfalls.md`.
 
 ## The one thing that really changes: source format
 

@@ -10,7 +10,7 @@ category: workflow
 
 ## Delegation principle
 
-13 specialized subagents are available (catalog below); the prompt of `1c-<name>` is `content/agents/<name>.md`, installed under the active tool.
+14 specialized subagents are available (catalog below); the prompt of `1c-<name>` is `content/agents/<name>.md`, installed under the active tool.
 
 **Delegate when at least one countable fact holds:**
 
@@ -23,7 +23,7 @@ First apply triage: standalone `docs-fix` and `quick-fix` tasks stay with the pa
 
 **Otherwise execute directly:** a single-file edit, or a full-cycle task under those thresholds, runs the 5-step Development Procedure from `AGENTS.md` plus the closing gate from `content/rules/verification-gates.md`. The pipeline in `subagent-pipeline.md` applies only when delegation is chosen here.
 
-All 13 agents declare `allowParallel: true`. That licenses parallel **read-only** tracks; two mutating subagents run in parallel on one configuration only when their write scopes are provably disjoint — `subagent-pipeline.md → Stage 3`.
+All 14 agents declare `allowParallel: true`. That licenses parallel **read-only** tracks; two mutating subagents run in parallel on one configuration only when their write scopes are provably disjoint — `subagent-pipeline.md → Stage 3`.
 
 **Model profile.** The active-model profile may tune **how eagerly** you delegate within these criteria, never the criteria themselves, the "when NOT to call" column, the built-in-explorer ban or the common obligations. No profile authorises a subagent spawned to double-check your own work.
 
@@ -56,6 +56,7 @@ Owned by `content/rules/subagent-core.md` — CONFUSION on material forks, MCP-f
 | **1c-error-fixer** | Fixing syntax / runtime errors / BSL LS warnings above the quick-fix line, without architectural changes (tier `coding` — it authors production code, often on transactional paths) | A quick-fix-eligible edit — the parent makes it; the fix requires architectural rework — escalate to `1c-architect` / `1c-developer` |
 | **1c-tester** | Applicable UI verification with effective `UI_TESTING=essential` (important new or changed user-visible behaviour) or `auto`, or explicit UI-test request under `manual`; authorized dev/test target required (`dev-standards-env.md`) | No test infobase; purely static task; `off`, or `manual` without an explicit UI-test request |
 | **1c-code-reviewer** | **Only when the user explicitly asks for a code review** (or approved a plan whose role table names it) and the reviewer model gate below is satisfied | Auto-triggering an unrequested review after edits is forbidden; no explicitly selected reviewer model |
+| **1c-cold-reader** | **Only when the user explicitly asks for a cold/independent logic review** (or approved a plan naming it) and the reviewer model gate below is satisfied — pass **only** `git diff` and file paths, never the task intent | Auto-triggering unrequested review; style/standards checks (`1c-code-reviewer` owns those); no explicitly selected reviewer model |
 | **1c-doc-writer** | User-facing documentation: user guides, admin manuals, tutorials, codemaps, API references | Inline code documentation (module / procedure headers) — that is the developer's responsibility |
 
 ## Tool declarations
@@ -69,7 +70,7 @@ Each agent declares an abstract `modelTier` (`coding` / `analysis` / `light`); t
 The three tiers:
 
 - **`coding`** — code / metadata authorship and design: writing or editing BSL and metadata, architecture design, error fixes. Agents: `1c-developer`, `1c-metadata-manager`, `1c-architect`, `1c-performance-optimizer`, `1c-refactoring`, `1c-error-fixer`. Warrants the strongest model — this tier mutates production code.
-- **`analysis`** — reasoning without production-code authorship: planning, analysis, review, testing, documentation. Agents: `1c-planner`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-doc-writer`, `1c-tester`. A strong-value model is usually enough.
+- **`analysis`** — reasoning without production-code authorship: planning, analysis, review, testing, documentation. Agents: `1c-planner`, `1c-analytic`, `1c-arch-reviewer`, `1c-code-reviewer`, `1c-cold-reader`, `1c-doc-writer`, `1c-tester`. A strong-value model is usually enough.
 - **`light`** — small bounded read-only tasks where a cheaper / faster model saves limits without hurting quality: repo scouting, search, impact lists, mechanical post-edit checks. Agent: `1c-explorer`. Bounded edits may still be routed down per invocation (below), but no code-writing agent declares this tier.
 
 Routing rules:
@@ -81,7 +82,7 @@ Routing rules:
 
 ## Reviewer model gate
 
-`1c-code-reviewer` and `1c-arch-reviewer` are **disabled unless a reviewer model is explicitly selected**: a non-empty `SUBAGENT_MODEL_ANALYSIS` in `.dev.env`, or a concrete model explicitly chosen by the user for this review invocation. An absent file / key, an empty value, the client's default model, and the legacy fallback to `SUBAGENT_MODEL_CODING` do not enable reviewers. Do not ask for a model merely to complete an ordinary development task.
+`1c-code-reviewer`, `1c-cold-reader` and `1c-arch-reviewer` are **disabled unless a reviewer model is explicitly selected**: a non-empty `SUBAGENT_MODEL_ANALYSIS` in `.dev.env`, or a concrete model explicitly chosen by the user for this review invocation. An absent file / key, an empty value, the client's default model, and the legacy fallback to `SUBAGENT_MODEL_CODING` do not enable reviewers. Do not ask for a model merely to complete an ordinary development task.
 
 Before dispatch, confirm that the active client's reviewer definition or supported invocation override selects that model. A setting that has not been rendered into the installed agent is insufficient; never silently substitute inheritance or another model. This is a launch condition, not a change to installer tier resolution for other agents.
 
@@ -147,6 +148,15 @@ Independent review of the current change for bugs, regressions, missing checks, 
 violations. Review scope: <parent-provided git diff and/or explicit file list>. Do not edit files.
 The reviewer has no Shell and must not infer an absent scope. High-confidence
 findings only, ordered by severity, with file/line references; then residual risk.
+```
+
+### cold-review — blind behavioral review (`1c-cold-reader`, **explicit request + reviewer model gate**)
+
+```text
+Cold behavioral review. Do NOT infer task intent. Do not edit files.
+Diff: <parent-provided git diff>
+Changed files: <explicit file paths>
+Return JSON per your output contract (read, findings with verbatim quote and concrete breaks_on, not_checked).
 ```
 
 ### smoke-check — mechanical post-change verification (`1c-explorer`, light-tier candidate)

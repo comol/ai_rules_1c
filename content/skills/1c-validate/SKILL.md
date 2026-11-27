@@ -34,6 +34,7 @@ Select BSL validators from the depth table in `content/rules/verification-policy
 
 - Blocking: any `error` from syntax; `critical` / `error` from check; `error` from review; a logic, data-integrity, security, transaction or performance defect named by the validator. Style noise never starts another AI pass.
 - `provenance.index` on a syntax answer says what a clean report proves: `absent` / `building` / `failed` = syntax and local rules only; `ready` = cross-module resolution included. Read it, never wait for it.
+- Guard against silent-clean failures (unparsed file fragments, suspiciously empty response after a transport blip → one sentinel check per session) and isolated CFE dumps (unresolved calls to base-configuration modules are *base-context unresolved*, verified via Gate 6 rather than "fixed").
 - A check of a large module may run for minutes; the server retries transport failures itself — do not resend.
 - Rewrites from `rewrite_1c_code` / `modify_1c_code` are drafts and re-enter this chain.
 - A missing validator is graceful degradation with a `Risk:` line, never a silent skip. Typed answers map to actions by code — `content/rules/mcp-policy.md → C. Server answers → actions`.

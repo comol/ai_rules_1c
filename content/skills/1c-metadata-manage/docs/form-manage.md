@@ -562,6 +562,8 @@ Checks Form.xml of a managed form for structural errors: ID uniqueness, companio
 | FormPath | yes | — | Path to Form.xml file |
 | Detailed | no | off | Print every check, not only problems |
 | MaxErrors | no | 30 | Stop after N errors |
+| ContextFormPath | no | — | Real form path in the dump when validating a staged copy of `Form.xml` (resolves dump anchor, owner descriptor, default module path) |
+| ModulePath | no | `<form>/Form/Module.bsl` | Explicit `Module.bsl` path when validating a staged form module |
 
 ### Command
 
@@ -621,6 +623,23 @@ Return code: 0 = no errors (warnings allowed), 1 = errors found.
 - **After `1c-form-compile`**: verify correctness of generated form
 - **After manual Form.xml editing**: ensure IDs are unique, companions are present, references are valid
 - **When debugging**: identify structural errors before building
+
+---
+
+## 7. Decompile — Draft JSON from Form.xml
+
+Reads an existing managed form (`Ext/Form.xml`) and generates a compact JSON draft in `form-compile` DSL format (`form-dsl-spec.md`) for building a **new** form by analogy or studying a complex layout.
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-form-decompile/scripts/form-decompile.ps1 -FormPath "Documents/Заказ/Forms/ФормаДокумента/Ext/Form.xml" -OutputPath "draft.form.json"
+```
+
+| Parameter | Required | Default | Description |
+|-----------|:--------:|---------|-------------|
+| `FormPath` (`-Path`) | yes | — | Path to source `Form.xml` |
+| `OutputPath` | no | `<stem>.form.json` / stdout | Destination JSON draft file |
+
+**Draft with `_todo` markers — NOT a lossless round-trip:** constructs unsupported by the DSL (rare field kinds, `ConditionalAppearance`, `CommandInterface`, role visibility, custom layout styling) are marked with `_todo` keys and `[TODO]` console notices. Review and resolve every `_todo` before calling `form-compile`. **Never** use `decompile → compile` for surgical edits on a live form (use `form-edit` instead so unsupported XML constructs are preserved).
 
 ---
 

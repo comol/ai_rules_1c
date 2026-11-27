@@ -37,7 +37,7 @@ Parameters are named only (`-JsonPath`, `-OutputPath`); positional arguments are
 
 A new template object in the configuration is registered by `add-template` ([template-manage.md](template-manage.md)); `mxl-compile` only writes the layout body.
 
-**If creating a layout from an image** (screenshot, scanned print form) — first use the `img-grid-analysis` skill to overlay a grid, determine column boundaries and proportions, then use `"Nx"` widths + `"page"` for automatic size calculation.
+**If creating a layout from an image** (screenshot, scanned print form) — first use the `img-grid-analysis` skill to overlay a grid, determine column boundaries and proportions, then use `"Nx"` widths + `"page"` for automatic size calculation. **If the source is an Excel file (`.xlsx`)** — use `content/skills/1c-layout-from-excel/SKILL.md` (OfficeCLI structural inspection) instead of screenshotting Excel.
 
 ### DSL at a glance
 

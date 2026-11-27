@@ -100,13 +100,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('init', 'update', 'add', 'remove', 'doctor', 'eject')]
+    [ValidateSet('init', 'update', 'add', 'remove', 'doctor', 'eject', 'packs')]
     [string]$Command = 'init',
 
     [Parameter(Position = 1)]
     [string]$Tool,
 
     [string[]]$Tools,
+    [string[]]$Packs,
     [string]$Source,
     [string]$ProjectRoot,
     [switch]$NonInteractive,
@@ -137,7 +138,7 @@ $script:CodeOwnerKey = 'CODE_OWNER'
 $script:CodeOwnerAnswer = $null
 $script:CodeOwnerAsked = $false
 $script:SupportKeys = @('SUPPORT_KEY', 'SUPPORT_EMAIL', 'SUPPORT_API_URL')
-$script:SupportedTools = @('dsh', 'cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'pi', 'other')
+$script:SupportedTools = @('dsh', 'cursor', 'claude-code', 'codex', 'opencode', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'pi', 'copilot', 'windsurf', 'roocode', 'gemini', 'kiro', 'yandex', 'other')
 # OpenCode configs belong to the user, including files tracked by older
 # installers. Never migrate, rewrite or remove any of these paths.
 $script:OpenCodeConfigPaths = @('opencode.json', 'opencode.jsonc', '.opencode/opencode.json', '.opencode/opencode.jsonc')
@@ -1110,6 +1111,28 @@ function New-McpConfig-Zcode {
     return (ConvertTo-Json ([ordered]@{ mcp = [ordered]@{ servers = $dict } }) -Depth 10)
 }
 
+function New-McpConfig-Copilot {
+    # VS Code / GitHub Copilot workspace MCP config: .vscode/mcp.json -> servers.
+    param([array]$Servers)
+    $dict = [ordered]@{}
+    foreach ($s in $Servers) {
+        $entry = [ordered]@{}
+        if ($s.url) {
+            $entry['type'] = 'http'
+            $entry['url'] = $s.url
+            if ($s.headers) { $entry['headers'] = $s.headers }
+        }
+        elseif ($s.command) {
+            $entry['type'] = 'stdio'
+            $entry['command'] = $s.command
+            if ($s.args) { $entry['args'] = $s.args }
+            if ($s.env) { $entry['env'] = $s.env }
+        }
+        $dict[$s.id] = $entry
+    }
+    return (ConvertTo-Json ([ordered]@{ servers = $dict }) -Depth 10)
+}
+
 function New-McpConfig-Kilocode {
     # Current Kilo CLI / Kilo Code extension MCP schema (v7.x+, see
     # https://kilo.ai/docs/automate/mcp/using-in-cli):
@@ -1290,6 +1313,10 @@ function New-McpConfig {
         'kilocode' { return (New-McpConfig-Kilocode $Servers) }
         'kimi' { return (New-McpConfig-Other $Servers) }
         'qwen' { return (New-McpConfig-Qwen $Servers) }
+        'copilot' { return (New-McpConfig-Copilot $Servers) }
+        'roocode' { return (New-McpConfig-Other $Servers) }
+        'gemini' { return (New-McpConfig-Qwen $Servers) }
+        'kiro' { return (New-McpConfig-Other $Servers) }
         'other' { return (New-McpConfig-Other $Servers) }
         default { throw "Unknown tool id: $ToolId" }
     }
@@ -1387,6 +1414,12 @@ function Get-ToolDetectionSignals {
         'zcode'        = @((Test-Path (Join-Path $Root '.zcode')))
         'mimocode'     = @((Test-Path (Join-Path $Root '.mimocode')), (Test-Path (Join-Path $Root 'mimocode.json')), (Test-Path (Join-Path $Root 'mimocode.jsonc')))
         'pi'           = @((Test-Path (Join-Path $Root '.pi')))
+        'copilot'      = @((Test-Path (Join-Path $Root '.github/copilot-instructions.md')), (Test-Path (Join-Path $Root '.github/agents')), (Test-Path (Join-Path $Root '.github/skills')))
+        'windsurf'     = @((Test-Path (Join-Path $Root '.windsurf')), (Test-Path (Join-Path $Root '.windsurfrules')))
+        'roocode'      = @((Test-Path (Join-Path $Root '.roo')), (Test-Path (Join-Path $Root '.roorules')))
+        'gemini'       = @((Test-Path (Join-Path $Root '.gemini')), (Test-Path (Join-Path $Root 'GEMINI.md')))
+        'kiro'         = @((Test-Path (Join-Path $Root '.kiro')))
+        'yandex'       = @((Test-Path (Join-Path $Root '.codeassistant')))
         # 'other' is a manual-only fallback — never auto-detected.
         'other'        = @()
     }
@@ -3048,7 +3081,208 @@ function Invoke-PlacePhase {
     # `.ai-rules/rules/` mirror is no longer created — `AGENTS.md` references
     # the canonical tool's directory, resolved by `Resolve-CanonicalRulesDir`.
 
+    if ($Manifest -and $Manifest.Contains('packs') -and $Manifest['packs'] -and @($Manifest['packs']).Count -gt 0) {
+        Invoke-PlacePacks -Root $Root -SourceRoot $SourceRoot -ActiveTools $ActiveTools `
+            -Adapters $canonicalAdapters -Manifest $Manifest -PackIds @($Manifest['packs']) -Layouts $layouts
+    }
+
     Remove-UnsharedSkillCopies -Root $Root -Manifest $Manifest -Tools $canonicalTools -NativeAdapters $nativeAdapters
+}
+
+function Read-PacksCatalog {
+    param([string]$SourceRoot)
+    $path = Join-Path $SourceRoot 'content/packs/packs.json'
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $raw = Read-TextFile $path
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+    $parsed = $raw | ConvertFrom-Json
+    if (-not $parsed -or -not $parsed.packs) { return @() }
+    return @($parsed.packs)
+}
+
+function Resolve-RequestedPacks {
+    param(
+        [array]$Catalog,
+        [string[]]$Requested,
+        [string[]]$Existing,
+        [switch]$PromptIfInteractive
+    )
+    if (-not $Catalog -or $Catalog.Count -eq 0) { return @() }
+    $validIds = @($Catalog | ForEach-Object { [string]$_.id })
+
+    if ($Requested -and $Requested.Count -gt 0) {
+        $norm = @($Requested | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { $_ })
+        if ($norm -contains 'none') { return @() }
+        if ($norm -contains 'all') { return $validIds }
+        $unknown = @($norm | Where-Object { $_ -notin $validIds })
+        if ($unknown.Count -gt 0) {
+            throw "Unknown pack id(s): $($unknown -join ', '). Available: $($validIds -join ', ')"
+        }
+        return @($norm | Select-Object -Unique)
+    }
+
+    if ($Existing -and $Existing.Count -gt 0) {
+        return @($Existing | Where-Object { $_ -in $validIds } | Select-Object -Unique)
+    }
+
+    if ($PromptIfInteractive -and -not $NonInteractive -and -not $AssumeYes) {
+        Write-Info 'Optional 1C domain packs available:'
+        foreach ($p in $Catalog) {
+            Write-Info "  - $($p.id): $($p.title)"
+        }
+        $ans = Read-Host "Install domain packs? Enter comma-separated ids, 'all', or press Enter for none [none]"
+        if (-not [string]::IsNullOrWhiteSpace($ans)) {
+            $picked = @($ans -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+            return (Resolve-RequestedPacks -Catalog $Catalog -Requested $picked -Existing @())
+        }
+    }
+    return @()
+}
+
+function Invoke-PlacePacks {
+    param(
+        [string]$Root,
+        [string]$SourceRoot,
+        [string[]]$ActiveTools,
+        [hashtable]$Adapters,
+        [System.Collections.IDictionary]$Manifest,
+        [string[]]$PackIds,
+        [hashtable]$Layouts
+    )
+    $catalog = Read-PacksCatalog -SourceRoot $SourceRoot
+    if ($catalog.Count -eq 0 -or -not $PackIds -or $PackIds.Count -eq 0) { return }
+
+    $byId = @{}
+    foreach ($p in $catalog) { $byId[[string]$p.id] = $p }
+
+    foreach ($packId in @($PackIds | Select-Object -Unique)) {
+        if (-not $byId.ContainsKey($packId)) {
+            Write-Warn "Pack '$packId' not found in source catalog; skipping."
+            continue
+        }
+        $pack = $byId[$packId]
+        $packRoot = Join-Path $SourceRoot ("content/packs/" + $packId)
+        if (-not (Test-Path -LiteralPath $packRoot)) { continue }
+        Write-Info "  [pack:$packId] placing files"
+
+        foreach ($tool in $ActiveTools) {
+            $adapter = $Adapters[$tool]
+            if (-not $adapter) { continue }
+
+            if ($pack.rules -and $adapter.rules -and $adapter.rules.copyTo) {
+                $copyTpl = $adapter.rules.copyTo
+                $fmOps = $adapter.rules.frontmatter
+                $mode = if ($adapter.rules.mode) { $adapter.rules.mode } else { 'transform' }
+                foreach ($relRule in @($pack.rules)) {
+                    $srcFile = Join-Path $packRoot $relRule
+                    if (-not (Test-Path -LiteralPath $srcFile)) { continue }
+                    $parts = Split-FrontmatterAndBody (Read-TextFile $srcFile)
+                    $name = [System.IO.Path]::GetFileNameWithoutExtension($srcFile)
+                    $target = Resolve-CopyToPath $copyTpl $name
+                    $srcKey = ('content/packs/' + $packId + '/' + ($relRule -replace '\\', '/'))
+                    Invoke-PlaceArtifactFile -Root $Root -SourcePath $srcFile `
+                        -TargetRel $target -SourceFm $parts.Frontmatter -SourceBody $parts.Body `
+                        -FrontmatterOps $fmOps -Mode $mode `
+                        -Manifest $Manifest -ContentSource $srcKey -OwnerTool $tool -Layouts $Layouts
+                }
+            }
+
+            if ($pack.skills -and $adapter.skills -and $adapter.skills.copyTo) {
+                $dirTpl = $adapter.skills.copyTo.TrimEnd('/', '\')
+                foreach ($relSkill in @($pack.skills)) {
+                    $srcDir = Join-Path $packRoot $relSkill
+                    if (-not (Test-Path -LiteralPath (Join-Path $srcDir 'SKILL.md'))) { continue }
+                    $name = Split-Path -Leaf $srcDir
+                    $targetDir = Resolve-CopyToPath $dirTpl $name
+                    $srcKey = ('content/packs/' + $packId + '/' + ($relSkill -replace '\\', '/'))
+                    Invoke-PlaceSkill -Root $Root -SourceDir $srcDir -TargetDir $targetDir `
+                        -Manifest $Manifest -ContentSource $srcKey -OwnerTool $tool -Layouts $Layouts
+                }
+            }
+        }
+    }
+}
+
+function Invoke-Packs {
+    param(
+        [string]$Root,
+        [string]$SourceRootRequested,
+        [string]$Action,
+        [string[]]$RequestedPacks
+    )
+    $act = if ($Action) { $Action.Trim().ToLowerInvariant() } else { 'list' }
+    if ($act -notin @('list', 'status', 'add', 'remove')) {
+        throw "Unknown packs action: '$Action'. Use: list | status | add | remove."
+    }
+
+    $manifest = Read-Manifest -Root $Root
+    $sourceHint = if ($SourceRootRequested) { $SourceRootRequested } elseif ($manifest -and $manifest.source) { $manifest.source } else { '' }
+    $sourceRoot = Resolve-SourceRoot -Requested $sourceHint
+    $catalog = Read-PacksCatalog -SourceRoot $sourceRoot
+    $installed = if ($manifest -and $manifest.Contains('packs') -and $manifest['packs']) { @($manifest['packs']) } else { @() }
+
+    if ($act -in @('list', 'status')) {
+        Write-Section 'Optional 1C Domain Packs'
+        foreach ($p in $catalog) {
+            $state = if ($installed -contains [string]$p.id) { 'installed' } else { 'not installed' }
+            Write-Info ("  {0,-18} [{1,-13}] {2}" -f $p.id, $state, $p.title)
+        }
+        return
+    }
+
+    if (-not $manifest) {
+        throw 'No .ai-rules.json manifest found. Run install.ps1 init first.'
+    }
+    $activeTools = @($manifest.tools)
+    if ($activeTools.Count -eq 0) { throw 'Manifest lists no active tools.' }
+
+    if ($act -eq 'add') {
+        if (-not $RequestedPacks -or $RequestedPacks.Count -eq 0) {
+            throw 'Specify pack ids with -Packs <id1,id2|all>.'
+        }
+        $toAdd = Resolve-RequestedPacks -Catalog $catalog -Requested $RequestedPacks -Existing @()
+        $combined = @(@($installed) + @($toAdd) | Select-Object -Unique)
+        $adapters = Load-Adapters -SourceRoot $sourceRoot -Tools $activeTools
+        $sharedAdapters = Get-SharedSkillsAdapters -Tools $activeTools -Adapters $adapters
+        $layouts = Resolve-CanonicalArtifactLayouts -ActiveTools $activeTools -Adapters $sharedAdapters -SourceRoot $sourceRoot
+        $manifest['packs'] = @($combined)
+        Invoke-PlacePacks -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools `
+            -Adapters $sharedAdapters -Manifest $manifest -PackIds $toAdd -Layouts $layouts
+        $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        Write-Manifest -Root $Root -Manifest $manifest
+        Write-Info ("Installed pack(s): " + ($toAdd -join ', '))
+        return
+    }
+
+    if ($act -eq 'remove') {
+        if (-not $RequestedPacks -or $RequestedPacks.Count -eq 0) {
+            throw 'Specify pack ids with -Packs <id1,id2|all>.'
+        }
+        $toRemove = Resolve-RequestedPacks -Catalog $catalog -Requested $RequestedPacks -Existing @()
+        $removedFiles = 0
+        foreach ($packId in $toRemove) {
+            $prefix = 'content/packs/' + $packId + '/'
+            foreach ($rel in @($manifest.files.Keys)) {
+                $entry = $manifest.files[$rel]
+                if (-not $entry -or -not ([string]$entry.source).StartsWith($prefix)) { continue }
+                $abs = Resolve-ManifestPath -Root $Root -Rel $rel
+                if ($entry.userModified -and -not $Force) {
+                    Write-Warn "  Kept user-modified pack file: $rel"
+                    continue
+                }
+                if (Test-Path -LiteralPath $abs) {
+                    Remove-Item -LiteralPath $abs -Force
+                    $removedFiles++
+                }
+                [void]$manifest.files.Remove($rel)
+            }
+        }
+        $remaining = @($installed | Where-Object { $_ -notin $toRemove })
+        $manifest['packs'] = @($remaining)
+        $manifest.updatedAt = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        Write-Manifest -Root $Root -Manifest $manifest
+        Write-Info ("Removed pack(s): " + ($toRemove -join ', ') + " ($removedFiles file(s) deleted)")
+    }
 }
 
 # Priority order for choosing the "canonical" rules directory referenced by
@@ -3057,7 +3291,7 @@ function Invoke-PlacePhase {
 # `other` is intentionally last: when combined with any "real" tool the real
 # tool's rules dir wins; `.ai-agent/rules/` becomes canonical only when
 # `other` is the only active tool.
-$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'opencode', 'codex', 'pi', 'dsh', 'other')
+$script:RulesDirPriority = @('cursor', 'claude-code', 'kilocode', 'kimi', 'qwen', 'command-code', 'cline', 'zcode', 'mimocode', 'opencode', 'codex', 'pi', 'copilot', 'windsurf', 'roocode', 'gemini', 'kiro', 'yandex', 'dsh', 'other')
 
 function Resolve-CanonicalRulesLayout {
     # Returns @{ Dir = <path>; Ext = <ext-without-dot> } for the highest-priority
@@ -4516,7 +4750,8 @@ function Get-SourceScanSkipDirs {
     # Directories that never hold 1C sources: installed rules and dependencies.
     return @('.git', '.dsh', '.cursor', '.claude', '.kilo', '.kilocode', '.codex', '.agents',
         '.opencode', '.kimi-code', '.qwen', '.commandcode', '.cline', '.zcode',
-        '.mimocode', '.pi', '.ai-agent', 'node_modules', '.venv')
+        '.mimocode', '.pi', '.github', '.windsurf', '.roo', '.gemini', '.kiro',
+        '.codeassistant', '.ai-agent', 'node_modules', '.venv')
 }
 
 function Find-SourceFormats {
@@ -5366,6 +5601,12 @@ function Invoke-Init {
     $manifest.tools = @($activeTools)
     $manifest.foreignFiles = $foreign
     $manifest.integrations = $integrations
+    $existingPacks = if ($existing -and $existing.Contains('packs') -and $existing['packs']) { @($existing['packs']) } else { @() }
+    $packsCatalog = Read-PacksCatalog -SourceRoot $sourceRoot
+    $selectedPacks = Resolve-RequestedPacks -Catalog $packsCatalog -Requested $Packs -Existing $existingPacks -PromptIfInteractive
+    if ($selectedPacks.Count -gt 0 -or $manifest.Contains('packs')) {
+        $manifest['packs'] = @($selectedPacks)
+    }
 
     Write-Section 'Phase 6: Place (copy + transform)'
     Invoke-PlacePhase -Root $Root -SourceRoot $sourceRoot -ActiveTools $activeTools -Adapters $adapters -Manifest $manifest
@@ -5744,7 +5985,7 @@ function Test-AgentToolVocabulary {
     param([string]$Root)
 
     $dirs = @()
-    foreach ($rel in @('.claude/agents', '.kimi-code/agents', '.qwen/agents', '.cursor/agents', '.commandcode/agents', '.zcode/agents', '.mimocode/agents')) {
+    foreach ($rel in @('.claude/agents', '.kimi-code/agents', '.qwen/agents', '.cursor/agents', '.commandcode/agents', '.zcode/agents', '.mimocode/agents', '.github/agents')) {
         $abs = Join-Path $Root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         if (Test-Path $abs) { $dirs += @{ Abs = $abs; Rel = $rel } }
     }
@@ -6323,6 +6564,12 @@ function Invoke-Remove {
             'zcode'         { $toolPrefixes = @('.zcode/') }
             'mimocode'      { $toolPrefixes = @('.mimocode/', 'mimocode.json') }
             'pi'            { $toolPrefixes = @('.pi/') }
+            'copilot'       { $toolPrefixes = @('.github/rules-1c/', '.github/agents/', '.github/prompts/', '.github/skills/', '.github/copilot-instructions.md', '.vscode/mcp.json') }
+            'windsurf'      { $toolPrefixes = @('.windsurf/') }
+            'roocode'       { $toolPrefixes = @('.roo/') }
+            'gemini'        { $toolPrefixes = @('.gemini/', 'GEMINI.md') }
+            'kiro'          { $toolPrefixes = @('.kiro/') }
+            'yandex'        { $toolPrefixes = @('.codeassistant/') }
             'cursor'        { $toolPrefixes = @('.cursor/') }
             'other'         { $toolPrefixes = @('.ai-agent/') }
         }
@@ -6543,6 +6790,9 @@ else {
 if ($Tools -and $Tools.Count -eq 1 -and $Tools[0].Contains(',')) {
     $Tools = @($Tools[0] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
+if ($Packs -and $Packs.Count -eq 1 -and $Packs[0].Contains(',')) {
+    $Packs = @($Packs[0] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
 
 try {
     if ($PSBoundParameters.ContainsKey('ForcePaths')) {
@@ -6558,6 +6808,7 @@ try {
         'remove' { Invoke-Remove -Root $projectRoot -ScopeTool $Tool }
         'doctor' { Invoke-Doctor -Root $projectRoot }
         'eject'  { Invoke-Eject  -Root $projectRoot }
+        'packs'  { Invoke-Packs  -Root $projectRoot -SourceRootRequested $Source -Action $Tool -RequestedPacks $Packs }
         default  { throw "Unknown command: $Command" }
     }
 }

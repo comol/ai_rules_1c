@@ -8,7 +8,7 @@ and travels with every copy of this skill, including installed ones
 ## Nikolay-Shirokov/cc-1c-skills
 
 - Upstream: <https://github.com/Nikolay-Shirokov/cc-1c-skills>
-- Pinned commit: `4fc37e1f992057847228a69837337bd3c141c059` (2026-11-15)
+- Pinned commit: `29a3a9e46c6ecaa6d2d2baf4c00b8a7dc511a89e` (2026-11-26)
 - Licence: MIT
 
 Vendored under `tools/`, with local modifications documented in each file's
@@ -69,7 +69,7 @@ carries its downstream deltas in its own file header:
   discarded; the support guard reads `.dev.env` `SUPPORT_GUARD` first and fails
   closed on an unreadable support state.
 - `tools/1c-meta-validate/scripts/meta-validate.py` — Python runtime of
-  `meta-validate`, upstream base v1.47 (`4fc37e1`). Downstream deltas, the same in
+  `meta-validate`, upstream base v1.48 (`29a3a9e`). Downstream deltas, the same in
   both runtimes: checks 6a–6d — a `ChildObjects/Form` registration must be a
   scalar reference (6a), it must resolve to `Forms/<Name>.xml` on disk (6b), that
   descriptor must parse as XML (6c), and the name it declares must be the name
@@ -104,8 +104,12 @@ Other tool commands remain PowerShell-only. The upstream pin above is not to be 
 
 - the PowerShell tool scripts under `tools/` synced from the same upstream
   (per-tool versions and local changes: `docs/CHANGELOG.md`, section "Upstream
-  sync 2026-11-17 (4fc37e1)"), including the tools first vendored at the previous
-  pin `2e75b0f`:
+  sync 2026-11-27 (29a3a9e)"), including `tools/1c-cfe-manage/scripts/cfe-transfer.ps1`
+  (`cfe-transfer` v1.61, adapted to `.dev.env` `SUPPORT_GUARD` / `NEW_OBJECT_POSITION`,
+  fail-closed `ParentConfigurations.bin`, downstream `1c-*` sibling validator paths and
+  cross-platform `pwsh`), `tools/1c-meta-decompile/scripts/meta-decompile.ps1`
+  (`meta-decompile` v0.71) and `tools/1c-form-decompile/scripts/form-decompile.ps1`
+  (`form-decompile` v0.160), and the tools first vendored at `2e75b0f`:
   `tools/1c-role-edit/` (`role-edit`), `tools/1c-db-ops/scripts/db-cfe-admin.ps1`
   (`db-cfe-admin`) and `tools/1c-v8-xsd-fetch/` (`v8-xsd-fetch`). Copies of
   shared functions across these scripts are held together by

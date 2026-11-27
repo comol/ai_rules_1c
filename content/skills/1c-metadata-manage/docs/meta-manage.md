@@ -565,6 +565,22 @@ Exit code: 0 = all checks passed, 1 = errors found.
 - **When debugging**: find structural errors before EPF build
 
 ---
+## 6. Decompile — Draft JSON from Existing XML
+
+Reads an existing metadata object XML (`Catalogs/X.xml`, etc.) and emits a compact JSON draft in `meta-compile` DSL format so you can build a **new** object by analogy (`decompile → rename & adapt → meta-compile → meta-validate`).
+
+```powershell
+powershell.exe -NoProfile -File skills/1c-metadata-manage/tools/1c-meta-decompile/scripts/meta-decompile.ps1 -ObjectPath "Catalogs/Образец.xml" -OutputPath "draft.json"
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `ObjectPath` | Path to the source metadata object XML (required) |
+| `OutputPath` | Destination JSON file (omit to write JSON to stdout) |
+
+**Warning — NOT a lossless round-trip or edit workflow:** the JSON draft omits UUIDs, modules, forms, templates and roles. **Never** compile a decompiled draft back over an existing object (that replaces its UUID and breaks infobase links — `meta-compile` refuses without `-Force`). Use `meta-edit` for modifying existing objects and `meta-info` for read-only inspection.
+
+---
 ## Typical Workflow
 
 ```

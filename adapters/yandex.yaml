@@ -1,0 +1,25 @@
+# Adapter: Yandex Code Assistant (SourceCraft Code Assistant)
+#
+# Describes how to copy and adapt files from content/ for Yandex Code Assistant.
+# Note: DeepSeek Harness (DSH) remains the primary target runtime for this ruleset.
+#
+# Layout:
+#   - Root `AGENTS.md` as always-on entry point.
+#   - On-demand rules under `.codeassistant/rules-1c/`.
+#   - Skills under `.codeassistant/skills/{name}/` (Agent Skills standard).
+
+tool: yandex
+schemaVersion: 1
+
+detection:
+  - exists: ".codeassistant/"
+
+rules:
+  copyTo: ".codeassistant/rules-1c/{name}.md"
+  frontmatter:
+    keep: [description, alwaysApply]
+    drop: [globs, category]
+
+skills:
+  copyTo: ".codeassistant/skills/{name}/"
+  mode: verbatim

@@ -19,10 +19,11 @@ Load the owner that matches the task; do not preload the whole set. Routed stand
 | Module regions (Russian, БСП-style; no regions inside procedures) | `module-structure.md` |
 | Architecture patterns, extensions, `COMОбъект` ban, client-server interaction, **query hard rules** (no queries in loops, parameters, `КАК` aliases, semantically equivalent virtual-table filter placement, `РезультатЗапроса = Запрос.Выполнить()`) | `standards(name="dev-standards-architecture") §2–§3` |
 | Reference attributes — never dot notation (`Контрагент.ИНН`); `ОбщегоНазначения.ЗначениеРеквизитаОбъекта` and the batch variants **[Project rule — stricter than ITS standard]** | `standards(name="dev-standards-architecture") §4` |
-| Performance baseline; anti-pattern catalog with severity; platform pitfalls | `standards(name="dev-standards-architecture") §5`, `standards(name="anti-patterns")`, `standards(name="platform-solutions")` |
+| Performance baseline; anti-pattern catalog; review defect cards & counter-signals; platform pitfalls | `standards(name="dev-standards-architecture") §5`, `standards(name="anti-patterns")`, `standards(name="review-defect-catalog")`, `standards(name="platform-solutions")` |
 | Queries — routing and pre-flight | `query-design.md` (load first for any non-trivial query) |
 | Forms (managed and ordinary) — routing | `forms.md` (load first; managed companions via its table, ordinary forms route to `form-ordinary`) |
 | Locks and transactions · logging · extensions · registers · СКД · БСП access rights | `standards(name="locks-and-transactions")` · `standards(name="logging-strategy")` · `standards(name="extension-patterns")` · `standards(name="registers-design")` · `standards(name="dcs-design")` (advanced two-pass composition — `standards(name="dcs-advanced-composition")`) · `standards(name="bsp-access-rights")` |
+| Data separation (SaaS) · performant BSP RLS · ЖР/ТЖ log analysis · localization (`НСтр`) · 8.3/8.5 compatibility | `data-separation.md` · `rls-performant-bsp.md` · `log-analysis.md` · `localization.md` · `platform-versions.md` |
 
 ## Code reuse
 

@@ -25,6 +25,7 @@ Always show tools in this order. The 1C MCP bundle is always first.
 | 8 | rtk | Third-party, user-global shell-output compression proxy — fewer tokens on every shell call (git, docker, platform commands) | Optional; only on explicit selection — also offered by `/economymode` | `/install-rtk` |
 | 9 | Atlassian MCP | Access to Jira issues and Confluence pages in Cloud or Server/Data Center | Optional for projects using Jira or Confluence | `/install-atlassian-mcp` |
 | 10 | OfficeCLI | Create, read and edit Word, Excel and PowerPoint files without Microsoft Office | Optional; recommended when the workflow includes `.docx`, `.xlsx` or `.pptx` documents | `/install-officecli` |
+| 11 | Optional 1C domain packs | Domain rules & skills on demand: ZUP 3.1 (`zup-hr`), Data Exchange KD 2.0/3.1 & EnterpriseData (`data-exchange`), 1C:Compatible audit (`1c-compatible`), meeting-to-tasks (`meeting-to-tasks`) | Optional; choose only the packs matching the project's domain | `/install-packs` |
 
 Do not list an optional tool as required merely because its installer exists.
 
@@ -99,6 +100,7 @@ Execute selected installers sequentially in catalog order by loading and followi
 8. `install-rtk.md`
 9. `install-atlassian-mcp.md`
 10. `install-officecli.md`
+11. `install-packs.md`
 
 If a slash-command dispatcher cannot invoke another slash command directly, execute that command file as the procedure. Do not tell the user to repeat the same selection manually.
 

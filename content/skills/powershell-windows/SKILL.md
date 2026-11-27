@@ -79,6 +79,13 @@ description: "PowerShell scripting rules for Windows environment. Use when runni
   Get-Process -Name "java" -ErrorAction SilentlyContinue
   ```
 
+### 11. Cyrillic Paths, Encoding and Silent Delete Traps
+- **PS 5.1 script encoding:** save any `.ps1` containing Cyrillic literals with UTF-8 **BOM** (or pure ASCII with `[char]` escapes); BOM-less UTF-8 is read as ANSI by Windows PowerShell 5.1 (`1С` becomes `1РЎ`).
+- **UTF-8 stdout:** `Get-Content -Encoding UTF8` sets input encoding only — PowerShell pipelines (`Get-Content`, `rg | Select-String`) can still re-encode stdout to the OEM code page and corrupt Cyrillic (`U+FFFD`). Prefer `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)` or Python with `-X utf8` (`sys.stdout.reconfigure(encoding="utf-8")`).
+- **Batch files (`.bat`/`.cmd`):** keep platform-launch batch files in single-byte OEM/ANSI encoding, not UTF-8; for unattended 1C CLI runs, Latin technical user names avoid Win32 argument transcoding traps.
+- **Verify recursive deletion on Cyrillic paths:** some runtimes (notably Node recursive `fs.rm` on Windows) can return without throwing while leaving a Cyrillic directory on disk. Always confirm deletion with `Test-Path -LiteralPath` rather than trusting exit code 0 alone.
+- **Stop after two encoding misses:** if a shell tool fails twice to locate an existing Cyrillic path, switch to a Unicode-native tool (agent file tools, PowerShell `-LiteralPath`, or Python) instead of retrying the same shell wrapper.
+
 ## Common Errors and Fixes
 
 | Error | Cause | Fix |

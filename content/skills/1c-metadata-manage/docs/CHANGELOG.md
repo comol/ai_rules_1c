@@ -88,6 +88,16 @@ The PowerShell scripts under `tools/1c-cf-manage/scripts/` were refreshed from [
 
 ## cfe-manage.md
 
+### Upstream sync 2026-11-27 (29a3a9e)
+
+`cfe-diff` v1.8 → **v2.2**, `cfe-patch-method` v2.14 → **v2.16**, new **`cfe-transfer` v1.61**; `cfe-borrow` v1.63 comment-only refresh; `cfe-init` and `cfe-validate` unchanged.
+
+- **`cfe-transfer` v1.61** (574fb730, 29a3a9e4): dedicated check-and-transfer tool split out of `cfe-diff` Mode B. `-Mode check` compares extension changes against the main configuration (multiple extensions / folder supported, `-Name`, `-Expand`, `-IncludeDefaultRoles`, `-Limit`/`-Offset`, `-OutFile`). `-Mode transfer` transfers remaining `&ИзменениеИКонтроль` / `&Перед` / `&После` / `&Вместо` interceptors, own methods, form edits, borrowed-object metadata/predefined items, and own extension objects (modules, commands, enums, constants, defined types, catalogs, documents, registers, processors, reports, subscriptions, scheduled jobs, roles, etc.), staging and validating each written form/object/template/XDTO before committing, honouring temporary markers (`// Временно:`, `// Не переносить:`) and `.v8-project.json` `devPrefix` / `cfeTransfer` rules, and warning when stored data is not migrated.
+- **`cfe-diff` v2.2**: focused solely on what the extension changes (`-ExtensionPath`, `-Name`, `-Expand`, `-Limit`/`-Offset`, `-OutFile`; no `-ConfigPath`/`-Mode`). Shows own methods and subobjects per file, borrowed-form diffs vs `BaseForm` (`+`, `~`, `>`), subsystem composition, and collapsed unchanged borrowed objects.
+- **`cfe-patch-method` v2.16**: case-sensitive line comparison during resync (`-ceq`/`-cne`), in-place absorbed replacements no longer flagged as conflicts, parenthesized `Or`/`Или` in effective preprocessor conditions, stricter `#If`/`#Else`/`#EndIf` matching.
+
+Local deltas applied to `cfe-transfer`: `.dev.env` `SUPPORT_GUARD` and `NEW_OBJECT_POSITION` take precedence over `.v8-project.json`, `Get-SupportInfo` fails closed on unreadable `Ext/ParentConfigurations.bin`, sibling validators resolve under the downstream `1c-*` directories (`1c-form-validate`, `1c-meta-validate`, `1c-role-validate`, `1c-subsystem-manage`, `1c-xdto-manage`, `1c-mxl-validate`, `1c-skd-validate`) and launch `pwsh` on non-Windows hosts.
+
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `cfe-borrow` v1.59 → **v1.63**, `cfe-validate` v1.34 → **v1.37**. `cfe-diff`, `cfe-init` and `cfe-patch-method` did not change. `-Actualize` here refreshes borrowed properties; it is not `cfe-patch-method -Actualize`.
@@ -300,6 +310,13 @@ The PowerShell script `tools/1c-epf-validate/scripts/epf-validate.ps1` was refre
 
 ## form-manage.md
 
+### Upstream sync 2026-11-27 (29a3a9e)
+
+`form-info` v1.15 → **v1.16**, `form-validate` v1.41 → **v1.42**; newly vendored **`form-decompile` v0.160** (`tools/1c-form-decompile/scripts/form-decompile.ps1`, PowerShell-only, for drafting new forms by analogy with `_todo` markers). `form-compile`, `form-edit`, `form-add` and `remove-form` did not change.
+
+- **`form-info` v1.16** (e37fbe51): prints a hint pointing at `cfe-diff` to see the extension's own edits vs `BaseForm` on a borrowed form.
+- **`form-validate` v1.42** (31561fa7): new `-ContextFormPath` and `-ModulePath` parameters so staged copies (e.g. from `cfe-transfer`) validate against the real dump anchor, owner descriptor and form module; local checks 28 and 29 updated to use the same context/module paths.
+
 ### Upstream sync 2026-11-17 (4fc37e1)
 
 `form-compile` v1.224 → **v1.244** (PowerShell and Python), `form-edit` v1.46 → **v1.60**, `form-validate` v1.39 → **v1.41**, `form-add` v1.34 → **v1.35** (both runtimes), `form-info` v1.14 → **v1.15**. `remove-form` v1.11 did not change upstream, so both copies still match this pin. `form-decompile` and the layout notes `references/events.md` / `layout-patterns.md` were not vendored; the compilers do not read them. `form-dsl-spec.md` and `presets/erp-standard.json` were re-merged.
@@ -459,6 +476,10 @@ The PowerShell scripts under `tools/1c-interface-manage/scripts/` were refreshed
 - **`interface-validate`** — universal validator improvements (one-liner output by default, `-Detailed`, folder path auto-resolution) — see `role-manage.md` → "Recent Additions".
 
 ## meta-manage.md
+
+### Upstream sync 2026-11-27 (29a3a9e)
+
+`meta-validate` v1.47 → **v1.48** (PowerShell and Python): adds `PaletteColor` to `structuralOnlyTypes` so 8.5 palette colors pass basic structural validation instead of failing as unrecognized. All local checks (6a–6d, 2, 6f, 6g, 6h, 8, 12, 16a) kept. Newly vendored **`meta-decompile` v0.71** (`tools/1c-meta-decompile/scripts/meta-decompile.ps1`, PowerShell-only, for drafting new objects by analogy). `meta-compile`, `meta-edit`, `meta-info` and `meta-remove` did not change.
 
 ### Upstream sync 2026-11-17 (4fc37e1)
 

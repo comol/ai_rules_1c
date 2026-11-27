@@ -121,6 +121,7 @@ Load `content/rules/<name>.md` on its trigger only; routers pull companions and 
 - applying a configuration/extension, missing MCP validators → `designer-batch-checks`
 - UI tests → `ui-testing-tools` → QA MCP: skill `1c-qa-testing` + `qa-testclient`; web: `web-client-driving`
 - extract from ИБ → `getconfigfiles`; integrations → `integrations-add`
+- git safety/EOL → `git-safety`; 8.3/8.5 & compatibility modes → `platform-versions`
 - metadata hand-edit within a skill exception → `metadata-xml-workarounds`
 
 # Spec-driven development workspace

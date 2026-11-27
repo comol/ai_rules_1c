@@ -6,7 +6,7 @@ category: tooling
 
 # Retrieving the routed standards from the Help MCP corpus
 
-Fourteen of the detailed domain standards in `content/rules/` carry headings without bodies. Their normative text is one document each in the **`1c-standards`** collection of the Help MCP server (`1C-docs-mcp`), and this file is the single description of how to get it. The routed files point here instead of repeating the contract.
+Fifteen of the detailed domain standards in `content/rules/` carry headings without bodies. Their normative text is one document each in the **`1c-standards`** collection of the Help MCP server (`1C-docs-mcp`), and this file is the single description of how to get it. The routed files point here instead of repeating the contract.
 
 ## The tool is `standards`, not `docsearch`
 

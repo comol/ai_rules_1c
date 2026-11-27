@@ -5,7 +5,7 @@ The toolchain of that skill is PowerShell-only, so a Linux / macOS install
 receives tools it cannot execute. The fix is to ship each tool twice - a
 PowerShell script for Windows and a Python port next to it - vendored from
 Nikolay-Shirokov/cc-1c-skills (MIT) at the commit the PowerShell family was
-synced from: 4fc37e1f992057847228a69837337bd3c141c059.
+synced from: 29a3a9e46c6ecaa6d2d2baf4c00b8a7dc511a89e.
 
 This file is the regression net for that runtime. It currently covers the first
 ported tool, ``remove-form`` - a tool that deletes files, so its contract is
@@ -1207,7 +1207,7 @@ def _(work):
 # ---------------------------------------------------------------- licensing
 
 UPSTREAM_NOTICE_REL = "content/skills/1c-metadata-manage/NOTICE.md"
-UPSTREAM_PIN = "4fc37e1f992057847228a69837337bd3c141c059"
+UPSTREAM_PIN = "29a3a9e46c6ecaa6d2d2baf4c00b8a7dc511a89e"
 
 
 @case("remove-form safety parity: PowerShell refuses the same names and paths", needs_powershell=True)
